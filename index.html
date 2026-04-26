@@ -1699,17 +1699,47 @@
       </div>
 
       <div class="card card-pad">
-        <div class="card-head" style="justify-content:space-between">
+        <div class="card-head" style="justify-content:space-between;margin-bottom:14px">
           <div>
             <div class="card-title">Open <em>vacancies</em></div>
-            <div class="card-sub">Showing 22 rooms across 3 cities</div>
-          </div>
-          <div class="tabs">
-            <div class="tab active">By move-in date</div>
-            <div class="tab">By city</div>
-            <div class="tab">By price</div>
+            <div class="card-sub" id="vac-result-sub">Search by date, city, or type — share matching listings</div>
           </div>
         </div>
+
+        <!-- Filter bar -->
+        <div class="filter-bar">
+          <div class="filter-search">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input id="vac-search" placeholder="Search by room, property, or city…" />
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);padding:5px 10px 5px 12px;border-radius:10px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted)"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            <span style="font-size:11.5px;color:var(--muted);font-weight:600">Available by</span>
+            <input id="vac-avail-by" type="date" style="border:0;outline:0;font-family:inherit;font-size:13px;background:transparent;color:var(--ink);min-width:130px" />
+            <button id="vac-avail-clear" title="Clear date" style="background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px;display:none">✕</button>
+          </div>
+          <div class="filter-chip" data-vac-filter="city">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg>
+            <span class="label">City</span>
+            <span class="val" id="vac-chip-city"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+          <div class="filter-chip" data-vac-filter="type">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v11H3z"/><path d="M9 21V13h6v8"/></svg>
+            <span class="label">Type</span>
+            <span class="val" id="vac-chip-type"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+          <select class="sort-select" id="vac-sort">
+            <option value="date">Sort: Move-in date (soonest)</option>
+            <option value="price-asc">Sort: Price (low → high)</option>
+            <option value="price-desc">Sort: Price (high → low)</option>
+            <option value="apps">Sort: Most applications</option>
+          </select>
+        </div>
+
+        <div class="active-chips" id="vac-active-chips"></div>
+
         <table>
           <thead>
             <tr>
@@ -1717,14 +1747,22 @@
               <th>Property</th>
               <th>City</th>
               <th>Type</th>
-              <th>Rent / mo</th>
+              <th class="right">Rent / mo</th>
               <th>Available from</th>
-              <th>Applications</th>
+              <th class="right">Apps</th>
               <th>Listing</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="vac-body"></tbody>
         </table>
+        <div id="vac-empty" style="display:none">
+          <div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <div class="t">No vacancies match these filters</div>
+            <div>Try a later "Available by" date or clear some filters.</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -2436,6 +2474,28 @@
   </div>
 </div>
 
+<!-- ============ SHARE LISTING MODAL ============ -->
+<div class="modal-backdrop" id="share-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="share-title">
+    <div class="modal-head">
+      <div class="ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="share-title">Share <em>listing</em></div>
+        <div class="modal-sub">Send this room to a prospective tenant</div>
+      </div>
+      <button class="modal-close" id="share-close" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="share-body"></div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" id="share-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast notification -->
 <div class="toast" id="toast">
   <svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></svg>
@@ -2735,14 +2795,22 @@ const portfolio = [
 ];
 
 const vacancies = [
-  {room:"Room 2A", prop:"Annex House", city:"Toronto", type:"Co-living", rent:1340, avail:"May 1, 2026", apps:6, listed:true},
-  {room:"Room 4D", prop:"Annex House", city:"Toronto", type:"Co-living", rent:1320, apps:4, avail:"May 5, 2026", listed:true},
-  {room:"Room 1B", prop:"Junction Triangle", city:"Toronto", type:"Co-living", rent:1280, apps:3, avail:"May 12, 2026", listed:true},
-  {room:"Suite 5", prop:"Bloor Brownstone", city:"Toronto", type:"Student housing", rent:1480, apps:8, avail:"May 1, 2026", listed:true},
-  {room:"Room B", prop:"Saint-Henri Co-Living", city:"Montréal", type:"Co-living", rent:1120, apps:5, avail:"May 1, 2026", listed:true},
-  {room:"Room 3", prop:"Plateau Co-Living", city:"Montréal", type:"Co-living", rent:1080, apps:2, avail:"May 8, 2026", listed:true},
-  {room:"Suite 1", prop:"Kitsilano Studios", city:"Vancouver", type:"Student housing", rent:1620, apps:7, avail:"May 1, 2026", listed:true},
-  {room:"Room 2", prop:"Mount Pleasant House", city:"Vancouver", type:"Co-living", rent:1450, apps:3, avail:"May 14, 2026", listed:false},
+  {id:"v01", room:"Room 2A",  prop:"Annex House",            city:"Toronto",   type:"Co-living",       rent:1340, availDate:"2026-05-01", apps:6, listed:true},
+  {id:"v02", room:"Room 4D",  prop:"Annex House",            city:"Toronto",   type:"Co-living",       rent:1320, availDate:"2026-05-05", apps:4, listed:true},
+  {id:"v03", room:"Room 1B",  prop:"Junction Triangle",      city:"Toronto",   type:"Co-living",       rent:1280, availDate:"2026-05-12", apps:3, listed:true},
+  {id:"v04", room:"Suite 5",  prop:"Bloor Brownstone",       city:"Toronto",   type:"Student housing", rent:1480, availDate:"2026-05-01", apps:8, listed:true},
+  {id:"v05", room:"Room B",   prop:"Saint-Henri Co-Living",  city:"Montréal",  type:"Co-living",       rent:1120, availDate:"2026-05-01", apps:5, listed:true},
+  {id:"v06", room:"Room 3",   prop:"Plateau Co-Living",      city:"Montréal",  type:"Co-living",       rent:1080, availDate:"2026-05-08", apps:2, listed:true},
+  {id:"v07", room:"Suite 1",  prop:"Kitsilano Studios",      city:"Vancouver", type:"Student housing", rent:1620, availDate:"2026-05-01", apps:7, listed:true},
+  {id:"v08", room:"Room 2",   prop:"Mount Pleasant House",   city:"Vancouver", type:"Co-living",       rent:1450, availDate:"2026-05-14", apps:3, listed:false},
+  {id:"v09", room:"Suite 7",  prop:"Bloor Brownstone",       city:"Toronto",   type:"Student housing", rent:1540, availDate:"2026-06-01", apps:5, listed:true},
+  {id:"v10", room:"Room 5A",  prop:"Annex House",            city:"Toronto",   type:"Co-living",       rent:1310, availDate:"2026-06-15", apps:2, listed:true},
+  {id:"v11", room:"Room 7",   prop:"Plateau Co-Living",      city:"Montréal",  type:"Co-living",       rent:1100, availDate:"2026-07-01", apps:4, listed:true},
+  {id:"v12", room:"Room 2C",  prop:"Junction Triangle",      city:"Toronto",   type:"Co-living",       rent:1330, availDate:"2026-07-10", apps:1, listed:true},
+  {id:"v13", room:"Room 5",   prop:"Mile End Loft",          city:"Montréal",  type:"Co-living",       rent:1190, availDate:"2026-07-15", apps:0, listed:true},
+  {id:"v14", room:"Suite 6",  prop:"Kitsilano Studios",      city:"Vancouver", type:"Student housing", rent:1670, availDate:"2026-08-01", apps:0, listed:true},
+  {id:"v15", room:"Room 6B",  prop:"Annex House",            city:"Toronto",   type:"Co-living",       rent:1350, availDate:"2026-08-15", apps:0, listed:false},
+  {id:"v16", room:"Room C",   prop:"Saint-Henri Co-Living",  city:"Montréal",  type:"Co-living",       rent:1140, availDate:"2026-09-01", apps:0, listed:true},
 ];
 
 const maint = [
@@ -4720,19 +4788,329 @@ function wirePropertyCards(){
 }
 wirePropertyCards();
 
-/* Vacancies table */
-document.getElementById("vac-body").innerHTML = vacancies.map(v => `
-  <tr>
-    <td><div class="name-main">${v.room}</div></td>
-    <td>${v.prop}</td>
-    <td>${v.city}</td>
-    <td><span class="badge badge-grey"><span class="dot"></span>${v.type}</span></td>
-    <td><span class="num">${fmt(v.rent)}</span></td>
-    <td>${v.avail}</td>
-    <td><span class="num">${v.apps}</span> applicants</td>
-    <td>${v.listed?'<span class="badge badge-green"><span class="dot"></span>Live</span>':'<span class="badge badge-amber"><span class="dot"></span>Draft</span>'}</td>
-  </tr>
-`).join("");
+/* ============ VACANCIES — filter, sort, share ============ */
+const VAC_FILTERS = { search:"", availBy:"", cities:new Set(), types:new Set(), sort:"date" };
+const VAC_BASE_URL = "https://aldo-adr23.github.io/vanmates-pms-demo";
+
+function vacFmtAvail(iso){
+  const d = parseLocalDate(iso);
+  return d.toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+}
+
+function applyVacancyFilters(){
+  let list = vacancies.slice();
+  const q = VAC_FILTERS.search.toLowerCase().trim();
+  if(q){
+    list = list.filter(v =>
+      v.room.toLowerCase().includes(q) ||
+      v.prop.toLowerCase().includes(q) ||
+      v.city.toLowerCase().includes(q) ||
+      v.type.toLowerCase().includes(q)
+    );
+  }
+  if(VAC_FILTERS.availBy){
+    const cutoff = parseLocalDate(VAC_FILTERS.availBy);
+    list = list.filter(v => parseLocalDate(v.availDate) <= cutoff);
+  }
+  if(VAC_FILTERS.cities.size) list = list.filter(v => VAC_FILTERS.cities.has(v.city));
+  if(VAC_FILTERS.types.size)  list = list.filter(v => VAC_FILTERS.types.has(v.type));
+
+  const sorters = {
+    "date":      (a,b) => parseLocalDate(a.availDate) - parseLocalDate(b.availDate),
+    "price-asc": (a,b) => a.rent - b.rent,
+    "price-desc":(a,b) => b.rent - a.rent,
+    "apps":      (a,b) => b.apps - a.apps,
+  };
+  list.sort(sorters[VAC_FILTERS.sort] || sorters.date);
+  return list;
+}
+
+function renderVacancies(){
+  const list = applyVacancyFilters();
+  const body = document.getElementById("vac-body");
+  if(!body) return;
+  document.getElementById("vac-empty").style.display = list.length ? "none" : "block";
+
+  // Update sub-text
+  const sub = document.getElementById("vac-result-sub");
+  if(sub){
+    if(VAC_FILTERS.availBy){
+      sub.textContent = `${list.length} room${list.length===1?"":"s"} available by ${vacFmtAvail(VAC_FILTERS.availBy)}`;
+    } else {
+      sub.textContent = `${list.length} of ${vacancies.length} rooms · search by date, city, or type`;
+    }
+  }
+
+  body.innerHTML = list.map(v => {
+    const days = daysBetween(TODAY, parseLocalDate(v.availDate));
+    const dateColor = days <= 14 ? "color:var(--red-dark)" : days <= 60 ? "color:#8a611f" : "color:var(--muted)";
+    return `
+      <tr>
+        <td><div class="name-main">${v.room}</div></td>
+        <td>${v.prop}</td>
+        <td>${v.city}</td>
+        <td><span class="badge badge-grey"><span class="dot"></span>${v.type}</span></td>
+        <td class="right"><span class="num">${fmt(v.rent)}</span></td>
+        <td>
+          <div class="name-main">${vacFmtAvail(v.availDate)}</div>
+          <div class="name-sub" style="font-size:11px;${dateColor}">${days >= 0 ? `in ${days} day${days===1?"":"s"}` : `${Math.abs(days)} days ago`}</div>
+        </td>
+        <td class="right"><span class="num">${v.apps}</span></td>
+        <td>${v.listed
+          ? '<span class="badge badge-green"><span class="dot"></span>Live</span>'
+          : '<span class="badge badge-amber"><span class="dot"></span>Draft</span>'}</td>
+        <td class="right">
+          <button class="btn btn-primary" data-share-vac="${v.id}" style="padding:6px 12px;font-size:12px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
+            Share
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  body.querySelectorAll("[data-share-vac]").forEach(b => {
+    b.addEventListener("click", () => openShareVacancy(b.dataset.shareVac));
+  });
+
+  // Update active chips bar
+  const ac = document.getElementById("vac-active-chips");
+  const chips = [];
+  if(VAC_FILTERS.search) chips.push({k:"search", v:VAC_FILTERS.search, l:'Search: "'+VAC_FILTERS.search+'"'});
+  if(VAC_FILTERS.availBy) chips.push({k:"availBy", v:VAC_FILTERS.availBy, l:"Available by " + vacFmtAvail(VAC_FILTERS.availBy)});
+  VAC_FILTERS.cities.forEach(v => chips.push({k:"cities", v, l:v}));
+  VAC_FILTERS.types.forEach(v => chips.push({k:"types", v, l:v}));
+  if(chips.length === 0){ ac.innerHTML = ""; return; }
+  ac.innerHTML = chips.map(c =>
+    `<span class="active-chip">${c.l}<span class="x" data-vacrm="${c.k}|${c.v}">✕</span></span>`
+  ).join("") + `<button class="clear" id="vac-clear-all">Clear all</button>`;
+  ac.querySelectorAll(".x").forEach(x => x.addEventListener("click", () => {
+    const [k, v] = x.dataset.vacrm.split("|");
+    if(k === "search"){ VAC_FILTERS.search = ""; document.getElementById("vac-search").value = ""; }
+    else if(k === "availBy"){ VAC_FILTERS.availBy = ""; document.getElementById("vac-avail-by").value = ""; document.getElementById("vac-avail-clear").style.display = "none"; }
+    else VAC_FILTERS[k].delete(v);
+    renderVacancies();
+  }));
+  document.getElementById("vac-clear-all").addEventListener("click", () => {
+    VAC_FILTERS.search = ""; VAC_FILTERS.availBy = "";
+    VAC_FILTERS.cities.clear(); VAC_FILTERS.types.clear();
+    document.getElementById("vac-search").value = "";
+    document.getElementById("vac-avail-by").value = "";
+    document.getElementById("vac-avail-clear").style.display = "none";
+    document.querySelectorAll('.filter-dropdown[data-vac] input[type=checkbox]').forEach(cb => cb.checked = false);
+    renderVacancies();
+  });
+
+  // Update chip values
+  const setChip = (id, set) => {
+    const el = document.getElementById(id); if(!el) return;
+    el.textContent = set.size === 0 ? "" : set.size === 1 ? " · " + [...set][0] : ` · ${set.size} selected`;
+    el.closest(".filter-chip").classList.toggle("has-value", set.size > 0);
+  };
+  setChip("vac-chip-city", VAC_FILTERS.cities);
+  setChip("vac-chip-type", VAC_FILTERS.types);
+}
+
+// Build dropdown helper (multi-select)
+function attachVacDropdown(filterKey, options){
+  const chip = document.querySelector(`.filter-chip[data-vac-filter="${filterKey}"]`);
+  if(!chip) return;
+  const dd = document.createElement("div");
+  dd.className = "filter-dropdown";
+  dd.dataset.vac = "1";
+  dd.innerHTML = options.map(o =>
+    `<label class="opt"><input type="checkbox" value="${o}"/><span>${o}</span></label>`
+  ).join("") + `
+    <div class="filter-dropdown-foot">
+      <button class="filter-link" data-action="clear">Clear</button>
+      <button class="filter-link" data-action="apply">Apply</button>
+    </div>`;
+  chip.appendChild(dd);
+  chip.addEventListener("click", e => {
+    if(e.target.closest(".filter-dropdown")) return;
+    document.querySelectorAll(".filter-dropdown.open").forEach(d => { if(d !== dd) d.classList.remove("open"); });
+    dd.classList.toggle("open");
+  });
+  dd.addEventListener("click", e => e.stopPropagation());
+  dd.querySelector('[data-action="apply"]').addEventListener("click", () => {
+    const set = new Set([...dd.querySelectorAll("input:checked")].map(i => i.value));
+    if(filterKey === "city") VAC_FILTERS.cities = set;
+    if(filterKey === "type") VAC_FILTERS.types  = set;
+    renderVacancies();
+    dd.classList.remove("open");
+  });
+  dd.querySelector('[data-action="clear"]').addEventListener("click", () => {
+    dd.querySelectorAll("input").forEach(cb => cb.checked = false);
+    if(filterKey === "city") VAC_FILTERS.cities.clear();
+    if(filterKey === "type") VAC_FILTERS.types.clear();
+    renderVacancies();
+  });
+  document.addEventListener("click", e => {
+    if(!chip.contains(e.target)) dd.classList.remove("open");
+  });
+}
+
+attachVacDropdown("city", [...new Set(vacancies.map(v => v.city))].sort());
+attachVacDropdown("type", [...new Set(vacancies.map(v => v.type))].sort());
+
+document.getElementById("vac-search")?.addEventListener("input", e => {
+  VAC_FILTERS.search = e.target.value; renderVacancies();
+});
+document.getElementById("vac-avail-by")?.addEventListener("change", e => {
+  VAC_FILTERS.availBy = e.target.value;
+  document.getElementById("vac-avail-clear").style.display = VAC_FILTERS.availBy ? "inline" : "none";
+  renderVacancies();
+});
+document.getElementById("vac-avail-clear")?.addEventListener("click", () => {
+  VAC_FILTERS.availBy = "";
+  document.getElementById("vac-avail-by").value = "";
+  document.getElementById("vac-avail-clear").style.display = "none";
+  renderVacancies();
+});
+document.getElementById("vac-sort")?.addEventListener("change", e => {
+  VAC_FILTERS.sort = e.target.value; renderVacancies();
+});
+
+renderVacancies();
+
+/* === Share Listing modal === */
+function openShareVacancy(id){
+  const v = vacancies.find(x => x.id === id);
+  if(!v) return;
+  const url = `${VAC_BASE_URL}/?listing=${v.id}`;
+  const subject = `${v.prop} — ${v.room} available ${vacFmtAvail(v.availDate)}`;
+  const message = `Hi! Wanted to share this Vanmates listing with you:\n\n${v.prop} — ${v.room}\n${v.city} · ${v.type}\nAvailable from ${vacFmtAvail(v.availDate)}\n${fmt(v.rent)} / month\n\nTake a look here: ${url}\n\nLet me know if you'd like to book a tour or apply.`;
+  const propMeta = properties.find(p => p.name === v.prop);
+  const days = daysBetween(TODAY, parseLocalDate(v.availDate));
+
+  document.getElementById("share-body").innerHTML = `
+    <!-- Listing preview card -->
+    <div class="card" style="overflow:hidden;margin-bottom:18px">
+      <div class="prop-img" style="background:linear-gradient(135deg, ${propMeta?propMeta.color+"33":"#A8896533"}, ${propMeta?propMeta.color+"66":"#A8896566"});aspect-ratio:21/9;position:relative">
+        <div class="prop-tag" style="background:var(--red);color:#fff">${vacFmtAvail(v.availDate)}</div>
+        <svg viewBox="0 0 200 110" width="100%" height="100%" preserveAspectRatio="none" style="opacity:.45">
+          <rect x="20" y="40" width="60" height="55" fill="${propMeta?propMeta.color:"#A88965"}"/>
+          <rect x="85" y="25" width="50" height="70" fill="${propMeta?shade(propMeta.color,-15):"#7d6041"}"/>
+          <rect x="140" y="50" width="45" height="45" fill="${propMeta?shade(propMeta.color,15):"#C19A6B"}"/>
+          <rect x="32" y="55" width="10" height="14" fill="#FAF5ED"/><rect x="55" y="55" width="10" height="14" fill="#FAF5ED"/>
+          <rect x="32" y="78" width="10" height="14" fill="#FAF5ED"/><rect x="55" y="78" width="10" height="14" fill="#FAF5ED"/>
+          <rect x="95" y="40" width="10" height="14" fill="#FAF5ED"/><rect x="115" y="40" width="10" height="14" fill="#FAF5ED"/>
+          <rect x="150" y="65" width="10" height="14" fill="#FAF5ED"/><rect x="170" y="65" width="10" height="14" fill="#FAF5ED"/>
+        </svg>
+      </div>
+      <div class="card-pad">
+        <div class="prop-name">${v.prop} — ${v.room}</div>
+        <div class="prop-addr">${propMeta?propMeta.addr:v.city}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+          <span class="badge badge-grey"><span class="dot"></span>${v.type}</span>
+          <span class="badge badge-grey"><span class="dot"></span>${v.city}</span>
+          <span class="badge ${days<=14?'badge-red':days<=60?'badge-amber':'badge-green'}"><span class="dot"></span>${days>=0?`Available in ${days}d`:"Available now"}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px">
+          <div>
+            <div class="card-sub" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px">Monthly rent</div>
+            <div style="font-family:var(--serif);font-size:26px;font-weight:700;letter-spacing:-.4px">${fmt(v.rent)}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="card-sub" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px">Applications</div>
+            <div class="num" style="font-size:18px">${v.apps}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sharable link -->
+    <div class="form-field" style="margin-bottom:14px">
+      <label>Listing link</label>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" id="share-link-input" readonly value="${url}" style="flex:1;font-family:var(--slab);font-size:12.5px"/>
+        <button class="btn btn-ghost" id="share-copy-btn" style="padding:10px 14px;font-size:12.5px">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy
+        </button>
+      </div>
+    </div>
+
+    <!-- Quick share buttons -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <a class="btn btn-ghost" href="mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message.replace(/\\n/g, "\n"))}" style="justify-content:center;padding:12px">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+        Send via email
+      </a>
+      <a class="btn btn-primary" href="https://wa.me/?text=${encodeURIComponent(message.replace(/\\n/g, "\n"))}" target="_blank" style="justify-content:center;padding:12px">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg>
+        Send via WhatsApp
+      </a>
+      <a class="btn btn-ghost" href="${url}" target="_blank" style="justify-content:center;padding:12px">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        Open public listing
+      </a>
+      <button class="btn btn-ghost" id="share-print-btn" style="justify-content:center;padding:12px">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Print as flyer
+      </button>
+    </div>
+
+    <!-- Custom message preview -->
+    <div class="form-field" style="margin-top:18px">
+      <label>Message preview</label>
+      <textarea class="form-input" id="share-message" rows="6" style="font-family:inherit;font-size:13px">${message.replace(/\\n/g, "\n")}</textarea>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:4px">Edit before sending — Email and WhatsApp will use the latest text.</div>
+    </div>
+  `;
+
+  // Wire copy
+  const copyBtn = document.getElementById("share-copy-btn");
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      copyBtn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#5C8A6B" stroke-width="2.5"><path d="M5 12l4 4L19 6"/></svg> Copied!';
+      copyBtn.style.color = "#3e6049";
+      setTimeout(() => { renderVacancies(); }, 1500);
+    } catch(e) {
+      const inp = document.getElementById("share-link-input");
+      inp.select(); inp.setSelectionRange(0, 999);
+    }
+    showToast("Link copied to clipboard");
+  });
+
+  // Wire print
+  document.getElementById("share-print-btn").addEventListener("click", () => {
+    showToast("Opening printable flyer…");
+  });
+
+  // Update mailto/whatsapp links live as message edits
+  document.getElementById("share-message").addEventListener("input", e => {
+    const txt = e.target.value;
+    const links = document.querySelectorAll("#share-body a[href^=\"mailto\"], #share-body a[href*=\"wa.me\"]");
+    if(links[0]) links[0].href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(txt)}`;
+    if(links[1]) links[1].href = `https://wa.me/?text=${encodeURIComponent(txt)}`;
+  });
+
+  // Open modal
+  const modal = document.getElementById("share-backdrop");
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
+}
+
+function closeShareVacancy(){
+  const modal = document.getElementById("share-backdrop");
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";
+}
+
+document.getElementById("share-close").addEventListener("click", closeShareVacancy);
+document.getElementById("share-cancel").addEventListener("click", closeShareVacancy);
+document.getElementById("share-backdrop").addEventListener("click", e => {
+  if(e.target.id === "share-backdrop") closeShareVacancy();
+});
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && document.getElementById("share-backdrop").classList.contains("open")){
+    closeShareVacancy();
+  }
+});
 
 /* Maintenance table */
 document.getElementById("maint-body").innerHTML = maint.map(m => `
