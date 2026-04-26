@@ -2454,13 +2454,27 @@
           <input class="form-input" name="leaseEnd" type="date" required />
         </div>
         <div class="form-field">
-          <label>Tags</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;padding:6px 0">
-            <label class="tag-pill blue" style="cursor:pointer"><input type="checkbox" name="tags" value="new" style="margin-right:5px;accent-color:var(--red)"/>New</label>
-            <label class="tag-pill green" style="cursor:pointer"><input type="checkbox" name="tags" value="renewing" style="margin-right:5px;accent-color:var(--red)"/>Renewing</label>
-            <label class="tag-pill gold" style="cursor:pointer"><input type="checkbox" name="tags" value="top-payer" style="margin-right:5px;accent-color:var(--red)"/>Top payer</label>
-            <label class="tag-pill red" style="cursor:pointer"><input type="checkbox" name="tags" value="watch" style="margin-right:5px;accent-color:var(--red)"/>Watch</label>
+          <label>Lease type <span class="req">*</span></label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;padding:6px 0">
+            <label class="tag-pill green" style="cursor:pointer;font-size:12px;padding:6px 12px"><input type="radio" name="leaseType" value="fixed-lease" checked style="margin-right:6px;accent-color:var(--red)"/>Fixed lease</label>
+            <label class="tag-pill blue" style="cursor:pointer;font-size:12px;padding:6px 12px"><input type="radio" name="leaseType" value="flex" style="margin-right:6px;accent-color:var(--red)"/>Flex (month-to-month)</label>
           </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Signed contract (PDF)</label>
+          <label class="form-pdf">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span id="tenant-pdf-label">Click to upload signed PDF</span>
+            <input type="file" name="contractPdf" accept="application/pdf" id="tenant-pdf-input" style="display:none"/>
+          </label>
+        </div>
+        <div class="form-field">
+          <label>Or PandaDoc link</label>
+          <input class="form-input" name="contractPandaDoc" type="url" placeholder="https://app.pandadoc.com/..." />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Paste the share URL of the signed contract</div>
         </div>
       </div>
     </form>
@@ -2512,57 +2526,57 @@
    tags: array of strings  */
 const tenants = [
   {ini:"SK", name:"Sofía Kim", email:"sofia.k@uoft.ca", flag:"🇰🇷", country:"South Korea", school:"U of Toronto",
-   property:"Annex House", room:"3B", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1280, pay:"on-time", status:"active", tags:["renewing","top-payer"]},
+   property:"Annex House", room:"3B", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1280, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/sofia.k-lease-2026"},
   {ini:"RJ", name:"Rohan Joshi", email:"rohan.j@mcgill.ca", flag:"🇮🇳", country:"India", school:"McGill",
-   property:"Mile End Loft", room:"2", city:"Montréal", moveIn:"2026-04-19", leaseEnd:"2027-04-18", rent:1090, pay:"on-time", status:"active", tags:["new"]},
+   property:"Mile End Loft", room:"2", city:"Montréal", moveIn:"2026-04-19", leaseEnd:"2027-04-18", rent:1090, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/rohan.j-lease-2026"},
   {ini:"YT", name:"Yui Tanaka", email:"yui.t@ubc.ca", flag:"🇯🇵", country:"Japan", school:"UBC",
-   property:"Kitsilano Studios", room:"Suite 4", city:"Vancouver", moveIn:"2026-04-17", leaseEnd:"2027-03-31", rent:1620, pay:"on-time", status:"active", tags:["new","top-payer"]},
+   property:"Kitsilano Studios", room:"Suite 4", city:"Vancouver", moveIn:"2026-04-17", leaseEnd:"2027-03-31", rent:1620, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/yui.t-lease-2026"},
   {ini:"MA", name:"Maya Abara", email:"maya.a@yorku.ca", flag:"🇳🇬", country:"Nigeria", school:"York U",
-   property:"Junction Triangle", room:"1A", city:"Toronto", moveIn:"2026-04-14", leaseEnd:"2027-04-13", rent:1340, pay:"on-time", status:"active", tags:["new"]},
+   property:"Junction Triangle", room:"1A", city:"Toronto", moveIn:"2026-04-14", leaseEnd:"2027-04-13", rent:1340, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/maya.a-lease-2026"},
   {ini:"NP", name:"Nikolai Petrov", email:"n.petrov@umontreal.ca", flag:"🇧🇬", country:"Bulgaria", school:"U de Montréal",
-   property:"Plateau Co-Living", room:"5", city:"Montréal", moveIn:"2025-05-01", leaseEnd:"2026-04-30", rent:1010, pay:"on-time", status:"notice", tags:["non-renewing"]},
+   property:"Plateau Co-Living", room:"5", city:"Montréal", moveIn:"2025-05-01", leaseEnd:"2026-04-30", rent:1010, pay:"on-time", status:"notice", tags:["flex"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/n.petrov-lease-2026"},
   {ini:"AD", name:"Aïcha Diallo", email:"a.diallo@ryerson.ca", flag:"🇸🇳", country:"Senegal", school:"TMU",
-   property:"Annex House", room:"1A", city:"Toronto", moveIn:"2025-05-08", leaseEnd:"2026-05-07", rent:1290, pay:"on-time", status:"notice", tags:["non-renewing"]},
+   property:"Annex House", room:"1A", city:"Toronto", moveIn:"2025-05-08", leaseEnd:"2026-05-07", rent:1290, pay:"on-time", status:"notice", tags:["flex"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/a.diallo-lease-2026"},
   {ini:"LO", name:"Liam O'Connor", email:"liam@sfu.ca", flag:"🇮🇪", country:"Ireland", school:"SFU",
-   property:"Kitsilano Studios", room:"Suite 2", city:"Vancouver", moveIn:"2025-06-01", leaseEnd:"2026-05-14", rent:1580, pay:"on-time", status:"notice", tags:["non-renewing"]},
+   property:"Kitsilano Studios", room:"Suite 2", city:"Vancouver", moveIn:"2025-06-01", leaseEnd:"2026-05-14", rent:1580, pay:"on-time", status:"notice", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/liam-lease-2026"},
   {ini:"PS", name:"Priya Shankar", email:"p.shankar@yorku.ca", flag:"🇮🇳", country:"India", school:"York U",
-   property:"Junction Triangle", room:"2B", city:"Toronto", moveIn:"2025-06-15", leaseEnd:"2026-05-21", rent:1310, pay:"on-time", status:"notice", tags:["non-renewing","top-payer"]},
+   property:"Junction Triangle", room:"2B", city:"Toronto", moveIn:"2025-06-15", leaseEnd:"2026-05-21", rent:1310, pay:"on-time", status:"notice", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/p.shankar-lease-2026"},
   {ini:"DC", name:"Dario Costa", email:"d.costa@concordia.ca", flag:"🇮🇹", country:"Italy", school:"Concordia",
-   property:"Plateau Co-Living", room:"2", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1140, pay:"late-12", status:"active", tags:["watch"]},
+   property:"Plateau Co-Living", room:"2", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1140, pay:"late-12", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/d.costa-lease-2026"},
   {ini:"EM", name:"Elena Marković", email:"em@uoft.ca", flag:"🇷🇸", country:"Serbia", school:"U of Toronto",
-   property:"Junction Triangle", room:"3A", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1240, pay:"late-8", status:"active", tags:["watch"]},
+   property:"Junction Triangle", room:"3A", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1240, pay:"late-8", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/em-lease-2026"},
   {ini:"NS", name:"Naveen Subramanian", email:"naveen.s@mcgill.ca", flag:"🇮🇳", country:"India", school:"McGill",
-   property:"Mile End Loft", room:"4", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1180, pay:"late-4", status:"active", tags:[]},
+   property:"Mile End Loft", room:"4", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1180, pay:"late-4", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/naveen.s-lease-2026"},
   {ini:"CW", name:"Chloé Wong", email:"chloe.w@uoft.ca", flag:"🇨🇳", country:"China", school:"U of Toronto",
-   property:"Annex House", room:"2C", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1290, pay:"late-2", status:"active", tags:["renewing"]},
+   property:"Annex House", room:"2C", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1290, pay:"late-2", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/chloe.w-lease-2026"},
   {ini:"JM", name:"Jorge Mendes", email:"j.mendes@uoft.ca", flag:"🇧🇷", country:"Brazil", school:"U of Toronto",
-   property:"Bloor Brownstone", room:"A", city:"Toronto", moveIn:"2026-01-08", leaseEnd:"2026-12-31", rent:1410, pay:"on-time", status:"active", tags:["top-payer"]},
+   property:"Bloor Brownstone", room:"A", city:"Toronto", moveIn:"2026-01-08", leaseEnd:"2026-12-31", rent:1410, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/j.mendes-lease-2026"},
   {ini:"AL", name:"Anya Larsen", email:"anya.l@ubc.ca", flag:"🇩🇰", country:"Denmark", school:"UBC",
-   property:"Mount Pleasant House", room:"3", city:"Vancouver", moveIn:"2026-02-12", leaseEnd:"2027-01-31", rent:1480, pay:"on-time", status:"active", tags:["top-payer"]},
+   property:"Mount Pleasant House", room:"3", city:"Vancouver", moveIn:"2026-02-12", leaseEnd:"2027-01-31", rent:1480, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/anya.l-lease-2026"},
   {ini:"FM", name:"Fatou M'Bow", email:"fatou.m@concordia.ca", flag:"🇸🇳", country:"Senegal", school:"Concordia",
-   property:"Saint-Henri Co-Living", room:"B", city:"Montréal", moveIn:"2026-05-01", leaseEnd:"2027-04-30", rent:1120, pay:"—", status:"pending", tags:["new"]},
+   property:"Saint-Henri Co-Living", room:"B", city:"Montréal", moveIn:"2026-05-01", leaseEnd:"2027-04-30", rent:1120, pay:"—", status:"pending", tags:["flex"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/fatou.m-lease-2026"},
   {ini:"HK", name:"Hiro Kawasaki", email:"h.kawasaki@uoft.ca", flag:"🇯🇵", country:"Japan", school:"U of Toronto",
-   property:"Annex House", room:"4D", city:"Toronto", moveIn:"2026-05-05", leaseEnd:"2027-04-30", rent:1320, pay:"—", status:"pending", tags:["new"]},
+   property:"Annex House", room:"4D", city:"Toronto", moveIn:"2026-05-05", leaseEnd:"2027-04-30", rent:1320, pay:"—", status:"pending", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/h.kawasaki-lease-2026"},
   {ini:"AS", name:"Andrés Silva", email:"a.silva@uoft.ca", flag:"🇲🇽", country:"Mexico", school:"U of Toronto",
-   property:"Bloor Brownstone", room:"D", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1380, pay:"on-time", status:"active", tags:["renewing"]},
+   property:"Bloor Brownstone", room:"D", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1380, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/a.silva-lease-2026"},
   {ini:"WL", name:"Wei Liu", email:"wei.l@ubc.ca", flag:"🇨🇳", country:"China", school:"UBC",
-   property:"Mount Pleasant House", room:"5", city:"Vancouver", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1450, pay:"on-time", status:"active", tags:["top-payer"]},
+   property:"Mount Pleasant House", room:"5", city:"Vancouver", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1450, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/wei.l-lease-2026"},
   {ini:"OB", name:"Omar Benali", email:"omar.b@concordia.ca", flag:"🇲🇦", country:"Morocco", school:"Concordia",
-   property:"Plateau Co-Living", room:"3", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-06-15", rent:1080, pay:"on-time", status:"active", tags:["renewing"]},
+   property:"Plateau Co-Living", room:"3", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-06-15", rent:1080, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/omar.b-lease-2026"},
   {ini:"AC", name:"Anna Costa Reyes", email:"anna.cr@yorku.ca", flag:"🇪🇸", country:"Spain", school:"York U",
-   property:"Junction Triangle", room:"1B", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1280, pay:"on-time", status:"active", tags:["top-payer"]},
+   property:"Junction Triangle", room:"1B", city:"Toronto", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1280, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/anna.cr-lease-2026"},
   {ini:"VR", name:"Viktor Romanov", email:"v.romanov@umontreal.ca", flag:"🇺🇦", country:"Ukraine", school:"U de Montréal",
-   property:"Mile End Loft", room:"3", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-05-31", rent:1180, pay:"on-time", status:"active", tags:[]},
+   property:"Mile End Loft", room:"3", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-05-31", rent:1180, pay:"on-time", status:"active", tags:["flex"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/v.romanov-lease-2026"},
   {ini:"NA", name:"Nadia Ahmed", email:"n.ahmed@uoft.ca", flag:"🇪🇬", country:"Egypt", school:"U of Toronto",
-   property:"Annex House", room:"4A", city:"Toronto", moveIn:"2024-09-01", leaseEnd:"2026-04-30", rent:1310, pay:"on-time", status:"notice", tags:["non-renewing"]},
+   property:"Annex House", room:"4A", city:"Toronto", moveIn:"2024-09-01", leaseEnd:"2026-04-30", rent:1310, pay:"on-time", status:"notice", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/n.ahmed-lease-2026"},
   {ini:"TF", name:"Tomás Fernández", email:"t.fernandez@uoft.ca", flag:"🇨🇱", country:"Chile", school:"U of Toronto",
-   property:"Bloor Brownstone", room:"E", city:"Toronto", moveIn:"2026-04-22", leaseEnd:"2027-04-21", rent:1420, pay:"on-time", status:"active", tags:["new"]},
+   property:"Bloor Brownstone", room:"E", city:"Toronto", moveIn:"2026-04-22", leaseEnd:"2027-04-21", rent:1420, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/t.fernandez-lease-2026"},
   {ini:"IK", name:"Ines Kabore", email:"i.kabore@yorku.ca", flag:"🇧🇫", country:"Burkina Faso", school:"York U",
-   property:"Junction Triangle", room:"3B", city:"Toronto", moveIn:"2026-05-12", leaseEnd:"2027-05-11", rent:1310, pay:"—", status:"pending", tags:["new"]},
+   property:"Junction Triangle", room:"3B", city:"Toronto", moveIn:"2026-05-12", leaseEnd:"2027-05-11", rent:1310, pay:"—", status:"pending", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/i.kabore-lease-2026"},
   {ini:"MK", name:"Mei-Ling Kwon", email:"ml.kwon@ubc.ca", flag:"🇹🇼", country:"Taiwan", school:"UBC",
-   property:"Kitsilano Studios", room:"Suite 5", city:"Vancouver", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1640, pay:"on-time", status:"active", tags:["renewing","top-payer"]},
+   property:"Kitsilano Studios", room:"Suite 5", city:"Vancouver", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1640, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/ml.kwon-lease-2026"},
   {ini:"GD", name:"Greta Dimitriadis", email:"g.dimitriadis@concordia.ca", flag:"🇬🇷", country:"Greece", school:"Concordia",
-   property:"Saint-Henri Co-Living", room:"A", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1100, pay:"on-time", status:"active", tags:[]},
+   property:"Saint-Henri Co-Living", room:"A", city:"Montréal", moveIn:"2025-09-01", leaseEnd:"2026-08-31", rent:1100, pay:"on-time", status:"active", tags:["fixed-lease"], contractPdf:"tenant-lease-sample.pdf", contractPandaDoc:"https://app.pandadoc.com/share/g.dimitriadis-lease-2026"},
 ];
 
 const properties = [
@@ -2900,13 +2914,10 @@ function leaseChip(leaseEnd){
 }
 function tagPills(tags){
   const m = {
-    "renewing":["green","Renewing"],
-    "non-renewing":["red","Non-renewing"],
-    "top-payer":["gold","★ Top payer"],
-    "new":["blue","New"],
-    "watch":["red","Watch"],
+    "flex":["blue","Flex"],
+    "fixed-lease":["green","Fixed lease"],
   };
-  return tags.map(t => m[t] ? `<span class="tag-pill ${m[t][0]}">${m[t][1]}</span>` : "").join(" ");
+  return (tags||[]).map(t => m[t] ? `<span class="tag-pill ${m[t][0]}">${m[t][1]}</span>` : "").join(" ");
 }
 
 /* Filter state */
@@ -2932,8 +2943,8 @@ function resetPage(){ F.page = 1; }
 const allCities = [...new Set(tenants.map(t=>t.city))];
 const allProps = [...new Set(tenants.map(t=>t.property))];
 const allCountries = [...new Set(tenants.map(t=>t.country))].sort();
-const allTags = ["renewing","non-renewing","top-payer","new","watch"];
-const tagLabels = {"renewing":"Renewing","non-renewing":"Non-renewing","top-payer":"Top payer","new":"New move-in","watch":"Watch list"};
+const allTags = ["fixed-lease","flex"];
+const tagLabels = {"flex":"Flex (month-to-month)","fixed-lease":"Fixed lease (12 months)"};
 // Map country name → flag emoji from tenant data
 const countryFlags = {};
 tenants.forEach(t => { if(!countryFlags[t.country]) countryFlags[t.country] = t.flag; });
@@ -4689,6 +4700,32 @@ function openTenant(email){
       </div>
     </div>
 
+    <!-- Contract / signed lease -->
+    <div class="panel-section">
+      <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">${t.tags && t.tags.includes("flex") ? "Flex (month-to-month)" : "Fixed lease (12 months)"}</span></div>
+      <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
+        <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
+        <div style="flex:1;min-width:0">
+          <div class="prop-name" style="font-size:15px">${t.property} — ${t.name.split(" ")[0]} sub-lease.pdf</div>
+          <div class="prop-addr">Vanmates standard tenant agreement · signed ${fmtDate(t.moveIn)}</div>
+          <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+            <span class="badge badge-green"><span class="dot"></span>Signed</span>
+            ${t.contractPandaDoc ? '<span class="badge badge-blue"><span class="dot"></span>PandaDoc</span>' : ''}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+          ${t.contractPdf ? `<a href="${t.contractPdf}" target="_blank" class="btn btn-primary" style="padding:6px 12px;font-size:12px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Open PDF
+          </a>` : ''}
+          ${t.contractPandaDoc ? `<a href="${t.contractPandaDoc}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Open in PandaDoc
+          </a>` : ''}
+        </div>
+      </div>
+    </div>
+
     <!-- Contact info -->
     <div class="panel-section">
       <div class="panel-section-title"><span><em>Contact</em> &amp; profile</span></div>
@@ -6033,6 +6070,8 @@ function openAddTenant(){
   const form = document.getElementById("tenant-form");
   form.reset();
   document.getElementById("tenant-error").classList.remove("show");
+  const pdfLabel = document.getElementById("tenant-pdf-label");
+  if(pdfLabel) pdfLabel.textContent = "Click to upload signed PDF";
 
   // Country dropdown — combine the existing countries with their flags
   const countrySel = document.getElementById("tenant-country");
@@ -6057,6 +6096,12 @@ function closeAddTenant(){
   document.body.style.overflow = "";
 }
 
+document.getElementById("tenant-pdf-input")?.addEventListener("change", e => {
+  const f = e.target.files[0];
+  document.getElementById("tenant-pdf-label").textContent = f
+    ? `${f.name} · ${(f.size/1024).toFixed(0)} KB · ready`
+    : "Click to upload signed PDF";
+});
 document.getElementById("tenant-close").addEventListener("click", closeAddTenant);
 document.getElementById("tenant-cancel").addEventListener("click", closeAddTenant);
 document.getElementById("tenant-backdrop").addEventListener("click", e => {
@@ -6093,7 +6138,11 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
   const rent      = parseInt(data.get("rent")||"0", 10);
   const moveIn    = (data.get("moveIn")||"").toString();
   const leaseEnd  = (data.get("leaseEnd")||"").toString();
-  const tags      = data.getAll("tags").map(String);
+  const leaseType = (data.get("leaseType")||"fixed-lease").toString();
+  const tags      = [leaseType];
+  const contractPandaDoc = (data.get("contractPandaDoc")||"").toString().trim();
+  const pdfFile   = document.getElementById("tenant-pdf-input").files[0];
+  const contractPdf = pdfFile ? pdfFile.name : "tenant-lease-sample.pdf";
 
   if(!name) { errEl.textContent = "Name is required."; errEl.classList.add("show"); return; }
   if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -6130,6 +6179,8 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
     pay: status === "pending" ? "—" : "on-time",
     status,
     tags,
+    contractPdf,
+    contractPandaDoc,
   };
   tenants.push(fresh);
 
