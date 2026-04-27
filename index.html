@@ -8488,6 +8488,25 @@ openLandlord = function(id){
     }
   }
 
+  /* === Prominent Edit button in the panel header (next to close X) === */
+  // Remove any prior header edit button (from a different panel type)
+  const head = document.querySelector(".panel-head");
+  const closeBtn = document.getElementById("panel-close");
+  if(head){
+    const oldHeaderEdit = head.querySelector(".header-edit-btn");
+    if(oldHeaderEdit) oldHeaderEdit.remove();
+
+    const headerEditBtn = document.createElement("button");
+    headerEditBtn.className = "header-edit-btn btn btn-primary";
+    headerEditBtn.setAttribute("data-edit-landlord-header", l.id);
+    headerEditBtn.title = "Edit landlord";
+    headerEditBtn.style.cssText = "padding:8px 14px;font-size:13px;margin-right:10px;flex-shrink:0";
+    headerEditBtn.innerHTML = `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit`;
+    headerEditBtn.onclick = () => openLandlordEdit(l.id);
+    if(closeBtn) head.insertBefore(headerEditBtn, closeBtn);
+    else head.appendChild(headerEditBtn);
+  }
+
   // Find the "Email landlord" button at the bottom and wire it
   const emailBtn = [...document.querySelectorAll("#panel-body .btn-primary")]
     .find(b => /email landlord/i.test(b.textContent));
@@ -9300,8 +9319,26 @@ updateLandlordKPIs();
 const _origOpenProperty_at = openProperty;
 openProperty = function(propName){
   _origOpenProperty_at(propName);
+  // Remove leftover landlord-only header Edit button if present
+  document.querySelector(".panel-head .header-edit-btn")?.remove();
   injectAddDeleteTenantUI(propName);
 };
+
+// Same cleanup for tenant + host panels
+if(typeof openTenant === "function"){
+  const _origOpenTenant_he = openTenant;
+  openTenant = function(arg){
+    _origOpenTenant_he(arg);
+    document.querySelector(".panel-head .header-edit-btn")?.remove();
+  };
+}
+if(typeof openHost === "function"){
+  const _origOpenHost_he = openHost;
+  openHost = function(arg){
+    _origOpenHost_he(arg);
+    document.querySelector(".panel-head .header-edit-btn")?.remove();
+  };
+}
 
 function injectAddDeleteTenantUI(propName){
   const body = document.getElementById("panel-body");
@@ -9393,73 +9430,77 @@ function openAddTenantModal(propName, roomLabel){
   if(!modal){
     modal = document.createElement("div");
     modal.id = "add-tenant-modal";
-    modal.className = "modal";
+    // Use the same .modal-backdrop pattern as other modals on the page
+    modal.className = "modal-backdrop";
     document.body.appendChild(modal);
   }
   modal.innerHTML = `
-    <div class="modal-backdrop"></div>
-    <div class="modal-dialog" style="max-width:560px">
+    <div class="modal-dialog" style="max-width:620px">
       <div class="modal-head">
-        <div>
+        <div class="ic" style="background:var(--red-soft);color:var(--red-dark)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
           <div class="modal-title">Add <em>tenant</em></div>
           <div class="modal-sub">${propName} · ${propMeta.city || ""}</div>
         </div>
-        <button class="modal-close" id="at-close">&times;</button>
+        <button class="modal-close" id="at-close" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
+        <div class="form-error" id="at-err"></div>
         <div class="form-row">
-          <div>
+          <div class="form-field">
             <label>Full name <span class="req">*</span></label>
-            <input id="at-name" type="text" placeholder="First Last" autocomplete="off"/>
+            <input id="at-name" type="text" class="form-input" placeholder="First Last" autocomplete="off"/>
           </div>
-          <div>
+          <div class="form-field">
             <label>Country</label>
-            <input id="at-country" type="text" placeholder="e.g. Mexico" autocomplete="off"/>
+            <input id="at-country" type="text" class="form-input" placeholder="e.g. Mexico" autocomplete="off"/>
           </div>
         </div>
         <div class="form-row">
-          <div>
+          <div class="form-field">
             <label>Email</label>
-            <input id="at-email" type="email" placeholder="name@email.com" autocomplete="off"/>
+            <input id="at-email" type="email" class="form-input" placeholder="name@email.com" autocomplete="off"/>
           </div>
-          <div>
+          <div class="form-field">
             <label>Room <span class="req">*</span></label>
-            <input id="at-room" type="text" value="${suggestedRoom}" placeholder="Room 4 / Suite B"/>
+            <input id="at-room" type="text" class="form-input" value="${suggestedRoom}" placeholder="Room 4 / Suite B"/>
           </div>
         </div>
         <div class="form-row">
-          <div>
+          <div class="form-field">
             <label>Monthly rent (CAD) <span class="req">*</span></label>
-            <input id="at-rent" type="number" value="${defaultRent}" min="0" step="50"/>
+            <input id="at-rent" type="number" class="form-input" value="${defaultRent}" min="0" step="50"/>
           </div>
-          <div>
+          <div class="form-field">
             <label>Deposit</label>
-            <input id="at-deposit" type="number" value="${defaultRent}" min="0" step="50"/>
+            <input id="at-deposit" type="number" class="form-input" value="${defaultRent}" min="0" step="50"/>
           </div>
         </div>
         <div class="form-row">
-          <div>
+          <div class="form-field">
             <label>Move-in date <span class="req">*</span></label>
-            <input id="at-movein" type="date" value="${moveInDef}"/>
+            <input id="at-movein" type="date" class="form-input" value="${moveInDef}"/>
           </div>
-          <div>
+          <div class="form-field">
             <label>Lease end <span class="req">*</span></label>
-            <input id="at-leaseend" type="date" value="${leaseEndDef}"/>
+            <input id="at-leaseend" type="date" class="form-input" value="${leaseEndDef}"/>
           </div>
         </div>
         <div class="form-row">
-          <div>
+          <div class="form-field">
             <label>Lease type</label>
-            <select id="at-leasetype">
+            <select id="at-leasetype" class="form-input">
               <option value="Long-term">Long-term</option>
               <option value="Mid-term">Mid-term</option>
               <option value="Short-term">Short-term</option>
               <option value="Month-to-month">Month-to-month</option>
             </select>
           </div>
-          <div>
+          <div class="form-field">
             <label>Payment method</label>
-            <select id="at-pay">
+            <select id="at-pay" class="form-input">
               <option value="e-Transfer">e-Transfer</option>
               <option value="Credit card">Credit card</option>
               <option value="Wire">Wire</option>
@@ -9467,13 +9508,12 @@ function openAddTenantModal(propName, roomLabel){
             </select>
           </div>
         </div>
-        <div class="form-row" style="grid-template-columns:1fr">
-          <div>
+        <div class="form-row single">
+          <div class="form-field">
             <label>Notes</label>
-            <textarea id="at-notes" rows="2" placeholder="Anything to remember about this tenant…"></textarea>
+            <textarea id="at-notes" class="form-input" rows="2" placeholder="Anything to remember about this tenant…"></textarea>
           </div>
         </div>
-        <div class="form-err" id="at-err" style="display:none;color:var(--red);font-size:12.5px;margin-top:6px"></div>
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" id="at-cancel">Cancel</button>
@@ -9481,12 +9521,17 @@ function openAddTenantModal(propName, roomLabel){
       </div>
     </div>
   `;
-  modal.classList.add("show");
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
 
-  const close = () => modal.classList.remove("show");
+  const close = () => { modal.classList.remove("open"); modal.setAttribute("aria-hidden","true"); };
   modal.querySelector("#at-close").onclick = close;
   modal.querySelector("#at-cancel").onclick = close;
-  modal.querySelector(".modal-backdrop").onclick = close;
+  // Backdrop click-to-close (clicking outside the dialog)
+  modal.onclick = (e) => { if(e.target === modal) close(); };
+  // Esc to close
+  const escHandler = (e) => { if(e.key === "Escape" && modal.classList.contains("open")){ close(); document.removeEventListener("keydown", escHandler); } };
+  document.addEventListener("keydown", escHandler);
   setTimeout(() => modal.querySelector("#at-name").focus(), 80);
 
   modal.querySelector("#at-save").onclick = () => {
@@ -9499,7 +9544,7 @@ function openAddTenantModal(propName, roomLabel){
     const leaseEnd = v("at-leaseend");
     const err = document.getElementById("at-err");
 
-    const showErr = (msg) => { err.textContent = msg; err.style.display = "block"; };
+    const showErr = (msg) => { err.textContent = msg; err.style.display = "block"; err.scrollIntoView({behavior:"smooth", block:"nearest"}); };
     if(!name){ showErr("Full name is required."); return; }
     if(!room){ showErr("Room is required."); return; }
     if(!rent || rent <= 0){ showErr("Monthly rent must be positive."); return; }
