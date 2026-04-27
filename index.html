@@ -9271,6 +9271,628 @@ function updateLandlordKPIs(){
   set("ll-kpi-cities", `${van} / ${tor}`);
 }
 updateLandlordKPIs();
+
+/* ============ ADD / DELETE TENANT (from Property panel) ============ */
+(function(){
+  if(document.getElementById("room-del-style")) return;
+  const st = document.createElement("style");
+  st.id = "room-del-style";
+  st.textContent = `
+    .room-card{position:relative}
+    .room-del{
+      position:absolute;top:8px;right:8px;width:22px;height:22px;
+      border-radius:50%;border:1px solid var(--line);
+      background:var(--surface);color:var(--muted);
+      font-size:15px;line-height:1;cursor:pointer;
+      display:none;align-items:center;justify-content:center;padding:0;
+      z-index:2;
+    }
+    .room-card:hover .room-del{display:flex}
+    .room-del:hover{background:var(--red);color:#fff;border-color:var(--red)}
+    .room-card.vacant{cursor:pointer;transition:border-color .15s, box-shadow .15s}
+    .room-card.vacant:hover{border-color:var(--red);box-shadow:0 0 0 2px var(--red-soft)}
+    .room-card.vacant .room-add-hint{display:none;font-size:10.5px;color:var(--red);font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-top:3px}
+    .room-card.vacant:hover .room-add-hint{display:block}
+  `;
+  document.head.appendChild(st);
+})();
+
+const _origOpenProperty_at = openProperty;
+openProperty = function(propName){
+  _origOpenProperty_at(propName);
+  injectAddDeleteTenantUI(propName);
+};
+
+function injectAddDeleteTenantUI(propName){
+  const body = document.getElementById("panel-body");
+  if(!body) return;
+
+  // 1. Add "+ Add tenant" button to Rooms section header
+  const sectionTitles = body.querySelectorAll(".panel-section-title");
+  sectionTitles.forEach(t => {
+    const lbl = t.querySelector("span")?.textContent.trim().toLowerCase();
+    if(lbl !== "rooms" || t.querySelector("[data-add-tenant]")) return;
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn btn-primary";
+    addBtn.style.cssText = "padding:6px 12px;font-size:12px;margin-left:auto;margin-right:8px";
+    addBtn.setAttribute("data-add-tenant", propName);
+    addBtn.innerHTML = "+ Add tenant";
+    addBtn.onclick = () => openAddTenantModal(propName);
+    const ctSpan = t.querySelector(".ct");
+    if(ctSpan) t.insertBefore(addBtn, ctSpan);
+    else t.appendChild(addBtn);
+  });
+
+  // 2. Per-occupied-room delete button
+  body.querySelectorAll(".room-card.occupied").forEach(card => {
+    if(card.querySelector(".room-del")) return;
+    const tenantName = (card.querySelector(".room-name")?.childNodes[0]?.textContent || "").trim();
+    const delBtn = document.createElement("button");
+    delBtn.className = "room-del";
+    delBtn.type = "button";
+    delBtn.title = "Remove tenant";
+    delBtn.innerHTML = "&times;";
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      const t = tenants.find(x => x.property === propName && x.name === tenantName && x.status === "active");
+      if(t) confirmRemoveTenant(t, propName);
+      else showToast("Could not find tenant record");
+    };
+    card.appendChild(delBtn);
+  });
+
+  // 3. Vacant cards: click to add tenant; show "+ Add tenant" hint on hover
+  body.querySelectorAll(".room-card.vacant").forEach(card => {
+    if(card.querySelector(".room-add-hint")) return;
+    const info = card.querySelector(".room-info");
+    if(info){
+      const hint = document.createElement("div");
+      hint.className = "room-add-hint";
+      hint.textContent = "+ Add tenant";
+      info.appendChild(hint);
+    }
+    const roomLabel = card.querySelector(".room-num")?.textContent.trim();
+    card.onclick = () => openAddTenantModal(propName, roomLabel);
+  });
+}
+
+/* ===== Add Tenant modal ===== */
+function openAddTenantModal(propName, roomLabel){
+  const propMeta = properties.find(p => p.name === propName);
+  if(!propMeta) return;
+
+  // Suggest next room number based on existing tenants
+  const existing = tenants.filter(t => t.property === propName).map(t => t.room).filter(Boolean);
+  const used = new Set(existing);
+  let suggestedRoom = roomLabel || `Room ${propMeta.occ + 1}`;
+  if(!roomLabel){
+    for(let i = 1; i <= (propMeta.rooms || 12); i++){
+      const try1 = `Room ${i}`;
+      if(!used.has(try1)){ suggestedRoom = try1; break; }
+    }
+  }
+
+  // Default rent: median active rent for this property, else parse propMeta.rent range
+  const propTenants = tenants.filter(t => t.property === propName && t.status === "active");
+  let defaultRent = 1000;
+  if(propTenants.length){
+    const rents = propTenants.map(t => t.rent || 0).filter(Boolean).sort((a,b)=>a-b);
+    if(rents.length) defaultRent = rents[Math.floor(rents.length/2)];
+  } else if(propMeta.rent){
+    const m = String(propMeta.rent).match(/(\d{3,4})/);
+    if(m) defaultRent = Number(m[1]);
+  }
+
+  // Today + 12 months as default lease end
+  const today = new Date();
+  const yyyy = today.getFullYear(), mm = today.getMonth(), dd = today.getDate();
+  const moveInDef = `${yyyy}-${String(mm+1).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
+  const leaseEndDef = `${yyyy+1}-${String(mm+1).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
+
+  let modal = document.getElementById("add-tenant-modal");
+  if(!modal){
+    modal = document.createElement("div");
+    modal.id = "add-tenant-modal";
+    modal.className = "modal";
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog" style="max-width:560px">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Add <em>tenant</em></div>
+          <div class="modal-sub">${propName} · ${propMeta.city || ""}</div>
+        </div>
+        <button class="modal-close" id="at-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div>
+            <label>Full name <span class="req">*</span></label>
+            <input id="at-name" type="text" placeholder="First Last" autocomplete="off"/>
+          </div>
+          <div>
+            <label>Country</label>
+            <input id="at-country" type="text" placeholder="e.g. Mexico" autocomplete="off"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>Email</label>
+            <input id="at-email" type="email" placeholder="name@email.com" autocomplete="off"/>
+          </div>
+          <div>
+            <label>Room <span class="req">*</span></label>
+            <input id="at-room" type="text" value="${suggestedRoom}" placeholder="Room 4 / Suite B"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>Monthly rent (CAD) <span class="req">*</span></label>
+            <input id="at-rent" type="number" value="${defaultRent}" min="0" step="50"/>
+          </div>
+          <div>
+            <label>Deposit</label>
+            <input id="at-deposit" type="number" value="${defaultRent}" min="0" step="50"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>Move-in date <span class="req">*</span></label>
+            <input id="at-movein" type="date" value="${moveInDef}"/>
+          </div>
+          <div>
+            <label>Lease end <span class="req">*</span></label>
+            <input id="at-leaseend" type="date" value="${leaseEndDef}"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>Lease type</label>
+            <select id="at-leasetype">
+              <option value="Long-term">Long-term</option>
+              <option value="Mid-term">Mid-term</option>
+              <option value="Short-term">Short-term</option>
+              <option value="Month-to-month">Month-to-month</option>
+            </select>
+          </div>
+          <div>
+            <label>Payment method</label>
+            <select id="at-pay">
+              <option value="e-Transfer">e-Transfer</option>
+              <option value="Credit card">Credit card</option>
+              <option value="Wire">Wire</option>
+              <option value="Cash">Cash</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row" style="grid-template-columns:1fr">
+          <div>
+            <label>Notes</label>
+            <textarea id="at-notes" rows="2" placeholder="Anything to remember about this tenant…"></textarea>
+          </div>
+        </div>
+        <div class="form-err" id="at-err" style="display:none;color:var(--red);font-size:12.5px;margin-top:6px"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="at-cancel">Cancel</button>
+        <button class="btn btn-primary" id="at-save">+ Add tenant</button>
+      </div>
+    </div>
+  `;
+  modal.classList.add("show");
+
+  const close = () => modal.classList.remove("show");
+  modal.querySelector("#at-close").onclick = close;
+  modal.querySelector("#at-cancel").onclick = close;
+  modal.querySelector(".modal-backdrop").onclick = close;
+  setTimeout(() => modal.querySelector("#at-name").focus(), 80);
+
+  modal.querySelector("#at-save").onclick = () => {
+    const v = (id) => document.getElementById(id).value.trim();
+    const num = (id) => Number(document.getElementById(id).value) || 0;
+    const name = v("at-name");
+    const room = v("at-room");
+    const rent = num("at-rent");
+    const moveIn = v("at-movein");
+    const leaseEnd = v("at-leaseend");
+    const err = document.getElementById("at-err");
+
+    const showErr = (msg) => { err.textContent = msg; err.style.display = "block"; };
+    if(!name){ showErr("Full name is required."); return; }
+    if(!room){ showErr("Room is required."); return; }
+    if(!rent || rent <= 0){ showErr("Monthly rent must be positive."); return; }
+    if(!moveIn || !leaseEnd){ showErr("Move-in and lease-end dates are required."); return; }
+    if(new Date(leaseEnd) < new Date(moveIn)){ showErr("Lease end must be after move-in."); return; }
+
+    // Build tenant record matching the existing schema
+    const id = "t-" + Date.now().toString(36);
+    const country = v("at-country");
+    const flagMap = {
+      "mexico":"🇲🇽","brazil":"🇧🇷","france":"🇫🇷","germany":"🇩🇪","spain":"🇪🇸",
+      "italy":"🇮🇹","uk":"🇬🇧","united kingdom":"🇬🇧","ireland":"🇮🇪","japan":"🇯🇵",
+      "korea":"🇰🇷","south korea":"🇰🇷","china":"🇨🇳","india":"🇮🇳","vietnam":"🇻🇳",
+      "thailand":"🇹🇭","philippines":"🇵🇭","colombia":"🇨🇴","peru":"🇵🇪","argentina":"🇦🇷",
+      "chile":"🇨🇱","canada":"🇨🇦","usa":"🇺🇸","united states":"🇺🇸","portugal":"🇵🇹",
+      "netherlands":"🇳🇱","switzerland":"🇨🇭","sweden":"🇸🇪","norway":"🇳🇴","turkey":"🇹🇷",
+      "russia":"🇷🇺","ukraine":"🇺🇦","iran":"🇮🇷","saudi arabia":"🇸🇦","egypt":"🇪🇬",
+      "morocco":"🇲🇦","nigeria":"🇳🇬","south africa":"🇿🇦","australia":"🇦🇺","new zealand":"🇳🇿"
+    };
+    const flag = flagMap[country.toLowerCase()] || "🌐";
+    const parts = name.split(/\s+/).filter(Boolean);
+    const ini = parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : (parts[0]||"?").slice(0,2).toUpperCase();
+
+    const newTenant = {
+      id, ini, name,
+      flag, country: country || "—",
+      property: propName,
+      room,
+      city: propMeta.city || "Vancouver",
+      type: propMeta.type || "Co-living",
+      rent,
+      deposit: num("at-deposit"),
+      moveIn,
+      leaseEnd,
+      leaseType: v("at-leasetype") || "Long-term",
+      paymentMethod: v("at-pay") || "e-Transfer",
+      email: v("at-email"),
+      status: "active",
+      lastPayDays: 0,
+      arrears: 0,
+      notes: v("at-notes"),
+      color: propMeta.color || "#A6724E"
+    };
+    tenants.push(newTenant);
+
+    // Bump property occ
+    propMeta.occ = Math.min(propMeta.rooms || 99, (propMeta.occ || 0) + 1);
+    propMeta.ratePct = propMeta.rooms ? Math.round((propMeta.occ / propMeta.rooms) * 100) : 100;
+
+    close();
+    showToast(`Added ${name} to ${propName}`);
+
+    // Refresh: tenants list, properties list, KPIs, panel
+    if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
+    if(typeof renderProperties === "function") renderProperties();
+    if(typeof refreshPortfolio === "function") refreshPortfolio();
+    openProperty(propName);
+  };
+}
+
+/* ===== Remove tenant with undo ===== */
+let _lastRemoved = null;
+function confirmRemoveTenant(t, propName){
+  // Confirmation toast: simple confirm() here for clarity
+  const ok = confirm(`Remove ${t.name} from ${t.property}?\n\nRoom: ${t.room || "—"}\nRent: ${fmt(t.rent || 0)} /mo\n\nThis will mark the lease as ended and free up the room. You can undo within 8 seconds.`);
+  if(!ok) return;
+
+  // Soft-delete: move to a "removed" backup, mark as past
+  const idx = tenants.findIndex(x => x.id === t.id);
+  if(idx === -1) return;
+  _lastRemoved = { tenant: {...t}, idx, propName };
+  tenants.splice(idx, 1);
+
+  const propMeta = properties.find(p => p.name === propName);
+  if(propMeta){
+    propMeta.occ = Math.max(0, (propMeta.occ || 0) - 1);
+    propMeta.ratePct = propMeta.rooms ? Math.round((propMeta.occ / propMeta.rooms) * 100) : 0;
+  }
+
+  if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
+  if(typeof renderProperties === "function") renderProperties();
+  if(typeof refreshPortfolio === "function") refreshPortfolio();
+  openProperty(propName);
+
+  showRemoveUndoToast(t.name);
+}
+
+function showRemoveUndoToast(name){
+  let toast = document.getElementById("rm-undo-toast");
+  if(!toast){
+    toast = document.createElement("div");
+    toast.id = "rm-undo-toast";
+    toast.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 16px;border-radius:10px;display:flex;align-items:center;gap:14px;z-index:9000;box-shadow:0 6px 24px rgba(0,0,0,.25);font-family:var(--sans);font-size:13.5px";
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML = `<span>Removed <b>${name}</b></span><button id="rm-undo-btn" style="background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 12px;border-radius:7px;font-weight:700;cursor:pointer;font-size:12px">Undo</button>`;
+  toast.style.display = "flex";
+  document.getElementById("rm-undo-btn").onclick = () => {
+    if(!_lastRemoved) return;
+    tenants.splice(Math.min(_lastRemoved.idx, tenants.length), 0, _lastRemoved.tenant);
+    const propMeta = properties.find(p => p.name === _lastRemoved.propName);
+    if(propMeta){
+      propMeta.occ = Math.min(propMeta.rooms || 99, (propMeta.occ || 0) + 1);
+      propMeta.ratePct = propMeta.rooms ? Math.round((propMeta.occ / propMeta.rooms) * 100) : 100;
+    }
+    if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
+    if(typeof renderProperties === "function") renderProperties();
+    if(typeof refreshPortfolio === "function") refreshPortfolio();
+    openProperty(_lastRemoved.propName);
+    _lastRemoved = null;
+    toast.style.display = "none";
+  };
+  clearTimeout(window._rmTimer);
+  window._rmTimer = setTimeout(() => { toast.style.display = "none"; _lastRemoved = null; }, 8000);
+}
+
+/* ============ PORTFOLIO PAGE — REBUILD WITH REAL DATA ============ */
+function computePortfolioFromReal(){
+  // Build one row per property (already individual units after un-consolidation)
+  return properties.map(p => {
+    const propTenants = tenants.filter(t => t.property === p.name && t.status === "active");
+    const rev = propTenants.reduce((s, t) => s + (t.rent || 0), 0);
+    const occ = propTenants.length;
+    // Floor rooms at occ — some Asana-imported props have stale `rooms` counts
+    const rooms = Math.max(p.rooms || 0, occ) || 1;
+    const occPct = rooms ? Math.min(100, Math.round((occ / rooms) * 100)) : 0;
+    return {
+      name: p.name,
+      city: p.city,
+      type: p.type || "Co-living",
+      rooms, occ, occPct,
+      rev,
+      // No real expense data yet — leave as nulls so we hide instead of fabricate
+      mort: null, util: null, maint: null, clean: null, other: null,
+      exp: null,
+      profit: null,
+      margin: null,
+      yoy: null,
+      trend: null,
+      color: p.color || "#A6724E"
+    };
+  }).sort((a,b) => b.rev - a.rev);
+}
+
+function refreshPortfolio(){
+  const real = computePortfolioFromReal();
+  const totalRev = real.reduce((s,p) => s + p.rev, 0);
+  const totalOcc = real.reduce((s,p) => s + p.occ, 0);
+  const totalRooms = real.reduce((s,p) => s + p.rooms, 0);
+  const occPct = totalRooms ? Math.round((totalOcc / totalRooms) * 100) : 0;
+
+  // KPI strip
+  const $ = (id) => document.getElementById(id);
+  const kpis = document.querySelectorAll('section[data-view="portfolio"] .kpi-grid .kpi');
+  if(kpis.length >= 4){
+    // Properties
+    kpis[0].querySelector(".kpi-value").textContent = real.length;
+    kpis[0].querySelector(".kpi-trend").textContent = `${[...new Set(real.map(p=>p.city))].length} cities`;
+    // Revenue MTD
+    kpis[1].querySelector(".kpi-value").textContent = "$" + totalRev.toLocaleString();
+    kpis[1].querySelector(".kpi-trend").textContent = `${totalOcc} active leases`;
+    // Net profit MTD — we don't have expense data yet, hide
+    kpis[2].querySelector(".kpi-label").textContent = "Avg rent per tenant";
+    kpis[2].querySelector(".kpi-value").textContent = totalOcc ? "$" + Math.round(totalRev/totalOcc).toLocaleString() : "$0";
+    kpis[2].querySelector(".kpi-trend").textContent = `across ${totalOcc} tenants`;
+    // Occupancy
+    kpis[3].querySelector(".kpi-label").textContent = "Portfolio occupancy";
+    kpis[3].querySelector(".kpi-value").innerHTML = occPct + '<span style="font-size:18px;color:var(--muted)">%</span>';
+    kpis[3].querySelector(".kpi-trend").textContent = `${totalOcc} of ${totalRooms} rooms filled`;
+  }
+
+  // P&L table — rebuild headers and body to match the real (no-expense) data
+  const pfBody = $("pf-body");
+  if(pfBody){
+    // Update column headers (Expenses, Profit, Margin, YoY columns become "—" placeholders)
+    const tbl = pfBody.closest("table");
+    const ths = tbl.querySelectorAll("thead th");
+    if(ths.length >= 9){
+      ths[4].textContent = "Revenue";
+      ths[5].innerHTML = "Avg rent";
+      ths[6].innerHTML = "Tenants";
+      ths[7].innerHTML = "Occupancy";
+      ths[8].innerHTML = "City";
+      // Hide YoY + Trend columns
+      if(ths[8]) ths[8].style.display = "table-cell";
+      // we'll handle column indexes 9 (YoY) and 10 (Trend) via tbody — simpler to just re-render with fewer cols
+    }
+
+    pfBody.innerHTML = real.map((p,i) => {
+      const avgRent = p.occ ? Math.round(p.rev / p.occ) : 0;
+      return `
+        <tr style="cursor:pointer" data-pf-prop="${p.name.replace(/"/g,"&quot;")}">
+          <td>
+            <div class="name-cell">
+              <div style="width:30px;height:30px;border-radius:8px;background:${p.color}33;display:grid;place-items:center;color:${p.color};font-weight:700;font-family:var(--serif);font-style:italic">${p.name[0]}</div>
+              <div>
+                <div class="name-main">${p.name}</div>
+                <div class="name-sub">${p.type}</div>
+              </div>
+            </div>
+          </td>
+          <td>${p.city || "—"}</td>
+          <td><span class="num">${p.occ}/${p.rooms}</span></td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="occ-bar" style="flex:1;min-width:60px;margin:0"><div class="occ-fill" style="width:${p.occPct}%"></div></div>
+              <span class="num" style="font-size:12px">${p.occPct}%</span>
+            </div>
+          </td>
+          <td class="right num">${fmt(p.rev)}</td>
+          <td class="right num" style="color:var(--muted)">${avgRent ? fmt(avgRent) : "—"}</td>
+          <td class="right num">${p.occ}</td>
+          <td class="right num">${p.occPct}%</td>
+          <td>${p.city || "—"}</td>
+          <td><button class="btn btn-ghost" style="padding:5px 12px;font-size:12px;pointer-events:none">Open</button></td>
+        </tr>
+      `;
+    }).join("");
+
+    // Click row → open property panel
+    pfBody.querySelectorAll("[data-pf-prop]").forEach(tr => {
+      tr.onclick = () => openProperty(tr.dataset.pfProp);
+    });
+
+    // Update tfoot total row
+    const tfootCells = tbl.querySelectorAll("tfoot td");
+    if(tfootCells.length >= 9){
+      tfootCells[0].setAttribute("colspan","2");
+      tfootCells[0].innerHTML = `<span style="font-family:var(--serif);font-size:15px">Portfolio total</span>`;
+      tfootCells[1].innerHTML = `<span class="num">${totalOcc}/${totalRooms}</span>`;
+      tfootCells[2].innerHTML = `<span class="num">${occPct}%</span>`;
+      tfootCells[3].innerHTML = `<span class="num right">${fmt(totalRev)}</span>`;
+      tfootCells[3].className = "right num";
+      // The remaining cells: avg rent, tenants, occ, city
+      if(tfootCells[4]){ tfootCells[4].className="right num"; tfootCells[4].innerHTML = totalOcc ? fmt(Math.round(totalRev/totalOcc)) : "—"; }
+      if(tfootCells[5]){ tfootCells[5].className="right num"; tfootCells[5].textContent = totalOcc; }
+      if(tfootCells[6]){ tfootCells[6].className="right num"; tfootCells[6].textContent = occPct + "%"; }
+      if(tfootCells[7]){ tfootCells[7].textContent = ""; }
+      if(tfootCells[8]){ tfootCells[8].textContent = ""; }
+      if(tfootCells[9]){ tfootCells[9].textContent = ""; }
+    }
+
+    // Update card subtitle "X properties · sorted by net profit" → "X properties · Y tenants · sorted by revenue"
+    const cardSub = tbl.closest(".card-pad")?.querySelector(".card-sub");
+    if(cardSub) cardSub.textContent = `${real.length} properties · ${totalOcc} active leases · sorted by revenue`;
+  }
+
+  // Revenue vs Profit chart — use top 12 by revenue (label gets crowded otherwise)
+  const top12 = real.slice(0, 12);
+  const maxRev = Math.max(1, ...top12.map(p => p.rev));
+  const rpChart = $("rp-chart");
+  if(rpChart){
+    rpChart.innerHTML = top12.map((p) => {
+      const hr = (p.rev / maxRev) * 200;
+      return `
+        <div class="bar-col">
+          <div style="display:flex;align-items:flex-end;gap:4px;height:200px;width:100%;justify-content:center">
+            <div class="bar" style="height:${hr}px;width:18px;background:linear-gradient(180deg,var(--red),#D17262)"></div>
+          </div>
+          <div class="bar-label num" style="margin-top:6px">$${(p.rev/1000).toFixed(1)}k</div>
+        </div>
+      `;
+    }).join("");
+    const labels = $("rp-labels");
+    if(labels){
+      labels.innerHTML = top12.map(p =>
+        `<span style="font-size:10.5px;text-align:center;line-height:1.2">${p.name.split(/\s+/).slice(0,2).join('<br>')}</span>`
+      ).join("");
+    }
+    // Update legend (we only have revenue now)
+    const legend = rpChart.closest(".card-pad")?.querySelector(".legend");
+    if(legend) legend.innerHTML = `<div class="legend-row"><span class="legend-sw" style="background:var(--red)"></span>Monthly revenue</div>`;
+    // Update card title "Revenue vs profit by property" → "Revenue by property"
+    const ct = rpChart.closest(".card-pad")?.querySelector(".card-title");
+    if(ct) ct.innerHTML = "Revenue <em>by property</em>";
+    const cs = rpChart.closest(".card-pad")?.querySelector(".card-sub");
+    if(cs) cs.textContent = "Top 12 by monthly revenue · CAD";
+  }
+
+  // Revenue mix donut — top 8 + "Other"
+  const donut = $("mix-donut");
+  if(donut && totalRev > 0){
+    const top8 = real.slice(0, 8);
+    const otherRev = real.slice(8).reduce((s,p) => s + p.rev, 0);
+    const slices = [
+      ...top8.map(p => ({name:p.name, rev:p.rev, color:p.color})),
+      ...(otherRev > 0 ? [{name:"All other properties", rev:otherRev, color:"#999"}] : [])
+    ];
+    let dashOffset = 25;
+    donut.innerHTML = `<circle cx="18" cy="18" r="15.91549430918954" fill="transparent" stroke="var(--cream-2)" stroke-width="3.6"/>` +
+      slices.map(s => {
+        const pct = (s.rev / totalRev) * 100;
+        const seg = `<circle cx="18" cy="18" r="15.91549430918954" fill="transparent"
+          stroke="${s.color}" stroke-width="3.6"
+          stroke-dasharray="${pct.toFixed(2)} ${(100-pct).toFixed(2)}"
+          stroke-dashoffset="${dashOffset.toFixed(2)}" />`;
+        dashOffset -= pct;
+        return seg;
+      }).join("");
+    const center = donut.parentElement?.querySelector(".donut-center .v");
+    if(center) center.textContent = "$" + (totalRev >= 1000 ? Math.round(totalRev/1000)+"k" : totalRev);
+    const legend = $("mix-legend");
+    if(legend){
+      legend.innerHTML = slices.map(s => `
+        <div class="legend-row">
+          <span class="legend-sw" style="background:${s.color}"></span>
+          <span style="font-size:12px">${s.name}</span>
+          <span class="legend-val">${((s.rev/totalRev)*100).toFixed(1)}%</span>
+        </div>
+      `).join("");
+    }
+  }
+
+  // Top performers (by revenue)
+  const top = $("pf-top");
+  if(top){
+    top.innerHTML = real.slice(0, 5).map((p,i) => `
+      <div class="list-row" style="cursor:pointer" data-pf-go="${p.name.replace(/"/g,"&quot;")}">
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--green-soft);color:#3e6049;display:grid;place-items:center;font-weight:700;font-size:12px;font-family:var(--slab)">#${i+1}</div>
+        <div class="list-main">
+          <div class="list-title">${p.name}</div>
+          <div class="list-sub">${p.city} · ${p.occ}/${p.rooms} occupied · ${p.occPct}% full</div>
+        </div>
+        <div class="list-meta num" style="color:#3e6049">${fmt(p.rev)}</div>
+      </div>
+    `).join("");
+    top.querySelectorAll("[data-pf-go]").forEach(r => r.onclick = () => openProperty(r.dataset.pfGo));
+    // Update card sub
+    const sub = top.closest(".card-pad")?.querySelector(".card-sub");
+    if(sub) sub.textContent = "By monthly revenue";
+  }
+
+  // Needs attention — lowest occupancy + has rooms
+  const bottom = $("pf-bottom");
+  if(bottom){
+    const needsAttn = [...real].filter(p => p.rooms > 0 && p.occPct < 100).sort((a,b) => a.occPct - b.occPct).slice(0, 5);
+    bottom.innerHTML = (needsAttn.length === 0
+      ? `<div style="padding:24px 8px;text-align:center;color:var(--muted);font-size:13px">All properties fully occupied 🎉</div>`
+      : needsAttn.map(p => {
+        const flag = p.occPct === 0 ? "Empty" : p.occPct < 50 ? "Half empty" : p.occPct < 85 ? "Under-occupied" : "Watch";
+        const cls = p.occPct < 50 ? "red" : "amber";
+        return `
+        <div class="list-row" style="cursor:pointer" data-pf-go="${p.name.replace(/"/g,"&quot;")}">
+          <div class="list-icon ${cls}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/></svg>
+          </div>
+          <div class="list-main">
+            <div class="list-title">${p.name}</div>
+            <div class="list-sub">${flag} · ${p.occ}/${p.rooms} rooms · ${p.occPct}% occupied</div>
+          </div>
+          <div class="list-meta num">${fmt(p.rev)}</div>
+        </div>`;
+      }).join(""));
+    bottom.querySelectorAll("[data-pf-go]").forEach(r => r.onclick = () => openProperty(r.dataset.pfGo));
+    const sub = bottom.closest(".card-pad")?.querySelector(".card-sub");
+    if(sub) sub.textContent = "Lowest occupancy";
+  }
+
+  // Hide cost-breakdown card (no real data yet)
+  const costCardTitle = [...document.querySelectorAll('section[data-view="portfolio"] .card-title')]
+    .find(t => /cost\s+breakdown/i.test(t.textContent));
+  if(costCardTitle){
+    const card = costCardTitle.closest(".card-pad");
+    if(card){
+      card.innerHTML = `<div class="card-head"><div><div class="card-title">Cost <em>breakdown</em></div><div class="card-sub">No expense data on file yet</div></div></div>
+        <div style="padding:32px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.6">
+          Add property-level expenses (mortgage to landlord, utilities, maintenance, cleaning) to see your cost mix.<br>
+          For now, revenue and occupancy are computed live from your tenant records.
+        </div>`;
+    }
+  }
+
+  // Hide the 12-month profit trend card (no real history yet)
+  const trendCardTitle = [...document.querySelectorAll('section[data-view="portfolio"] .card-title')]
+    .find(t => /portfolio\s+profit\s+trend/i.test(t.textContent));
+  if(trendCardTitle){
+    const card = trendCardTitle.closest(".card-pad");
+    if(card) card.style.display = "none";
+  }
+}
+
+// Initial portfolio refresh
+refreshPortfolio();
+
+// Refresh whenever user navigates to Portfolio
+const _origGoToView = typeof goToView === "function" ? goToView : null;
+if(_origGoToView){
+  goToView = function(v){
+    _origGoToView(v);
+    if(v === "portfolio") setTimeout(refreshPortfolio, 30);
+  };
+}
+
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
 </script>
