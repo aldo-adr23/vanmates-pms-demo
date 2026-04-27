@@ -1936,6 +1936,7 @@
             </tr>
           </thead>
           <tbody id="dd-body"></tbody>
+          <tfoot id="dd-foot"></tfoot>
         </table>
         <div id="dd-empty" style="display:none">
           <div class="empty">
@@ -6549,6 +6550,50 @@ function renderDeposits(){
     `;
   }).join("");
 
+  // Update footer totals based on the visible (filtered) list
+  const foot = document.getElementById("dd-foot");
+  if(foot){
+    const visiblePending = list.filter(x => x.status !== "completed");
+    const visibleCompleted = list.filter(x => x.status === "completed");
+    const pendDeposit = visiblePending.reduce((s,x) => s + x.deposit, 0);
+    const pendDed     = visiblePending.reduce((s,x) => s + depositTotalDeductions(x), 0);
+    const pendRefund  = pendDeposit - pendDed;
+    const compDeposit = visibleCompleted.reduce((s,x) => s + x.deposit, 0);
+    const compDed     = visibleCompleted.reduce((s,x) => s + depositTotalDeductions(x), 0);
+    const compRefund  = compDeposit - compDed;
+
+    if(list.length === 0){
+      foot.innerHTML = "";
+    } else {
+      foot.innerHTML = `
+        ${visiblePending.length > 0 ? `
+          <tr style="background:#FFF6F2">
+            <td colspan="4" style="font-family:var(--serif);font-size:15px;font-weight:700;color:var(--ink);padding:14px 14px">
+              Total Vanmates owes
+              <span class="card-sub" style="font-weight:500;font-size:11.5px;text-transform:none;letter-spacing:0;display:block;margin-top:1px">${visiblePending.length} pending refund${visiblePending.length===1?"":"s"} in current view</span>
+            </td>
+            <td class="right num" style="font-size:14px;padding:14px 14px">${fmt(pendDeposit)}</td>
+            <td class="right num" style="font-size:14px;color:var(--red-dark);padding:14px 14px">${pendDed > 0 ? '−' + fmt(pendDed) : '—'}</td>
+            <td class="right num" style="font-size:18px;color:var(--red-dark);font-family:var(--serif);font-weight:700;letter-spacing:-.4px;padding:14px 14px">${fmt(pendRefund)}</td>
+            <td colspan="2" style="padding:14px"></td>
+          </tr>
+        ` : ''}
+        ${visibleCompleted.length > 0 ? `
+          <tr style="background:var(--cream)">
+            <td colspan="4" style="font-family:var(--serif);font-size:14px;font-weight:600;color:var(--muted);padding:12px 14px">
+              Already refunded
+              <span class="card-sub" style="font-weight:500;font-size:11.5px;text-transform:none;letter-spacing:0;display:block;margin-top:1px">${visibleCompleted.length} completed in current view</span>
+            </td>
+            <td class="right num" style="color:var(--muted);padding:12px 14px">${fmt(compDeposit)}</td>
+            <td class="right num" style="color:var(--muted);padding:12px 14px">${compDed > 0 ? '−' + fmt(compDed) : '—'}</td>
+            <td class="right num" style="font-size:14px;color:#3e6049;padding:12px 14px">${fmt(compRefund)}</td>
+            <td colspan="2" style="padding:12px"></td>
+          </tr>
+        ` : ''}
+      `;
+    }
+  }
+
   // Wire row + button clicks
   body.querySelectorAll("tr[data-deposit-id]").forEach(row => {
     row.addEventListener("click", e => {
@@ -6806,13 +6851,43 @@ function openDeposit(id){
     <div style="display:flex;gap:8px;margin-top:24px">
       ${r.status === "completed"
         ? '<button class="btn btn-ghost" style="flex:1;justify-content:center">Download statement</button>'
-        : r.status === "disputed"
-          ? '<button class="btn btn-primary" style="flex:1;justify-content:center">Resolve dispute</button>'
-          : '<button class="btn btn-primary" style="flex:1;justify-content:center">Process refund</button>'}
+        : `<button class="btn btn-primary" id="dd-mark-complete" data-id="${r.id}" style="flex:1;justify-content:center">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="5 12 10 17 19 7"/></svg>
+            Mark refund as completed
+          </button>`}
       <button class="btn btn-ghost" style="flex:1;justify-content:center">Send statement</button>
       <button class="btn btn-ghost">⋯</button>
     </div>
   `;
+
+  // Wire the Mark complete button
+  const markBtn = document.getElementById("dd-mark-complete");
+  if(markBtn){
+    markBtn.addEventListener("click", () => {
+      // Update the deposit record
+      r.status = "completed";
+      r.refundDate = new Date(TODAY).toISOString().slice(0, 10);
+      r.processedBy = (typeof activeRole === "function" ? activeRole().name : "Aldo Martínez");
+      if(!r.method) r.method = "e-transfer"; // default if not chosen
+      // Close panel and refresh
+      document.getElementById("detail-panel").classList.remove("open");
+      document.getElementById("detail-panel").setAttribute("aria-hidden","true");
+      document.getElementById("panel-backdrop").classList.remove("open");
+      document.body.style.overflow = "";
+      renderDeposits();
+      showToast(`${r.name}'s refund marked as completed · ${fmt(r.deposit - depositTotalDeductions(r))} returned`);
+      // Briefly highlight the row
+      setTimeout(() => {
+        const row = document.querySelector(`tr[data-deposit-id="${r.id}"]`);
+        if(row){
+          row.scrollIntoView({behavior:"smooth", block:"center"});
+          row.style.transition = "background-color 1s ease";
+          row.style.backgroundColor = "#E2EDDF";
+          setTimeout(() => { row.style.backgroundColor = ""; }, 2200);
+        }
+      }, 200);
+    });
+  }
 
   document.getElementById("detail-panel").classList.add("open");
   document.getElementById("detail-panel").setAttribute("aria-hidden","false");
