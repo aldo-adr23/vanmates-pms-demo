@@ -3979,13 +3979,7 @@ function fmtDate(s){
 function leaseChip(leaseEnd){
   const d = new Date(leaseEnd);
   const days = daysBetween(TODAY, d);
-  let cls = "badge-grey";
-  let txt = fmtDate(leaseEnd);
-  if(days < 0) {cls="badge-grey"; txt+=" (ended)";}
-  else if(days <= 30) cls="badge-amber";
-  else if(days <= 90) cls="badge-blue";
-  else cls="badge-green";
-  return `<div>${fmtDate(leaseEnd)}</div><div class="name-sub" style="font-size:11px;color:${days<=30?'var(--red-dark)':'var(--muted)'}">in ${days} days</div>`;
+  return `<div style="white-space:nowrap">${fmtDate(leaseEnd)}</div><div class="name-sub" style="font-size:11px;white-space:nowrap;color:${days<=30?'var(--red-dark)':'var(--muted)'}">${days >= 0 ? 'in ' + days + ' days' : Math.abs(days) + ' days ago'}</div>`;
 }
 function tagPills(tags){
   const m = {
@@ -4175,7 +4169,7 @@ function renderTenants(){
       </td>
       <td>
         <div class="name-main">${t.property}</div>
-        <div class="name-sub">Room ${t.room}</div>
+        <div class="name-sub">${t.room && t.room !== "—" ? "Room " + t.room : ""}</div>
       </td>
       <td>${t.city}</td>
       <td>${leaseChip(t.leaseEnd)}</td>
@@ -4314,7 +4308,7 @@ function renderBulkBar(){
   document.getElementById("bulk-ct").textContent = F.selected.size;
 }
 
-/* Build dropdowns */
+/* Build dropdowns — applies filters live on every checkbox/radio change */
 function attachDropdown(chipEl, content, onApply){
   const dd = document.createElement("div");
   dd.className = "filter-dropdown";
@@ -4326,9 +4320,14 @@ function attachDropdown(chipEl, content, onApply){
     dd.classList.toggle("open");
   });
   dd.addEventListener("click", e => e.stopPropagation());
+  // Live-apply on every checkbox or radio change
+  dd.querySelectorAll('input[type=checkbox], input[type=radio]').forEach(inp => {
+    inp.addEventListener("change", () => { onApply && onApply(); });
+  });
+  // Apply button still works (for users who reach for it)
   dd.querySelectorAll('[data-action="apply"]').forEach(b => b.addEventListener("click", () => { dd.classList.remove("open"); onApply && onApply(); }));
   dd.querySelectorAll('[data-action="clear"]').forEach(b => b.addEventListener("click", () => {
-    dd.querySelectorAll("input[type=checkbox]").forEach(cb => cb.checked=false);
+    dd.querySelectorAll("input[type=checkbox], input[type=radio]").forEach(cb => cb.checked=false);
     onApply && onApply();
   }));
   document.addEventListener("click", e => {
@@ -6137,13 +6136,15 @@ function attachVacDropdown(filterKey, options){
     dd.classList.toggle("open");
   });
   dd.addEventListener("click", e => e.stopPropagation());
-  dd.querySelector('[data-action="apply"]').addEventListener("click", () => {
+  // Live-apply on every checkbox change
+  const liveApplyVac = () => {
     const set = new Set([...dd.querySelectorAll("input:checked")].map(i => i.value));
     if(filterKey === "city") VAC_FILTERS.cities = set;
     if(filterKey === "type") VAC_FILTERS.types  = set;
     renderVacancies();
-    dd.classList.remove("open");
-  });
+  };
+  dd.querySelectorAll("input[type=checkbox]").forEach(inp => inp.addEventListener("change", liveApplyVac));
+  dd.querySelector('[data-action="apply"]').addEventListener("click", () => { liveApplyVac(); dd.classList.remove("open"); });
   dd.querySelector('[data-action="clear"]').addEventListener("click", () => {
     dd.querySelectorAll("input").forEach(cb => cb.checked = false);
     if(filterKey === "city") VAC_FILTERS.cities.clear();
@@ -7110,13 +7111,14 @@ function attachHostDropdown(filterKey, options, buildLabel){
     dd.classList.toggle("open");
   });
   dd.addEventListener("click", e => e.stopPropagation());
-  dd.querySelector('[data-action="apply"]').addEventListener("click", () => {
+  const liveApplyHH = () => {
     HH_FILTERS[filterKey] = new Set(
       [...dd.querySelectorAll("input[type=checkbox]:checked")].map(i => i.value)
     );
     renderHomestayHosts();
-    dd.classList.remove("open");
-  });
+  };
+  dd.querySelectorAll("input[type=checkbox]").forEach(inp => inp.addEventListener("change", liveApplyHH));
+  dd.querySelector('[data-action="apply"]').addEventListener("click", () => { liveApplyHH(); dd.classList.remove("open"); });
   dd.querySelector('[data-action="clear"]').addEventListener("click", () => {
     dd.querySelectorAll("input[type=checkbox]").forEach(cb => cb.checked = false);
     HH_FILTERS[filterKey].clear();
@@ -7661,11 +7663,12 @@ function attachDDDropdown(filterKey, options, labelMap){
     dd.classList.toggle("open");
   });
   dd.addEventListener("click", e => e.stopPropagation());
-  dd.querySelector('[data-action="apply"]').addEventListener("click", () => {
+  const liveApplyDD = () => {
     DD_FILTERS[filterKey] = new Set([...dd.querySelectorAll("input:checked")].map(i => i.value));
     renderDeposits();
-    dd.classList.remove("open");
-  });
+  };
+  dd.querySelectorAll("input[type=checkbox]").forEach(inp => inp.addEventListener("change", liveApplyDD));
+  dd.querySelector('[data-action="apply"]').addEventListener("click", () => { liveApplyDD(); dd.classList.remove("open"); });
   dd.querySelector('[data-action="clear"]').addEventListener("click", () => {
     dd.querySelectorAll("input").forEach(cb => cb.checked = false);
     DD_FILTERS[filterKey].clear();
