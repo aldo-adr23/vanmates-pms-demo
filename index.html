@@ -2404,7 +2404,7 @@
           <span class="val" id="hh-chip-nationality"></span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
         </div>
-        <button class="btn btn-primary" style="margin-left:auto">+ Add host</button>
+        <button class="btn btn-primary" style="margin-left:auto" id="hh-add-host-btn">+ Add host</button>
       </div>
 
       <div class="active-chips" id="hh-active-chips"></div>
@@ -9268,7 +9268,8 @@ function updateSidebarCounts(){
   };
   if(typeof tenants !== "undefined")           set("tenants",           tenants.length);
   if(typeof properties !== "undefined")        set("properties",        properties.length);
-  if(typeof portfolio !== "undefined")         set("portfolio",         portfolio.length);
+  // Portfolio page now lists every property (rebuilt from real data) — use properties.length
+  if(typeof properties !== "undefined")        set("portfolio",         properties.length);
   if(typeof landlords !== "undefined")         set("landlords",         landlords.length);
   if(typeof homestayClients !== "undefined")   set("homestay-clients",  homestayClients.filter(c => c.status === "active").length);
   if(typeof homestayHosts !== "undefined")     set("homestay-hosts",    homestayHosts.length);
@@ -10186,6 +10187,171 @@ function refreshDashboard(){
 
 // Initial dashboard refresh
 refreshDashboard();
+
+/* ============ ADD HOMESTAY HOST modal ============ */
+function openAddHostModal(){
+  let modal = document.getElementById("add-host-modal");
+  if(!modal){
+    modal = document.createElement("div");
+    modal.id = "add-host-modal";
+    modal.className = "modal-backdrop";
+    document.body.appendChild(modal);
+  }
+
+  const palette = ["#A88965","#B0855A","#C19A6B","#9b6b53","#8E6F4A","#7d6041","#A6724E","#D17262"];
+  const defaultColor = palette[Math.floor(Math.random() * palette.length)];
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-width:640px">
+      <div class="modal-head">
+        <div class="ic" style="background:var(--red-soft);color:var(--red-dark)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-7H10v7H4a1 1 0 0 1-1-1z"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="modal-title">Add a <em>host family</em></div>
+          <div class="modal-sub">Partner family for homestays</div>
+        </div>
+        <button class="modal-close" id="ah-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-error" id="ah-err"></div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Family name <span class="req">*</span></label>
+            <input id="ah-name" type="text" class="form-input" placeholder="e.g. Tremblay family" autocomplete="off"/>
+          </div>
+          <div class="form-field">
+            <label>City <span class="req">*</span></label>
+            <select id="ah-city" class="form-input">
+              <option value="Vancouver">Vancouver</option>
+              <option value="Toronto">Toronto</option>
+              <option value="Montréal">Montréal</option>
+              <option value="Québec City">Québec City</option>
+              <option value="Guadalajara">Guadalajara</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Neighborhood</label>
+            <input id="ah-neighborhood" type="text" class="form-input" placeholder="e.g. Mile End" autocomplete="off"/>
+          </div>
+          <div class="form-field">
+            <label>Capacity (rooms) <span class="req">*</span></label>
+            <input id="ah-capacity" type="number" class="form-input" value="2" min="1" max="6" step="1"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>We pay host (per guest / month)</label>
+            <input id="ah-pay" type="number" class="form-input" value="900" min="0" step="50"/>
+          </div>
+          <div class="form-field">
+            <label>Initial rating</label>
+            <input id="ah-rating" type="number" class="form-input" value="4.8" min="1" max="5" step="0.1"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Nationality</label>
+            <input id="ah-nationality" type="text" class="form-input" placeholder="e.g. Canadian (Québécois)" autocomplete="off"/>
+          </div>
+          <div class="form-field">
+            <label>Languages spoken</label>
+            <input id="ah-languages" type="text" class="form-input" placeholder="English, Français, …" autocomplete="off"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label>Email</label>
+            <input id="ah-email" type="email" class="form-input" placeholder="family@example.ca" autocomplete="off"/>
+          </div>
+          <div class="form-field">
+            <label>Phone</label>
+            <input id="ah-phone" type="tel" class="form-input" placeholder="+1 (514) 555-0144" autocomplete="off"/>
+          </div>
+        </div>
+        <div class="form-row single">
+          <div class="form-field">
+            <label>Bio / household notes</label>
+            <textarea id="ah-bio" class="form-input" rows="3" placeholder="A few sentences about the family, household style, dietary notes, etc."></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="ah-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ah-save">+ Add host</button>
+      </div>
+    </div>
+  `;
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden", "false");
+
+  const close = () => { modal.classList.remove("open"); modal.setAttribute("aria-hidden","true"); };
+  modal.querySelector("#ah-close").onclick = close;
+  modal.querySelector("#ah-cancel").onclick = close;
+  modal.onclick = (e) => { if(e.target === modal) close(); };
+  const escHandler = (e) => { if(e.key === "Escape" && modal.classList.contains("open")){ close(); document.removeEventListener("keydown", escHandler); } };
+  document.addEventListener("keydown", escHandler);
+  setTimeout(() => modal.querySelector("#ah-name").focus(), 80);
+
+  modal.querySelector("#ah-save").onclick = () => {
+    const v = (id) => document.getElementById(id).value.trim();
+    const num = (id) => Number(document.getElementById(id).value) || 0;
+    const err = document.getElementById("ah-err");
+    const showErr = (msg) => { err.textContent = msg; err.style.display = "block"; err.scrollIntoView({behavior:"smooth", block:"nearest"}); };
+
+    const name = v("ah-name");
+    if(!name){ showErr("Family name is required."); return; }
+    const city = v("ah-city");
+    const capacity = num("ah-capacity");
+    if(!capacity || capacity < 1){ showErr("Capacity must be at least 1."); return; }
+
+    const flagMap = {
+      "canadian":"🇨🇦","quebecois":"🇨🇦","mexican":"🇲🇽","brazilian":"🇧🇷","french":"🇫🇷",
+      "german":"🇩🇪","spanish":"🇪🇸","italian":"🇮🇹","british":"🇬🇧","irish":"🇮🇪",
+      "japanese":"🇯🇵","korean":"🇰🇷","south korean":"🇰🇷","chinese":"🇨🇳","indian":"🇮🇳",
+      "indian-canadian":"🇮🇳","chinese-canadian":"🇨🇳","irish-canadian":"🇮🇪",
+      "vietnamese":"🇻🇳","thai":"🇹🇭","filipino":"🇵🇭","colombian":"🇨🇴","peruvian":"🇵🇪",
+      "argentinian":"🇦🇷","chilean":"🇨🇱","portuguese":"🇵🇹","dutch":"🇳🇱","swiss":"🇨🇭",
+      "swedish":"🇸🇪","norwegian":"🇳🇴","turkish":"🇹🇷","russian":"🇷🇺","ukrainian":"🇺🇦"
+    };
+    const nationality = v("ah-nationality");
+    const flag = flagMap[nationality.toLowerCase()] || flagMap[nationality.toLowerCase().split(/[\s(]/)[0]] || "🌐";
+
+    const rawLangs = v("ah-languages");
+    const languages = rawLangs ? rawLangs.split(/[,;]/).map(s => s.trim()).filter(Boolean) : [];
+
+    const newHost = {
+      id: "h" + Date.now().toString(36),
+      name,
+      city,
+      capacity,
+      payPerGuest: num("ah-pay"),
+      color: defaultColor,
+      phone: v("ah-phone"),
+      email: v("ah-email"),
+      since: new Date().toISOString().slice(0,10),
+      rating: Math.min(5, Math.max(1, num("ah-rating") || 4.8)),
+      nationality: nationality || "—",
+      flag,
+      languages,
+      bio: v("ah-bio"),
+      pdf: null,
+      neighborhood: v("ah-neighborhood")
+    };
+    homestayHosts.push(newHost);
+
+    close();
+    showToast(`Added ${name} to homestay hosts`);
+
+    if(typeof renderHomestayHosts === "function") renderHomestayHosts();
+    if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+  };
+}
+
+// Wire the Add host button
+document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHostModal);
 
 // Refresh whenever user navigates to Portfolio or Dashboard
 const _origGoToView = typeof goToView === "function" ? goToView : null;
