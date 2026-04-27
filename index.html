@@ -194,6 +194,20 @@
   tr:last-child td{border-bottom:none}
   tr:hover td{background:var(--cream)}
 
+  /* Homestay clients — horizontally scrollable card; tight cells nowrap */
+  .hc-table-card{overflow-x:auto}
+  .hc-table{min-width:1180px}
+  .hc-table td:nth-child(4),  /* Stay */
+  .hc-table td:nth-child(5),  /* Check-in/out */
+  .hc-table td:nth-child(6),  /* Payment */
+  .hc-table td:nth-child(7),  /* We collect */
+  .hc-table td:nth-child(8),  /* We pay host */
+  .hc-table td:nth-child(9){  /* Margin */
+    white-space:nowrap;
+  }
+  .hc-table td:nth-child(2){white-space:nowrap}  /* Country */
+  .hc-table th{white-space:nowrap}
+
   .name-cell{display:flex;align-items:center;gap:10px}
   .name-cell .avatar{width:32px;height:32px;font-size:12px}
   .name-main{font-weight:600;font-size:13px}
@@ -927,6 +941,8 @@
     /* Tables — horizontal scroll */
     .card table{display:block;overflow-x:auto;white-space:nowrap}
     .card thead, .card tbody, .card tfoot{display:table;width:100%;table-layout:auto}
+    /* Homestay clients table — also nowrap dates on mobile */
+    .hc-table-card .hc-table .nw{white-space:nowrap}
     /* Modals — full-width on small screens */
     .modal-dialog{width:95vw;max-height:92vh}
     .modal-body{padding:14px 18px}
@@ -2332,8 +2348,8 @@
         <button class="btn btn-primary" id="hc-add-btn">+ Add homestay client</button>
       </div>
 
-      <div class="card">
-        <table>
+      <div class="card hc-table-card">
+        <table class="hc-table">
           <thead>
             <tr>
               <th>Client</th>
@@ -6952,6 +6968,16 @@ function renderHomestayClients(searchTxt = ""){
       "cash":         {label:"Cash",         icon:'<rect x="3" y="6" width="18" height="13" rx="2"/><circle cx="12" cy="12.5" r="2"/>',         cls:"badge-grey"},
     };
     const pm = payMethodMap[c.paymentMethod] || payMethodMap["credit-card"];
+    // Compact date helper: omit year if it matches arrival year
+    const _short = (s, refYear) => {
+      const d = parseLocalDate ? parseLocalDate(s) : new Date(s);
+      if(isNaN(d)) return s;
+      const m = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+      return `${m} ${d.getDate()}` + (d.getFullYear() === refYear ? "" : `, ${d.getFullYear()}`);
+    };
+    const arrYr = arrivalDate.getFullYear();
+    const depYr = departureDate.getFullYear();
+    const stayStr = `${_short(c.arrival, depYr)} → ${_short(c.departure, depYr)}`;
     return `
       <tr>
         <td>
@@ -6969,15 +6995,15 @@ function renderHomestayClients(searchTxt = ""){
           <div class="name-sub">${host ? host.city : "—"}</div>
         </td>
         <td>
-          <div style="font-size:12.5px">${fmtDate(c.arrival)} <span style="color:var(--muted)">→</span> ${fmtDate(c.departure)}</div>
+          <div style="font-size:12.5px">${stayStr}</div>
           <div class="name-sub" style="font-size:11px">${Math.round(stayDays/30*10)/10} months</div>
         </td>
         <td>
           <div style="font-size:12px">
-            <span style="color:var(--muted)">in:</span> <b>${fmtDate(c.checkIn)}</b>
+            <span style="color:var(--muted)">in:</span> <b>${_short(c.checkIn, depYr)}</b>
           </div>
           <div style="font-size:12px">
-            <span style="color:var(--muted)">out:</span> <b>${fmtDate(c.checkOut)}</b>
+            <span style="color:var(--muted)">out:</span> <b>${_short(c.checkOut, depYr)}</b>
           </div>
         </td>
         <td>
@@ -8332,15 +8358,299 @@ openLandlord = function(id){
   _origOpenLandlord(id);
   const l = landlords.find(x => x.id === id);
   if(!l) return;
+
+  /* === Null-safe panel cleanup === */
+  const body = document.getElementById("panel-body");
+  if(body){
+    const hasContract = !!(l.contractStart && l.contractEnd);
+    const hasRent = !!(l.monthlyRent && l.monthlyRent > 0);
+    const hasPayRec = l.payRecord != null;
+    const hasPdf = !!l.pdf;
+    const hasNotes = !!(l.notes && l.notes.trim());
+    const hasCompany = !!(l.company && l.company.trim());
+    const hasEmail = !!(l.email && l.email.trim());
+
+    // 1. Sanitize KPI strip (4 cards)
+    const kpis = body.querySelectorAll(".panel-kpi");
+    if(kpis.length >= 4){
+      // Monthly rent
+      if(!hasRent){
+        kpis[0].querySelector(".v").innerHTML = '<span style="color:var(--muted);font-size:24px">—</span>';
+        const sub = kpis[0].querySelector(".s"); if(sub) sub.textContent = "Rent not set";
+      }
+      // Contract length
+      if(!hasContract){
+        kpis[1].querySelector(".v").innerHTML = '<span style="color:var(--muted);font-size:24px">—</span>';
+        const sub = kpis[1].querySelector(".s"); if(sub) sub.textContent = "Contract not set";
+      }
+      // Time remaining
+      if(!hasContract){
+        kpis[2].querySelector(".l").textContent = "Time remaining";
+        kpis[2].querySelector(".v").innerHTML = '<span style="color:var(--muted);font-size:24px">—</span>';
+        const sub = kpis[2].querySelector(".s"); if(sub) sub.textContent = "Contract not set";
+      }
+      // Payment record
+      if(!hasPayRec){
+        kpis[3].querySelector(".v").innerHTML = '<span style="color:var(--muted);font-size:24px">—</span>';
+        const sub = kpis[3].querySelector(".s"); if(sub) sub.textContent = "No payments tracked yet";
+      }
+    }
+
+    // 2. Status badges — drop "Active contract" / "X year term" / "Expired" if no contract
+    if(!hasContract){
+      const meta = document.getElementById("panel-meta");
+      if(meta) meta.innerHTML = '<span class="badge badge-grey"><span class="dot"></span>Contract not on file</span>';
+    }
+
+    // 3. Sanitize "Contract details" rows
+    const sections = body.querySelectorAll(".panel-section");
+    sections.forEach(sec => {
+      const titleEl = sec.querySelector(".panel-section-title span");
+      const titleTxt = (titleEl ? titleEl.textContent : "").toLowerCase();
+      if(titleTxt.includes("contract details")){
+        const rows = sec.querySelectorAll(".list-row");
+        rows.forEach(r => {
+          const title = r.querySelector(".list-title")?.textContent.trim().toLowerCase() || "";
+          const meta = r.querySelector(".list-meta");
+          const sub = r.querySelector(".list-sub");
+          if(title === "contract start" || title === "contract end"){
+            if(!hasContract){
+              if(meta) meta.innerHTML = '<span style="color:var(--muted)">Not set</span>';
+              if(sub) sub.textContent = "—";
+            }
+          } else if(title === "total contract value"){
+            if(!hasRent || !hasContract){
+              if(meta) meta.innerHTML = '<span style="color:var(--muted)">—</span>';
+              if(sub) sub.textContent = "Set rent and contract dates";
+            }
+          } else if(title === "security deposit"){
+            if(!l.deposit){
+              if(meta) meta.innerHTML = '<span style="color:var(--muted)">—</span>';
+            }
+          } else if(title === "paid to landlord to date"){
+            if(!hasRent){
+              if(meta) meta.innerHTML = '<span style="color:var(--muted)">—</span>';
+            }
+          }
+        });
+      } else if(titleTxt.includes("signed") && titleTxt.includes("contract")){
+        // PDF block
+        if(!hasPdf) sec.style.display = "none";
+      } else if(titleTxt.includes("recent") && titleTxt.includes("rent")){
+        // Recent rent payments
+        if(!hasRent || !hasContract) sec.style.display = "none";
+      } else if(titleTxt === "contact"){
+        // Contact info — hide email/company rows when blank
+        const rows = sec.querySelectorAll(".list-row");
+        rows.forEach(r => {
+          const title = r.querySelector(".list-title")?.textContent.trim().toLowerCase() || "";
+          const meta = r.querySelector(".list-meta");
+          if(title === "email" && !hasEmail){
+            if(meta) meta.innerHTML = '<span style="color:var(--muted)">Not on file</span>';
+          } else if(title === "company" && !hasCompany){
+            if(meta) meta.innerHTML = '<span style="color:var(--muted)">Independent owner</span>';
+          }
+        });
+      }
+    });
+
+    // 4. Hide notes line if empty
+    const note = body.querySelector(".narrative");
+    if(note && !hasNotes){
+      // If the note ended up showing "Note: " with nothing, hide it
+      const txt = note.textContent.trim();
+      if(/^Note:\s*$/.test(txt)) note.style.display = "none";
+    }
+
+    // 5. Action footer — fix Email button when no email + add Edit button
+    const footer = body.querySelector("div[style*='margin-top:24px']");
+    if(footer){
+      const emailLink = footer.querySelector("a.btn-primary");
+      if(emailLink && !hasEmail){
+        emailLink.removeAttribute("href");
+        emailLink.style.opacity = "0.5";
+        emailLink.style.pointerEvents = "none";
+        emailLink.title = "No email on file";
+      }
+      // Inject Edit button if not already present
+      if(!footer.querySelector("[data-edit-landlord]")){
+        const editBtn = document.createElement("button");
+        editBtn.className = "btn btn-ghost";
+        editBtn.style.cssText = "flex:1;justify-content:center";
+        editBtn.setAttribute("data-edit-landlord", l.id);
+        editBtn.innerHTML = `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit`;
+        editBtn.addEventListener("click", () => openLandlordEdit(l.id));
+        // Insert before the "⋯" button
+        const moreBtn = [...footer.querySelectorAll("button")].find(b => b.textContent.trim() === "⋯");
+        if(moreBtn) footer.insertBefore(editBtn, moreBtn);
+        else footer.appendChild(editBtn);
+      }
+    }
+  }
+
   // Find the "Email landlord" button at the bottom and wire it
   const emailBtn = [...document.querySelectorAll("#panel-body .btn-primary")]
     .find(b => /email landlord/i.test(b.textContent));
-  if(emailBtn){
+  if(emailBtn && l.email){
     emailBtn.addEventListener("click", () => {
       window.open(`mailto:${l.email}?subject=${encodeURIComponent("Hello from Vanmates")}`, "_self");
     });
   }
 };
+
+/* === Landlord EDIT mode === */
+function openLandlordEdit(id){
+  const l = landlords.find(x => x.id === id);
+  if(!l) return;
+  const body = document.getElementById("panel-body");
+  if(!body) return;
+
+  // Helper for date input value
+  const toDateInput = (s) => {
+    if(!s) return "";
+    if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(s);
+    if(isNaN(d)) return "";
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  };
+
+  body.innerHTML = `
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Edit</em> landlord</span><span class="ct">${l.name}</span></div>
+      <div class="card card-pad">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 16px">
+          <div style="grid-column:1/-1">
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Full name</label>
+            <input type="text" id="ed-name" value="${(l.name||"").replace(/"/g,"&quot;")}" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Company</label>
+            <input type="text" id="ed-company" value="${(l.company||"").replace(/"/g,"&quot;")}" placeholder="Independent owner" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">City</label>
+            <select id="ed-city" class="ed-input">
+              ${["Vancouver","Toronto","Montreal","Guadalajara"].map(c => `<option value="${c}" ${l.city===c?"selected":""}>${c}</option>`).join("")}
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Email</label>
+            <input type="email" id="ed-email" value="${(l.email||"").replace(/"/g,"&quot;")}" placeholder="name@domain.com" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Phone</label>
+            <input type="tel" id="ed-phone" value="${(l.phone||"").replace(/"/g,"&quot;")}" class="ed-input"/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Contract</em> &amp; rent</span><span class="ct">leave blank if unknown</span></div>
+      <div class="card card-pad">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px 16px">
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Monthly rent (CAD)</label>
+            <input type="number" id="ed-rent" value="${l.monthlyRent || ""}" placeholder="0" min="0" step="50" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Security deposit</label>
+            <input type="number" id="ed-deposit" value="${l.deposit || ""}" placeholder="0" min="0" step="50" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Due day of month</label>
+            <input type="number" id="ed-due" value="${l.dueDay || 1}" min="1" max="31" step="1" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Contract start</label>
+            <input type="date" id="ed-start" value="${toDateInput(l.contractStart)}" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Contract end</label>
+            <input type="date" id="ed-end" value="${toDateInput(l.contractEnd)}" class="ed-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Payment record (%)</label>
+            <input type="number" id="ed-payrec" value="${l.payRecord != null ? l.payRecord : ""}" placeholder="100" min="0" max="100" step="1" class="ed-input"/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Properties</em> owned</span><span class="ct">one per line</span></div>
+      <div class="card card-pad">
+        <textarea id="ed-properties" rows="4" placeholder="715 W 14 Ave&#10;2066 Maple" class="ed-input" style="font-family:var(--slab);resize:vertical">${(l.properties || [l.property] || []).join("\n")}</textarea>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">First line becomes the primary property. Use exact house names so they link to your Properties section.</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Notes</em></span></div>
+      <div class="card card-pad">
+        <textarea id="ed-notes" rows="3" placeholder="Anything we should remember about this owner…" class="ed-input" style="resize:vertical">${(l.notes||"").replace(/</g,"&lt;")}</textarea>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:24px">
+      <button class="btn btn-primary" id="ed-save-btn" style="flex:1;justify-content:center">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Save changes
+      </button>
+      <button class="btn btn-ghost" id="ed-cancel-btn" style="flex:1;justify-content:center">Cancel</button>
+    </div>
+  `;
+
+  // Style inputs
+  if(!document.getElementById("ll-edit-style")){
+    const st = document.createElement("style");
+    st.id = "ll-edit-style";
+    st.textContent = `
+      .ed-input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font-family:var(--sans);font-size:14px;box-sizing:border-box}
+      .ed-input:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 3px var(--red-soft)}
+    `;
+    document.head.appendChild(st);
+  }
+
+  document.getElementById("ed-cancel-btn").onclick = () => openLandlord(id);
+
+  document.getElementById("ed-save-btn").onclick = () => {
+    const v = (sel) => document.getElementById(sel).value.trim();
+    const num = (sel) => { const x = v(sel); return x === "" ? null : Number(x); };
+
+    const newName = v("ed-name") || l.name;
+    l.name = newName;
+    // Refresh initials from first two name parts
+    const parts = newName.split(/\s+|\//).filter(Boolean);
+    if(parts.length >= 2) l.ini = (parts[0][0] + parts[1][0]).toUpperCase();
+    else if(parts.length === 1) l.ini = parts[0].slice(0,2).toUpperCase();
+
+    l.company = v("ed-company");
+    l.city = v("ed-city");
+    l.email = v("ed-email");
+    l.phone = v("ed-phone");
+
+    const rent = num("ed-rent"); l.monthlyRent = rent != null ? rent : 0;
+    const dep = num("ed-deposit"); l.deposit = dep != null ? dep : 0;
+    const due = num("ed-due"); l.dueDay = (due && due >= 1 && due <= 31) ? due : 1;
+    l.contractStart = v("ed-start") || null;
+    l.contractEnd = v("ed-end") || null;
+    const pr = num("ed-payrec"); l.payRecord = (pr != null && pr >= 0 && pr <= 100) ? pr : null;
+
+    const props = v("ed-properties").split(/\n/).map(s => s.trim()).filter(Boolean);
+    if(props.length){
+      l.properties = props;
+      l.property = props[0];
+    }
+    l.notes = v("ed-notes");
+
+    // Re-render: panel + table + KPIs
+    showToast(`Updated ${l.name}`);
+    if(typeof renderLandlords === "function") renderLandlords(document.getElementById("ll-search")?.value || "");
+    if(typeof updateLandlordKPIs === "function") updateLandlordKPIs();
+    openLandlord(id);
+  };
+}
 
 /* === HOMESTAY CLIENTS — All cities + All hosts + Add buttons === */
 let HC_CITY = null;
