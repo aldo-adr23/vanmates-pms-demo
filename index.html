@@ -9337,7 +9337,64 @@ if(typeof openTenant === "function"){
   openTenant = function(arg){
     _origOpenTenant_he(arg);
     document.querySelector(".panel-head .header-edit-btn")?.remove();
+    wireTenantActionButtons(arg);
   };
+}
+
+// Wire Send email + WhatsApp buttons in the tenant panel action footer
+function wireTenantActionButtons(emailOrTenant){
+  const t = typeof emailOrTenant === "string"
+    ? tenants.find(x => x.email === emailOrTenant)
+    : emailOrTenant;
+  if(!t) return;
+  const body = document.getElementById("panel-body");
+  if(!body) return;
+
+  // Find the action footer (the div with margin-top:24px containing the action buttons)
+  const footer = [...body.querySelectorAll("div[style*='margin-top:24px']")].find(d => {
+    const txt = d.textContent.replace(/\s+/g," ").trim();
+    return /Send email/i.test(txt) && /WhatsApp/i.test(txt);
+  });
+  if(!footer) return;
+
+  const buttons = footer.querySelectorAll("button");
+  // First button = Send email, second = WhatsApp, third = ⋯
+  const emailBtn = buttons[0];
+  const waBtn = buttons[1];
+  const moreBtn = buttons[2];
+
+  if(emailBtn){
+    emailBtn.onclick = () => {
+      if(!t.email){ showToast("No email on file for " + t.name); return; }
+      const subject = encodeURIComponent(`Hello from Vanmates`);
+      const body = encodeURIComponent(`Hi ${t.name.split(/\s+/)[0]},\n\n\n\nBest,\nThe Vanmates team`);
+      window.location.href = `mailto:${t.email}?subject=${subject}&body=${body}`;
+    };
+    emailBtn.style.cursor = "pointer";
+  }
+
+  if(waBtn){
+    waBtn.onclick = () => {
+      if(!t.phone){
+        showToast(`No phone on file for ${t.name}. Add it via Edit to enable WhatsApp.`);
+        return;
+      }
+      const cleaned = String(t.phone).replace(/[^\d+]/g, "");
+      const text = encodeURIComponent(`Hi ${t.name.split(/\s+/)[0]}, this is Vanmates — `);
+      window.open(`https://wa.me/${cleaned}?text=${text}`, "_blank", "noopener");
+    };
+    if(!t.phone){
+      waBtn.style.opacity = "0.55";
+      waBtn.title = "No phone on file — click for details";
+    }
+  }
+
+  if(moreBtn){
+    moreBtn.onclick = () => {
+      // Simple action menu
+      showToast(`More actions for ${t.name} — coming soon`);
+    };
+  }
 }
 if(typeof openHost === "function"){
   const _origOpenHost_he = openHost;
