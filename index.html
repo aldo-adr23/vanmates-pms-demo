@@ -935,6 +935,11 @@
       Maintenance
       <span class="nav-count">9</span>
     </button>
+    <button class="nav-item" data-view="deposits">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><circle cx="20" cy="20" r="3" fill="currentColor" stroke="none" opacity=".15"/></svg>
+      Damage deposits
+      <span class="nav-count">10</span>
+    </button>
     <button class="nav-item" data-view="financials">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l5-5 4 4 8-8"/><path d="M14 8h6v6"/></svg>
       Financials
@@ -1878,6 +1883,70 @@
       <div class="team-grid" id="team-grid"></div>
     </section>
 
+        <!-- ============ DAMAGE DEPOSITS ============ -->
+    <section class="view" data-view="deposits">
+
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Pending refunds</div><div class="kpi-value" id="dd-kpi-pending">5</div><div class="kpi-trend up" id="dd-kpi-pending-sub">$13,460 owed</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg days to refund</div><div class="kpi-value" id="dd-kpi-days">8<span style="font-size:18px;color:var(--muted)"> d</span></div><div class="kpi-trend up">▼ 6 days vs 14-day legal limit</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Refunded YTD</div><div class="kpi-value" id="dd-kpi-refunded" style="color:#3e6049">$13,575</div><div class="kpi-trend up">across 5 tenants</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg deduction rate</div><div class="kpi-value" id="dd-kpi-deductions">5.0<span style="font-size:18px;color:var(--muted)">%</span></div><div class="kpi-trend up">healthy · industry avg ~12%</div></div>
+      </div>
+
+      <div class="filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="dd-search" placeholder="Search by tenant, property, or city…" />
+        </div>
+        <div class="filter-chip" data-dd-filter="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+          <span class="label">Status</span>
+          <span class="val" id="dd-chip-status"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div class="filter-chip" data-dd-filter="city">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg>
+          <span class="label">City</span>
+          <span class="val" id="dd-chip-city"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <select class="sort-select" id="dd-sort">
+          <option value="recent">Sort: Most recent move-out</option>
+          <option value="oldest">Sort: Oldest pending first</option>
+          <option value="amount-desc">Sort: Largest deposit</option>
+          <option value="status">Sort: By status</option>
+        </select>
+      </div>
+
+      <div class="active-chips" id="dd-active-chips"></div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>Property / room</th>
+              <th>City</th>
+              <th>Move-out</th>
+              <th class="right">Deposit</th>
+              <th class="right">Deductions</th>
+              <th class="right">Refund</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="dd-body"></tbody>
+        </table>
+        <div id="dd-empty" style="display:none">
+          <div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <div class="t">No deposit refunds match these filters</div>
+            <div>Try changing the status or clearing some filters.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ SETTINGS ============ -->
     <section class="view" data-view="settings">
       <div class="row-15">
@@ -2633,6 +2702,137 @@ const propertyHistory = {
     history:[ 33, 50, 67, 83, 83, 83, 67, 67, 83,100,100, 83,
               83, 83, 83, 83, 83, 67, 83, 83]
   },
+};
+
+/* Damage deposit refunds — tracks money owed back to tenants after move-out.
+   Each record captures the deposit, any damages found during inspection,
+   and the refund status through to completion. */
+const damageDeposits = [
+  // === Completed / paid out ===
+  {
+    id:"dd01", ini:"NA", name:"Nadia Ahmed",        flag:"🇪🇬", country:"Egypt",
+    property:"Annex House",      room:"4A", city:"Toronto",   color:"#9b6b53",
+    moveIn:"2024-09-01", moveOut:"2026-04-30",
+    deposit:2620, status:"completed", method:"e-transfer", refundDate:"2026-04-22", processedBy:"Sarah Chen",
+    inspector:"Marcus Weber", inspectedOn:"2026-04-19",
+    damages:[{desc:"Carpet shampoo (light staining)", amt:120}],
+    notes:"Otherwise excellent condition. Tenant signed off on the deduction the same day."
+  },
+  {
+    id:"dd02", ini:"OB", name:"Olivia Brown",       flag:"🇦🇺", country:"Australia",
+    property:"Park family",      room:"Homestay",   city:"Toronto",   color:"#B0855A",
+    moveIn:"2025-09-01", moveOut:"2026-02-28",
+    deposit:2900, status:"completed", method:"e-transfer", refundDate:"2026-03-14", processedBy:"James Park",
+    inspector:"Sarah Chen", inspectedOn:"2026-03-01",
+    damages:[],
+    notes:"Pristine. Park family praised her thoughtfulness throughout the stay."
+  },
+  {
+    id:"dd03", ini:"FW", name:"Felix Werner",       flag:"🇩🇪", country:"Germany",
+    property:"Junction Triangle",room:"3C", city:"Toronto",   color:"#A88965",
+    moveIn:"2024-09-01", moveOut:"2026-01-31",
+    deposit:2480, status:"completed", method:"wire", refundDate:"2026-02-12", processedBy:"James Park",
+    inspector:"Marcus Weber", inspectedOn:"2026-02-02",
+    damages:[
+      {desc:"Wall hole patch + paint touch-up", amt:180},
+      {desc:"Replacement drawer slide", amt:75},
+    ],
+    notes:"Returned to Munich. Wired to his German account; took 4 business days."
+  },
+  // === In progress ===
+  {
+    id:"dd04", ini:"AD", name:"Aïcha Diallo",       flag:"🇸🇳", country:"Senegal",
+    property:"Annex House",      room:"1A", city:"Toronto",   color:"#C19A6B",
+    moveIn:"2025-05-08", moveOut:"2026-05-07",
+    deposit:2580, status:"inspection-done", method:"e-transfer", processedBy:null,
+    inspector:"Marcus Weber", inspectedOn:"2026-04-25",
+    damages:[
+      {desc:"Bathroom mildew clean (extensive)", amt:180},
+      {desc:"Missing closet key — re-key", amt:65},
+    ],
+    notes:"Quote sent to tenant for sign-off on April 26."
+  },
+  {
+    id:"dd05", ini:"NP", name:"Nikolai Petrov",     flag:"🇧🇬", country:"Bulgaria",
+    property:"Plateau Co-Living", room:"5", city:"Montréal",   color:"#B0855A",
+    moveIn:"2025-05-01", moveOut:"2026-04-30",
+    deposit:2020, status:"awaiting-approval", method:"e-transfer", processedBy:null,
+    inspector:"Léa Bernard", inspectedOn:"2026-04-23",
+    damages:[
+      {desc:"Mattress replacement (deep stain)", amt:300},
+      {desc:"Wall paint touch-up", amt:120},
+      {desc:"Window blind replacement", amt:90},
+    ],
+    notes:"Tenant disputing the mattress charge. Photos sent April 24, awaiting reply."
+  },
+  {
+    id:"dd06", ini:"PS", name:"Priya Shankar",      flag:"🇮🇳", country:"India",
+    property:"Junction Triangle", room:"2B", city:"Toronto",   color:"#9b6b53",
+    moveIn:"2025-06-15", moveOut:"2026-05-21",
+    deposit:2620, status:"pending-inspection", method:null, processedBy:null,
+    inspector:"Marcus Weber", inspectedOn:null,
+    damages:[],
+    notes:"Move-out scheduled May 21. Inspection booked for May 22 at 11 AM."
+  },
+  {
+    id:"dd07", ini:"LO", name:"Liam O'Connor",      flag:"🇮🇪", country:"Ireland",
+    property:"Kitsilano Studios", room:"Suite 2", city:"Vancouver", color:"#8E6F4A",
+    moveIn:"2025-06-01", moveOut:"2026-05-14",
+    deposit:3160, status:"pending-inspection", method:null, processedBy:null,
+    inspector:"Sarah Chen", inspectedOn:null,
+    damages:[],
+    notes:"Vacating to head back to Dublin. Final walk-through May 15 at 3 PM."
+  },
+  // === Disputed ===
+  {
+    id:"dd08", ini:"VR", name:"Viktor Romanov",     flag:"🇺🇦", country:"Ukraine",
+    property:"Mile End Loft",     room:"3", city:"Montréal",   color:"#7d6041",
+    moveIn:"2025-09-01", moveOut:"2026-05-31",
+    deposit:2360, status:"disputed", method:null, processedBy:null,
+    inspector:"Léa Bernard", inspectedOn:"2026-04-15",
+    damages:[
+      {desc:"Cigarette burns on counter (claimed pre-existing)", amt:240},
+      {desc:"Deep clean of kitchen", amt:180},
+    ],
+    notes:"Tenant disputes cigarette damage charge — claims it was there at move-in. Reviewing original move-in photos."
+  },
+  // === Recently completed (with no deductions for variety) ===
+  {
+    id:"dd09", ini:"YH", name:"Yusuf Hassan",       flag:"🇸🇴", country:"Somalia",
+    property:"Bloor Brownstone",  room:"B", city:"Toronto",   color:"#A88965",
+    moveIn:"2024-09-01", moveOut:"2025-12-15",
+    deposit:3080, status:"completed", method:"e-transfer", refundDate:"2025-12-22", processedBy:"James Park",
+    inspector:"Marcus Weber", inspectedOn:"2025-12-16",
+    damages:[],
+    notes:"Refund processed within 7 days — well under the 14-day legal limit."
+  },
+  {
+    id:"dd10", ini:"GS", name:"Grace Sánchez",      flag:"🇪🇸", country:"Spain",
+    property:"Bloor Brownstone",  room:"C", city:"Toronto",   color:"#B0855A",
+    moveIn:"2024-09-01", moveOut:"2025-11-30",
+    deposit:3080, status:"completed", method:"credit-card-reversal", refundDate:"2025-12-09", processedBy:"James Park",
+    inspector:"Sarah Chen", inspectedOn:"2025-12-01",
+    damages:[
+      {desc:"Lost mailbox key", amt:35},
+    ],
+    notes:"Quick turnaround. Tenant moved to Madrid."
+  },
+];
+
+const depositStatuses = {
+  "pending-inspection": {label:"Pending inspection", cls:"badge-grey",  color:"var(--muted)"},
+  "inspection-done":    {label:"Inspection done",    cls:"badge-blue",  color:"var(--blue)"},
+  "awaiting-approval":  {label:"Awaiting approval",  cls:"badge-amber", color:"var(--amber)"},
+  "disputed":           {label:"Disputed",           cls:"badge-red",   color:"var(--red)"},
+  "processing":         {label:"Processing payment", cls:"badge-blue",  color:"var(--blue)"},
+  "completed":          {label:"Completed",          cls:"badge-green", color:"var(--green)"},
+};
+
+const depositMethods = {
+  "e-transfer":           "e-Transfer",
+  "credit-card-reversal": "Credit card reversal",
+  "wire":                 "Wire transfer",
+  "cheque":               "Cheque",
 };
 
 /* Per-property utility accounts. Sums match each property's utilities total in portfolio data. */
@@ -3831,13 +4031,13 @@ function closeProperty(){
 /* ============ TEAM & ROLES ============ */
 const roles = {
   admin:       {label:"Admin",              color:"#B94A3F", desc:"Full access to everything",
-                nav:["dashboard","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-finance","vacancies","maintenance","financials","team","settings"]},
+                nav:["dashboard","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
-                nav:["dashboard","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance"]},
+                nav:["dashboard","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
-                nav:["dashboard","portfolio","landlords","homestay-finance","financials"]},
+                nav:["dashboard","portfolio","landlords","homestay-finance","financials","deposits"]},
   maintenance: {label:"Maintenance Lead",   color:"#8A7B6C", desc:"Maintenance tickets and vendors",
                 nav:["dashboard","maintenance"]},
 };
@@ -5348,6 +5548,7 @@ const titles = {
   portfolio: ["<em>Portfolio</em> performance", "Revenue, profit, and margin per property · April 2026"],
   landlords: ["<em>Landlords</em>", "Owners we lease from · contracts, rent paid, and renewals"],
   team: ["<em>Team</em>", "Members, roles, and permissions"],
+  deposits: ["Damage <em>deposits</em>", "Refund tracking for tenants who have moved out"],
   "homestay-clients": ["Homestay <em>clients</em>", "Students hosted by partner families · contact, host, and rent"],
   "homestay-hosts": ["Homestay <em>hosts</em>", "Partner families across our cities · profiles, capacity, and history"],
   "homestay-finance": ["Homestay <em>finance</em>", "Revenue from clients, payouts to hosts, and net margin"],
@@ -6239,6 +6440,385 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
     }
   }, 120);
 });
+
+
+/* ============ DAMAGE DEPOSITS ============ */
+const DD_FILTERS = { search:"", status:new Set(), city:new Set(), sort:"recent" };
+
+function dedDays(rec){
+  // Days since move-out (or until move-out if future)
+  return daysBetween(parseLocalDate(rec.moveOut), TODAY);
+}
+function depositTotalDeductions(rec){
+  return (rec.damages || []).reduce((s, d) => s + d.amt, 0);
+}
+
+function applyDepositFilters(){
+  let list = damageDeposits.slice();
+  const q = DD_FILTERS.search.toLowerCase().trim();
+  if(q){
+    list = list.filter(r =>
+      r.name.toLowerCase().includes(q) ||
+      r.property.toLowerCase().includes(q) ||
+      r.city.toLowerCase().includes(q) ||
+      r.country.toLowerCase().includes(q)
+    );
+  }
+  if(DD_FILTERS.status.size) list = list.filter(r => DD_FILTERS.status.has(r.status));
+  if(DD_FILTERS.city.size)   list = list.filter(r => DD_FILTERS.city.has(r.city));
+
+  const sorters = {
+    "recent":      (a,b) => parseLocalDate(b.moveOut) - parseLocalDate(a.moveOut),
+    "oldest":      (a,b) => parseLocalDate(a.moveOut) - parseLocalDate(b.moveOut),
+    "amount-desc": (a,b) => b.deposit - a.deposit,
+    "status":      (a,b) => a.status.localeCompare(b.status),
+  };
+  list.sort(sorters[DD_FILTERS.sort] || sorters.recent);
+  return list;
+}
+
+function renderDeposits(){
+  const list = applyDepositFilters();
+  const body = document.getElementById("dd-body");
+  if(!body) return;
+
+  document.getElementById("dd-empty").style.display = list.length ? "none" : "block";
+
+  // Update KPIs (always based on full data, not the filtered list)
+  const all = damageDeposits;
+  const pending = all.filter(r => r.status !== "completed");
+  const pendingTotal = pending.reduce((s,r) => s + (r.deposit - depositTotalDeductions(r)), 0);
+  document.getElementById("dd-kpi-pending").textContent = pending.length;
+  document.getElementById("dd-kpi-pending-sub").textContent = `${fmt(pendingTotal)} owed`;
+
+  const completed = all.filter(r => r.status === "completed");
+  const refundedYTD = completed.reduce((s,r) => s + (r.deposit - depositTotalDeductions(r)), 0);
+  document.getElementById("dd-kpi-refunded").textContent = fmt(refundedYTD);
+
+  // Avg days to refund (only completed records)
+  const days = completed
+    .filter(r => r.refundDate && r.moveOut)
+    .map(r => daysBetween(parseLocalDate(r.moveOut), parseLocalDate(r.refundDate)));
+  const avgDays = days.length ? Math.round(days.reduce((a,b)=>a+b,0)/days.length) : 0;
+  document.getElementById("dd-kpi-days").innerHTML = `${avgDays}<span style="font-size:18px;color:var(--muted)"> d</span>`;
+
+  // Avg deduction rate
+  const totalDep = completed.reduce((s,r) => s + r.deposit, 0);
+  const totalDeducted = completed.reduce((s,r) => s + depositTotalDeductions(r), 0);
+  const avgRate = totalDep > 0 ? (totalDeducted / totalDep * 100) : 0;
+  document.getElementById("dd-kpi-deductions").innerHTML = `${avgRate.toFixed(1)}<span style="font-size:18px;color:var(--muted)">%</span>`;
+
+  body.innerHTML = list.map(r => {
+    const ded = depositTotalDeductions(r);
+    const refund = r.deposit - ded;
+    const dDays = dedDays(r);
+    const moveOutLabel = dDays >= 0 ? `${dDays} day${dDays===1?"":"s"} ago` : `in ${Math.abs(dDays)} day${Math.abs(dDays)===1?"":"s"}`;
+    const sm = depositStatuses[r.status];
+    return `
+      <tr data-deposit-id="${r.id}" style="cursor:pointer">
+        <td>
+          <div class="name-cell">
+            <div class="avatar" style="background:linear-gradient(135deg, ${r.color}, ${shade(r.color,-25)})">${r.ini}</div>
+            <div>
+              <div class="name-main">${r.name} <span class="flag">${r.flag}</span></div>
+              <div class="name-sub">${r.country}</div>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div class="name-main">${r.property}</div>
+          <div class="name-sub">${r.room}</div>
+        </td>
+        <td>${r.city}</td>
+        <td>
+          <div class="name-main">${fmtDate(r.moveOut)}</div>
+          <div class="name-sub" style="font-size:11px;color:${dDays > 14 && r.status !== "completed" ? "var(--red-dark)" : "var(--muted)"}">${moveOutLabel}</div>
+        </td>
+        <td class="right"><span class="num">${fmt(r.deposit)}</span></td>
+        <td class="right">${ded > 0
+          ? `<span class="num" style="color:var(--red-dark)">−${fmt(ded)}</span><div class="name-sub" style="font-size:11px">${r.damages.length} item${r.damages.length===1?"":"s"}</div>`
+          : `<span class="card-sub" style="font-size:12px">no deductions</span>`}</td>
+        <td class="right"><span class="num" style="color:#3e6049">${fmt(refund)}</span></td>
+        <td><span class="badge ${sm.cls}"><span class="dot"></span>${sm.label}</span></td>
+        <td class="right">
+          ${r.status === "completed"
+            ? `<button class="btn btn-ghost" data-deposit-view="${r.id}" style="padding:6px 12px;font-size:12px">View</button>`
+            : `<button class="btn btn-primary" data-deposit-view="${r.id}" style="padding:6px 12px;font-size:12px">Process</button>`}
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  // Wire row + button clicks
+  body.querySelectorAll("tr[data-deposit-id]").forEach(row => {
+    row.addEventListener("click", e => {
+      if(e.target.closest("button[data-deposit-view]")) return;
+      openDeposit(row.dataset.depositId);
+    });
+  });
+  body.querySelectorAll("[data-deposit-view]").forEach(b => {
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      openDeposit(b.dataset.depositView);
+    });
+  });
+
+  // Active chips
+  const ac = document.getElementById("dd-active-chips");
+  const chips = [];
+  if(DD_FILTERS.search) chips.push({k:"search", v:DD_FILTERS.search, l:'Search: "'+DD_FILTERS.search+'"'});
+  DD_FILTERS.status.forEach(v => chips.push({k:"status", v, l: depositStatuses[v]?.label || v}));
+  DD_FILTERS.city.forEach(v => chips.push({k:"city", v, l:v}));
+  if(chips.length === 0) ac.innerHTML = "";
+  else {
+    ac.innerHTML = chips.map(c =>
+      `<span class="active-chip">${c.l}<span class="x" data-ddrm="${c.k}|${c.v}">✕</span></span>`
+    ).join("") + `<button class="clear" id="dd-clear-all">Clear all</button>`;
+    ac.querySelectorAll(".x").forEach(x => x.addEventListener("click", () => {
+      const [k, v] = x.dataset.ddrm.split("|");
+      if(k === "search") { DD_FILTERS.search = ""; document.getElementById("dd-search").value = ""; }
+      else DD_FILTERS[k].delete(v);
+      renderDeposits();
+    }));
+    document.getElementById("dd-clear-all").addEventListener("click", () => {
+      DD_FILTERS.search = ""; DD_FILTERS.status.clear(); DD_FILTERS.city.clear();
+      document.getElementById("dd-search").value = "";
+      document.querySelectorAll('.filter-dropdown[data-dd] input[type=checkbox]').forEach(cb => cb.checked = false);
+      renderDeposits();
+    });
+  }
+
+  // Chip values
+  const setChip = (id, set) => {
+    const el = document.getElementById(id); if(!el) return;
+    el.textContent = set.size === 0 ? "" : set.size === 1 ? " · " + (depositStatuses[[...set][0]]?.label || [...set][0]) : ` · ${set.size} selected`;
+    el.closest(".filter-chip").classList.toggle("has-value", set.size > 0);
+  };
+  setChip("dd-chip-status", DD_FILTERS.status);
+  setChip("dd-chip-city", DD_FILTERS.city);
+}
+
+function attachDDDropdown(filterKey, options, labelMap){
+  const chip = document.querySelector(`.filter-chip[data-dd-filter="${filterKey}"]`);
+  if(!chip) return;
+  const dd = document.createElement("div");
+  dd.className = "filter-dropdown";
+  dd.dataset.dd = "1";
+  dd.innerHTML = options.map(o =>
+    `<label class="opt"><input type="checkbox" value="${o}"/><span>${labelMap ? labelMap[o] || o : o}</span></label>`
+  ).join("") + `
+    <div class="filter-dropdown-foot">
+      <button class="filter-link" data-action="clear">Clear</button>
+      <button class="filter-link" data-action="apply">Apply</button>
+    </div>`;
+  chip.appendChild(dd);
+  chip.addEventListener("click", e => {
+    if(e.target.closest(".filter-dropdown")) return;
+    document.querySelectorAll(".filter-dropdown.open").forEach(d => { if(d !== dd) d.classList.remove("open"); });
+    dd.classList.toggle("open");
+  });
+  dd.addEventListener("click", e => e.stopPropagation());
+  dd.querySelector('[data-action="apply"]').addEventListener("click", () => {
+    DD_FILTERS[filterKey] = new Set([...dd.querySelectorAll("input:checked")].map(i => i.value));
+    renderDeposits();
+    dd.classList.remove("open");
+  });
+  dd.querySelector('[data-action="clear"]').addEventListener("click", () => {
+    dd.querySelectorAll("input").forEach(cb => cb.checked = false);
+    DD_FILTERS[filterKey].clear();
+    renderDeposits();
+  });
+  document.addEventListener("click", e => {
+    if(!chip.contains(e.target)) dd.classList.remove("open");
+  });
+}
+
+attachDDDropdown("status", Object.keys(depositStatuses),
+  Object.fromEntries(Object.entries(depositStatuses).map(([k,v]) => [k, v.label])));
+attachDDDropdown("city", [...new Set(damageDeposits.map(r => r.city))].sort());
+
+document.getElementById("dd-search")?.addEventListener("input", e => {
+  DD_FILTERS.search = e.target.value; renderDeposits();
+});
+document.getElementById("dd-sort")?.addEventListener("change", e => {
+  DD_FILTERS.sort = e.target.value; renderDeposits();
+});
+
+renderDeposits();
+
+/* === Deposit detail panel === */
+function openDeposit(id){
+  const r = damageDeposits.find(x => x.id === id);
+  if(!r) return;
+  const ded = depositTotalDeductions(r);
+  const refund = r.deposit - ded;
+  const dedRate = (ded / r.deposit * 100).toFixed(1);
+  const dDays = dedDays(r);
+  const sm = depositStatuses[r.status];
+
+  // Hero
+  const hero = document.getElementById("panel-hero");
+  hero.style.background = `linear-gradient(135deg, ${r.color}, ${shade(r.color, -25)})`;
+  hero.style.color = "#fff";
+  hero.style.fontSize = "20px";
+  hero.textContent = r.ini;
+
+  document.getElementById("panel-title").innerHTML = `${r.name} <span class="flag" style="font-size:22px">${r.flag}</span>`;
+  document.getElementById("panel-sub").textContent = `${r.property} · Room ${r.room} · ${r.city}`;
+  document.getElementById("panel-meta").innerHTML = `
+    <span class="badge ${sm.cls}"><span class="dot"></span>${sm.label}</span>
+    <span class="badge badge-grey"><span class="dot"></span>Moved out ${fmtDate(r.moveOut)}</span>
+    ${r.status === "completed" ? `<span class="badge badge-green"><span class="dot"></span>Refunded ${fmtDate(r.refundDate)}</span>` : ""}
+  `;
+
+  // Status timeline steps
+  const steps = ["pending-inspection", "inspection-done", "awaiting-approval", "processing", "completed"];
+  const isDisputed = r.status === "disputed";
+  const currentIdx = isDisputed ? 2 : steps.indexOf(r.status);
+  const stepLabels = ["Move-out", "Inspection", "Quote sent", "Refund processing", "Refund paid"];
+
+  const timelineHtml = `
+    <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px;position:relative">
+      ${stepLabels.map((label, i) => {
+        const done = i < currentIdx || r.status === "completed";
+        const active = i === currentIdx && r.status !== "completed";
+        const color = done ? "#5C8A6B" : active ? "var(--red)" : "var(--line)";
+        const fill = done ? "#5C8A6B" : active ? "var(--red)" : "#fff";
+        const textColor = done || active ? "var(--ink)" : "var(--muted)";
+        return `
+          <div style="text-align:center;flex:1;position:relative;z-index:2">
+            <div style="width:24px;height:24px;border-radius:50%;background:${fill};border:2px solid ${color};margin:0 auto 6px;display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700">
+              ${done ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="5 12 10 17 19 7"/></svg>' : (i+1)}
+            </div>
+            <div style="font-size:11px;font-weight:600;color:${textColor};letter-spacing:.2px">${label}</div>
+          </div>
+        `;
+      }).join('<div style="height:2px;flex:0 0 auto;width:30px;background:var(--line);margin-bottom:18px;z-index:1"></div>')}
+    </div>
+  `;
+
+  const body = document.getElementById("panel-body");
+  body.innerHTML = `
+    <!-- KPI strip -->
+    <div class="panel-kpis">
+      <div class="panel-kpi">
+        <div class="l">Deposit held</div>
+        <div class="v">${fmt(r.deposit)}</div>
+        <div class="s">collected ${fmtDate(r.moveIn)}</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Deductions</div>
+        <div class="v ${ded > 0 ? 'red' : ''}">${ded > 0 ? '−' : ''}${fmt(ded)}</div>
+        <div class="s">${ded > 0 ? `${dedRate}% of deposit` : "no damages"}</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Refund due</div>
+        <div class="v green">${fmt(refund)}</div>
+        <div class="s">${r.status === "completed" ? "paid" : "pending"}</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">${r.status === "completed" ? "Days to refund" : "Days since move-out"}</div>
+        <div class="v ${dDays > 14 && r.status !== "completed" ? "red" : ""}">${r.status === "completed" && r.refundDate
+          ? daysBetween(parseLocalDate(r.moveOut), parseLocalDate(r.refundDate))
+          : Math.abs(dDays)}<span style="font-size:13px;color:var(--muted);font-weight:500"> d</span></div>
+        <div class="s">${r.status === "completed" ? "well within 14-day limit" : (dDays >= 0 ? "14-day clock running" : "move-out upcoming")}</div>
+      </div>
+    </div>
+
+    <!-- Status timeline -->
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Status</em> timeline</span><span class="ct">${isDisputed ? "Disputed — on hold" : sm.label}</span></div>
+      ${timelineHtml}
+      ${isDisputed ? `
+        <div class="narrative" style="background:var(--red-soft);color:var(--red-dark);margin-top:10px">
+          <b>Dispute open:</b> Tenant is contesting deductions. Refund is on hold pending resolution.
+        </div>
+      ` : ""}
+    </div>
+
+    <!-- Itemized damages -->
+    <div class="panel-section">
+      <div class="panel-section-title">
+        <span>Itemized <em>damages</em></span>
+        <span class="ct">${r.damages.length} item${r.damages.length===1?"":"s"} · ${fmt(ded)}</span>
+      </div>
+      ${r.damages.length === 0
+        ? `<div class="card card-pad" style="text-align:center;color:#3e6049;font-weight:600">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#5C8A6B" stroke-width="2" style="margin-bottom:6px"><path d="M5 12l4 4L19 6"/></svg>
+            <div>No damages found at inspection — full deposit returned.</div>
+          </div>`
+        : `<div class="card" style="padding:0">
+            ${r.damages.map((d, i) => `
+              <div class="list-row" style="padding:12px 16px;${i===r.damages.length-1?'border-bottom:none':''}">
+                <div class="list-icon red">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+                </div>
+                <div class="list-main">
+                  <div class="list-title">${d.desc}</div>
+                  <div class="list-sub">Photo on file · approved by ${r.inspector}</div>
+                </div>
+                <div class="list-meta num" style="color:var(--red-dark)">−${fmt(d.amt)}</div>
+              </div>
+            `).join("")}
+            <div class="list-row" style="padding:12px 16px;border-bottom:none;background:var(--cream-2)">
+              <div class="list-main"><div class="list-title">Total deductions</div><div class="list-sub">${dedRate}% of deposit</div></div>
+              <div class="list-meta num" style="color:var(--red-dark);font-size:15px">−${fmt(ded)}</div>
+            </div>
+          </div>`}
+    </div>
+
+    <!-- Refund details -->
+    <div class="panel-section">
+      <div class="panel-section-title"><span>Refund <em>details</em></span></div>
+      <div class="card" style="padding:0">
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 1 0-18 0"/><path d="M9 12l2 2 4-4"/></svg></div>
+          <div class="list-main"><div class="list-title">Refund amount</div><div class="list-sub">${fmt(r.deposit)} deposit − ${fmt(ded)} deductions</div></div>
+          <div class="list-meta num" style="color:#3e6049;font-size:15px">${fmt(refund)}</div>
+        </div>
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/></svg></div>
+          <div class="list-main"><div class="list-title">Refund method</div><div class="list-sub">${r.method ? "Selected by tenant" : "Not yet chosen"}</div></div>
+          <div class="list-meta" style="color:var(--ink);font-weight:600">${r.method ? depositMethods[r.method] : "—"}</div>
+        </div>
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+          <div class="list-main"><div class="list-title">Inspection date</div><div class="list-sub">By ${r.inspector}</div></div>
+          <div class="list-meta num">${r.inspectedOn ? fmtDate(r.inspectedOn) : "Not yet inspected"}</div>
+        </div>
+        <div class="list-row" style="padding:12px 16px;border-bottom:none">
+          <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
+          <div class="list-main"><div class="list-title">Refund issued</div><div class="list-sub">${r.processedBy ? `By ${r.processedBy}` : "Pending processing"}</div></div>
+          <div class="list-meta num">${r.refundDate ? fmtDate(r.refundDate) : "—"}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inspector notes -->
+    <div class="panel-section">
+      <div class="panel-section-title"><span>Inspector <em>notes</em></span></div>
+      <div class="card card-pad" style="font-size:13.5px;line-height:1.5;color:var(--ink)">
+        ${r.notes || '<span style="color:var(--muted)">No notes recorded.</span>'}
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex;gap:8px;margin-top:24px">
+      ${r.status === "completed"
+        ? '<button class="btn btn-ghost" style="flex:1;justify-content:center">Download statement</button>'
+        : r.status === "disputed"
+          ? '<button class="btn btn-primary" style="flex:1;justify-content:center">Resolve dispute</button>'
+          : '<button class="btn btn-primary" style="flex:1;justify-content:center">Process refund</button>'}
+      <button class="btn btn-ghost" style="flex:1;justify-content:center">Send statement</button>
+      <button class="btn btn-ghost">⋯</button>
+    </div>
+  `;
+
+  document.getElementById("detail-panel").classList.add("open");
+  document.getElementById("detail-panel").setAttribute("aria-hidden","false");
+  document.getElementById("panel-backdrop").classList.add("open");
+  document.body.style.overflow = "hidden";
+}
 
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
