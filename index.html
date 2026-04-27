@@ -921,6 +921,11 @@
       Homestay hosts
       <span class="nav-count">6</span>
     </button>
+    <button class="nav-item" data-view="homestay-matching">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="12" r="3"/><path d="M9 12h6"/><path d="M12 4v3M12 17v3"/></svg>
+      Homestay matching
+      <span class="nav-count">5</span>
+    </button>
     <button class="nav-item" data-view="homestay-finance">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
       Homestay finance
@@ -1280,6 +1285,18 @@
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
           Save view
         </button>
+        <div style="position:relative" id="tenants-email-wrap">
+          <button class="btn btn-ghost" id="tenants-email-btn" style="padding:7px 14px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+            Email tenants ▾
+          </button>
+          <div class="filter-dropdown" id="tenants-email-menu" style="min-width:240px">
+            <label class="opt" data-email-scope="all"><span style="font-weight:600">Email all <em>active</em> tenants</span><span class="ct" id="tenants-email-all-count"></span></label>
+            <div style="height:1px;background:var(--line);margin:4px 0"></div>
+            <div style="font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:700;padding:6px 10px 4px">By house</div>
+            <div id="tenants-email-house-list"></div>
+          </div>
+        </div>
         <button class="btn btn-primary" style="padding:7px 14px">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
           Add tenant
@@ -1434,8 +1451,8 @@
           <div class="tab">Vancouver</div>
         </div>
         <div style="flex:1"></div>
-        <button class="btn btn-ghost">Map view</button>
-        <button class="btn btn-primary">+ Add property</button>
+        <button class="btn btn-ghost" id="props-map-btn">Map view</button>
+        <button class="btn btn-primary" id="props-add-btn">+ Add property</button>
       </div>
 
       <div class="prop-grid" id="props-grid">
@@ -1671,8 +1688,10 @@
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input id="ll-search" placeholder="Search landlords or properties…" />
         </div>
-        <button class="btn btn-ghost">All cities ▾</button>
-        <button class="btn btn-ghost">All cities</button>
+        <div style="position:relative" id="ll-city-wrap">
+          <button class="btn btn-ghost" id="ll-city-btn">All cities ▾</button>
+          <div class="filter-dropdown" id="ll-city-menu" style="min-width:200px"></div>
+        </div>
         <button class="btn btn-primary">+ Add landlord</button>
       </div>
 
@@ -1685,7 +1704,7 @@
               <th>City</th>
               <th>Monthly rent</th>
               <th>Contract</th>
-              <th>Ends</th>
+              <th class="sortable" id="ll-th-ends" style="cursor:pointer;user-select:none">Ends <span id="ll-ends-arrow" style="font-size:9px;opacity:.5">⇅</span></th>
               <th>Contract</th>
               <th></th>
             </tr>
@@ -2126,9 +2145,15 @@
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input id="hc-search" placeholder="Search clients, hosts, school, or country…" />
         </div>
-        <button class="btn btn-ghost">All cities ▾</button>
-        <button class="btn btn-ghost">All hosts ▾</button>
-        <button class="btn btn-primary">+ Add homestay client</button>
+        <div style="position:relative" id="hc-city-wrap">
+          <button class="btn btn-ghost" id="hc-city-btn">All cities ▾</button>
+          <div class="filter-dropdown" id="hc-city-menu" style="min-width:200px"></div>
+        </div>
+        <div style="position:relative" id="hc-host-wrap">
+          <button class="btn btn-ghost" id="hc-host-btn">All hosts ▾</button>
+          <div class="filter-dropdown" id="hc-host-menu" style="min-width:240px"></div>
+        </div>
+        <button class="btn btn-primary" id="hc-add-btn">+ Add homestay client</button>
       </div>
 
       <div class="card">
@@ -2199,6 +2224,66 @@
       <div class="prop-grid" id="hh-grid"></div>
     </section>
 
+        <!-- ============ HOMESTAY MATCHING ============ -->
+    <section class="view" data-view="homestay-matching">
+
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">New applications</div><div class="kpi-value" id="hm-kpi-apps">5</div><div class="kpi-trend up">▲ 3 this week</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Hosts with capacity</div><div class="kpi-value" id="hm-kpi-hosts">5</div><div class="kpi-trend up">8 open beds total</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg time to match</div><div class="kpi-value">2.4<span style="font-size:18px;color:var(--muted)"> d</span></div><div class="kpi-trend up">▼ from 3.2 last quarter</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Match rate</div><div class="kpi-value">92<span style="font-size:18px;color:var(--muted)">%</span></div><div class="kpi-trend up">23 of 25 last month</div></div>
+      </div>
+
+      <div class="row-15">
+        <div>
+          <div class="card-head" style="margin-bottom:12px">
+            <div>
+              <div class="card-title">New <em>applications</em></div>
+              <div class="card-sub">Click an applicant to see best-matched host candidates</div>
+            </div>
+          </div>
+          <div id="hm-applicants"></div>
+        </div>
+
+        <div>
+          <div class="card-head" style="margin-bottom:12px">
+            <div>
+              <div class="card-title">Match <em>candidates</em></div>
+              <div class="card-sub" id="hm-candidates-sub">Pick an applicant on the left</div>
+            </div>
+          </div>
+          <div id="hm-candidates"></div>
+        </div>
+      </div>
+
+      <div class="card card-pad" style="margin-top:18px;background:linear-gradient(135deg, var(--cream-2), var(--cream))">
+        <div class="card-head">
+          <div>
+            <div class="card-title">How <em>matching</em> works</div>
+            <div class="card-sub">Same scoring engine powers the public website and mobile app</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+          <div class="list-row" style="border-bottom:none;padding:8px 0">
+            <div class="list-icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/></svg></div>
+            <div class="list-main"><div class="list-title">City</div><div class="list-sub">Must match — required</div></div>
+          </div>
+          <div class="list-row" style="border-bottom:none;padding:8px 0">
+            <div class="list-icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8h14M5 16h10"/></svg></div>
+            <div class="list-main"><div class="list-title">Languages</div><div class="list-sub">+25 per shared language</div></div>
+          </div>
+          <div class="list-row" style="border-bottom:none;padding:8px 0">
+            <div class="list-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/></svg></div>
+            <div class="list-main"><div class="list-title">Date overlap</div><div class="list-sub">+30 if dates align</div></div>
+          </div>
+          <div class="list-row" style="border-bottom:none;padding:8px 0">
+            <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-7H10v7H4a1 1 0 0 1-1-1z"/></svg></div>
+            <div class="list-main"><div class="list-title">Capacity</div><div class="list-sub">Required &amp; +20 if 1 free bed only</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ HOMESTAY FINANCE ============ -->
     <section class="view" data-view="homestay-finance">
 
@@ -2206,7 +2291,59 @@
         <div class="kpi clickable" data-go="homestay-clients"><div class="kpi-deco"></div><div class="kpi-arrow"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg></div><div class="kpi-label">Active customers</div><div class="kpi-value">11</div><div class="kpi-trend up">▲ 3 vs last month</div></div>
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Revenue · MTD</div><div class="kpi-value">$15,880</div><div class="kpi-trend up">▲ 12.4% MoM</div></div>
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Paid to hosts · MTD</div><div class="kpi-value" style="color:var(--red-dark)">−$10,000</div><div class="kpi-trend up">100% on-time</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Net profit · MTD</div><div class="kpi-value" style="color:#3e6049">$5,880</div><div class="kpi-trend up">▲ 37.0% margin</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Placement fees · MTD</div><div class="kpi-value" style="color:#3e6049">$2,400</div><div class="kpi-trend up">8 new bookings × $300</div></div>
+      </div>
+
+      <div class="row-15" style="margin-bottom:18px">
+        <div class="card card-pad">
+          <div class="card-head" style="justify-content:space-between">
+            <div>
+              <div class="card-title">Placement <em>fees</em></div>
+              <div class="card-sub">One-time fee charged on each new booking · separate from monthly rent</div>
+            </div>
+            <span class="badge badge-green"><span class="dot"></span>$2,400 collected MTD</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Host family</th>
+                <th>Booked on</th>
+                <th class="right">Stay</th>
+                <th class="right">Placement fee</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="hf-placement-body"></tbody>
+            <tfoot>
+              <tr style="background:var(--cream)">
+                <td colspan="4" style="font-family:var(--serif);font-size:14px;font-weight:700;padding:12px 14px">Total placement fees · April 2026</td>
+                <td class="right num" style="color:#3e6049;font-size:16px;font-weight:700;padding:12px 14px">$2,400</td>
+                <td style="padding:12px"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div class="card card-pad">
+          <div class="card-head"><div><div class="card-title">Net profit · <em>MTD</em></div><div class="card-sub">Rent margin + placement fees</div></div></div>
+          <div style="font-family:var(--serif);font-size:32px;font-weight:700;letter-spacing:-1px;color:#3e6049">$8,280</div>
+          <div class="card-sub" style="margin-top:4px">$5,880 rent margin + $2,400 placement</div>
+          <div class="list-row" style="border-bottom:none;margin-top:14px">
+            <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 17 9 11 13 15 21 7"/></svg></div>
+            <div class="list-main">
+              <div class="list-title">Booking velocity</div>
+              <div class="list-sub">8 new clients in April · ▲ 33% vs March</div>
+            </div>
+          </div>
+          <div class="list-row" style="border-bottom:none">
+            <div class="list-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+            <div class="list-main">
+              <div class="list-title">Avg time to placement</div>
+              <div class="list-sub">3.2 days from application → confirmed booking</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="row-15">
@@ -2422,9 +2559,15 @@
         </div>
       </div>
 
-      <div class="form-field" style="margin-bottom:14px">
-        <label style="margin-bottom:8px">Role &amp; access <span class="req">*</span></label>
-        <div class="role-picker" id="invite-roles"></div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Custom title <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(shown on profile)</span></label>
+          <input class="form-input" name="title" type="text" placeholder="e.g. House Manager · Annex" />
+        </div>
+        <div class="form-field">
+          <label>Quick role preset</label>
+          <select class="form-input" name="rolePreset" id="invite-role-preset"></select>
+        </div>
       </div>
 
       <div class="scope-block" id="invite-scope">
@@ -2434,6 +2577,14 @@
         </select>
         <div style="font-size:11.5px;color:var(--muted);margin-top:6px">
           Property Managers only see tenants, rooms, and maintenance for the building they're assigned to.
+        </div>
+      </div>
+
+      <div class="form-field" style="margin-top:14px">
+        <label style="margin-bottom:8px">Pages this person can access <span class="req">*</span></label>
+        <div id="invite-pages" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px"></div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">
+          Choose a preset above and we'll pre-check the right pages — or customize freely.
         </div>
       </div>
 
@@ -2658,6 +2809,7 @@ const properties = [
   {name:"Mile End Loft", addr:"5210 Saint-Laurent, Montréal", type:"Co-living", rooms:5, occ:5, ratePct:100, rent:"$1,090–1,260", color:"#C19A6B"},
   {name:"Plateau Co-Living", addr:"4055 Rue Berri, Montréal", type:"Co-living", rooms:7, occ:6, ratePct:86, rent:"$1,010–1,180", color:"#A88965"},
   {name:"Kitsilano Studios", addr:"2810 W 4th Ave, Vancouver", type:"Student housing", rooms:6, occ:5, ratePct:83, rent:"$1,580–1,720", color:"#B0855A"},
+  {name:"Casa Chapultepec", addr:"Avenida Vallarta 5400, Guadalajara, Jalisco", type:"Co-living", rooms:8, occ:5, ratePct:63, rent:"$680–850 USD", color:"#9b6b53"},
 ];
 
 /* Vacancy history — monthly occupancy % since each property opened.
@@ -2704,6 +2856,36 @@ const propertyHistory = {
               83, 83, 83, 83, 83, 67, 83, 83]
   },
 };
+
+/* Homestay applicants — prospective clients who have applied through the website/app
+   and are waiting to be matched to a host family. */
+const homestayApplicants = [
+  {id:"ap1", ini:"YO", name:"Yuki Otsuka",      flag:"🇯🇵", country:"Japan",
+   email:"yuki.o@example.com", school:"ILSC Montréal",
+   city:"Montréal", arrival:"2026-06-01", departure:"2026-09-15",
+   languages:["日本語","English"], dietary:"Vegetarian", appliedDaysAgo:1, color:"#A88965",
+   notes:"First time abroad. Prefers a quiet household with home-cooked meals."},
+  {id:"ap2", ini:"DM", name:"Diego Morales",    flag:"🇨🇴", country:"Colombia",
+   email:"diego.m@example.com", school:"VanWest College",
+   city:"Vancouver", arrival:"2026-05-15", departure:"2026-12-15",
+   languages:["Español","English"], dietary:"None", appliedDaysAgo:3, color:"#B0855A",
+   notes:"Studying business. Looking for a family with kids."},
+  {id:"ap3", ini:"AS", name:"Amélie Schmidt",   flag:"🇩🇪", country:"Germany",
+   email:"amelie.s@example.com", school:"École de langues UL",
+   city:"Québec City", arrival:"2026-07-01", departure:"2026-08-30",
+   languages:["Deutsch","Français","English"], dietary:"Gluten-free", appliedDaysAgo:2, color:"#9b6b53",
+   notes:"Short summer immersion. French-speaking household preferred."},
+  {id:"ap4", ini:"KT", name:"Kofi Tetteh",      flag:"🇬🇭", country:"Ghana",
+   email:"kofi.t@example.com", school:"ILAC Toronto",
+   city:"Toronto", arrival:"2026-05-20", departure:"2026-11-30",
+   languages:["English","Twi"], dietary:"Halal", appliedDaysAgo:5, color:"#C19A6B",
+   notes:"Halal kitchen needed. Studies start May 25."},
+  {id:"ap5", ini:"VG", name:"Valentina Garibaldi", flag:"🇮🇹", country:"Italy",
+   email:"valentina.g@example.com", school:"Spanish at IMAC",
+   city:"Guadalajara", arrival:"2026-06-15", departure:"2026-10-15",
+   languages:["Italiano","Español","English"], dietary:"None", appliedDaysAgo:0, color:"#8E6F4A",
+   notes:"4-month Spanish immersion. Loves cooking — open to helping in kitchen."},
+];
 
 /* Damage deposit refunds — tracks money owed back to tenants after move-out.
    Each record captures the deposit, any damages found during inspection,
@@ -2964,6 +3146,7 @@ const homestayHosts = [
   {id:"h4", name:"Singh family",      city:"Vancouver",    capacity:2, payPerGuest:950, color:"#9b6b53", phone:"+1 (604) 555-0151", email:"singh.family@example.ca",  since:"2022-11-10", rating:4.9, nationality:"Indian-Canadian",     flag:"🇮🇳", languages:["English","ਪੰਜਾਬੀ","हिन्दी"], bio:"Harjeet and Priya host in their bright Burnaby home with two friendly teenagers and a Labrador named Maple.", pdf:"host-profile-tremblay.pdf", neighborhood:"Burnaby"},
   {id:"h5", name:"O'Connor family",   city:"Toronto",      capacity:2, payPerGuest:900, color:"#8E6F4A", phone:"+1 (416) 555-0298", email:"oconnors@example.ca",      since:"2023-08-20", rating:4.6, nationality:"Irish-Canadian",      flag:"🇮🇪", languages:["English"],              bio:"Patrick and Aoife live near High Park with their two-year-old. Patrick is a chef — guests rave about his Sunday roasts.", pdf:"host-profile-tremblay.pdf", neighborhood:"High Park"},
   {id:"h6", name:"Chen family",       city:"Vancouver",    capacity:3, payPerGuest:940, color:"#7d6041", phone:"+1 (604) 555-0182", email:"chen.family@example.ca",   since:"2022-08-01", rating:4.8, nationality:"Chinese-Canadian",    flag:"🇨🇳", languages:["普通话","English","廣東話"],  bio:"David and Wendy run a quiet Mandarin-speaking household in Richmond. Excellent for students who want full language immersion.", pdf:"host-profile-tremblay.pdf", neighborhood:"Richmond"},
+  {id:"h7", name:"Hernández family", city:"Guadalajara", capacity:2, payPerGuest:520, color:"#C19A6B", phone:"+52 (33) 5555 0188", email:"hernandez@familia.mx",     since:"2024-06-01", rating:4.9, nationality:"Mexican",             flag:"🇲🇽", languages:["Español","English"],     bio:"Carlos and Adriana host in their colonial home in Colonia Americana. Warm, family-style dinners every night.", pdf:"host-profile-tremblay.pdf", neighborhood:"Colonia Americana"},
 ];
 
 /* === HOMESTAY clients (different from co-living tenants) ===
@@ -2983,6 +3166,8 @@ const homestayClients = [
   {id:"hc11", ini:"JP", name:"Ji-Min Park",       email:"jimin.p@example.com",     phone:"+1 (604) 555-1111", flag:"🇰🇷", country:"South Korea", school:"ILSC Vancouver",   hostId:"h6", arrival:"2026-02-05", departure:"2026-07-31", weCollect:1470, wePay:940, status:"active", checkIn:"2026-02-04", checkOut:"2026-08-01", paymentMethod:"credit-card"},
   {id:"hc12", ini:"AE", name:"Ahmed El-Sayed",    email:"ahmed.e@example.com",     phone:"+1 (418) 555-1112", flag:"🇪🇬", country:"Egypt",       school:"École de langues UL", hostId:"h3", arrival:"2026-05-12", departure:"2026-08-15", weCollect:1380, wePay:880, status:"upcoming", checkIn:"2026-05-11", checkOut:"2026-08-16", paymentMethod:"credit-card"},
   {id:"hc13", ini:"OB", name:"Olivia Brown",      email:"olivia.b@example.com",    phone:"+1 (416) 555-1113", flag:"🇦🇺", country:"Australia",   school:"ILAC Toronto",     hostId:"h2", arrival:"2025-09-01", departure:"2026-02-28", weCollect:1450, wePay:920, status:"past", checkIn:"2025-08-31", checkOut:"2026-03-01", paymentMethod:"e-transfer"},
+  {id:"hc14", ini:"AT", name:"Anna Tessier",       email:"anna.t@example.com",      phone:"+52 (33) 5555 1114", flag:"🇨🇦", country:"Canada",      school:"Spanish at IMAC",  hostId:"h7", arrival:"2026-04-10", departure:"2026-08-31", weCollect:980,  wePay:520, status:"active",   checkIn:"2026-04-09", checkOut:"2026-09-01", paymentMethod:"credit-card"},
+  {id:"hc15", ini:"PB", name:"Paul Berger",        email:"paul.b@example.com",      phone:"+52 (33) 5555 1115", flag:"🇩🇪", country:"Germany",     school:"Spanish at IMAC",  hostId:"h7", arrival:"2026-05-05", departure:"2026-07-30", weCollect:980,  wePay:520, status:"upcoming", checkIn:"2026-05-04", checkOut:"2026-07-31", paymentMethod:"wire"},
 ];
 
 
@@ -4032,7 +4217,7 @@ function closeProperty(){
 /* ============ TEAM & ROLES ============ */
 const roles = {
   admin:       {label:"Admin",              color:"#B94A3F", desc:"Full access to everything",
-                nav:["dashboard","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
+                nav:["dashboard","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-matching","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -4194,29 +4379,89 @@ function showToast(msg){
 }
 
 /* === Invite member modal === */
+const ALL_PAGES = [
+  ["dashboard",        "Dashboard"],
+  ["tenants",          "Tenants"],
+  ["properties",       "Properties & rooms"],
+  ["portfolio",        "Portfolio"],
+  ["landlords",        "Landlords"],
+  ["homestay-clients", "Homestay clients"],
+  ["homestay-hosts",   "Homestay hosts"],
+  ["homestay-finance", "Homestay finance"],
+  ["vacancies",        "Vacancies"],
+  ["maintenance",      "Maintenance"],
+  ["deposits",         "Damage deposits"],
+  ["financials",       "Financials"],
+  ["team",             "Team"],
+  ["settings",         "Settings"],
+];
+
 function buildRolePicker(){
-  const picker = document.getElementById("invite-roles");
-  if(!picker) return;
-  const orderedRoleKeys = ["admin","ops","property","accountant","maintenance"];
-  picker.innerHTML = orderedRoleKeys.map((k, i) => {
-    const r = roles[k];
-    return `
-      <label class="role-option ${i===1?'selected':''}">
-        <input type="radio" name="role" value="${k}" ${i===1?'checked':''} />
-        <div class="meta">
-          <div class="nm"><span class="swatch" style="background:${r.color}"></span>${r.label}</div>
-          <div class="desc">${r.desc}</div>
-        </div>
-      </label>
-    `;
+  // Populate preset dropdown
+  const sel = document.getElementById("invite-role-preset");
+  if(!sel) return;
+  const orderedRoleKeys = ["admin","ops","property","accountant","maintenance","custom"];
+  sel.innerHTML = orderedRoleKeys.map(k => {
+    if(k === "custom") return `<option value="custom">Custom — set my own access</option>`;
+    return `<option value="${k}" ${k==="ops"?"selected":""}>${roles[k].label}</option>`;
   }).join("");
-  // Wire selection styling + scope reveal
-  picker.querySelectorAll(".role-option").forEach(opt => {
-    opt.addEventListener("click", () => {
-      picker.querySelectorAll(".role-option").forEach(o => o.classList.remove("selected"));
-      opt.classList.add("selected");
-      const v = opt.querySelector("input").value;
-      document.getElementById("invite-scope").classList.toggle("show", v === "property");
+
+  // Populate page-access checkboxes
+  const pages = document.getElementById("invite-pages");
+  pages.innerHTML = ALL_PAGES.map(([k, label]) =>
+    `<label class="role-option" style="padding:9px 12px;font-size:12.5px">
+      <input type="checkbox" name="pages" value="${k}" />
+      <div class="meta"><div class="nm" style="font-size:12.5px">${label}</div></div>
+    </label>`
+  ).join("");
+
+  // Helper: apply preset to checkboxes
+  function applyPreset(key){
+    if(key === "custom") return;
+    const r = roles[key];
+    if(!r) return;
+    pages.querySelectorAll('input[name="pages"]').forEach(cb => {
+      cb.checked = r.nav.includes(cb.value);
+    });
+    // Property scope visibility
+    document.getElementById("invite-scope").classList.toggle("show", key === "property");
+    // Sync visual selection state on cards
+    pages.querySelectorAll(".role-option").forEach(opt => {
+      const cb = opt.querySelector("input");
+      opt.classList.toggle("selected", cb.checked);
+    });
+  }
+  // Default to "ops"
+  applyPreset("ops");
+
+  sel.onchange = () => applyPreset(sel.value);
+
+  // Toggle individual checkboxes — flips to "custom" preset if user diverges
+  pages.querySelectorAll(".role-option").forEach(opt => {
+    opt.addEventListener("click", e => {
+      // Only handle clicks on the label itself, not the inner checkbox (which fires its own event)
+      if(e.target.tagName !== "INPUT"){
+        const cb = opt.querySelector("input");
+        cb.checked = !cb.checked;
+      }
+      opt.classList.toggle("selected", opt.querySelector("input").checked);
+      // Detect if user diverged from preset → switch to custom
+      const currentPreset = sel.value;
+      if(currentPreset !== "custom"){
+        const r = roles[currentPreset];
+        const checked = [...pages.querySelectorAll("input:checked")].map(c => c.value).sort().join(",");
+        const expected = [...r.nav].sort().join(",");
+        if(checked !== expected){
+          // Add "Custom" option dynamically and switch to it
+          if(![...sel.options].some(o => o.value === "custom-modified")){
+            const opt2 = document.createElement("option");
+            opt2.value = "custom-modified";
+            opt2.textContent = "Custom — modified from " + r.label;
+            sel.appendChild(opt2);
+          }
+          sel.value = "custom-modified";
+        }
+      }
     });
   });
 }
@@ -4270,14 +4515,21 @@ document.getElementById("invite-form").addEventListener("submit", e => {
 
   const name = (data.get("name")||"").toString().trim();
   const email = (data.get("email")||"").toString().trim();
-  const role = (data.get("role")||"").toString();
+  const presetRaw = (data.get("rolePreset")||"ops").toString();
+  // Map "custom" / "custom-modified" to the role with closest matching nav
+  let role = presetRaw;
+  if(role === "custom" || role === "custom-modified") role = "ops"; // fallback storage
+  const title = (data.get("title")||"").toString().trim();
+  const pages = data.getAll("pages").map(String);
   const assigned = (data.get("assigned")||"").toString();
 
   if(!name) { errEl.textContent = "Name is required."; errEl.classList.add("show"); return; }
   if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errEl.textContent = "A valid work email is required."; errEl.classList.add("show"); return;
   }
-  if(!role) { errEl.textContent = "Pick a role for this member."; errEl.classList.add("show"); return; }
+  if(pages.length === 0){
+    errEl.textContent = "Pick at least one page this person can access."; errEl.classList.add("show"); return;
+  }
   if(role === "property" && !assigned) {
     errEl.textContent = "Property Managers need an assigned property.";
     errEl.classList.add("show"); return;
@@ -4291,6 +4543,8 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   const id = "i" + (pendingInvites.length + 1);
   pendingInvites.push({
     id, name, email, role,
+    title: title || roles[role].label,
+    pages,
     assigned: role === "property" ? assigned : null,
     status: "sent",
     sentDaysAgo: 0,
@@ -4390,6 +4644,11 @@ function buildRoleMenu(){
       </div>
     `).join("")}
     <div class="footer">Switching just changes what you can see. The actual signed-in user is <b>${CURRENT_USER.name}</b>.</div>
+    <div style="height:1px;background:var(--line);margin:6px 0"></div>
+    <a class="opt" href="signin.html" style="color:var(--red-dark);font-weight:600;text-decoration:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:8px"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Sign out
+    </a>
   `;
   menu.querySelectorAll("[data-pick]").forEach(opt => {
     opt.addEventListener("click", () => {
@@ -5551,6 +5810,7 @@ const titles = {
   team: ["<em>Team</em>", "Members, roles, and permissions"],
   deposits: ["Damage <em>deposits</em>", "Refund tracking for tenants who have moved out"],
   "homestay-clients": ["Homestay <em>clients</em>", "Students hosted by partner families · contact, host, and rent"],
+  "homestay-matching": ["Homestay <em>matching</em>", "New applicants & best-fit host candidates — same engine the website and app use"],
   "homestay-hosts": ["Homestay <em>hosts</em>", "Partner families across our cities · profiles, capacity, and history"],
   "homestay-finance": ["Homestay <em>finance</em>", "Revenue from clients, payouts to hosts, and net margin"],
   settings: ["<em>Settings</em>", "Workspace, notifications, integrations, and billing"],
@@ -5958,6 +6218,42 @@ function renderHomestayFinance(){
   }
 }
 renderHomestayFinance();
+
+function renderPlacementFees(){
+  const body = document.getElementById("hf-placement-body");
+  if(!body) return;
+  // The 8 most recently-booked clients (any status) earn a $300 placement fee
+  const PLACEMENT_FEE = 300;
+  const recent = [...homestayClients]
+    .sort((a,b) => parseLocalDate(b.arrival) - parseLocalDate(a.arrival))
+    .slice(0, 8);
+  body.innerHTML = recent.map(c => {
+    const host = homestayHosts.find(h => h.id === c.hostId);
+    const stayMonths = Math.round(((parseLocalDate(c.departure) - parseLocalDate(c.arrival)) / (1000*60*60*24)) / 30 * 10) / 10;
+    const status = c.status === "upcoming" ? "Upcoming" : c.status === "active" ? "Confirmed" : "Past";
+    const cls = c.status === "upcoming" ? "badge-blue" : c.status === "active" ? "badge-green" : "badge-grey";
+    return `
+      <tr>
+        <td>
+          <div class="name-cell">
+            ${avatar(c.ini)}
+            <div>
+              <div class="name-main">${c.name} <span class="flag">${c.flag}</span></div>
+              <div class="name-sub">${c.country} · ${c.school}</div>
+            </div>
+          </div>
+        </td>
+        <td>${host ? host.name : "—"}</td>
+        <td>${fmtDate(c.arrival)}</td>
+        <td class="right"><span class="num">${stayMonths}</span> mo</td>
+        <td class="right"><span class="num" style="color:#3e6049">${fmt(PLACEMENT_FEE)}</span></td>
+        <td><span class="badge ${cls}"><span class="dot"></span>${status}</span></td>
+      </tr>
+    `;
+  }).join("");
+}
+renderPlacementFees();
+
 /* ============ HOMESTAY HOSTS ============ */
 const HH_FILTERS = { city:new Set(), capacity:new Set(), nationality:new Set(), search:"" };
 
@@ -6894,6 +7190,499 @@ function openDeposit(id){
   document.getElementById("panel-backdrop").classList.add("open");
   document.body.style.overflow = "hidden";
 }
+
+
+/* ============ BATCH 1 — broken button wiring ============ */
+
+// Helper: simple dropdown toggler
+function bindDropdown(triggerId, menuId, wrapId, populateFn){
+  const trigger = document.getElementById(triggerId);
+  const menu    = document.getElementById(menuId);
+  const wrap    = document.getElementById(wrapId);
+  if(!trigger || !menu || !wrap) return;
+  trigger.addEventListener("click", e => {
+    e.stopPropagation();
+    if(populateFn) populateFn(menu);
+    document.querySelectorAll(".filter-dropdown.open").forEach(d => { if(d !== menu) d.classList.remove("open"); });
+    menu.classList.toggle("open");
+  });
+  document.addEventListener("click", e => {
+    if(!wrap.contains(e.target)) menu.classList.remove("open");
+  });
+  menu.addEventListener("click", e => e.stopPropagation());
+}
+
+/* === TENANTS — Email all/per-house === */
+bindDropdown("tenants-email-btn", "tenants-email-menu", "tenants-email-wrap", () => {
+  const active = tenants.filter(t => t.status === "active");
+  const allCt = document.getElementById("tenants-email-all-count");
+  if(allCt) allCt.textContent = `${active.length} recipients`;
+
+  const houseList = document.getElementById("tenants-email-house-list");
+  const byHouse = {};
+  active.forEach(t => { byHouse[t.property] = (byHouse[t.property]||0) + 1; });
+  houseList.innerHTML = Object.entries(byHouse).sort()
+    .map(([p, c]) => `<label class="opt" data-email-scope="house:${p}">${p}<span class="ct">${c}</span></label>`)
+    .join("");
+
+  // Wire opt clicks
+  document.querySelectorAll('#tenants-email-menu [data-email-scope]').forEach(o => {
+    o.onclick = () => {
+      const scope = o.dataset.emailScope;
+      const recipients = scope === "all" ? active : active.filter(t => t.property === scope.replace("house:", ""));
+      const emails = recipients.map(t => t.email).join(",");
+      const subject = scope === "all" ? "A note from Vanmates" : `${scope.replace("house:","")} — update from Vanmates`;
+      const body = `Hi everyone,\n\n[Your message here]\n\nBest,\nThe Vanmates team`;
+      window.open(`mailto:?bcc=${encodeURIComponent(emails)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+      document.getElementById("tenants-email-menu").classList.remove("open");
+      showToast(`Drafting email to ${recipients.length} recipient${recipients.length===1?"":"s"}`);
+    };
+  });
+});
+
+/* === PROPERTIES — Add property + Map view === */
+document.getElementById("props-add-btn")?.addEventListener("click", () => {
+  showToast("Add property — opening builder…");
+});
+document.getElementById("props-map-btn")?.addEventListener("click", () => {
+  // Simple inline map view: show all property locations as a list with city pins
+  const grid = document.getElementById("props-grid");
+  if(!grid) return;
+  if(grid.dataset.mode === "map"){
+    // toggle back
+    delete grid.dataset.mode;
+    wirePropertyCards();
+    return;
+  }
+  grid.dataset.mode = "map";
+  const byCity = {};
+  properties.forEach(p => { (byCity[p.addr.split(",").pop().trim()] ||= []).push(p); });
+  grid.style.gridTemplateColumns = "1fr";
+  grid.innerHTML = `
+    <div class="card card-pad" style="background:linear-gradient(135deg, #FAF5ED, #F4ECDD)">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+        <div class="list-icon red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg></div>
+        <div>
+          <div class="card-title">Map <em>view</em></div>
+          <div class="card-sub">${properties.length} properties across ${Object.keys(byCity).length} cities</div>
+        </div>
+        <button class="btn btn-ghost" style="margin-left:auto" onclick="document.getElementById('props-map-btn').click()">Back to grid</button>
+      </div>
+      ${Object.entries(byCity).map(([city, props]) => `
+        <div style="margin-top:14px">
+          <div style="font-family:var(--serif);font-size:18px;font-weight:700;margin-bottom:8px">📍 ${city} <span class="card-sub" style="font-weight:500">· ${props.length} ${props.length===1?"property":"properties"}</span></div>
+          ${props.map((p, i) => `
+            <div class="list-row" style="padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;cursor:pointer" data-map-prop="${p.name}">
+              <div class="avatar" style="background:linear-gradient(135deg, ${p.color}, ${shade(p.color,-25)})">${p.name[0]}</div>
+              <div class="list-main">
+                <div class="list-title">${p.name}</div>
+                <div class="list-sub">${p.addr}</div>
+              </div>
+              <div class="list-meta">
+                <div class="num">${p.occ}/${p.rooms}</div>
+                <div class="card-sub" style="font-size:11px">${p.ratePct}% occupied</div>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `).join("")}
+      <div class="card-sub" style="font-size:11px;text-align:center;margin-top:14px;font-style:italic">For a real map, integrate Google Maps or Mapbox. Pins shown as a grouped list for now.</div>
+    </div>
+  `;
+  // Wire click on each map row
+  grid.querySelectorAll("[data-map-prop]").forEach(row => {
+    row.addEventListener("click", () => openProperty(row.dataset.mapProp));
+  });
+});
+
+/* === LANDLORDS — All cities filter + sortable Ends column === */
+let LL_CITY = null;
+let LL_SORT_ENDS = null; // null | "asc" | "desc"
+
+function applyLandlordFilters(){
+  let list = landlords.slice();
+  // Re-apply existing search filter
+  const q = (document.getElementById("ll-search")?.value || "").toLowerCase().trim();
+  if(q){
+    list = list.filter(l => l.name.toLowerCase().includes(q) || l.company.toLowerCase().includes(q) ||
+      l.property.toLowerCase().includes(q) || l.city.toLowerCase().includes(q));
+  }
+  if(LL_CITY) list = list.filter(l => l.city === LL_CITY);
+  if(LL_SORT_ENDS){
+    list.sort((a,b) => {
+      const da = parseLocalDate(a.contractEnd), db = parseLocalDate(b.contractEnd);
+      return LL_SORT_ENDS === "asc" ? da - db : db - da;
+    });
+  }
+  return list;
+}
+
+// Override renderLandlords to use new filter pipeline if present
+const _origRenderLandlords = renderLandlords;
+renderLandlords = function(){
+  // Get filtered list from our pipeline
+  const list = applyLandlordFilters();
+  document.getElementById("landlords-body").innerHTML = list.map(l => {
+    const days = daysBetween(TODAY, parseLocalDate(l.contractEnd));
+    const totalMonths = monthDiff(parseLocalDate(l.contractStart), parseLocalDate(l.contractEnd));
+    const yrs = (totalMonths/12).toFixed(1);
+    const endingSoon = days >= 0 && days <= 365;
+    return `
+    <tr data-landlord="${l.id}" style="cursor:pointer">
+      <td>
+        <div class="name-cell">
+          <div class="avatar" style="background:linear-gradient(135deg, ${l.color}, ${shade(l.color,-25)})">${l.ini}</div>
+          <div>
+            <div class="name-main">${l.name}</div>
+            <div class="name-sub">${l.company}</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        <div class="name-main">${l.property}</div>
+        <div class="name-sub">${l.email}</div>
+      </td>
+      <td>${l.city}</td>
+      <td>
+        <span class="num">${fmt(l.monthlyRent)}</span>
+        <div class="name-sub" style="font-size:11px">/month</div>
+      </td>
+      <td>
+        <div class="name-sub">${fmtDate(l.contractStart)} →</div>
+        <div class="name-main" style="font-size:12px">${yrs} yr term</div>
+      </td>
+      <td>
+        <div class="name-main">${fmtDate(l.contractEnd)}</div>
+        <div class="name-sub" style="color:${endingSoon?'var(--red-dark)':'var(--muted)'}">${days>=0?'in '+days+' days':Math.abs(days)+' days ago'}</div>
+      </td>
+      <td>
+        <a href="${l.pdf}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h6M9 17h4"/></svg>
+          PDF
+        </a>
+      </td>
+      <td class="right"><button class="btn btn-ghost" style="padding:6px 12px;font-size:12px">View</button></td>
+    </tr>
+  `}).join("");
+  document.querySelectorAll("tr[data-landlord]").forEach(row => {
+    row.addEventListener("click", () => openLandlord(row.dataset.landlord));
+  });
+};
+// Re-render with the new function
+renderLandlords();
+
+bindDropdown("ll-city-btn", "ll-city-menu", "ll-city-wrap", menu => {
+  const cities = [...new Set(landlords.map(l => l.city))].sort();
+  menu.innerHTML = `
+    <div class="opt" data-ll-city="">
+      <span style="font-weight:600">All cities</span>
+      <span class="ct">${landlords.length}</span>
+    </div>
+    ${cities.map(c => {
+      const ct = landlords.filter(l => l.city === c).length;
+      return `<div class="opt" data-ll-city="${c}">${c}<span class="ct">${ct}</span></div>`;
+    }).join("")}
+  `;
+  menu.querySelectorAll("[data-ll-city]").forEach(o => {
+    o.onclick = () => {
+      LL_CITY = o.dataset.llCity || null;
+      const btn = document.getElementById("ll-city-btn");
+      btn.textContent = (LL_CITY || "All cities") + " ▾";
+      menu.classList.remove("open");
+      renderLandlords();
+    };
+  });
+});
+
+document.getElementById("ll-th-ends")?.addEventListener("click", () => {
+  LL_SORT_ENDS = LL_SORT_ENDS === "asc" ? "desc" : "asc";
+  const arrow = document.getElementById("ll-ends-arrow");
+  if(arrow){
+    arrow.textContent = LL_SORT_ENDS === "asc" ? "▲" : "▼";
+    arrow.style.opacity = "1";
+    arrow.style.color = "var(--red)";
+  }
+  renderLandlords();
+});
+
+/* === LANDLORD detail panel — wire "Email landlord" button === */
+const _origOpenLandlord = openLandlord;
+openLandlord = function(id){
+  _origOpenLandlord(id);
+  const l = landlords.find(x => x.id === id);
+  if(!l) return;
+  // Find the "Email landlord" button at the bottom and wire it
+  const emailBtn = [...document.querySelectorAll("#panel-body .btn-primary")]
+    .find(b => /email landlord/i.test(b.textContent));
+  if(emailBtn){
+    emailBtn.addEventListener("click", () => {
+      window.open(`mailto:${l.email}?subject=${encodeURIComponent("Hello from Vanmates")}`, "_self");
+    });
+  }
+};
+
+/* === HOMESTAY CLIENTS — All cities + All hosts + Add buttons === */
+let HC_CITY = null;
+let HC_HOST = null;
+
+const _origRenderHomestayClients = renderHomestayClients;
+renderHomestayClients = function(searchTxt = ""){
+  // Simply call original then post-filter the body if our filters are active
+  _origRenderHomestayClients(searchTxt);
+  if(HC_CITY || HC_HOST){
+    const body = document.getElementById("homestay-clients-body");
+    body.querySelectorAll("tr").forEach(row => {
+      const cells = row.querySelectorAll("td");
+      const city = cells[2]?.querySelector(".name-sub")?.textContent || "";
+      const hostName = cells[2]?.querySelector(".name-main")?.textContent || "";
+      const cityMatch = !HC_CITY || city === HC_CITY;
+      const hostMatch = !HC_HOST || hostName === HC_HOST;
+      if(!cityMatch || !hostMatch) row.style.display = "none";
+    });
+  }
+};
+
+bindDropdown("hc-city-btn", "hc-city-menu", "hc-city-wrap", menu => {
+  const cities = [...new Set(homestayHosts.map(h => h.city))].sort();
+  menu.innerHTML = `
+    <div class="opt" data-hc-city=""><span style="font-weight:600">All cities</span></div>
+    ${cities.map(c => {
+      const ct = homestayClients.filter(cl => {
+        const h = homestayHosts.find(x => x.id === cl.hostId);
+        return h && h.city === c;
+      }).length;
+      return `<div class="opt" data-hc-city="${c}">${c}<span class="ct">${ct}</span></div>`;
+    }).join("")}
+  `;
+  menu.querySelectorAll("[data-hc-city]").forEach(o => {
+    o.onclick = () => {
+      HC_CITY = o.dataset.hcCity || null;
+      document.getElementById("hc-city-btn").textContent = (HC_CITY || "All cities") + " ▾";
+      menu.classList.remove("open");
+      renderHomestayClients(document.getElementById("hc-search")?.value || "");
+    };
+  });
+});
+
+bindDropdown("hc-host-btn", "hc-host-menu", "hc-host-wrap", menu => {
+  menu.innerHTML = `
+    <div class="opt" data-hc-host=""><span style="font-weight:600">All hosts</span></div>
+    ${homestayHosts.map(h => {
+      const ct = homestayClients.filter(c => c.hostId === h.id).length;
+      return `<div class="opt" data-hc-host="${h.name}">${h.name}<span class="ct">${ct}</span></div>`;
+    }).join("")}
+  `;
+  menu.querySelectorAll("[data-hc-host]").forEach(o => {
+    o.onclick = () => {
+      HC_HOST = o.dataset.hcHost || null;
+      document.getElementById("hc-host-btn").textContent = (HC_HOST || "All hosts") + " ▾";
+      menu.classList.remove("open");
+      renderHomestayClients(document.getElementById("hc-search")?.value || "");
+    };
+  });
+});
+
+document.getElementById("hc-add-btn")?.addEventListener("click", () => {
+  showToast("Add homestay client — opening builder…");
+});
+
+
+/* ============ HOMESTAY MATCHING ============ */
+const HM_STATE = { selectedApplicantId: null };
+
+function scoreHostForApplicant(host, applicant){
+  // Required: same city, capacity available
+  if(host.city !== applicant.city) return null;
+  const occupiedNow = homestayClients.filter(c => c.hostId === host.id && (c.status === "active" || c.status === "upcoming")).length;
+  const free = host.capacity - occupiedNow;
+  if(free <= 0) return null;
+
+  // Score
+  let score = 0;
+  let reasons = [];
+
+  // Base: same city = 30
+  score += 30; reasons.push(`Same city (${host.city})`);
+
+  // Languages overlap
+  const sharedLangs = host.languages.filter(l => applicant.languages.includes(l));
+  if(sharedLangs.length > 0){
+    score += 25 * sharedLangs.length;
+    reasons.push(`${sharedLangs.length} shared language${sharedLangs.length===1?"":"s"} (${sharedLangs.join(", ")})`);
+  }
+
+  // Capacity scarcity bonus (1 free bed = more focused match)
+  if(free === 1){ score += 20; reasons.push("Only 1 bed open — focused match"); }
+  else if(free >= 2){ score += 10; reasons.push(`${free} beds available`); }
+
+  // Date overlap — if applicant's arrival is within next 90 days from today
+  const arr = parseLocalDate(applicant.arrival);
+  const days = daysBetween(TODAY, arr);
+  if(days >= 0 && days <= 60){ score += 30; reasons.push("Move-in within 60 days"); }
+  else if(days >= 0 && days <= 90){ score += 15; reasons.push("Move-in within 90 days"); }
+
+  // Rating bonus
+  if(host.rating >= 4.8){ score += 10; reasons.push(`Top-rated host (${host.rating} ★)`); }
+
+  return { score, reasons, free };
+}
+
+function renderMatchingApplicants(){
+  const container = document.getElementById("hm-applicants");
+  if(!container) return;
+  container.innerHTML = homestayApplicants.map(a => {
+    const sel = HM_STATE.selectedApplicantId === a.id;
+    const arrLabel = a.appliedDaysAgo === 0 ? "Today" : `${a.appliedDaysAgo}d ago`;
+    return `
+      <div class="card card-pad" style="margin-bottom:10px;cursor:pointer;${sel?'border-color:var(--red);box-shadow:0 0 0 3px var(--red-soft)':''}" data-applicant="${a.id}">
+        <div style="display:flex;align-items:flex-start;gap:14px">
+          <div class="avatar" style="background:linear-gradient(135deg, ${a.color}, ${shade(a.color,-25)})">${a.ini}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div class="prop-name" style="font-size:15px">${a.name} <span class="flag">${a.flag}</span></div>
+              <span class="badge badge-amber" style="font-size:10px"><span class="dot"></span>Applied ${arrLabel}</span>
+            </div>
+            <div class="prop-addr" style="font-size:12.5px">${a.school} · ${a.city}</div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">
+              <span class="badge badge-grey"><span class="dot"></span>${fmtDate(a.arrival)} → ${fmtDate(a.departure)}</span>
+              <span class="badge badge-blue"><span class="dot"></span>${a.languages.join(" · ")}</span>
+              ${a.dietary !== "None" ? `<span class="badge badge-grey"><span class="dot"></span>${a.dietary}</span>` : ""}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+  container.querySelectorAll("[data-applicant]").forEach(card => {
+    card.addEventListener("click", () => {
+      HM_STATE.selectedApplicantId = card.dataset.applicant;
+      renderMatchingApplicants();
+      renderMatchCandidates();
+    });
+  });
+}
+
+function renderMatchCandidates(){
+  const container = document.getElementById("hm-candidates");
+  const subEl = document.getElementById("hm-candidates-sub");
+  if(!container) return;
+  const a = homestayApplicants.find(x => x.id === HM_STATE.selectedApplicantId);
+  if(!a){
+    container.innerHTML = `<div class="card card-pad" style="text-align:center;color:var(--muted);padding:48px 20px">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--line)" stroke-width="1.5" style="margin-bottom:8px"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+      <div class="prop-name" style="margin-bottom:4px">Pick an applicant</div>
+      <div>Select someone on the left to see their best-matched host candidates.</div>
+    </div>`;
+    if(subEl) subEl.textContent = "Pick an applicant on the left";
+    return;
+  }
+  // Score every host
+  const ranked = homestayHosts.map(h => ({...h, match: scoreHostForApplicant(h, a)}))
+    .filter(h => h.match !== null)
+    .sort((a,b) => b.match.score - a.match.score);
+
+  if(subEl) subEl.textContent = `${ranked.length} host${ranked.length===1?"":"s"} matched for ${a.name}`;
+
+  if(ranked.length === 0){
+    container.innerHTML = `<div class="card card-pad" style="text-align:center;color:var(--muted);padding:36px 20px">
+      <div class="prop-name" style="margin-bottom:4px">No host capacity in ${a.city}</div>
+      <div>Recruit a new host family in this city — there's demand.</div>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = ranked.map((h, i) => `
+    <div class="card card-pad" style="margin-bottom:10px;${i===0?'border-color:#5C8A6B;box-shadow:0 0 0 2px var(--green-soft)':''}">
+      <div style="display:flex;align-items:flex-start;gap:14px">
+        <div class="avatar" style="width:42px;height:42px;font-size:14px;background:linear-gradient(135deg, ${h.color}, ${shade(h.color,-25)})">${h.name.split(" ")[0][0]}${h.name.split(" ")[1] ? h.name.split(" ")[1][0] : ""}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <div class="prop-name" style="font-size:15px">${h.name}</div>
+            ${i===0 ? '<span class="badge badge-green" style="font-size:10px"><span class="dot"></span>★ Best match</span>' : ''}
+            <span class="badge ${h.match.score>=80?'badge-green':h.match.score>=60?'badge-amber':'badge-grey'}" style="font-size:10.5px;font-family:var(--slab)">
+              <span class="dot"></span>Score ${h.match.score}
+            </span>
+          </div>
+          <div class="prop-addr" style="font-size:12.5px">${h.neighborhood} · ${h.match.free} bed${h.match.free===1?"":"s"} available · ${h.rating} ★</div>
+          <div style="margin-top:8px;font-size:12px;color:var(--muted)">
+            ${h.match.reasons.map(r => `<div style="margin-top:3px"><span style="color:#5C8A6B;font-weight:700">✓</span> ${r}</div>`).join("")}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+          <button class="btn btn-primary" style="padding:6px 14px;font-size:12px" data-confirm-match="${h.id}|${a.id}">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="5 12 10 17 19 7"/></svg>
+            Confirm match
+          </button>
+          <button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" data-share-match="${h.id}|${a.id}">
+            Share with applicant
+          </button>
+        </div>
+      </div>
+    </div>
+  `).join("");
+
+  // Wire confirm match button
+  container.querySelectorAll("[data-confirm-match]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const [hid, aid] = btn.dataset.confirmMatch.split("|");
+      const h = homestayHosts.find(x => x.id === hid);
+      const ap = homestayApplicants.find(x => x.id === aid);
+      if(!h || !ap) return;
+
+      // Add as a new active homestay client
+      const newId = "hc" + String(homestayClients.length + 1).padStart(2, "0");
+      homestayClients.push({
+        id: newId, ini: ap.ini, name: ap.name, email: ap.email, phone: "—",
+        flag: ap.flag, country: ap.country, school: ap.school,
+        hostId: h.id, arrival: ap.arrival, departure: ap.departure,
+        weCollect: 1400, wePay: h.payPerGuest,
+        status: parseLocalDate(ap.arrival) > TODAY ? "upcoming" : "active",
+        checkIn: ap.arrival, checkOut: ap.departure,
+        paymentMethod: "credit-card",
+      });
+      // Remove from applicants
+      const idx = homestayApplicants.findIndex(x => x.id === aid);
+      if(idx >= 0) homestayApplicants.splice(idx, 1);
+
+      HM_STATE.selectedApplicantId = null;
+      renderMatchingApplicants();
+      renderMatchCandidates();
+      document.getElementById("hm-kpi-apps").textContent = homestayApplicants.length;
+      showToast(`Matched ${ap.name} with ${h.name} — added to homestay clients`);
+      // Refresh client list if user navigates there
+      if(typeof renderHomestayClients === "function") renderHomestayClients();
+    });
+  });
+
+  container.querySelectorAll("[data-share-match]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const [hid, aid] = btn.dataset.shareMatch.split("|");
+      const h = homestayHosts.find(x => x.id === hid);
+      const ap = homestayApplicants.find(x => x.id === aid);
+      if(!h || !ap) return;
+      const subject = `A host family for your stay in ${h.city}`;
+      const body = `Hi ${ap.name.split(" ")[0]},\n\nWe found a great host family for you:\n\n${h.name} — ${h.neighborhood}, ${h.city}\nLanguages: ${h.languages.join(", ")}\nRating: ${h.rating} ★\n\nLet us know if you'd like to confirm and we'll set up the introduction.\n\n— The Vanmates team`;
+      window.open(`mailto:${ap.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_self");
+      showToast(`Email draft opened for ${ap.name}`);
+    });
+  });
+}
+
+// Update KPI count of hosts with capacity
+function updateMatchingKPIs(){
+  const hostsAvail = homestayHosts.filter(h => {
+    const occupied = homestayClients.filter(c => c.hostId === h.id && (c.status === "active" || c.status === "upcoming")).length;
+    return h.capacity - occupied > 0;
+  });
+  const apsEl = document.getElementById("hm-kpi-apps");
+  const hostsEl = document.getElementById("hm-kpi-hosts");
+  if(apsEl) apsEl.textContent = homestayApplicants.length;
+  if(hostsEl) hostsEl.textContent = hostsAvail.length;
+}
+
+renderMatchingApplicants();
+renderMatchCandidates();
+updateMatchingKPIs();
 
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
