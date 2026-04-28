@@ -1968,11 +1968,15 @@
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
             <input id="vac-search" placeholder="Search by room, property, or city…" />
           </div>
-          <div style="display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);padding:5px 10px 5px 12px;border-radius:10px">
+          <div style="display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);padding:5px 10px 5px 12px;border-radius:10px;flex-wrap:wrap">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted)"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-            <span style="font-size:11.5px;color:var(--muted);font-weight:600">Available by</span>
-            <input id="vac-avail-by" type="date" style="border:0;outline:0;font-family:inherit;font-size:13px;background:transparent;color:var(--ink);min-width:130px" />
-            <button id="vac-avail-clear" title="Clear date" style="background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px;display:none">✕</button>
+            <span style="font-size:11.5px;color:var(--muted);font-weight:600">Available</span>
+            <span style="font-size:11.5px;color:var(--muted)">from</span>
+            <input id="vac-avail-from" type="date" style="border:0;outline:0;font-family:inherit;font-size:13px;background:transparent;color:var(--ink);min-width:130px" />
+            <span style="font-size:11.5px;color:var(--muted)">to</span>
+            <input id="vac-avail-to" type="date" style="border:0;outline:0;font-family:inherit;font-size:13px;background:transparent;color:var(--ink);min-width:130px" />
+            <button id="vac-avail-clear" title="Clear dates" style="background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px;display:none">✕</button>
+            <div id="vac-avail-presets" style="display:flex;gap:4px;margin-left:6px"></div>
           </div>
           <div class="filter-chip" data-vac-filter="city">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg>
@@ -2016,7 +2020,7 @@
           <div class="empty">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
             <div class="t">No vacancies match these filters</div>
-            <div>Try a later "Available by" date or clear some filters.</div>
+            <div>Try a wider date range or clear some filters.</div>
           </div>
         </div>
       </div>
@@ -6538,12 +6542,18 @@ function wirePropertyCards(){
 }
 
 /* ============ VACANCIES — filter, sort, share ============ */
-const VAC_FILTERS = { search:"", availBy:"", cities:new Set(), types:new Set(), sort:"date" };
+const VAC_FILTERS = { search:"", availFrom:"", availTo:"", cities:new Set(), types:new Set(), sort:"date" };
 const VAC_BASE_URL = "https://aldo-adr23.github.io/vanmates-pms-demo";
 
 function vacFmtAvail(iso){
   const d = parseLocalDate(iso);
   return d.toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+}
+function vacFmtRange(from, to){
+  if(from && to) return `${vacFmtAvail(from)} → ${vacFmtAvail(to)}`;
+  if(from)       return `from ${vacFmtAvail(from)}`;
+  if(to)         return `by ${vacFmtAvail(to)}`;
+  return "";
 }
 
 function applyVacancyFilters(){
@@ -6557,9 +6567,14 @@ function applyVacancyFilters(){
       v.type.toLowerCase().includes(q)
     );
   }
-  if(VAC_FILTERS.availBy){
-    const cutoff = parseLocalDate(VAC_FILTERS.availBy);
-    list = list.filter(v => parseLocalDate(v.availDate) <= cutoff);
+  // Date range: availDate must fall within [from, to]
+  if(VAC_FILTERS.availFrom){
+    const start = parseLocalDate(VAC_FILTERS.availFrom);
+    list = list.filter(v => parseLocalDate(v.availDate) >= start);
+  }
+  if(VAC_FILTERS.availTo){
+    const end = parseLocalDate(VAC_FILTERS.availTo);
+    list = list.filter(v => parseLocalDate(v.availDate) <= end);
   }
   if(VAC_FILTERS.cities.size) list = list.filter(v => VAC_FILTERS.cities.has(v.city));
   if(VAC_FILTERS.types.size)  list = list.filter(v => VAC_FILTERS.types.has(v.type));
@@ -6583,10 +6598,11 @@ function renderVacancies(){
   // Update sub-text
   const sub = document.getElementById("vac-result-sub");
   if(sub){
-    if(VAC_FILTERS.availBy){
-      sub.textContent = `${list.length} room${list.length===1?"":"s"} available by ${vacFmtAvail(VAC_FILTERS.availBy)}`;
+    const range = vacFmtRange(VAC_FILTERS.availFrom, VAC_FILTERS.availTo);
+    if(range){
+      sub.textContent = `${list.length} room${list.length===1?"":"s"} available ${range}`;
     } else {
-      sub.textContent = `${list.length} of ${vacancies.length} rooms · search by date, city, or type`;
+      sub.textContent = `${list.length} of ${vacancies.length} rooms · search by date range, city, or type`;
     }
   }
 
@@ -6626,7 +6642,9 @@ function renderVacancies(){
   const ac = document.getElementById("vac-active-chips");
   const chips = [];
   if(VAC_FILTERS.search) chips.push({k:"search", v:VAC_FILTERS.search, l:'Search: "'+VAC_FILTERS.search+'"'});
-  if(VAC_FILTERS.availBy) chips.push({k:"availBy", v:VAC_FILTERS.availBy, l:"Available by " + vacFmtAvail(VAC_FILTERS.availBy)});
+  if(VAC_FILTERS.availFrom || VAC_FILTERS.availTo) {
+    chips.push({k:"availRange", v:"range", l:"Available " + vacFmtRange(VAC_FILTERS.availFrom, VAC_FILTERS.availTo)});
+  }
   VAC_FILTERS.cities.forEach(v => chips.push({k:"cities", v, l:v}));
   VAC_FILTERS.types.forEach(v => chips.push({k:"types", v, l:v}));
   if(chips.length === 0){ ac.innerHTML = ""; return; }
@@ -6636,16 +6654,22 @@ function renderVacancies(){
   ac.querySelectorAll(".x").forEach(x => x.addEventListener("click", () => {
     const [k, v] = x.dataset.vacrm.split("|");
     if(k === "search"){ VAC_FILTERS.search = ""; document.getElementById("vac-search").value = ""; }
-    else if(k === "availBy"){ VAC_FILTERS.availBy = ""; document.getElementById("vac-avail-by").value = ""; document.getElementById("vac-avail-clear").style.display = "none"; }
+    else if(k === "availRange"){
+      VAC_FILTERS.availFrom = ""; VAC_FILTERS.availTo = "";
+      const fromEl = document.getElementById("vac-avail-from"); if(fromEl) fromEl.value = "";
+      const toEl = document.getElementById("vac-avail-to"); if(toEl) toEl.value = "";
+      const clr = document.getElementById("vac-avail-clear"); if(clr) clr.style.display = "none";
+    }
     else VAC_FILTERS[k].delete(v);
     renderVacancies();
   }));
   document.getElementById("vac-clear-all").addEventListener("click", () => {
-    VAC_FILTERS.search = ""; VAC_FILTERS.availBy = "";
+    VAC_FILTERS.search = ""; VAC_FILTERS.availFrom = ""; VAC_FILTERS.availTo = "";
     VAC_FILTERS.cities.clear(); VAC_FILTERS.types.clear();
     document.getElementById("vac-search").value = "";
-    document.getElementById("vac-avail-by").value = "";
-    document.getElementById("vac-avail-clear").style.display = "none";
+    const fromEl = document.getElementById("vac-avail-from"); if(fromEl) fromEl.value = "";
+    const toEl = document.getElementById("vac-avail-to"); if(toEl) toEl.value = "";
+    const clr = document.getElementById("vac-avail-clear"); if(clr) clr.style.display = "none";
     document.querySelectorAll('.filter-dropdown[data-vac] input[type=checkbox]').forEach(cb => cb.checked = false);
     renderVacancies();
   });
@@ -6707,17 +6731,71 @@ attachVacDropdown("type", [...new Set(vacancies.map(v => v.type))].sort());
 document.getElementById("vac-search")?.addEventListener("input", e => {
   VAC_FILTERS.search = e.target.value; renderVacancies();
 });
-document.getElementById("vac-avail-by")?.addEventListener("change", e => {
-  VAC_FILTERS.availBy = e.target.value;
-  document.getElementById("vac-avail-clear").style.display = VAC_FILTERS.availBy ? "inline" : "none";
+function _vacUpdateDateClear(){
+  const has = VAC_FILTERS.availFrom || VAC_FILTERS.availTo;
+  const clr = document.getElementById("vac-avail-clear");
+  if(clr) clr.style.display = has ? "inline" : "none";
+}
+document.getElementById("vac-avail-from")?.addEventListener("change", e => {
+  VAC_FILTERS.availFrom = e.target.value;
+  // Auto-bump To if From is later than To
+  if(VAC_FILTERS.availFrom && VAC_FILTERS.availTo && VAC_FILTERS.availFrom > VAC_FILTERS.availTo){
+    VAC_FILTERS.availTo = "";
+    const toEl = document.getElementById("vac-avail-to"); if(toEl) toEl.value = "";
+  }
+  _vacUpdateDateClear();
+  renderVacancies();
+});
+document.getElementById("vac-avail-to")?.addEventListener("change", e => {
+  VAC_FILTERS.availTo = e.target.value;
+  if(VAC_FILTERS.availFrom && VAC_FILTERS.availTo && VAC_FILTERS.availFrom > VAC_FILTERS.availTo){
+    VAC_FILTERS.availFrom = "";
+    const fromEl = document.getElementById("vac-avail-from"); if(fromEl) fromEl.value = "";
+  }
+  _vacUpdateDateClear();
   renderVacancies();
 });
 document.getElementById("vac-avail-clear")?.addEventListener("click", () => {
-  VAC_FILTERS.availBy = "";
-  document.getElementById("vac-avail-by").value = "";
-  document.getElementById("vac-avail-clear").style.display = "none";
+  VAC_FILTERS.availFrom = ""; VAC_FILTERS.availTo = "";
+  const f = document.getElementById("vac-avail-from"); if(f) f.value = "";
+  const t = document.getElementById("vac-avail-to"); if(t) t.value = "";
+  _vacUpdateDateClear();
   renderVacancies();
 });
+
+// Quick presets — click to set a common date range
+(function buildVacPresets(){
+  const host = document.getElementById("vac-avail-presets");
+  if(!host) return;
+  const today = TODAY;
+  const ymd = (d) => d.getUTCFullYear() + "-" + String(d.getUTCMonth()+1).padStart(2,"0") + "-" + String(d.getUTCDate()).padStart(2,"0");
+  function plusDays(n){ const d = new Date(today); d.setUTCDate(d.getUTCDate()+n); return d; }
+  function startOfMonth(off){ const d = new Date(today); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth()+off); return d; }
+  function endOfMonth(off){ const d = new Date(today); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth()+off+1); d.setUTCDate(0); return d; }
+
+  const presets = [
+    {label:"30 days",   from: ymd(today),         to: ymd(plusDays(30))},
+    {label:"60 days",   from: ymd(today),         to: ymd(plusDays(60))},
+    {label:"This month",from: ymd(today),         to: ymd(endOfMonth(0))},
+    {label:"Next month",from: ymd(startOfMonth(1)),to: ymd(endOfMonth(1))},
+    {label:"Summer",    from: "2026-06-01",       to: "2026-08-31"},
+    {label:"Fall",      from: "2026-09-01",       to: "2026-11-30"},
+  ];
+  host.innerHTML = presets.map((p, i) => `<button data-preset="${i}" style="background:var(--cream-2);border:1px solid var(--line);color:var(--muted);font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit">${p.label}</button>`).join("");
+  host.querySelectorAll("[data-preset]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const p = presets[+btn.dataset.preset];
+      VAC_FILTERS.availFrom = p.from;
+      VAC_FILTERS.availTo = p.to;
+      const fromEl = document.getElementById("vac-avail-from"); if(fromEl) fromEl.value = p.from;
+      const toEl = document.getElementById("vac-avail-to"); if(toEl) toEl.value = p.to;
+      _vacUpdateDateClear();
+      renderVacancies();
+    });
+    btn.addEventListener("mouseenter", () => { btn.style.background = "var(--red-soft)"; btn.style.color = "var(--red-dark)"; btn.style.borderColor = "var(--red-soft)"; });
+    btn.addEventListener("mouseleave", () => { btn.style.background = "var(--cream-2)"; btn.style.color = "var(--muted)"; btn.style.borderColor = "var(--line)"; });
+  });
+})();
 document.getElementById("vac-sort")?.addEventListener("change", e => {
   VAC_FILTERS.sort = e.target.value; renderVacancies();
 });
