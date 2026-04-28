@@ -5999,22 +5999,73 @@ document.getElementById("ll-search").addEventListener("input", e => renderLandlo
 
 /* === Add Landlord modal === */
 const landlordPalette = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041","#6E5236"];
-function openAddLandlord(){
-  const modal = document.getElementById("modal-backdrop");
+function refreshLandlordPropertySelect(selectedName){
   const select = document.querySelector('#add-landlord-form select[name="property"]');
-  // Refresh the property dropdown — only show properties that don't already have a landlord
+  if(!select) return;
   const taken = new Set(landlords.map(l => l.property));
   select.innerHTML = `<option value="">Select a property…</option>` +
     properties.map(p =>
-      `<option value="${p.name}" ${taken.has(p.name)?'disabled':''}>${p.name}${taken.has(p.name)?' (already assigned)':''}</option>`
+      `<option value="${p.name}" ${taken.has(p.name)?'disabled':''} ${selectedName===p.name?'selected':''}>${p.name}${taken.has(p.name)?' (already assigned)':''}</option>`
     ).join("") +
     `<option value="__new__">+ Add a new property…</option>`;
+}
+
+function handleAddNewPropertyInline(){
+  // Prompt sequence — name, then city
+  const name = (prompt("New property name:\n(e.g. Heather House, Vancouver House · 920, Mile End Loft)") || "").trim();
+  if(!name){ refreshLandlordPropertySelect(""); return null; }
+  // Reject duplicates
+  if(properties.some(p => p.name.toLowerCase() === name.toLowerCase())){
+    alert(`A property called "${name}" already exists.`);
+    refreshLandlordPropertySelect(name);
+    return name;
+  }
+  const city = (prompt("City for " + name + "?\n(Vancouver, Toronto, Montréal, Guadalajara…)") || "").trim() || "—";
+  const addr = (prompt("Street address (optional):") || "").trim();
+  const rooms = parseInt(prompt("How many rooms? (default 1)") || "1", 10) || 1;
+
+  // Build minimal property record matching the existing schema
+  const palette = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041","#6E5236"];
+  const newProp = {
+    name,
+    addr: addr || (city + ", —"),
+    city,
+    type: "Co-living",
+    rooms, occ: 0,
+    ratePct: 0,
+    rent: "—",
+    color: palette[properties.length % palette.length],
+  };
+  properties.push(newProp);
+  refreshLandlordPropertySelect(name);
+  if(typeof renderProperties === "function") renderProperties();
+  if(typeof renderPropertiesGrid === "function") renderPropertiesGrid();
+  if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+  if(typeof refreshPortfolio === "function") refreshPortfolio();
+  if(typeof showToast === "function") showToast(`Added property "${name}" — now select it for the landlord`);
+  return name;
+}
+
+function openAddLandlord(){
+  const modal = document.getElementById("modal-backdrop");
+  refreshLandlordPropertySelect("");
   document.getElementById("add-landlord-form").reset();
   document.getElementById("form-error").classList.remove("show");
   document.getElementById("pdf-label").textContent = "Click to upload signed PDF (or drag and drop)";
   modal.classList.add("open");
   modal.setAttribute("aria-hidden","false");
   document.body.style.overflow = "hidden";
+
+  // Wire the property select once
+  const sel = document.querySelector('#add-landlord-form select[name="property"]');
+  if(sel && !sel.dataset.wiredNewOpt){
+    sel.dataset.wiredNewOpt = "1";
+    sel.addEventListener("change", () => {
+      if(sel.value === "__new__"){
+        handleAddNewPropertyInline();
+      }
+    });
+  }
   setTimeout(() => document.querySelector('#add-landlord-form input[name="name"]').focus(), 250);
 }
 function closeAddLandlord(){
@@ -6087,7 +6138,11 @@ document.getElementById("add-landlord-form").addEventListener("submit", e => {
   const pdfFile = document.getElementById("pdf-input").files[0];
   const pdfName = pdfFile ? pdfFile.name : "lease-annex-house.pdf";
   const pdfSize = pdfFile ? `${(pdfFile.size/1024).toFixed(0)} KB` : "— pending";
-  const propertyResolved = property === "__new__" ? "New property (TBD)" : property;
+  // If user left "+ Add a new property…" selected without filling it in, force a real selection
+  if(property === "__new__"){
+    errEl.textContent = "Please pick or create a property first."; errEl.classList.add("show"); return;
+  }
+  const propertyResolved = property;
 
   const fresh = {
     id, ini, name, company, email, phone,
@@ -9109,7 +9164,6 @@ let HC_HOST = null;
 
 const _origRenderHomestayClients = renderHomestayClients;
 renderHomestayClients = function(searchTxt = ""){
-  // Simply call original then post-filter the body if our filters are active
   _origRenderHomestayClients(searchTxt);
   if(HC_CITY || HC_HOST){
     const body = document.getElementById("homestay-clients-body");
@@ -9122,7 +9176,193 @@ renderHomestayClients = function(searchTxt = ""){
       if(!cityMatch || !hostMatch) row.style.display = "none";
     });
   }
+  // Wire row click + View button click to open the homestay client panel
+  const body = document.getElementById("homestay-clients-body");
+  if(body){
+    const visibleClients = (typeof homestayClients !== "undefined") ? homestayClients : [];
+    [...body.querySelectorAll("tr")].forEach((row, i) => {
+      // Match each row to a client by visible name in the first cell
+      const nameMain = row.querySelector("td:first-child .name-main")?.textContent.trim();
+      if(!nameMain) return;
+      const client = visibleClients.find(c => c.name === nameMain);
+      if(!client) return;
+      row.dataset.hcId = client.id;
+      row.style.cursor = "pointer";
+      // The View button — last cell
+      const viewBtn = row.querySelector("td:last-child button");
+      if(viewBtn){
+        viewBtn.onclick = (e) => { e.stopPropagation(); openHomestayClient(client.id); };
+      }
+      row.onclick = () => openHomestayClient(client.id);
+    });
+  }
 };
+
+/* === Homestay client detail panel === */
+function openHomestayClient(id){
+  const c = (typeof homestayClients !== "undefined") ? homestayClients.find(x => x.id === id) : null;
+  if(!c) return;
+  const host = (typeof homestayHosts !== "undefined") ? homestayHosts.find(h => h.id === c.hostId) : null;
+
+  // Hero
+  const hero = document.getElementById("panel-hero");
+  if(hero){
+    hero.textContent = c.ini || (c.name||"?").slice(0,2).toUpperCase();
+    const palette = ["#A88965","#B0855A","#C19A6B","#9b6b53","#8E6F4A","#7d6041","#A6724E"];
+    const idx = (c.id || "").split("").reduce((s,ch)=>s+ch.charCodeAt(0),0) % palette.length;
+    const col = palette[idx];
+    hero.style.background = `linear-gradient(135deg, ${col}, ${shade(col,-25)})`;
+  }
+
+  document.getElementById("panel-title").innerHTML = `${c.name} <span class="flag">${c.flag||"🌐"}</span>`;
+  document.getElementById("panel-sub").textContent = `${c.country || "—"}${c.school ? " · " + c.school : ""}${host ? " · " + host.city : ""}`;
+
+  // Status badges
+  const today = TODAY;
+  const arr = c.arrival ? parseLocalDate(c.arrival) : null;
+  const dep = c.departure ? parseLocalDate(c.departure) : null;
+  const stayDays = (arr && dep) ? Math.round((dep - arr) / (1000*60*60*24)) : null;
+  const stayMonths = stayDays != null ? Math.round(stayDays / 30 * 10) / 10 : null;
+  const margin = (c.weCollect || 0) - (c.wePay || 0);
+  const marginPct = c.weCollect ? Math.round(margin / c.weCollect * 100) : 0;
+
+  const statusBadge = c.status === "active" ? '<span class="badge badge-green"><span class="dot"></span>Active</span>'
+    : c.status === "upcoming" ? `<span class="badge badge-blue"><span class="dot"></span>Arrives ${c.arrival ? fmtDate(c.arrival) : "—"}</span>`
+    : '<span class="badge badge-grey"><span class="dot"></span>Past</span>';
+
+  document.getElementById("panel-meta").innerHTML = `
+    ${statusBadge}
+    ${stayMonths != null ? `<span class="badge badge-grey"><span class="dot"></span>${stayMonths} month${stayMonths===1?"":"s"} stay</span>` : ""}
+    ${host ? `<span class="badge badge-grey"><span class="dot"></span>${host.name}</span>` : ""}
+  `;
+
+  // Remove leftover landlord-only header Edit button
+  document.querySelector(".panel-head .header-edit-btn")?.remove();
+
+  const body = document.getElementById("panel-body");
+  body.innerHTML = `
+    <div class="panel-kpis">
+      <div class="panel-kpi">
+        <div class="l">We collect</div>
+        <div class="v">${fmt(c.weCollect || 0)}</div>
+        <div class="s">/ month from student</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">We pay host</div>
+        <div class="v red">−${fmt(c.wePay || 0)}</div>
+        <div class="s">/ month to ${host ? host.name.split(" ")[0] : "host"}</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Net margin</div>
+        <div class="v green">${fmt(margin)}</div>
+        <div class="s">${marginPct}% margin</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Placement fee</div>
+        <div class="v">${c.placementFee ? fmt(c.placementFee) : '<span style="color:var(--muted);font-size:24px">—</span>'}</div>
+        <div class="s">${c.placementFee ? "one-time, on arrival" : "no placement fee"}</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Stay</em> details</span><span class="ct">${c.paymentMethod || "—"}</span></div>
+      <div class="card" style="padding:0">
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+          <div class="list-main"><div class="list-title">Arrival → Departure</div><div class="list-sub">Booked stay window</div></div>
+          <div class="list-meta num">${c.arrival ? fmtDate(c.arrival) : "—"} → ${c.departure ? fmtDate(c.departure) : "—"}</div>
+        </div>
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l4 4L19 6"/></svg></div>
+          <div class="list-main"><div class="list-title">Check-in</div><div class="list-sub">Day of arrival</div></div>
+          <div class="list-meta num">${c.checkIn ? fmtDate(c.checkIn) : "—"}</div>
+        </div>
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+          <div class="list-main"><div class="list-title">Check-out</div><div class="list-sub">Day of departure</div></div>
+          <div class="list-meta num">${c.checkOut ? fmtDate(c.checkOut) : "—"}</div>
+        </div>
+        ${c.house ? `
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v11H3z"/></svg></div>
+          <div class="list-main"><div class="list-title">House</div><div class="list-sub">${c.room ? "Room " + c.room : "—"}</div></div>
+          <div class="list-meta num">${c.house}</div>
+        </div>` : ""}
+        <div class="list-row" style="padding:12px 16px;border-bottom:none">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="2"/><line x1="3" y1="11" x2="21" y2="11"/></svg></div>
+          <div class="list-main"><div class="list-title">Payment method</div><div class="list-sub">How student pays Vanmates</div></div>
+          <div class="list-meta">${c.paymentMethod || "—"}</div>
+        </div>
+      </div>
+    </div>
+
+    ${host ? `
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Host</em> family</span><span class="ct">${host.city || ""}</span></div>
+      <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
+        <div class="avatar" style="width:42px;height:42px;font-size:14px;background:linear-gradient(135deg,${host.color||"#A88965"},${shade(host.color||"#A88965",-25)})">${(host.name||"?").split(/\s+/).map(p=>p[0]).slice(0,2).join("").toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div class="prop-name" style="font-size:15px">${host.name} <span class="flag">${host.flag||""}</span></div>
+          <div class="prop-addr">${host.neighborhood ? host.neighborhood + " · " : ""}${host.city || ""}${host.capacity ? " · capacity " + host.capacity : ""}</div>
+          <div style="margin-top:4px">
+            ${host.languages ? host.languages.slice(0,3).map(l => `<span class="badge badge-grey"><span class="dot"></span>${l}</span>`).join(" ") : ""}
+          </div>
+        </div>
+        <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-go-host="${host.id}">View →</button>
+      </div>
+    </div>` : `
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Host</em> family</span></div>
+      <div class="card card-pad" style="text-align:center;color:var(--muted);font-size:13px">
+        Not assigned to a host yet. Edit this client to pick one.
+      </div>
+    </div>`}
+
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Contact</em></span></div>
+      <div class="card" style="padding:0">
+        <div class="list-row" style="padding:12px 16px">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
+          <div class="list-main"><div class="list-title">Email</div></div>
+          <div class="list-meta" style="font-family:var(--slab);font-size:13px">${c.email || '<span style="color:var(--muted)">Not on file</span>'}</div>
+        </div>
+        <div class="list-row" style="padding:12px 16px;border-bottom:none">
+          <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+          <div class="list-main"><div class="list-title">Phone</div></div>
+          <div class="list-meta" style="font-family:var(--slab);font-size:13px">${c.phone || '<span style="color:var(--muted)">Not on file</span>'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:24px">
+      <a class="btn btn-primary" href="${c.email ? `mailto:${c.email}?subject=${encodeURIComponent("Hello from Vanmates")}` : "#"}" style="flex:1;justify-content:center;${c.email?'':'opacity:.5;pointer-events:none'}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+        Email student
+      </a>
+      <button class="btn btn-ghost" id="hc-wa-btn" style="flex:1;justify-content:center">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg>
+        WhatsApp
+      </button>
+    </div>
+  `;
+
+  // Wire host link
+  body.querySelectorAll("[data-go-host]").forEach(b => b.addEventListener("click", () => {
+    if(typeof openHost === "function") openHost(b.dataset.goHost);
+  }));
+  // Wire WhatsApp
+  document.getElementById("hc-wa-btn")?.addEventListener("click", () => {
+    if(!c.phone){ showToast(`No phone on file for ${c.name}.`); return; }
+    const cleaned = String(c.phone).replace(/[^\d+]/g, "");
+    window.open(`https://wa.me/${cleaned}?text=${encodeURIComponent("Hi " + c.name.split(" ")[0] + ", this is Vanmates — ")}`, "_blank", "noopener");
+  });
+
+  // Open the panel
+  document.getElementById("detail-panel").classList.add("open");
+  document.getElementById("detail-panel").setAttribute("aria-hidden","false");
+  document.getElementById("panel-backdrop").classList.add("open");
+  document.body.style.overflow = "hidden";
+}
 
 bindDropdown("hc-city-btn", "hc-city-menu", "hc-city-wrap", menu => {
   const cities = [...new Set(homestayHosts.map(h => h.city))].sort();
