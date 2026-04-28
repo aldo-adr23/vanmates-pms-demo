@@ -10507,6 +10507,144 @@ function refreshDashboard(){
 // Initial dashboard refresh
 refreshDashboard();
 
+/* ============ VACANCY ↔ PROPERTY NAME ALIGNMENT ============ */
+/* Asana vacancies use building-level names ("Vancouver House", "Blood Alley
+   Residence"); properties[] uses unit-level names ("Vancouver House · 506",
+   "Blood Alley · 503") because each Asana section is its own property. We
+   re-map each vacancy's `prop` to the unit-level name where possible by
+   extracting the unit number from the room title. */
+(function alignVacancyProperties(){
+  if(typeof vacancies === "undefined" || typeof properties === "undefined") return;
+
+  // Building-name aliases: vacancy name → base used in properties[]
+  const buildingAlias = {
+    "Blood Alley Residence": "Blood Alley",
+    "Mount Pleasant": "Mount Pleasant",
+    "Vancouver House": "Vancouver House",
+    "The Stainsbury": "The Stainsbury",
+    "Granville-Davie": "Granville-Davie Units",
+    "Main Building": "Main St Units",
+    "Landis Residence": "Landis Residence",
+    "1133 Barclay Apartments": "Barclay Units",
+    "923 E Broadway": "Broadway 923 E",
+    "925 E Broadway": "Broadway 925 E",
+    "1361 Broadway": "1361 E Broadway",
+    "1369 E Broadway": "1369 Broadway",
+    "Hamilton House": "Hamilton",
+    "Granville house": "Granville House",
+    "Sparbrook": "Sparbrook House",
+    "1954 King Edward": "King Edward",
+    "La casa de Papel": "Casa de Papel / Shaughnessy Home",
+    "Beatrice House": "Beatrice",
+    "Kitsilano House": "Kitsilano Shared House",
+    "Quayside": "Quayside 1203",
+    "Willow House": "Willow"
+  };
+
+  // Build a quick lookup: { baseName: [{name, unit}...] }
+  const byBase = {};
+  properties.forEach(p => {
+    const m1 = p.name.match(/^(.+?)\s*[·\u00b7]\s*(\d+\w*)\b/);
+    const m2 = p.name.match(/^(.+?)\s+(\d{2,4}[A-Z]?)$/);
+    let base, unit;
+    if(m1){ base = m1[1].trim(); unit = m1[2]; }
+    else if(m2){ base = m2[1].trim(); unit = m2[2]; }
+    else { base = p.name; unit = null; }
+    (byBase[base] = byBase[base] || []).push({name: p.name, unit});
+  });
+
+  // Quick set for exact matches
+  const exactProps = new Set(properties.map(p => p.name));
+
+  function extractUnit(roomTitle){
+    // Match "Unit 903", "Apt 12", etc. — capture the number
+    const m = roomTitle.match(/\b(?:Unit|Apt)\s+(\d+\w*)\b/i)
+      || roomTitle.match(/^(\d{3,4})\b/); // bare 3-4 digit number at start
+    return m ? m[1] : null;
+  }
+
+  // Build a roomName → unitPropertyName lookup from existing tenants.
+  // This catches rooms whose unit number was stripped (e.g. "Cedar (Master)"
+  // in vacancy → tenant "Cedar" lives in "The Stainsbury 301").
+  const roomToProp = {};
+  function normRoom(s){
+    return (s || "")
+      .toLowerCase()
+      .replace(/\([^)]+\)/g, "")           // drop "(Master)", "(flex)", etc.
+      .replace(/\b(master|standard|std|flex|basement|main floor|female|couples|standard\s*\d|std\s*\d)\b/gi, "")
+      .replace(/[^\w\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  tenants.forEach(t => {
+    if(!t.property || !t.room) return;
+    const key = normRoom(t.room);
+    if(!key || key.length < 3) return;
+    // Don't overwrite a multi-unit base name with a non-unit one
+    if(!roomToProp[key]) roomToProp[key] = t.property;
+  });
+
+  let remapped = 0, unchanged = 0, viaTenant = 0;
+  vacancies.forEach(v => {
+    if(exactProps.has(v.prop)) { unchanged++; return; }
+    const aliasBase = buildingAlias[v.prop] || v.prop;
+
+    const unit = extractUnit(v.room || "");
+    const units = byBase[aliasBase] || [];
+
+    if(unit && units.length){
+      const hit = units.find(u => u.unit === unit);
+      if(hit){ v.prop = hit.name; remapped++; return; }
+    }
+
+    // Try room-name → unit lookup from tenants
+    const normalized = normRoom(v.room);
+    if(normalized && roomToProp[normalized]){
+      const hit = roomToProp[normalized];
+      const hitBase = (hit.match(/^(.+?)\s*[·\u00b7]\s*\d/) || hit.match(/^(.+?)\s+\d{2,4}/) || [null, hit])[1];
+      if(hitBase === aliasBase || (units.some(u => u.name === hit))){
+        v.prop = hit; remapped++; viaTenant++; return;
+      }
+    }
+
+    // Last-ditch: search propertyProfiles notes for the room name across the
+    // building's units. If "Cedar" appears in unit-301's notes, vacancy is 301.
+    if(typeof propertyProfiles !== "undefined" && normalized){
+      const candidates = units.length ? units.map(u => u.name) : [];
+      // Also include any propertyProfiles key that starts with aliasBase
+      Object.keys(propertyProfiles).forEach(k => {
+        if(k.startsWith(aliasBase) && !candidates.includes(k)) candidates.push(k);
+      });
+      const roomToken = normalized.split(/\s+/)[0]; // first significant word
+      if(roomToken && roomToken.length >= 3){
+        const re = new RegExp("\\b" + roomToken.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "\\b", "i");
+        for(const cand of candidates){
+          const pp = propertyProfiles[cand];
+          if(!pp) continue;
+          const found = (pp.units || []).some(u => re.test(u.notes || "") || re.test(u.section || ""));
+          if(found){
+            v.prop = cand; remapped++; viaTenant++; return;
+          }
+        }
+      }
+    }
+
+    // If the building has just one unit record, use it regardless of unit
+    // number (e.g. Landis Residence · 1024 is the only Landis record we have)
+    if(units.length === 1){
+      v.prop = units[0].name; remapped++; return;
+    }
+    // Fall back to building-level alias if that's an actual property record
+    if(exactProps.has(aliasBase)){
+      v.prop = aliasBase; remapped++; return;
+    }
+    unchanged++;
+  });
+  console.log(`[vacancy align] remapped=${remapped} (${viaTenant} via fuzzy lookup) unchanged=${unchanged} of ${vacancies.length}`);
+
+  if(typeof applyVacancyFilters === "function") applyVacancyFilters();
+})();
+
 /* ============ ADD HOMESTAY HOST modal ============ */
 function openAddHostModal(){
   let modal = document.getElementById("add-host-modal");
