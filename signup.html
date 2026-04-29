@@ -212,7 +212,25 @@ function finishAccept(profile){
   window.location.href = "index.html";
 }
 
-function handleCredentialResponse(resp){
+async function handleCredentialResponse(resp){
+  // Try to also create a real Supabase session so the new teammate can read/
+  // write via RLS in the PMS. Requires Google enabled in Supabase Auth →
+  // Providers (same Client ID). Falls back to legacy session if not configured.
+  if(sb){
+    try {
+      const { error } = await sb.auth.signInWithIdToken({
+        provider: "google",
+        token: resp.credential
+      });
+      if(error){
+        console.warn("[signup] Supabase Google sign-in not configured yet:", error.message);
+      } else {
+        console.log("[signup] Supabase session created via Google ID token");
+      }
+    } catch(err){
+      console.warn("[signup] Supabase Google sign-in threw:", err.message);
+    }
+  }
   finishAccept(decodeJwt(resp.credential));
 }
 
