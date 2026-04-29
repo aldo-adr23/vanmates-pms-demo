@@ -148,9 +148,18 @@
 <!-- Google Identity Services (loaded async) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 
+<!-- Supabase JS client -->
+<script src="supabase-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
 <script>
-/* See signin.html for full Google OAuth setup notes. Same Client ID. */
 const GOOGLE_CLIENT_ID = "802991869168-0dpre0q2b939vmdi6einvlurgkif9h7o.apps.googleusercontent.com";
+
+const sb = (window.VM_SUPABASE_URL && window.VM_SUPABASE_KEY && window.supabase)
+  ? window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    })
+  : null;
 
 const inviteParams = new URLSearchParams(window.location.search);
 const INVITE_EMAIL = (inviteParams.get("invite") || "").trim().toLowerCase();
@@ -233,11 +242,68 @@ function acceptWithGoogle(){
   if(ok) finishAccept({email: INVITE_EMAIL, name: "Invited Teammate", picture: null, sub: "demo"});
 }
 
-function acceptInvite(e){
+async function acceptInvite(e){
   e.preventDefault();
   const first = (document.getElementById("first")?.value || "").trim();
   const last  = (document.getElementById("last")?.value || "").trim();
   const fullName = (first + " " + last).trim() || "Invited Teammate";
+  const passwords = e.target.querySelectorAll('input[type="password"]');
+  const password = passwords[0]?.value || "";
+  const confirm  = passwords[1]?.value || "";
+  if(password !== confirm){
+    alert("Passwords don't match.");
+    return;
+  }
+  if(password.length < 10){
+    alert("Password must be at least 10 characters.");
+    return;
+  }
+
+  // Real signup via Supabase (creates auth.users; the DB trigger sees the
+  // matching pending_invite row and creates the team_members entry with the
+  // role from the invite).
+  if(sb){
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = "Creating account…"; }
+    try {
+      const { data, error } = await sb.auth.signUp({
+        email: INVITE_EMAIL,
+        password,
+        options: {
+          data: { name: fullName, invited_role: INVITE_ROLE || null },
+          emailRedirectTo: window.location.origin + "/signin.html"
+        }
+      });
+      if(error){
+        alert("Couldn't accept invite: " + error.message);
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Accept invite & sign in"; }
+        return;
+      }
+      if(data.session){
+        // Auto-confirmed — go straight to the portal
+        sessionStorage.setItem("vm_session", JSON.stringify({
+          email: data.user.email,
+          name: fullName,
+          picture: null, sub: data.user.id,
+          signedInAt: new Date().toISOString(),
+          via: "password",
+          invitedRole: INVITE_ROLE || null,
+        }));
+        window.location.href = "index.html";
+      } else {
+        // Email confirmation enabled — show check-your-email message
+        alert("✅ Account created!\n\nCheck " + INVITE_EMAIL + " for a confirmation link, then sign in.");
+        window.location.href = "signin.html";
+      }
+      return;
+    } catch(err){
+      alert("Network error: " + err.message);
+      if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Accept invite & sign in"; }
+      return;
+    }
+  }
+
+  // Fallback: legacy session-only signup (used only if Supabase isn't loaded)
   sessionStorage.setItem("vm_session", JSON.stringify({
     email: INVITE_EMAIL,
     name: fullName,

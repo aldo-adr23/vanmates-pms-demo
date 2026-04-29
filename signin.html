@@ -160,7 +160,7 @@
         <div class="field">
           <div class="field-row">
             <label>Password</label>
-            <a class="forgot-link" href="mailto:aldo@vanmates.com?subject=Password%20reset%20%E2%80%94%20Vanmates%20Portal&body=Hi%20Aldo%2C%0A%0AI%20need%20a%20password%20reset%20for%20the%20Vanmates%20Portal.%0A%0AThanks%21">Forgot password?</a>
+            <a class="forgot-link" href="#" onclick="requestPasswordReset(event)">Forgot password?</a>
           </div>
           <input type="password" name="password" placeholder="••••••••" required />
         </div>
@@ -179,27 +179,22 @@
 <!-- Google Identity Services (loaded async) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-<script>
-/* ============================================================================
-   GOOGLE SIGN-IN SETUP
-   ----------------------------------------------------------------------------
-   To enable real Google sign-in:
-   1. Go to https://console.cloud.google.com/apis/credentials
-   2. Create an OAuth 2.0 Client ID (type: Web application)
-   3. Under "Authorized JavaScript origins" add:
-        https://portal.vanmates.com   (production)
-        https://aldo-adr23.github.io  (legacy GitHub Pages URL — keep during migration)
-        http://localhost:8000         (optional, for local testing)
-   4. Copy the Client ID and paste it below in place of "REPLACE_ME"
-   5. Save and reload — the Google button will use the real OAuth flow.
+<!-- Supabase JS client (Phase 1: real auth backend) -->
+<script src="supabase-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
-   While CLIENT_ID is "REPLACE_ME", clicking the button falls back to a
-   prompt-based demo flow so the prototype still works.
-============================================================================ */
+<script>
 const GOOGLE_CLIENT_ID = "802991869168-0dpre0q2b939vmdi6einvlurgkif9h7o.apps.googleusercontent.com";
 
-// Allowlist of emails that are recognized team members.
-// Anyone else trying to Google-sign-in gets rejected with a clear message.
+// Initialize Supabase client. If config is missing (or unreachable), we fall
+// back to the legacy sessionStorage allowlist flow so the page still works.
+const sb = (window.VM_SUPABASE_URL && window.VM_SUPABASE_KEY && window.supabase)
+  ? window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    })
+  : null;
+
+// Legacy email allowlist — only used as a fallback when Supabase isn't wired.
 const ALLOWED_EMAILS = ["aldo@vanmates.com"];
 
 function decodeJwt(token){
@@ -269,18 +264,49 @@ function signInWithGoogle(){
   finishSignIn({email, name: "Aldo Diaz Rodriguez", picture: null, sub: "demo-" + email});
 }
 
-function signIn(e){
+async function signIn(e){
   e.preventDefault();
   const email = (document.querySelector('input[type="email"]')?.value || "").trim().toLowerCase();
+  const password = (document.querySelector('input[type="password"]')?.value || "");
+
+  // Real auth via Supabase
+  if(sb){
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = "Signing in…"; }
+    try {
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if(error){
+        alert("Sign-in failed: " + error.message + "\n\n" +
+              "If you haven't set a password yet, click \"Forgot password?\" — " +
+              "the admin will send you a reset link.");
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Sign in"; }
+        return;
+      }
+      // The PMS reads the Supabase session on load (see vanmates-pms.html).
+      // Also write a vm_session shim for backwards compatibility.
+      sessionStorage.setItem("vm_session", JSON.stringify({
+        email: data.user.email,
+        name: data.user.user_metadata?.name || data.user.email.split("@")[0],
+        picture: data.user.user_metadata?.avatar_url || null,
+        sub: data.user.id,
+        signedInAt: new Date().toISOString(),
+        via: "password"
+      }));
+      window.location.href = "index.html";
+      return;
+    } catch(err){
+      alert("Network error reaching auth server: " + err.message);
+      if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = "Sign in"; }
+      return;
+    }
+  }
+
+  // Fallback: legacy email-allowlist (used only if Supabase isn't loaded)
   if(!email){ window.location.href = "index.html"; return; }
   if(!ALLOWED_EMAILS.includes(email)){
-    alert(
-      `${email} isn't on the Vanmates team.\n\n` +
-      `Ask a workspace admin to send you an invite.`
-    );
+    alert(`${email} isn't on the Vanmates team.\n\nAsk a workspace admin to send you an invite.`);
     return;
   }
-  // For the prototype we accept any password; production would call /auth/login
   sessionStorage.setItem("vm_session", JSON.stringify({
     email, name: "Aldo Diaz Rodriguez",
     picture: null, sub: null,
@@ -288,6 +314,26 @@ function signIn(e){
     via: "password"
   }));
   window.location.href = "index.html";
+}
+
+// "Forgot password?" handler — sends Supabase password-reset email
+async function requestPasswordReset(e){
+  e.preventDefault();
+  const email = (document.querySelector('input[type="email"]')?.value || "").trim().toLowerCase();
+  if(!email){ alert("Please enter your work email first, then click \"Forgot password?\""); return; }
+  if(!sb){
+    // Fall back to mailto if Supabase isn't reachable
+    window.location.href = `mailto:aldo@vanmates.com?subject=${encodeURIComponent("Password reset — Vanmates Portal")}&body=${encodeURIComponent("Hi Aldo,\n\nI need a password reset for " + email + ".\n\nThanks!")}`;
+    return;
+  }
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + "/reset-password.html"
+  });
+  if(error){
+    alert("Couldn't send reset email: " + error.message);
+  } else {
+    alert("✅ Reset link sent to " + email + ". Check your inbox (and spam folder).");
+  }
 }
 
 // Optional: render the official Google button when GIS loads with a real Client ID
