@@ -30,15 +30,17 @@
     return;
   }
 
+  // Use the default storageKey so we share the auth session with signin.html
+  // (which also uses the default key). The previous override pointed at the
+  // Supabase dashboard's own session key, which is wrong for end-user portals.
   const sb = window.supabase.createClient(
     window.VM_SUPABASE_URL,
     window.VM_SUPABASE_KEY,
     {
       auth: {
-        storageKey: 'supabase.dashboard.auth.token',
         autoRefreshToken: true,
         persistSession: true,
-        detectSessionInUrl: false
+        detectSessionInUrl: true
       }
     }
   );
@@ -112,7 +114,24 @@
           summary.errors.push({ name, error:'local array not found on window' });
           continue;
         }
-        // Replace contents in place — keeps the const reference intact.
+        // Defensive: never blank a populated local array with empty Postgres
+        // results. RLS denials and auth/network failures show up as `data=[]`
+        // here, and overwriting in that case would wipe the seed data the UI
+        // relies on. Only replace contents when Postgres returns at least
+        // ~10% of the local array's rows (or local is also empty).
+        const incoming = (data || []).length;
+        const local = arr.length;
+        if (incoming === 0 && local > 0) {
+          summary.errors.push({ name, error:`got 0 rows but local has ${local} — keeping local (likely RLS/auth)` });
+          summary.counts[name] = local;
+          continue;
+        }
+        if (local > 0 && incoming < Math.max(1, Math.floor(local * 0.1))) {
+          summary.errors.push({ name, error:`got only ${incoming} of ${local} expected — keeping local` });
+          summary.counts[name] = local;
+          continue;
+        }
+        // Safe to replace — Postgres returned a plausible row count.
         arr.length = 0;
         for (const row of data) arr.push(row.data || row);
         summary.counts[name] = arr.length;
