@@ -136,10 +136,10 @@
     </div>
     <div class="hero">
       <h1>Welcome back to <em>Vanmates</em></h1>
-      <p>Manage all your tenants, hosts, properties, and finances in one place. Designed for the way Vanmates actually operates.</p>
-      <div class="quote">
-        "Our team has cut admin time in half since switching. Everything from leases to deposits to host matching lives in one calm, beautiful workspace."
-        <div class="quote-author">— Aldo Martínez · COO, Vanmates</div>
+      <p>Tenants, hosts, properties, leases, and finances — all in one place. Sign in with your work email or your Google account.</p>
+      <div class="quote" style="font-style:normal;font-family:inherit">
+        <div style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;opacity:.75;margin-bottom:6px">Internal portal</div>
+        Vanmates Property Management is for our team only. Access is invite-only and managed by workspace admins. If you need access, contact <a href="mailto:aldo@vanmates.com" style="color:#fff;text-decoration:underline">aldo@vanmates.com</a>.
       </div>
     </div>
   </div>
@@ -174,21 +174,134 @@
         <button type="submit" class="btn-primary">Sign in</button>
       </form>
 
-      <div class="footnote">
-        New to Vanmates? <a href="signup.html">Create an account →</a>
+      <div class="footnote" style="font-size:12.5px;color:var(--muted)">
+        Vanmates is invite-only — ask a workspace admin to send you an invite if you don't have an account yet.
       </div>
     </div>
   </div>
 
+<!-- Google Identity Services (loaded async) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
 <script>
-function signInWithGoogle(){
-  // Simulated SSO: in a real build this would redirect to /auth/google
+/* ============================================================================
+   GOOGLE SIGN-IN SETUP
+   ----------------------------------------------------------------------------
+   To enable real Google sign-in:
+   1. Go to https://console.cloud.google.com/apis/credentials
+   2. Create an OAuth 2.0 Client ID (type: Web application)
+   3. Under "Authorized JavaScript origins" add:
+        https://aldo-adr23.github.io
+        http://localhost:8000   (optional, for local testing)
+   4. Copy the Client ID and paste it below in place of "REPLACE_ME"
+   5. Save and reload — the Google button will use the real OAuth flow.
+
+   While CLIENT_ID is "REPLACE_ME", clicking the button falls back to a
+   prompt-based demo flow so the prototype still works.
+============================================================================ */
+const GOOGLE_CLIENT_ID = "REPLACE_ME.apps.googleusercontent.com";
+
+// Allowlist of emails that are recognized team members.
+// Anyone else trying to Google-sign-in gets rejected with a clear message.
+const ALLOWED_EMAILS = ["aldo@vanmates.com"];
+
+function decodeJwt(token){
+  try {
+    const payload = token.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");
+    return JSON.parse(decodeURIComponent(escape(atob(payload))));
+  } catch(e){ return null; }
+}
+
+function finishSignIn(profile){
+  // profile = { email, name, picture, sub }
+  if(!profile || !profile.email){
+    alert("We couldn't read your Google account info. Please try again.");
+    return;
+  }
+  const email = profile.email.toLowerCase();
+  if(!ALLOWED_EMAILS.includes(email)){
+    alert(
+      `${profile.email} isn't on the Vanmates team yet.\n\n` +
+      `Vanmates Property Management is invite-only. ` +
+      `Ask a workspace admin (aldo@vanmates.com) to send you an invite.`
+    );
+    return;
+  }
+  // Persist for the PMS to read on load
+  sessionStorage.setItem("vm_session", JSON.stringify({
+    email: profile.email,
+    name: profile.name,
+    picture: profile.picture || null,
+    sub: profile.sub || null,
+    signedInAt: new Date().toISOString(),
+    via: "google"
+  }));
   window.location.href = "index.html";
 }
+
+function handleCredentialResponse(resp){
+  const profile = decodeJwt(resp.credential);
+  finishSignIn(profile);
+}
+
+function signInWithGoogle(){
+  // Real GIS path — only used when a real Client ID has been set
+  if(GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("REPLACE_ME") && window.google?.accounts?.id){
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredentialResponse,
+      ux_mode: "popup",
+      auto_select: false,
+    });
+    google.accounts.id.prompt();
+    return;
+  }
+  // Demo fallback — works without a Client ID. Removable once OAuth is set up.
+  const email = (prompt(
+    "Demo Google sign-in\n\n" +
+    "Real OAuth isn't set up yet (see GOOGLE_CLIENT_ID in signin.html).\n" +
+    "Type your Google email to simulate sign-in:",
+    "aldo@vanmates.com"
+  ) || "").trim();
+  if(!email) return;
+  finishSignIn({email, name: "Aldo Diaz Rodriguez", picture: null, sub: "demo-" + email});
+}
+
 function signIn(e){
   e.preventDefault();
+  const email = (document.querySelector('input[type="email"]')?.value || "").trim().toLowerCase();
+  if(!email){ window.location.href = "index.html"; return; }
+  if(!ALLOWED_EMAILS.includes(email)){
+    alert(
+      `${email} isn't on the Vanmates team.\n\n` +
+      `Ask a workspace admin to send you an invite.`
+    );
+    return;
+  }
+  // For the prototype we accept any password; production would call /auth/login
+  sessionStorage.setItem("vm_session", JSON.stringify({
+    email, name: "Aldo Diaz Rodriguez",
+    picture: null, sub: null,
+    signedInAt: new Date().toISOString(),
+    via: "password"
+  }));
   window.location.href = "index.html";
 }
+
+// Optional: render the official Google button when GIS loads with a real Client ID
+window.addEventListener("load", () => {
+  if(!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.startsWith("REPLACE_ME")) return;
+  const tryRender = () => {
+    if(!window.google?.accounts?.id) { setTimeout(tryRender, 200); return; }
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredentialResponse,
+    });
+    // (Optional) silent One Tap — uncomment to auto-prompt returning users
+    // google.accounts.id.prompt();
+  };
+  tryRender();
+});
 </script>
 </body>
 </html>

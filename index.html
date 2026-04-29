@@ -11755,6 +11755,80 @@ if(_origGoToView){
   };
 }
 
+/* ============ APPLY GOOGLE SIGN-IN SESSION ============
+   Reads sessionStorage.vm_session (set by signin.html / signup.html on
+   successful Google or password sign-in) and applies the real user's name,
+   email, and avatar picture across the workspace. */
+(function applyGoogleSession(){
+  let sess;
+  try { sess = JSON.parse(sessionStorage.getItem("vm_session") || "null"); } catch(e){ sess = null; }
+  if(!sess || !sess.email) return;
+
+  // Find a matching team member; if none, ignore the session (shouldn't happen
+  // because signin.html allowlists email, but be defensive).
+  const member = teamMembers.find(m => m.email.toLowerCase() === sess.email.toLowerCase());
+  if(!member) return;
+
+  // Override the team member with real Google profile data
+  if(sess.name) member.name = sess.name;
+  if(sess.picture) member.picture = sess.picture;
+  // Recompute initials from the real name
+  const parts = (member.name || "").split(/\s+/).filter(Boolean);
+  if(parts.length >= 2) member.ini = (parts[0][0] + parts[1][0]).toUpperCase();
+  else if(parts.length === 1) member.ini = parts[0].slice(0,2).toUpperCase();
+
+  // Make CURRENT_USER point to the same record (it's the same object reference)
+  CURRENT_USER = member;
+
+  // Helper: replace an .avatar element's text with the picture if available
+  const applyPic = (el) => {
+    if(!el || !sess.picture) return;
+    el.innerHTML = "";
+    el.style.background = `center/cover no-repeat url("${sess.picture}")`;
+    el.title = member.name;
+  };
+  applyPic(document.querySelector(".sidebar-footer .user-card .avatar"));
+  applyPic(document.getElementById("pill-avatar"));
+
+  // Update display names that were already rendered before this ran
+  const sidebarName = document.querySelector(".sidebar-footer .user-name");
+  if(sidebarName) sidebarName.textContent = member.name;
+  const pillName = document.getElementById("pill-name");
+  if(pillName) pillName.textContent = (member.name || "").split(/\s+/)[0];
+
+  // Update the topbar dropdown — when user clicks the role-pill,
+  // include a "Sign out" option at the bottom.
+  installSignOutOption();
+})();
+
+function installSignOutOption(){
+  const menu = document.getElementById("role-menu");
+  if(!menu) return;
+  // Wait until role-menu has been populated (the existing render fills it
+  // with view-as options); add a divider + Sign out at the end.
+  const observer = new MutationObserver(() => {
+    if(menu.querySelector("[data-sign-out]")) return;
+    if(!menu.children.length) return;
+    const divider = document.createElement("div");
+    divider.style.cssText = "height:1px;background:var(--line);margin:6px 0";
+    menu.appendChild(divider);
+    const btn = document.createElement("button");
+    btn.setAttribute("data-sign-out", "1");
+    btn.style.cssText = "display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;background:transparent;border:0;border-radius:8px;cursor:pointer;font-family:var(--sans);font-size:13.5px;color:var(--red-dark);font-weight:600;text-align:left";
+    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign out`;
+    btn.onmouseenter = () => btn.style.background = "var(--red-soft)";
+    btn.onmouseleave = () => btn.style.background = "transparent";
+    btn.onclick = () => {
+      try { sessionStorage.removeItem("vm_session"); } catch(e){}
+      window.location.href = "signin.html";
+    };
+    menu.appendChild(btn);
+  });
+  observer.observe(menu, {childList: true});
+  // Trigger a one-time re-render so the menu populates with our extras
+  if(typeof renderRoleMenu === "function") renderRoleMenu();
+}
+
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
 </script>
