@@ -231,8 +231,32 @@ function finishSignIn(profile){
   window.location.href = "index.html";
 }
 
-function handleCredentialResponse(resp){
+async function handleCredentialResponse(resp){
   const profile = decodeJwt(resp.credential);
+
+  // Try to also create a real Supabase session so RLS allows reads + writes
+  // in the PMS. This requires Google to be enabled as an Auth provider in
+  // Supabase (Auth → Providers → Google) using the same Client ID. If that's
+  // not configured yet, signInWithIdToken returns an error and we fall through
+  // to the legacy sessionStorage-only flow (the portal still works for reads
+  // via the defensive hydrate; writes will silently fail until Supabase is
+  // wired up).
+  if(sb){
+    try {
+      const { error } = await sb.auth.signInWithIdToken({
+        provider: "google",
+        token: resp.credential
+      });
+      if(error){
+        console.warn("[signin] Supabase Google sign-in not configured yet:", error.message);
+      } else {
+        console.log("[signin] Supabase session created via Google ID token");
+      }
+    } catch(err){
+      console.warn("[signin] Supabase Google sign-in threw:", err.message);
+    }
+  }
+
   finishSignIn(profile);
 }
 
