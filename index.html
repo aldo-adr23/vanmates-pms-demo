@@ -322,8 +322,9 @@
   .list-sub{font-size:12px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .list-meta{font-size:11.5px;color:var(--muted);font-weight:600;text-align:right;white-space:nowrap}
 
-  /* Property cards */
-  .prop-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  /* Property cards — cap width per card so a single filtered card
+     doesn't stretch into one giant tile when there are very few results. */
+  .prop-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 380px));gap:18px;justify-content:start}
   .prop-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column}
   .prop-img{
     aspect-ratio:16/9;background:var(--cream-2);position:relative;
@@ -2101,10 +2102,10 @@
     <section class="view" data-view="team">
 
       <div class="kpi-grid">
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Team members</div><div class="kpi-value">6</div><div class="kpi-trend up">▲ 1 added in Q1</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Active roles</div><div class="kpi-value">5</div><div class="kpi-trend up">All seats filled</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Property managers</div><div class="kpi-value">2</div><div class="kpi-trend up">Toronto · Montréal</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Pending invites</div><div class="kpi-value">0</div><div class="kpi-trend up">No outstanding invites</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Team members</div><div class="kpi-value" id="team-kpi-members">—</div><div class="kpi-trend up" id="team-kpi-members-sub">across all roles</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Active roles</div><div class="kpi-value" id="team-kpi-roles">—</div><div class="kpi-trend up" id="team-kpi-roles-sub">in use</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Property managers</div><div class="kpi-value" id="team-kpi-pm">—</div><div class="kpi-trend up" id="team-kpi-pm-sub">scoped per property</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Pending invites</div><div class="kpi-value" id="team-kpi-pending">—</div><div class="kpi-trend up" id="team-kpi-pending-sub">No outstanding invites</div></div>
       </div>
 
       <div class="card card-pad" style="margin-bottom:18px">
@@ -6880,7 +6881,7 @@ function renderVacancies(){
     const days = daysBetween(TODAY, parseLocalDate(v.availDate));
     const dateColor = days <= 14 ? "color:var(--red-dark)" : days <= 60 ? "color:#8a611f" : "color:var(--muted)";
     return `
-      <tr>
+      <tr data-open-vac="${v.id}" style="cursor:pointer">
         <td><div class="name-main">${v.room}</div></td>
         <td>${v.prop}</td>
         <td>${v.city}</td>
@@ -6905,7 +6906,10 @@ function renderVacancies(){
   }).join("");
 
   body.querySelectorAll("[data-share-vac]").forEach(b => {
-    b.addEventListener("click", () => openShareVacancy(b.dataset.shareVac));
+    b.addEventListener("click", (e) => { e.stopPropagation(); openShareVacancy(b.dataset.shareVac); });
+  });
+  body.querySelectorAll("[data-open-vac]").forEach(row => {
+    row.addEventListener("click", () => openVacancy(row.dataset.openVac));
   });
 
   // Update active chips bar
@@ -11833,6 +11837,210 @@ if(_origGoToView){
   // The role-pill dropdown already renders a "Sign out" link via
   // renderRoleMenu(); we hooked it above to also clear sessionStorage.
 })();
+
+/* ============ VACANCY DETAIL PANEL ============ */
+function openVacancy(id){
+  const v = (typeof vacancies !== "undefined") ? vacancies.find(x => x.id === id) : null;
+  if(!v) return;
+
+  const days = daysBetween(TODAY, parseLocalDate(v.availDate));
+  const ratio = parseFloat(v.size || 0);
+  const propMeta = (typeof properties !== "undefined") ? properties.find(p => p.name === v.prop) : null;
+
+  // Hero
+  const hero = document.getElementById("panel-hero");
+  if(hero){
+    hero.innerHTML = "";
+    const col = v.color || (propMeta && propMeta.color) || "#A88965";
+    hero.style.background = `linear-gradient(135deg, ${col}, ${shade(col, -25)})`;
+    hero.style.color = "#fff";
+    hero.textContent = (v.room || "?").slice(0,2).toUpperCase();
+  }
+
+  document.getElementById("panel-title").innerHTML = `${v.room}`;
+  document.getElementById("panel-sub").textContent = `${v.prop} · ${v.city}`;
+
+  document.getElementById("panel-meta").innerHTML = `
+    <span class="badge ${v.listed?'badge-green':'badge-amber'}"><span class="dot"></span>${v.listed?'Live listing':'Draft'}</span>
+    <span class="badge badge-grey"><span class="dot"></span>${v.type}</span>
+    ${days >= 0
+      ? `<span class="badge ${days<=14?'badge-red':days<=60?'badge-amber':'badge-grey'}"><span class="dot"></span>Available in ${days} day${days===1?"":"s"}</span>`
+      : `<span class="badge badge-grey"><span class="dot"></span>Available since ${Math.abs(days)} days ago</span>`}
+  `;
+
+  // Remove leftover landlord-only header Edit
+  document.querySelector(".panel-head .header-edit-btn")?.remove();
+
+  // Build a Google Maps link from the address (works whether or not we have a street view)
+  const mapsUrl = v.addr
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.addr)}`
+    : null;
+
+  const body = document.getElementById("panel-body");
+  body.innerHTML = `
+    <!-- KPI strip -->
+    <div class="panel-kpis">
+      <div class="panel-kpi">
+        <div class="l">Monthly rent</div>
+        <div class="v">${fmt(v.rent)}</div>
+        <div class="s">CAD · per month</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Available from</div>
+        <div class="v" style="font-size:18px;line-height:1.1">${vacFmtAvail(v.availDate)}</div>
+        <div class="s">${days >= 0 ? `in ${days} day${days===1?"":"s"}` : `${Math.abs(days)} days ago`}</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Applications</div>
+        <div class="v">${v.apps || 0}</div>
+        <div class="s">${(v.apps || 0) === 0 ? "No interest yet" : "interested so far"}</div>
+      </div>
+      <div class="panel-kpi">
+        <div class="l">Lease type</div>
+        <div class="v" style="font-size:16px;line-height:1.1">${v.type}</div>
+        <div class="s">${v.section ? "Listed in " + v.section : "—"}</div>
+      </div>
+    </div>
+
+    <!-- Address -->
+    ${v.addr ? `
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Address</em></span><span class="ct">${v.city}</span></div>
+      <div class="card card-pad" style="display:flex;align-items:flex-start;gap:14px">
+        <div class="list-icon" style="margin-top:2px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        </div>
+        <div style="flex:1;min-width:0;font-size:13.5px;line-height:1.5">
+          ${v.addr}
+        </div>
+        ${mapsUrl ? `<a href="${mapsUrl}" target="_blank" class="btn btn-ghost" style="padding:5px 12px;font-size:12px;flex-shrink:0">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg>
+          Maps
+        </a>` : ""}
+      </div>
+    </div>` : ""}
+
+    <!-- Photos + listing links -->
+    ${(v.pictures || v.website) ? `
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Listing</em> assets</span><span class="ct">photos · web</span></div>
+      <div class="card" style="padding:0">
+        ${v.pictures ? `
+        <a href="${v.pictures}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer">
+          <div class="list-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+          </div>
+          <div class="list-main">
+            <div class="list-title">Photos folder</div>
+            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${v.pictures}</div>
+          </div>
+          <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Open →</div>
+        </a>` : ""}
+        ${v.website ? `
+        <a href="${v.website}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer;${v.pictures?'border-top:none':''}">
+          <div class="list-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M2 12h20"/><path d="M12 2a14.5 14.5 0 0 1 0 20"/><path d="M12 2a14.5 14.5 0 0 0 0 20"/></svg>
+          </div>
+          <div class="list-main">
+            <div class="list-title">Public listing on vanmates.com</div>
+            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${v.website}</div>
+          </div>
+          <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Open →</div>
+        </a>` : ""}
+      </div>
+    </div>` : ""}
+
+    <!-- Notes -->
+    ${v.notes ? `
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Notes</em></span></div>
+      <div class="card card-pad" style="font-size:13.5px;line-height:1.55">${v.notes.replace(/</g,"&lt;")}</div>
+    </div>` : ""}
+
+    <!-- Linked property -->
+    ${propMeta ? `
+    <div class="panel-section">
+      <div class="panel-section-title"><span>Linked <em>property</em></span></div>
+      <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
+        <div class="panel-hero" style="width:40px;height:40px;font-size:14px;border-radius:9px;background:linear-gradient(135deg,${propMeta.color||"#A88965"},${shade(propMeta.color||"#A88965",-25)})">${(propMeta.name||"?")[0]}</div>
+        <div style="flex:1;min-width:0">
+          <div class="prop-name" style="font-size:14.5px">${propMeta.name}</div>
+          <div class="prop-addr">${propMeta.addr || v.city}</div>
+        </div>
+        <button class="btn btn-ghost" data-go-prop="${propMeta.name.replace(/"/g,'&quot;')}" style="padding:5px 12px;font-size:12px">View →</button>
+      </div>
+    </div>` : ""}
+
+    <!-- Action footer -->
+    <div style="display:flex;gap:8px;margin-top:24px">
+      <button class="btn btn-primary" id="vac-share-btn" style="flex:1;justify-content:center">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
+        Share listing
+      </button>
+      ${v.website ? `<a class="btn btn-ghost" style="flex:1;justify-content:center" href="${v.website}" target="_blank">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v7H3V3h7"/></svg>
+        Open public page
+      </a>` : ""}
+    </div>
+  `;
+
+  // Wire panel actions
+  body.querySelector("#vac-share-btn")?.addEventListener("click", () => {
+    if(typeof openShareVacancy === "function") openShareVacancy(v.id);
+  });
+  body.querySelectorAll("[data-go-prop]").forEach(b => b.addEventListener("click", () => {
+    if(typeof openProperty === "function"){
+      // Close current panel first so the property panel can take over
+      document.getElementById("detail-panel").classList.remove("open");
+      document.getElementById("panel-backdrop").classList.remove("open");
+      setTimeout(() => openProperty(b.dataset.goProp), 250);
+    }
+  }));
+
+  document.getElementById("detail-panel").classList.add("open");
+  document.getElementById("detail-panel").setAttribute("aria-hidden","false");
+  document.getElementById("panel-backdrop").classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+/* ============ TEAM PAGE — DYNAMIC KPIS ============ */
+function refreshTeamKPIs(){
+  const setText = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  if(typeof teamMembers === "undefined") return;
+  const total = teamMembers.length;
+  const activeRoles = new Set(teamMembers.map(m => m.role)).size;
+  const propManagers = teamMembers.filter(m => m.role === "property").length;
+  const pmCities = [...new Set(teamMembers.filter(m => m.role === "property").map(m => m.city).filter(Boolean))];
+  const pending = (typeof pendingInvites !== "undefined") ? pendingInvites.length : 0;
+
+  setText("team-kpi-members", total);
+  setText("team-kpi-members-sub", total === 1 ? "Just you for now" : `across ${activeRoles} role${activeRoles===1?"":"s"}`);
+  setText("team-kpi-roles", activeRoles);
+  setText("team-kpi-roles-sub", activeRoles === 1 ? "1 role in use" : "in use");
+  setText("team-kpi-pm", propManagers);
+  setText("team-kpi-pm-sub", propManagers === 0 ? "None assigned yet" : pmCities.join(" · ") || "scoped per property");
+  setText("team-kpi-pending", pending);
+  setText("team-kpi-pending-sub", pending === 0 ? "No outstanding invites" : `${pending} awaiting response`);
+}
+refreshTeamKPIs();
+
+// Refresh whenever the user opens the Team page or invites/removes a teammate
+if(typeof goToView === "function"){
+  const _origGV2 = goToView;
+  goToView = function(v){
+    _origGV2(v);
+    if(v === "team") setTimeout(refreshTeamKPIs, 30);
+  };
+}
+// Also refresh after any pending-invite render and after sidebar count updates
+if(typeof renderPendingInvites === "function"){
+  const _origRPI = renderPendingInvites;
+  renderPendingInvites = function(){ _origRPI(); refreshTeamKPIs(); };
+}
+if(typeof updateSidebarCounts === "function"){
+  const _origUSC = updateSidebarCounts;
+  updateSidebarCounts = function(){ _origUSC(); refreshTeamKPIs(); };
+}
 
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
