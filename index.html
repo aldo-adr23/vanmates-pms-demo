@@ -1089,6 +1089,10 @@
   :root[data-theme="dark"] .modal-backdrop{ background:rgba(0,0,0,.65); }
   :root[data-theme="dark"] .panel-backdrop{ background:rgba(0,0,0,.6); }
 </style>
+<!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script src="pms-supabase.js"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6194,6 +6198,7 @@ function handleAddNewPropertyInline(){
     color: palette[properties.length % palette.length],
   };
   properties.push(newProp);
+  if (window.vmDb) window.vmDb.upsert('properties', newProp);
   refreshLandlordPropertySelect(name);
   if(typeof renderProperties === "function") renderProperties();
   if(typeof renderPropertiesGrid === "function") renderPropertiesGrid();
@@ -6312,6 +6317,7 @@ document.getElementById("add-landlord-form").addEventListener("submit", e => {
     color,
   };
   landlords.push(fresh);
+  if (window.vmDb) window.vmDb.upsert('landlords', fresh);
 
   // Re-render and close
   renderLandlords();
@@ -8393,6 +8399,7 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
     contractPandaDoc,
   };
   tenants.push(fresh);
+  if (window.vmDb) window.vmDb.upsert('tenants', fresh);
 
   // Re-render and toast — switch to most recent move-in so new tenant lands on top
   if(typeof F !== "undefined"){
@@ -9856,7 +9863,7 @@ function renderMatchCandidates(){
 
       // Add as a new active homestay client
       const newId = "hc" + String(homestayClients.length + 1).padStart(2, "0");
-      homestayClients.push({
+      const newClient = {
         id: newId, ini: ap.ini, name: ap.name, email: ap.email, phone: "—",
         flag: ap.flag, country: ap.country, school: ap.school,
         hostId: h.id, arrival: ap.arrival, departure: ap.departure,
@@ -9864,12 +9871,17 @@ function renderMatchCandidates(){
         status: parseLocalDate(ap.arrival) > TODAY ? "upcoming" : "active",
         checkIn: ap.arrival, checkOut: ap.departure,
         paymentMethod: "credit-card",
-      });
+      };
+      homestayClients.push(newClient);
+      if (window.vmDb) window.vmDb.upsert('homestayClients', newClient);
       // Remove from applicants
       const idx = homestayApplicants.findIndex(x => x.id === aid);
       const removedApplicant = idx >= 0 ? homestayApplicants[idx] : null;
       const addedClientIdx = homestayClients.length - 1;
-      if(idx >= 0) homestayApplicants.splice(idx, 1);
+      if(idx >= 0) {
+        homestayApplicants.splice(idx, 1);
+        if (window.vmDb) window.vmDb.delete('homestayApplicants', aid);
+      }
 
       HM_STATE.selectedApplicantId = null;
       renderMatchingApplicants();
@@ -9877,7 +9889,11 @@ function renderMatchCandidates(){
       document.getElementById("hm-kpi-apps").textContent = homestayApplicants.length;
       const undoFn = () => {
         homestayClients.splice(addedClientIdx, 1);
-        if(removedApplicant) homestayApplicants.splice(idx, 0, removedApplicant);
+        if (window.vmDb) window.vmDb.delete('homestayClients', newId);
+        if(removedApplicant) {
+          homestayApplicants.splice(idx, 0, removedApplicant);
+          if (window.vmDb) window.vmDb.upsert('homestayApplicants', removedApplicant);
+        }
         renderMatchingApplicants();
         renderMatchCandidates();
         document.getElementById("hm-kpi-apps").textContent = homestayApplicants.length;
@@ -10580,10 +10596,12 @@ function openAddTenantModal(propName, roomLabel){
       color: propMeta.color || "#A6724E"
     };
     tenants.push(newTenant);
+    if (window.vmDb) window.vmDb.upsert('tenants', newTenant);
 
     // Bump property occ
     propMeta.occ = Math.min(propMeta.rooms || 99, (propMeta.occ || 0) + 1);
     propMeta.ratePct = propMeta.rooms ? Math.round((propMeta.occ / propMeta.rooms) * 100) : 100;
+    if (window.vmDb) window.vmDb.upsert('properties', propMeta);
 
     close();
     showToast(`Added ${name} to ${propName}`);
@@ -10608,11 +10626,13 @@ function confirmRemoveTenant(t, propName){
   if(idx === -1) return;
   _lastRemoved = { tenant: {...t}, idx, propName };
   tenants.splice(idx, 1);
+  if (window.vmDb) window.vmDb.delete('tenants', t.email || t.id);
 
   const propMeta = properties.find(p => p.name === propName);
   if(propMeta){
     propMeta.occ = Math.max(0, (propMeta.occ || 0) - 1);
     propMeta.ratePct = propMeta.rooms ? Math.round((propMeta.occ / propMeta.rooms) * 100) : 0;
+    if (window.vmDb) window.vmDb.upsert('properties', propMeta);
   }
 
   if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
@@ -10636,10 +10656,12 @@ function showRemoveUndoToast(name){
   document.getElementById("rm-undo-btn").onclick = () => {
     if(!_lastRemoved) return;
     tenants.splice(Math.min(_lastRemoved.idx, tenants.length), 0, _lastRemoved.tenant);
+    if (window.vmDb) window.vmDb.upsert('tenants', _lastRemoved.tenant);
     const propMeta = properties.find(p => p.name === _lastRemoved.propName);
     if(propMeta){
       propMeta.occ = Math.min(propMeta.rooms || 99, (propMeta.occ || 0) + 1);
       propMeta.ratePct = propMeta.rooms ? Math.round((propMeta.occ / propMeta.rooms) * 100) : 100;
+      if (window.vmDb) window.vmDb.upsert('properties', propMeta);
     }
     if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
     if(typeof renderProperties === "function") renderProperties();
@@ -11424,6 +11446,7 @@ function openAddHostModal(){
       neighborhood: v("ah-neighborhood")
     };
     homestayHosts.push(newHost);
+    if (window.vmDb) window.vmDb.upsert('homestayHosts', newHost);
 
     close();
     showToast(`Added ${name}${pdfFile ? " · profile PDF attached" : ""}`);
@@ -12077,6 +12100,50 @@ if(typeof updateSidebarCounts === "function"){
 
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
+
+/* ============ Phase 2.2 · Hydrate from Supabase, then re-render ============
+   Expose the 8 const arrays on window so the persistence layer can reach them,
+   then fetch the latest rows from Postgres and re-run all renders. The arrays
+   are identical to the seed data on first load, so users won't see a flicker. */
+(function vmHydrateBoot(){
+  // 1. Expose arrays on window (const refs survive — we only mutate contents)
+  window.tenants            = tenants;
+  window.properties         = properties;
+  window.landlords          = landlords;
+  window.homestayHosts      = homestayHosts;
+  window.homestayClients    = homestayClients;
+  window.vacancies          = vacancies;
+  window.damageDeposits     = damageDeposits;
+  window.homestayApplicants = homestayApplicants;
+
+  // 2. After DOM ready, hydrate and re-render
+  const start = async () => {
+    if (!window.vmDb || !window.vmDb.hydrate) {
+      console.log('[vmDb] not loaded — skipping hydrate');
+      return;
+    }
+    const summary = await window.vmDb.hydrate();
+    console.log('[vmDb] hydrate summary:', summary);
+    if (summary.errors && summary.errors.length){
+      window.vmDb.toast(`Loaded with ${summary.errors.length} table errors — see console`, 'error');
+    }
+    // Re-run all renders so the UI reflects the live DB state
+    const fns = [
+      'renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies',
+      'renderHomestayClients','renderHomestayFinance','renderHomestayHosts',
+      'renderDeposits','updateSidebarCounts'
+    ];
+    for (const fn of fns) {
+      try { if (typeof window[fn] === 'function') window[fn](); }
+      catch (e) { console.warn(`[vmDb] re-render ${fn} failed:`, e.message); }
+    }
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    setTimeout(start, 0);
+  }
+})();
 </script>
 </body>
 </html>
