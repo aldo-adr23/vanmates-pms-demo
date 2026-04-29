@@ -5740,7 +5740,12 @@ function renderPendingInvites(){
   block.querySelectorAll("[data-resend]").forEach(b => {
     b.addEventListener("click", () => {
       const inv = pendingInvites.find(x => x.id === b.dataset.resend);
-      if(inv){ inv.status = "sent"; inv.sentDaysAgo = 0; renderPendingInvites(); showToast(`Invite resent to ${inv.name}`); }
+      if(inv){
+        inv.status = "sent"; inv.sentDaysAgo = 0;
+        renderPendingInvites();
+        showToast(`Invite resent to ${inv.name}`);
+        if(typeof openInviteMailto === "function") openInviteMailto(inv);
+      }
     });
   });
   // Wire cancel
@@ -5943,7 +5948,56 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   renderPendingInvites();
   closeInviteMember();
   showToast(`Invite sent to ${name}`);
+
+  // Open the user's mail client with a pre-filled invite email (mailto fallback)
+  openInviteMailto({name, email, role, title: title || roles[role].label, pages, assigned});
 });
+
+/* === Mailto fallback for team invites ===
+   Opens the user's default mail client with a pre-filled invite email.
+   No backend / email API required — the user reviews and hits Send themselves.
+   This is the "today" implementation; later we can swap in Resend/SendGrid. */
+function openInviteMailto({name, email, role, title, pages, assigned}){
+  const inviter = (typeof CURRENT_USER !== "undefined" && CURRENT_USER) ? CURRENT_USER.name : "Aldo";
+  const roleLabel = (typeof roles === "object" && roles[role]?.label) || role;
+
+  const pageLabels = {
+    "dashboard":"Dashboard","tenants":"Tenants","properties":"Properties & rooms",
+    "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
+    "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
+    "homestay-matching":"Homestay matching","vacancies":"Vacancies",
+    "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits",
+    "team":"Team","settings":"Settings"
+  };
+  const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
+  const acceptUrl = `https://aldo-adr23.github.io/vanmates-pms-demo/signup.html?invite=${encodeURIComponent(email)}&role=${encodeURIComponent(role)}`;
+
+  const subject = `You're invited to join Vanmates as ${title || roleLabel}`;
+  const firstName = (name || "").split(/\s+/)[0] || "there";
+  const propertyLine = role === "property" && assigned ? `\nAssigned property: ${assigned}\n` : "";
+
+  const body =
+`Hi ${firstName},
+
+${inviter} added you to the Vanmates Property Management workspace as ${title || roleLabel}.
+
+You'll have access to these pages:
+${pageList}
+${propertyLine}
+Accept the invite and set your password here:
+${acceptUrl}
+
+If anything looks off — wrong role, missing pages, or you weren't expecting this — just reply to this email and we'll fix it.
+
+Welcome aboard!
+${inviter} · Vanmates
+hello@vanmates.com`;
+
+  const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  // Use a fresh tab to avoid navigating away from the PMS
+  const w = window.open(mailto, "_blank");
+  if(!w){ window.location.href = mailto; }
+}
 
 renderPendingInvites();
 
@@ -11442,7 +11496,12 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
         }).join("");
         pl.querySelectorAll(".pi-resend").forEach(b => b.onclick = () => {
           const inv = pendingInvites.find(i => i.id === b.dataset.id);
-          if(inv){ inv.sentDaysAgo = 0; renderSettingsTeam(); showToast(`Invite resent to ${inv.name}`); }
+          if(inv){
+            inv.sentDaysAgo = 0;
+            renderSettingsTeam();
+            showToast(`Invite resent to ${inv.name}`);
+            if(typeof openInviteMailto === "function") openInviteMailto(inv);
+          }
         });
         pl.querySelectorAll(".pi-revoke").forEach(b => b.onclick = () => {
           const inv = pendingInvites.find(i => i.id === b.dataset.id);
