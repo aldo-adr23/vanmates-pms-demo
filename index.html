@@ -8136,9 +8136,9 @@ function openHost(id){
       <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
         <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
         <div style="flex:1;min-width:0">
-          <div class="prop-name" style="font-size:15px">${h.name} — Host Profile.pdf</div>
-          <div class="prop-addr">Bio, photos, references, dietary options · 240 KB</div>
-          <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Verified</span>${hasSince?` <span class="badge badge-grey"><span class="dot"></span>Updated ${sinceLabel}</span>`:""}</div>
+          <div class="prop-name" style="font-size:15px">${h.pdfName || h.name + " — Host Profile.pdf"}</div>
+          <div class="prop-addr">${h.pdfSize ? h.pdfSize + " · " : ""}Bio, photos, dietary notes — what we share with clients</div>
+          <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Attached</span>${hasSince?` <span class="badge badge-grey"><span class="dot"></span>Updated ${sinceLabel}</span>`:""}</div>
         </div>
         <a href="${safePdf}" target="_blank" class="btn btn-primary">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -11288,6 +11288,16 @@ function openAddHostModal(){
             <textarea id="ah-bio" class="form-input" rows="3" placeholder="A few sentences about the family, household style, dietary notes, etc."></textarea>
           </div>
         </div>
+        <div class="form-row single">
+          <div class="form-field">
+            <label>Host profile PDF <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">— the one you share with clients (photos + details)</span></label>
+            <label for="ah-pdf-input" class="form-pdf" id="ah-pdf-label" style="cursor:pointer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span id="ah-pdf-text">Click to upload PDF (or drag and drop)</span>
+            </label>
+            <input id="ah-pdf-input" type="file" accept="application/pdf" style="display:none"/>
+          </div>
+        </div>
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" id="ah-cancel">Cancel</button>
@@ -11333,6 +11343,13 @@ function openAddHostModal(){
     const rawLangs = v("ah-languages");
     const languages = rawLangs ? rawLangs.split(/[,;]/).map(s => s.trim()).filter(Boolean) : [];
 
+    // Capture the uploaded PDF (if any) as a Blob URL — works for the
+    // current session. For real persistence you'd POST to S3/Drive instead.
+    const pdfFile = document.getElementById("ah-pdf-input")?.files[0] || null;
+    const pdfUrl = pdfFile ? URL.createObjectURL(pdfFile) : null;
+    const pdfName = pdfFile ? pdfFile.name : null;
+    const pdfSize = pdfFile ? `${Math.round(pdfFile.size/1024).toLocaleString()} KB` : null;
+
     const newHost = {
       id: "h" + Date.now().toString(36),
       name,
@@ -11348,17 +11365,31 @@ function openAddHostModal(){
       flag,
       languages,
       bio: v("ah-bio"),
-      pdf: null,
+      pdf: pdfUrl,
+      pdfName,
+      pdfSize,
       neighborhood: v("ah-neighborhood")
     };
     homestayHosts.push(newHost);
 
     close();
-    showToast(`Added ${name} to homestay hosts`);
+    showToast(`Added ${name}${pdfFile ? " · profile PDF attached" : ""}`);
 
     if(typeof renderHomestayHosts === "function") renderHomestayHosts();
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
   };
+
+  // Update label when a file is selected so the user sees confirmation
+  modal.querySelector("#ah-pdf-input")?.addEventListener("change", e => {
+    const f = e.target.files[0];
+    const txt = document.getElementById("ah-pdf-text");
+    if(!txt) return;
+    if(f){
+      txt.innerHTML = `<b style="color:var(--ink)">${f.name}</b> · ${Math.round(f.size/1024).toLocaleString()} KB · ready to attach`;
+    } else {
+      txt.textContent = "Click to upload PDF (or drag and drop)";
+    }
+  });
 }
 
 // Wire the Add host button
