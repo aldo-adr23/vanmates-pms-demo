@@ -209,7 +209,12 @@ function handleCredentialResponse(resp){
 
 function acceptWithGoogle(){
   if(!INVITE_EMAIL){ alert("This page needs an invite link."); return; }
-  if(GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("REPLACE_ME") && window.google?.accounts?.id){
+  // Real GIS requires HTTPS — fall back to demo on HTTP (cert still provisioning)
+  const isSecure = location.protocol === "https:";
+  const haveRealId = GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("REPLACE_ME");
+  const gisReady = !!window.google?.accounts?.id;
+
+  if(isSecure && haveRealId && gisReady){
     google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
       callback: handleCredentialResponse,
@@ -220,12 +225,11 @@ function acceptWithGoogle(){
     google.accounts.id.prompt();
     return;
   }
-  // Demo fallback
-  const ok = confirm(
-    "Demo Google sign-in\n\n" +
-    "Real OAuth isn't set up yet (see GOOGLE_CLIENT_ID in signup.html).\n" +
-    `Continue as ${INVITE_EMAIL}?`
-  );
+  // HTTP / demo fallback
+  const note = isSecure
+    ? "Real OAuth isn't fully wired yet."
+    : "You're on HTTP (HTTPS cert still provisioning). Real Google sign-in needs HTTPS — confirming via prompt.";
+  const ok = confirm("Sign in with Google\n\n" + note + `\n\nContinue as ${INVITE_EMAIL}?`);
   if(ok) finishAccept({email: INVITE_EMAIL, name: "Invited Teammate", picture: null, sub: "demo"});
 }
 

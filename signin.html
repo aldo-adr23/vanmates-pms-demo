@@ -160,7 +160,7 @@
         <div class="field">
           <div class="field-row">
             <label>Password</label>
-            <a class="forgot-link" href="forgot-password.html">Forgot password?</a>
+            <a class="forgot-link" href="mailto:aldo@vanmates.com?subject=Password%20reset%20%E2%80%94%20Vanmates%20Portal&body=Hi%20Aldo%2C%0A%0AI%20need%20a%20password%20reset%20for%20the%20Vanmates%20Portal.%0A%0AThanks%21">Forgot password?</a>
           </div>
           <input type="password" name="password" placeholder="••••••••" required />
         </div>
@@ -242,8 +242,14 @@ function handleCredentialResponse(resp){
 }
 
 function signInWithGoogle(){
-  // Real GIS path — only used when a real Client ID has been set
-  if(GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("REPLACE_ME") && window.google?.accounts?.id){
+  // Real Google Identity Services requires HTTPS. If we're on HTTP (e.g. while
+  // the Let's Encrypt cert is still provisioning for portal.vanmates.com),
+  // GIS silently refuses to initialize — so fall through to the demo prompt.
+  const isSecure = location.protocol === "https:";
+  const haveRealId = GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("REPLACE_ME");
+  const gisReady = !!window.google?.accounts?.id;
+
+  if(isSecure && haveRealId && gisReady){
     google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
       callback: handleCredentialResponse,
@@ -253,13 +259,12 @@ function signInWithGoogle(){
     google.accounts.id.prompt();
     return;
   }
-  // Demo fallback — works without a Client ID. Removable once OAuth is set up.
-  const email = (prompt(
-    "Demo Google sign-in\n\n" +
-    "Real OAuth isn't set up yet (see GOOGLE_CLIENT_ID in signin.html).\n" +
-    "Type your Google email to simulate sign-in:",
-    "aldo@vanmates.com"
-  ) || "").trim();
+
+  // Demo / HTTP fallback — prompt for email and complete locally
+  const note = isSecure
+    ? "Real OAuth isn't fully wired yet. Type your email to simulate sign-in:"
+    : "You're on HTTP (the HTTPS cert is still provisioning).\nReal Google sign-in needs HTTPS — using a quick prompt for now:";
+  const email = (prompt("Sign in with Google\n\n" + note, "aldo@vanmates.com") || "").trim();
   if(!email) return;
   finishSignIn({email, name: "Aldo Diaz Rodriguez", picture: null, sub: "demo-" + email});
 }
