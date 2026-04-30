@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30d"></script>
+<script src="pms-supabase.js?v=2026-04-30e"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5972,16 +5972,55 @@ document.getElementById("invite-form").addEventListener("submit", e => {
                    pendingInvites.find(i => i.email.toLowerCase() === email.toLowerCase());
   if(existing){ errEl.textContent = "Someone with that email already has access or a pending invite."; errEl.classList.add("show"); return; }
 
-  // Create the invite
-  const id = "i" + (pendingInvites.length + 1);
-  pendingInvites.push({
-    id, name, email, role,
+  // Create the invite — local UI state (id will be replaced with DB UUID
+  // once we get a successful insert).
+  const tempId = "i" + (pendingInvites.length + 1);
+  const localInvite = {
+    id: tempId, name, email, role,
     title: title || roles[role].label,
     pages,
     assigned: role === "property" ? assigned : null,
     status: "sent",
     sentDaysAgo: 0,
-  });
+  };
+  pendingInvites.push(localInvite);
+
+  // Persist to Supabase pending_invites — required so the signup trigger
+  // can match the invite and create the team_members row with the right
+  // role + allowed_pages. Without this, the recipient's signup is
+  // rejected by handle_new_user.
+  if (window.vmDb && window.vmDb.sb) {
+    (async () => {
+      try {
+        const { data: row, error } = await window.vmDb.sb
+          .from('pending_invites')
+          .insert({
+            email,
+            name,
+            role,
+            title: title || roles[role].label,
+            pages: pages || [],
+            assigned_property: role === "property" ? assigned : null,
+            invited_by: CURRENT_USER?.id_db || null,
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (error) {
+          console.error('[invite] pending_invites insert failed:', error);
+          showToast(`Couldn't save invite: ${error.message}`);
+        } else if (row) {
+          // Replace the temp id with the real DB id so resend/cancel target
+          // the right row.
+          localInvite.id = row.id;
+          renderPendingInvites();
+        }
+      } catch(e) {
+        console.error('[invite] pending_invites insert threw:', e);
+      }
+    })();
+  }
 
   // Re-render the UI immediately
   renderPendingInvites();
@@ -6097,16 +6136,23 @@ hello@vanmates.com`;
 renderPendingInvites();
 
 function applyRolePermissions(){
-  const r = roles[activeRole().role];
+  const u = activeRole();
+  const r = roles[u.role] || roles.viewer || {nav:["dashboard"]};
+  // If the user has an explicit allowed_pages list (set when an admin
+  // restricted their pages on the invite), respect that. Otherwise fall
+  // back to the role's default nav. Admins always get the full role nav.
+  const allowed = (u.role !== 'admin' && Array.isArray(u.allowed_pages) && u.allowed_pages.length > 0)
+                  ? u.allowed_pages : r.nav;
   // Show/hide nav items
   document.querySelectorAll(".nav-item[data-view]").forEach(el => {
     const v = el.dataset.view;
-    el.classList.toggle("role-hidden", !r.nav.includes(v));
+    el.classList.toggle("role-hidden", !allowed.includes(v));
   });
-  // If currently active view is not allowed, switch to dashboard
+  // If currently active view is not allowed, switch to dashboard (or first
+  // allowed page if dashboard isn't on the list).
   const activeView = document.querySelector(".view.active");
-  if(activeView && !r.nav.includes(activeView.dataset.view)){
-    goToView("dashboard");
+  if(activeView && !allowed.includes(activeView.dataset.view)){
+    goToView(allowed.includes("dashboard") ? "dashboard" : (allowed[0] || "dashboard"));
   }
 
   // Update sidebar footer
@@ -12064,6 +12110,98 @@ if(_origGoToView){
 
   // The role-pill dropdown already renders a "Sign out" link via
   // renderRoleMenu(); we hooked it above to also clear sessionStorage.
+})();
+
+/* ============ HYDRATE TEAM + PENDING INVITES FROM SUPABASE ============
+   Pulls every team_members row and every still-pending invite, merges
+   them into the in-memory teamMembers / pendingInvites arrays, and then
+   re-applies the user's session so CURRENT_USER points at their actual
+   row (carrying role + allowed_pages). Runs once on portal load. */
+(async function hydrateTeamFromDb(){
+  if (!window.vmDb || !window.vmDb.sb) {
+    console.log("[hydrateTeam] no vmDb client, skipping");
+    return;
+  }
+  const sb = window.vmDb.sb;
+  try {
+    // 1. team_members
+    const { data: tms, error: tmErr } = await sb
+      .from('team_members')
+      .select('id,email,name,role,title,city,assigned_property,color,avatar_url,allowed_pages,created_at');
+    if (tmErr) {
+      console.warn("[hydrateTeam] team_members error:", tmErr);
+    } else if (Array.isArray(tms)) {
+      tms.forEach(row => {
+        if (!row.email) return;
+        const existing = teamMembers.find(m => (m.email||"").toLowerCase() === row.email.toLowerCase());
+        const initials = (row.name || row.email).split(/\s+/).map(p=>p[0]||"").slice(0,2).join("").toUpperCase() || "?";
+        const merged = {
+          id_db:    row.id,
+          name:     row.name || (row.email.split('@')[0]),
+          email:    row.email,
+          role:     row.role || (existing?.role) || "ops",
+          title:    row.title || existing?.title || "",
+          assigned: row.assigned_property || existing?.assigned || null,
+          city:     row.city || existing?.city || null,
+          color:    row.color || existing?.color || "#8A7B6C",
+          avatar_url: row.avatar_url || existing?.avatar_url || null,
+          allowed_pages: row.allowed_pages,  // NULL or array
+          ini:      existing?.ini || initials,
+          lastLogin: existing?.lastLogin || "today",
+        };
+        if (existing) Object.assign(existing, merged);
+        else teamMembers.push({ id: "u_" + (row.id || "").slice(0,8), ...merged });
+      });
+    }
+
+    // 2. pending_invites (status = 'sent')
+    const { data: pis, error: piErr } = await sb
+      .from('pending_invites')
+      .select('id,email,name,role,title,pages,assigned_property,sent_at,status')
+      .eq('status', 'sent');
+    if (piErr) {
+      console.warn("[hydrateTeam] pending_invites error:", piErr);
+    } else if (Array.isArray(pis)) {
+      pendingInvites.length = 0;
+      pis.forEach(row => {
+        const sentMs = row.sent_at ? new Date(row.sent_at).getTime() : Date.now();
+        const days   = Math.max(0, Math.floor((Date.now() - sentMs) / 86400000));
+        pendingInvites.push({
+          id:    row.id,
+          name:  row.name,
+          email: row.email,
+          role:  row.role,
+          title: row.title,
+          pages: row.pages || [],
+          assigned: row.assigned_property,
+          status: 'sent',
+          sentDaysAgo: days,
+        });
+      });
+    }
+
+    // 3. Re-apply session so CURRENT_USER points at the real signed-in row
+    try {
+      const sess = JSON.parse(sessionStorage.getItem("vm_session") || "null");
+      if (sess && sess.email) {
+        const member = teamMembers.find(m => (m.email||"").toLowerCase() === sess.email.toLowerCase());
+        if (member) {
+          if (sess.name) member.name = sess.name;
+          if (sess.picture) member.picture = sess.picture;
+          CURRENT_USER = member;
+        }
+      }
+    } catch(e) { console.warn("[hydrateTeam] session re-apply:", e); }
+
+    // 4. Re-render anything that depends on the team / invites lists
+    if (typeof applyRolePermissions === "function") applyRolePermissions();
+    if (typeof renderPendingInvites === "function") renderPendingInvites();
+    if (typeof renderSettingsTeam   === "function") renderSettingsTeam();
+    if (typeof renderRoleMenu       === "function") renderRoleMenu();
+    console.log("[hydrateTeam] done. teamMembers=", teamMembers.length, "pendingInvites=", pendingInvites.length, "currentUser=", CURRENT_USER?.email, "allowed_pages=", CURRENT_USER?.allowed_pages);
+  } catch(e) {
+    console.error("[hydrateTeam] threw:", e);
+  }
 })();
 
 /* ============ VACANCY DETAIL PANEL ============ */
