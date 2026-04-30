@@ -74,6 +74,52 @@
     if(error){console.warn('[vmDb] file delete failed:',error.message); return false;}
     return true;
   }
-  window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted, uploadFile, fileUrl, deleteFile, toast, sb };
-  console.log('[vmDb] persistence layer ready (Phase 2.4d: soft delete + audit + storage)');
+  /* Realtime (Phase 2.4f) */
+  let _rerenderTimer = null;
+  function scheduleRerender(){
+    if (_rerenderTimer) return;
+    _rerenderTimer = setTimeout(() => {
+      _rerenderTimer = null;
+      const fns = ["renderTenants","renderPropertiesGrid","renderLandlords","renderVacancies","renderHomestayClients","renderHomestayFinance","renderHomestayHosts","renderDeposits","updateSidebarCounts"];
+      for (const fn of fns) { try { if (typeof window[fn] === "function") window[fn](); } catch(e){} }
+    }, 250);
+  }
+  function applyRealtimeEvent(arrayName, payload){
+    const arr = window[arrayName];
+    if (!arr || !Array.isArray(arr)) return;
+    const event = payload.eventType;
+    const newRow = payload.new || {};
+    const oldRow = payload.old || {};
+    const id = newRow.id || oldRow.id;
+    if (!id) return;
+    const findIdx = () => arr.findIndex(x => recordId(arrayName, x) === id);
+    if (event === "INSERT") {
+      if (findIdx() < 0) arr.push(newRow.data || newRow);
+    } else if (event === "UPDATE") {
+      const idx = findIdx();
+      if (newRow.deleted_at) { if (idx >= 0) arr.splice(idx, 1); }
+      else { const fresh = newRow.data || newRow; if (idx >= 0) arr[idx] = fresh; else arr.push(fresh); }
+    } else if (event === "DELETE") {
+      const idx = findIdx();
+      if (idx >= 0) arr.splice(idx, 1);
+    }
+    scheduleRerender();
+  }
+  function subscribeRealtime(){
+    if (window.__VM_RT_CH) return window.__VM_RT_CH;
+    const ch = sb.channel("vmDb-changes");
+    for (const [arrayName, cfg] of Object.entries(TABLES)) {
+      ch.on("postgres_changes", { event: "*", schema: "public", table: cfg.table }, (payload) => applyRealtimeEvent(arrayName, payload));
+    }
+    ch.subscribe((status) => {
+      if (status === "SUBSCRIBED") console.log("[vmDb] realtime SUBSCRIBED on 8 tables");
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") console.warn("[vmDb] realtime status:", status);
+    });
+    window.__VM_RT_CH = ch;
+    return ch;
+  }
+  setTimeout(() => { try { subscribeRealtime(); } catch(e) { console.warn("[vmDb] subscribe failed:", e.message); } }, 1500);
+
+  window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted, uploadFile, fileUrl, deleteFile, subscribeRealtime, toast, sb };
+  console.log('[vmDb] persistence layer ready (Phase 2.4f: soft delete + audit + storage + realtime)');
 })();
