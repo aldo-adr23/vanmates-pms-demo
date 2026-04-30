@@ -1092,7 +1092,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-29d"></script>
+<script src="pms-supabase.js?v=2026-04-29e"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5914,9 +5914,38 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   closeInviteMember();
   showToast(`Invite sent to ${name}`);
 
-  // Open the user's mail client with a pre-filled invite email (mailto fallback)
-  openInviteMailto({name, email, role, title: title || roles[role].label, pages, assigned});
+  // Phase 2.4: try Resend via the send-invite Edge Function first; if that
+  // fails (function not deployed, secret missing, etc.) fall back to mailto.
+  sendInviteEmail({name, email, role, title: title || roles[role].label, pages, assigned})
+    .then(result => {
+      if (result.ok) {
+        showToast(`✉️ Invite emailed to ${email}`);
+      } else {
+        console.warn("[invite] Edge Function failed, falling back to mailto:", result.error);
+        openInviteMailto({name, email, role, title: title || roles[role].label, pages, assigned});
+      }
+    });
 });
+
+// === Phase 2.4: send invite via Resend Edge Function ===
+async function sendInviteEmail({name, email, role, title, pages, assigned}){
+  if (!window.vmDb || !window.vmDb.sb) return { ok: false, error: "no supabase client" };
+  try {
+    const sb = window.vmDb.sb;
+    const sess = await sb.auth.getSession();
+    if (!sess?.data?.session) return { ok: false, error: "not signed in to supabase" };
+
+    const inviter = (typeof CURRENT_USER !== "undefined" && CURRENT_USER) ? CURRENT_USER.name : "Vanmates Admin";
+    const { data, error } = await sb.functions.invoke("send-invite", {
+      body: { name, email, role, title, assigned, inviter,
+              signupUrl: "https://portal.vanmates.com/signup.html" }
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, id: data?.id };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
 
 /* === Mailto fallback for team invites ===
    Opens the user's default mail client with a pre-filled invite email.
