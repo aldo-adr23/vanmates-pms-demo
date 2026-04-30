@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30b"></script>
+<script src="pms-supabase.js?v=2026-04-30c"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -2466,7 +2466,7 @@ hello@vanmates.com · vanmates.com</textarea>
               </div>
             </div>
 
-            <!-- Phase 2.4c: Recently deleted (Trash) -->
+            <!-- Phase 2.4c: Recently deleted (Trash) — admin-only, populated from vmDb.listDeleted() -->
             <div class="card card-pad" style="margin-bottom:18px;display:none" id="trash-card">
               <div class="card-head">
                 <div>
@@ -5744,15 +5744,46 @@ function renderPendingInvites(){
       }).join("")}
     </div>
   `;
-  // Wire resend
+  // Wire resend — call the send-invite Edge Function (Resend) like the
+  // initial invite flow. Falls back to the mailto: helper if the function
+  // call fails so the admin always has a working path.
   block.querySelectorAll("[data-resend]").forEach(b => {
-    b.addEventListener("click", () => {
+    b.addEventListener("click", async () => {
       const inv = pendingInvites.find(x => x.id === b.dataset.resend);
-      if(inv){
-        inv.status = "sent"; inv.sentDaysAgo = 0;
-        renderPendingInvites();
-        showToast(`Invite resent to ${inv.name}`);
-        if(typeof openInviteMailto === "function") openInviteMailto(inv);
+      if(!inv) return;
+      const origLabel = b.textContent;
+      b.disabled = true; b.textContent = "Sending…";
+      try {
+        if(typeof sendInviteEmail === "function"){
+          const res = await sendInviteEmail({
+            name:     inv.name,
+            email:    inv.email,
+            role:     inv.role,
+            title:    inv.title,
+            pages:    inv.pages,
+            assigned: inv.assigned,
+          });
+          if(res && res.ok){
+            inv.status = "sent"; inv.sentDaysAgo = 0;
+            renderPendingInvites();
+            showToast(`Invite resent to ${inv.name}`);
+            return;
+          }
+          // Edge Function failed — fall through to mailto: fallback
+          console.warn("[resend] sendInviteEmail failed:", res && res.error);
+          showToast(`Email service failed — opening your mail client`);
+          if(typeof openInviteMailto === "function") openInviteMailto(inv);
+        } else if(typeof openInviteMailto === "function"){
+          openInviteMailto(inv);
+          inv.status = "sent"; inv.sentDaysAgo = 0;
+          renderPendingInvites();
+          showToast(`Invite resent to ${inv.name}`);
+        }
+      } catch(e){
+        console.error("[resend] error:", e);
+        showToast(`Resend failed: ${e.message || e}`);
+      } finally {
+        b.disabled = false; b.textContent = origLabel;
       }
     });
   });
@@ -11689,13 +11720,41 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
               <button class="btn btn-ghost pi-revoke" data-id="${inv.id}" style="padding:5px 10px;font-size:12px;color:var(--red-dark)">Revoke</button>
             </div>`;
         }).join("");
-        pl.querySelectorAll(".pi-resend").forEach(b => b.onclick = () => {
+        pl.querySelectorAll(".pi-resend").forEach(b => b.onclick = async () => {
           const inv = pendingInvites.find(i => i.id === b.dataset.id);
-          if(inv){
-            inv.sentDaysAgo = 0;
-            renderSettingsTeam();
-            showToast(`Invite resent to ${inv.name}`);
-            if(typeof openInviteMailto === "function") openInviteMailto(inv);
+          if(!inv) return;
+          const origLabel = b.textContent;
+          b.disabled = true; b.textContent = "Sending…";
+          try {
+            if(typeof sendInviteEmail === "function"){
+              const res = await sendInviteEmail({
+                name:     inv.name,
+                email:    inv.email,
+                role:     inv.role,
+                title:    inv.title,
+                pages:    inv.pages,
+                assigned: inv.assigned,
+              });
+              if(res && res.ok){
+                inv.sentDaysAgo = 0;
+                renderSettingsTeam();
+                showToast(`Invite resent to ${inv.name}`);
+                return;
+              }
+              console.warn("[pi-resend] sendInviteEmail failed:", res && res.error);
+              showToast(`Email service failed — opening your mail client`);
+              if(typeof openInviteMailto === "function") openInviteMailto(inv);
+            } else if(typeof openInviteMailto === "function"){
+              openInviteMailto(inv);
+              inv.sentDaysAgo = 0;
+              renderSettingsTeam();
+              showToast(`Invite resent to ${inv.name}`);
+            }
+          } catch(e){
+            console.error("[pi-resend] error:", e);
+            showToast(`Resend failed: ${e.message || e}`);
+          } finally {
+            b.disabled = false; b.textContent = origLabel;
           }
         });
         pl.querySelectorAll(".pi-revoke").forEach(b => b.onclick = () => {
@@ -12193,64 +12252,84 @@ if(typeof updateSidebarCounts === "function"){
 // === Phase 2.4c: Trash UI (Settings → Recently deleted) ===
 async function renderTrashPanel(){
   if (!window.vmDb || !window.vmDb.listDeleted) return;
-  const card = document.getElementById("trash-card");
+  const card = document.getElementById('trash-card');
   if (!card) return;
-  const me = (typeof CURRENT_USER !== "undefined") ? CURRENT_USER : null;
-  if (!me || me.role !== "admin") { card.style.display = "none"; return; }
-  card.style.display = "";
-  const list = document.getElementById("trash-list");
+  // Admins only — RLS would also reject non-admin reads of deleted rows
+  const me = (typeof CURRENT_USER !== 'undefined') ? CURRENT_USER : null;
+  if (!me || me.role !== 'admin') { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const list = document.getElementById('trash-list');
   if (!list) return;
   list.innerHTML = '<div style="text-align:center;padding:18px;color:var(--muted);font-size:13px">Loading…</div>';
+
   const TABLES = {
-    tenants:"Tenant", properties:"Property", landlords:"Landlord",
-    homestayHosts:"Homestay host", homestayClients:"Homestay client",
-    vacancies:"Vacancy", damageDeposits:"Damage deposit", homestayApplicants:"Applicant"
+    tenants:'Tenant', properties:'Property', landlords:'Landlord',
+    homestayHosts:'Homestay host', homestayClients:'Homestay client',
+    vacancies:'Vacancy', damageDeposits:'Damage deposit', homestayApplicants:'Applicant'
   };
   const all = [];
   for (const [t, label] of Object.entries(TABLES)) {
     try {
       const rows = await window.vmDb.listDeleted(t);
       for (const r of rows) all.push({ table:t, label, row:r });
-    } catch(e) { console.warn("[trash]", t, e.message); }
+    } catch(e) { console.warn('[trash]', t, e.message); }
   }
-  all.sort((a,b) => (b.row._deletedAt||"").localeCompare(a.row._deletedAt||""));
-  const cnt = document.getElementById("trash-count");
-  if (cnt) cnt.textContent = "· " + all.length + " item" + (all.length===1?"":"s");
+  all.sort((a,b) => (b.row._deletedAt||'').localeCompare(a.row._deletedAt||''));
+
+  const cnt = document.getElementById('trash-count');
+  if (cnt) cnt.textContent = '· ' + all.length + ' item' + (all.length===1?'':'s');
+
   if (!all.length) {
     list.innerHTML = '<div style="text-align:center;padding:18px;color:var(--muted);font-size:13px">Trash is empty.</div>';
     return;
   }
-  const esc = s => String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+
+  const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
   list.innerHTML = all.map(item => {
     const r = item.row;
-    const name = r.name || r.email || r.id || r._id || "(unnamed)";
-    const when = r._deletedAt ? new Date(r._deletedAt).toLocaleString(undefined, {dateStyle:"medium", timeStyle:"short"}) : "—";
-    return '<div class="list-row" style="border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div class="list-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div><div class="list-main"><div class="list-title">' + esc(name) + '</div><div class="list-sub">' + esc(item.label) + ' · deleted ' + esc(when) + '</div></div><button class="btn btn-ghost trash-restore-btn" data-table="' + esc(item.table) + '" data-id="' + esc(r._id || r.id) + '" style="padding:5px 12px;font-size:12px">Restore</button></div>';
-  }).join("");
-  list.querySelectorAll(".trash-restore-btn").forEach(b => {
-    b.addEventListener("click", async () => {
-      b.disabled = true; b.textContent = "Restoring…";
+    const name = r.name || r.email || r.id || r._id || '(unnamed)';
+    const when = r._deletedAt ? new Date(r._deletedAt).toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'}) : '—';
+    return `<div class="list-row" style="border:1px solid var(--line);border-radius:10px;padding:10px 14px">
+      <div class="list-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div>
+      <div class="list-main">
+        <div class="list-title">${esc(name)}</div>
+        <div class="list-sub">${esc(item.label)} · deleted ${esc(when)}</div>
+      </div>
+      <button class="btn btn-ghost trash-restore-btn" data-table="${esc(item.table)}" data-id="${esc(r._id || r.id)}" style="padding:5px 12px;font-size:12px">Restore</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.trash-restore-btn').forEach(b => {
+    b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = 'Restoring…';
       const ok = await window.vmDb.restore(b.dataset.table, b.dataset.id);
       if (ok) {
-        if (typeof showToast === "function") showToast("Restored " + b.dataset.id);
+        if (typeof showToast === 'function') showToast(`Restored ${b.dataset.id}`);
         await window.vmDb.hydrate();
         renderTrashPanel();
-        ["renderTenants","renderPropertiesGrid","renderLandlords","renderVacancies","renderHomestayClients","renderHomestayHosts","renderDeposits","updateSidebarCounts"].forEach(fn => {
-          try { if (typeof window[fn]==="function") window[fn](); } catch(e){}
+        ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies','renderHomestayClients','renderHomestayHosts','renderDeposits','updateSidebarCounts'].forEach(fn => {
+          try { if (typeof window[fn]==='function') window[fn](); } catch(e){}
         });
-      } else { b.disabled = false; b.textContent = "Restore"; }
+      } else {
+        b.disabled = false; b.textContent = 'Restore';
+      }
     });
   });
 }
-document.getElementById("trash-refresh")?.addEventListener("click", renderTrashPanel);
+
+document.getElementById('trash-refresh')?.addEventListener('click', renderTrashPanel);
+
+// Render the trash panel whenever Settings view is shown AND the Data section is the active one
 (function wireTrashPanel(){
   const settingsBtn = document.querySelector('button[data-sec="data"]');
-  if (settingsBtn) settingsBtn.addEventListener("click", () => setTimeout(renderTrashPanel, 30));
-  if (typeof window.goToView === "function") {
+  if (settingsBtn) settingsBtn.addEventListener('click', () => setTimeout(renderTrashPanel, 30));
+  // Also hook goToView so navigating to Settings refreshes trash
+  if (typeof window.goToView === 'function') {
     const orig = window.goToView;
     window.goToView = function(v){
       orig(v);
-      if (v === "settings") setTimeout(renderTrashPanel, 30);
+      if (v === 'settings') setTimeout(renderTrashPanel, 30);
     };
   }
 })();
