@@ -2439,6 +2439,20 @@ hello@vanmates.com · vanmates.com</textarea>
               </div>
             </div>
 
+            <!-- Phase 2.4c: Recently deleted (Trash) -->
+            <div class="card card-pad" style="margin-bottom:18px;display:none" id="trash-card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Recently deleted <span id="trash-count" style="font-weight:400;color:var(--muted);font-size:13px"></span></div>
+                  <div class="card-sub">Soft-deleted rows. Click Restore to bring one back; only admins see this panel.</div>
+                </div>
+                <button class="btn btn-ghost" id="trash-refresh" style="padding:5px 12px;font-size:12px">Refresh</button>
+              </div>
+              <div id="trash-list" style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+                <div style="text-align:center;padding:18px;color:var(--muted);font-size:13px">Loading…</div>
+              </div>
+            </div>
+
             <div class="card card-pad" style="border-color:var(--red-soft)">
               <div class="card-head"><div><div class="card-title" style="color:var(--red-dark)">Danger zone</div><div class="card-sub">These actions are permanent</div></div></div>
               <div class="list-row" style="border-bottom:none">
@@ -12148,6 +12162,71 @@ if(typeof updateSidebarCounts === "function"){
   const _origUSC = updateSidebarCounts;
   updateSidebarCounts = function(){ _origUSC(); refreshTeamKPIs(); };
 }
+
+// === Phase 2.4c: Trash UI (Settings → Recently deleted) ===
+async function renderTrashPanel(){
+  if (!window.vmDb || !window.vmDb.listDeleted) return;
+  const card = document.getElementById("trash-card");
+  if (!card) return;
+  const me = (typeof CURRENT_USER !== "undefined") ? CURRENT_USER : null;
+  if (!me || me.role !== "admin") { card.style.display = "none"; return; }
+  card.style.display = "";
+  const list = document.getElementById("trash-list");
+  if (!list) return;
+  list.innerHTML = '<div style="text-align:center;padding:18px;color:var(--muted);font-size:13px">Loading…</div>';
+  const TABLES = {
+    tenants:"Tenant", properties:"Property", landlords:"Landlord",
+    homestayHosts:"Homestay host", homestayClients:"Homestay client",
+    vacancies:"Vacancy", damageDeposits:"Damage deposit", homestayApplicants:"Applicant"
+  };
+  const all = [];
+  for (const [t, label] of Object.entries(TABLES)) {
+    try {
+      const rows = await window.vmDb.listDeleted(t);
+      for (const r of rows) all.push({ table:t, label, row:r });
+    } catch(e) { console.warn("[trash]", t, e.message); }
+  }
+  all.sort((a,b) => (b.row._deletedAt||"").localeCompare(a.row._deletedAt||""));
+  const cnt = document.getElementById("trash-count");
+  if (cnt) cnt.textContent = "· " + all.length + " item" + (all.length===1?"":"s");
+  if (!all.length) {
+    list.innerHTML = '<div style="text-align:center;padding:18px;color:var(--muted);font-size:13px">Trash is empty.</div>';
+    return;
+  }
+  const esc = s => String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+  list.innerHTML = all.map(item => {
+    const r = item.row;
+    const name = r.name || r.email || r.id || r._id || "(unnamed)";
+    const when = r._deletedAt ? new Date(r._deletedAt).toLocaleString(undefined, {dateStyle:"medium", timeStyle:"short"}) : "—";
+    return '<div class="list-row" style="border:1px solid var(--line);border-radius:10px;padding:10px 14px"><div class="list-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></div><div class="list-main"><div class="list-title">' + esc(name) + '</div><div class="list-sub">' + esc(item.label) + ' · deleted ' + esc(when) + '</div></div><button class="btn btn-ghost trash-restore-btn" data-table="' + esc(item.table) + '" data-id="' + esc(r._id || r.id) + '" style="padding:5px 12px;font-size:12px">Restore</button></div>';
+  }).join("");
+  list.querySelectorAll(".trash-restore-btn").forEach(b => {
+    b.addEventListener("click", async () => {
+      b.disabled = true; b.textContent = "Restoring…";
+      const ok = await window.vmDb.restore(b.dataset.table, b.dataset.id);
+      if (ok) {
+        if (typeof showToast === "function") showToast("Restored " + b.dataset.id);
+        await window.vmDb.hydrate();
+        renderTrashPanel();
+        ["renderTenants","renderPropertiesGrid","renderLandlords","renderVacancies","renderHomestayClients","renderHomestayHosts","renderDeposits","updateSidebarCounts"].forEach(fn => {
+          try { if (typeof window[fn]==="function") window[fn](); } catch(e){}
+        });
+      } else { b.disabled = false; b.textContent = "Restore"; }
+    });
+  });
+}
+document.getElementById("trash-refresh")?.addEventListener("click", renderTrashPanel);
+(function wireTrashPanel(){
+  const settingsBtn = document.querySelector('button[data-sec="data"]');
+  if (settingsBtn) settingsBtn.addEventListener("click", () => setTimeout(renderTrashPanel, 30));
+  if (typeof window.goToView === "function") {
+    const orig = window.goToView;
+    window.goToView = function(v){
+      orig(v);
+      if (v === "settings") setTimeout(renderTrashPanel, 30);
+    };
+  }
+})();
 
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
