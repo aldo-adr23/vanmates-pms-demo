@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30c"></script>
+<script src="pms-supabase.js?v=2026-04-30d"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5983,41 +5983,68 @@ document.getElementById("invite-form").addEventListener("submit", e => {
     sentDaysAgo: 0,
   });
 
-  // Re-render and toast
+  // Re-render the UI immediately
   renderPendingInvites();
   closeInviteMember();
-  showToast(`Invite sent to ${name}`);
+  showToast(`Sending invite to ${name}…`);
 
-  // Phase 2.4: try Resend via the send-invite Edge Function first; if that
-  // fails (function not deployed, secret missing, etc.) fall back to mailto.
+  // Send via the send-invite Edge Function (Resend). Surface the real
+  // outcome to the toast — old behaviour silently fell back to mailto and
+  // showed a misleading success.
   sendInviteEmail({name, email, role, title: title || roles[role].label, pages, assigned})
     .then(result => {
+      window.__lastInviteResult = result;
       if (result.ok) {
-        showToast(`✉️ Invite emailed to ${email}`);
+        showToast(`✉️ Invite emailed to ${email} (id ${(result.id||'').slice(0,8)})`);
       } else {
-        console.warn("[invite] Edge Function failed, falling back to mailto:", result.error);
-        openInviteMailto({name, email, role, title: title || roles[role].label, pages, assigned});
+        console.warn("[invite] sendInviteEmail failed:", result.error);
+        showToast(`Email failed: ${result.error}`);
       }
+    })
+    .catch(err => {
+      window.__lastInviteResult = { ok:false, error: String(err) };
+      console.error("[invite] sendInviteEmail threw:", err);
+      showToast(`Email error: ${err.message || err}`);
     });
 });
 
 // === Phase 2.4: send invite via Resend Edge Function ===
 async function sendInviteEmail({name, email, role, title, pages, assigned}){
-  if (!window.vmDb || !window.vmDb.sb) return { ok: false, error: "no supabase client" };
+  console.log("[sendInviteEmail] start", {name, email, role, title, assigned});
+  if (!window.vmDb || !window.vmDb.sb) {
+    console.error("[sendInviteEmail] no supabase client (window.vmDb.sb missing)");
+    return { ok: false, error: "no supabase client" };
+  }
   try {
     const sb = window.vmDb.sb;
     const sess = await sb.auth.getSession();
-    if (!sess?.data?.session) return { ok: false, error: "not signed in to supabase" };
+    const session = sess?.data?.session;
+    if (!session) {
+      console.error("[sendInviteEmail] no supabase session");
+      return { ok: false, error: "not signed in to supabase" };
+    }
+    console.log("[sendInviteEmail] session ok, user=", session.user?.email);
 
     const inviter = (typeof CURRENT_USER !== "undefined" && CURRENT_USER) ? CURRENT_USER.name : "Vanmates Admin";
-    const { data, error } = await sb.functions.invoke("send-invite", {
-      body: { name, email, role, title, assigned, inviter,
-              signupUrl: "https://portal.vanmates.com/signup.html" }
-    });
-    if (error) return { ok: false, error: error.message };
+    const payload = { name, email, role, title, assigned, inviter,
+                      signupUrl: "https://portal.vanmates.com/signup.html" };
+
+    // Use sb.functions.invoke for friendly error handling
+    const { data, error } = await sb.functions.invoke("send-invite", { body: payload });
+    console.log("[sendInviteEmail] invoke result", { data, error });
+    window.__lastInviteResponse = { data, error: error ? { message: error.message, name: error.name, status: error.status, context: error.context } : null };
+
+    if (error) {
+      // Try to extract upstream body from the FunctionsHttpError
+      let upstream = null;
+      try { if (error.context && error.context.body) upstream = await error.context.text(); } catch(e){}
+      console.error("[sendInviteEmail] invoke error", error, "upstream body:", upstream);
+      return { ok: false, error: `${error.message}${upstream ? ' — ' + upstream.slice(0,200) : ''}`, raw: error };
+    }
     return { ok: true, id: data?.id };
   } catch (e) {
-    return { ok: false, error: e.message };
+    console.error("[sendInviteEmail] threw", e);
+    return { ok: false, error: e.message || String(e) };
   }
 }
 
