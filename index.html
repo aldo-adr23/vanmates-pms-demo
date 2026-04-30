@@ -1089,6 +1089,33 @@
   :root[data-theme="dark"] .modal-backdrop{ background:rgba(0,0,0,.65); }
   :root[data-theme="dark"] .panel-backdrop{ background:rgba(0,0,0,.6); }
 </style>
+<!-- ============ Auth gate — runs before body renders ============
+     Redirects unauthenticated visitors to signin.html. -->
+<script>
+(function authGate(){
+  var p = location.pathname;
+  if (p.endsWith('signin.html') || p.endsWith('signup.html')
+      || p.endsWith('reset-password.html') || p.endsWith('forgot-password.html')) return;
+  var hasSession = false;
+  try {
+    var sb = localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token');
+    if (sb) {
+      var parsed = JSON.parse(sb);
+      if (parsed && parsed.access_token && (!parsed.expires_at || parsed.expires_at * 1000 > Date.now())) {
+        hasSession = true;
+      }
+    }
+    if (!hasSession) {
+      var vm = sessionStorage.getItem('vm_session');
+      if (vm) hasSession = !!JSON.parse(vm).email;
+    }
+  } catch(e) { hasSession = false; }
+  if (!hasSession) {
+    var next = encodeURIComponent(location.pathname + location.search);
+    location.replace('signin.html' + (next && next !== '%2F' ? '?next=' + next : ''));
+  }
+})();
+</script>
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
