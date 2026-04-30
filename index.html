@@ -1092,7 +1092,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-29e"></script>
+<script src="pms-supabase.js?v=2026-04-30a"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6341,12 +6341,18 @@ document.getElementById("add-landlord-form").addEventListener("submit", e => {
     monthlyRent: rent,
     contractStart, contractEnd,
     deposit, dueDay:1, payRecord:100,
-    pdf: pdfName, pdfSize,
+    pdf: pdfName, pdfSize, pdfPath: null,
     notes,
     color,
   };
   landlords.push(fresh);
   if (window.vmDb) window.vmDb.upsert('landlords', fresh);
+  // Phase 2.4d: upload the PDF to Supabase Storage in the background
+  if (pdfFile && window.vmDb?.uploadFile) {
+    window.vmDb.uploadFile(pdfFile, \`landlord-leases/\${id}\`).then(res => {
+      if (res?.path) { fresh.pdfPath = res.path; window.vmDb.upsert('landlords', fresh); }
+    });
+  }
 
   // Re-render and close
   renderLandlords();
@@ -8425,10 +8431,17 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
     status,
     tags,
     contractPdf,
+    contractPdfPath: null,
     contractPandaDoc,
   };
   tenants.push(fresh);
   if (window.vmDb) window.vmDb.upsert('tenants', fresh);
+  // Phase 2.4d: upload the lease PDF to Storage in the background
+  if (pdfFile && window.vmDb?.uploadFile) {
+    window.vmDb.uploadFile(pdfFile, \`tenant-leases/\${(email || fresh.id).replace(/[^a-z0-9]/gi,'_')}\`).then(res => {
+      if (res?.path) { fresh.contractPdfPath = res.path; window.vmDb.upsert('tenants', fresh); }
+    });
+  }
 
   // Re-render and toast — switch to most recent move-in so new tenant lands on top
   if(typeof F !== "undefined"){
@@ -11472,10 +11485,17 @@ function openAddHostModal(){
       pdf: pdfUrl,
       pdfName,
       pdfSize,
+      pdfPath: null,
       neighborhood: v("ah-neighborhood")
     };
     homestayHosts.push(newHost);
     if (window.vmDb) window.vmDb.upsert('homestayHosts', newHost);
+    // Phase 2.4d: upload the host profile PDF to Storage in the background
+    if (pdfFile && window.vmDb?.uploadFile) {
+      window.vmDb.uploadFile(pdfFile, \`host-profiles/\${newHost.id}\`).then(res => {
+        if (res?.path) { newHost.pdfPath = res.path; window.vmDb.upsert('homestayHosts', newHost); }
+      });
+    }
 
     close();
     showToast(`Added ${name}${pdfFile ? " · profile PDF attached" : ""}`);
