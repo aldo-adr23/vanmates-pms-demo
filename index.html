@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30e"></script>
+<script src="pms-supabase.js?v=2026-04-30f"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6137,11 +6137,24 @@ renderPendingInvites();
 
 function applyRolePermissions(){
   const u = activeRole();
+
+  // Hard guard: admin role ALWAYS sees every nav item that exists in the
+  // DOM. No allowed_pages, no role.nav lookups — just take the live DOM.
+  // Anything else has historically been a footgun (stale roles arrays,
+  // missing entries, hydration edge cases) that nukes the admin sidebar.
+  if (u && u.role === 'admin') {
+    document.querySelectorAll(".nav-item[data-view]").forEach(el => {
+      el.classList.remove("role-hidden");
+    });
+    console.log("[applyRolePermissions] admin -> all nav visible");
+    return;
+  }
+
   const r = roles[u.role] || roles.viewer || {nav:["dashboard"]};
   // If the user has an explicit allowed_pages list (set when an admin
   // restricted their pages on the invite), respect that. Otherwise fall
-  // back to the role's default nav. Admins always get the full role nav.
-  const allowed = (u.role !== 'admin' && Array.isArray(u.allowed_pages) && u.allowed_pages.length > 0)
+  // back to the role's default nav.
+  const allowed = (Array.isArray(u.allowed_pages) && u.allowed_pages.length > 0)
                   ? u.allowed_pages : r.nav;
   // Show/hide nav items
   document.querySelectorAll(".nav-item[data-view]").forEach(el => {
