@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30h"></script>
+<script src="pms-supabase.js?v=2026-04-30i"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5946,6 +5946,18 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   const errEl = document.getElementById("invite-error");
   errEl.classList.remove("show");
 
+  // Helper: show validation error in BOTH the error element AND a toast at
+  // the bottom of the screen, plus log to console. Without this, errors at
+  // the top of a long modal scroll out of view and the Send button looks
+  // broken.
+  const failInvite = (msg) => {
+    console.warn("[invite] validation failed:", msg);
+    errEl.textContent = msg;
+    errEl.classList.add("show");
+    try { errEl.scrollIntoView({behavior:"smooth", block:"center"}); } catch(_){}
+    if (typeof showToast === "function") showToast(msg);
+  };
+
   const name = (data.get("name")||"").toString().trim();
   const email = (data.get("email")||"").toString().trim();
   const presetRaw = (data.get("rolePreset")||"ops").toString();
@@ -5956,21 +5968,22 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   const pages = data.getAll("pages").map(String);
   const assigned = (data.get("assigned")||"").toString();
 
-  if(!name) { errEl.textContent = "Name is required."; errEl.classList.add("show"); return; }
+  console.log("[invite] submit", {name, email, role, presetRaw, pagesCount: pages.length, assigned});
+
+  if(!name) { failInvite("Name is required."); return; }
   if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    errEl.textContent = "A valid work email is required."; errEl.classList.add("show"); return;
+    failInvite("A valid work email is required."); return;
   }
   if(pages.length === 0){
-    errEl.textContent = "Pick at least one page this person can access."; errEl.classList.add("show"); return;
+    failInvite("Pick at least one page this person can access."); return;
   }
   if(role === "property" && !assigned) {
-    errEl.textContent = "Property Managers need an assigned property.";
-    errEl.classList.add("show"); return;
+    failInvite("Property Managers need an assigned property."); return;
   }
   // Don't allow inviting an email that already exists
   const existing = teamMembers.find(m => m.email.toLowerCase() === email.toLowerCase()) ||
                    pendingInvites.find(i => i.email.toLowerCase() === email.toLowerCase());
-  if(existing){ errEl.textContent = "Someone with that email already has access or a pending invite."; errEl.classList.add("show"); return; }
+  if(existing){ failInvite("Someone with that email already has access or a pending invite."); return; }
 
   // Create the invite — local UI state (id will be replaced with DB UUID
   // once we get a successful insert).
