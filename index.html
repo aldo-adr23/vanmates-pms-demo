@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30j"></script>
+<script src="pms-supabase.js?v=2026-04-30k"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -1230,7 +1230,7 @@
     <!-- TOP BAR -->
     <div class="topbar">
       <div>
-        <div class="page-title" id="page-title">Good morning, <em>Aldo</em></div>
+        <div class="page-title" id="page-title">Welcome</div>
         <div class="page-sub" id="page-sub">Saturday · April 25, 2026 · 3 cities · 24 active properties</div>
       </div>
       <div class="topbar-spacer"></div>
@@ -7581,7 +7581,7 @@ document.getElementById("pf-bottom").innerHTML = attention.map(p => {
 
 /* ============ NAVIGATION ============ */
 const titles = {
-  dashboard: ["Good morning, <em>Aldo</em>", "Saturday · April 25, 2026 · 3 cities · 24 active properties"],
+  dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
   portfolio: ["<em>Portfolio</em> performance", "Revenue, profit, and margin per property · April 2026"],
@@ -11177,9 +11177,23 @@ function refreshDashboard(){
   if(sub && isDashboard){
     sub.textContent = `${dateLine} · ${uniqCityCount} cities · ${properties.length} properties · ${totalTenants} active tenants`;
   }
-  // Also update titles map so navigating away/back keeps it fresh
+
+  // Build a personalised greeting that respects the signed-in user (not
+  // hardcoded to Aldo) and the current local hour (so afternoons don't say
+  // "morning"). Uses CURRENT_USER's first name; falls back to "there".
+  const u = (typeof activeRole === "function") ? activeRole() : (typeof CURRENT_USER !== "undefined" ? CURRENT_USER : null);
+  const firstName = ((u && u.name) || "there").toString().split(/\s+/)[0];
+  const hour = new Date().getHours();
+  const partOfDay = hour < 12 ? "morning" : (hour < 18 ? "afternoon" : "evening");
+  const greeting = `Good ${partOfDay}, <em>${firstName}</em>`;
+
+  // Apply greeting to the live page-title element (so it changes immediately
+  // even if the user is already on Dashboard) and to the titles map (so
+  // navigating away/back keeps it fresh).
+  const pageTitleEl = document.getElementById("page-title");
+  if (pageTitleEl && isDashboard) pageTitleEl.innerHTML = greeting;
   if(typeof titles === "object" && titles.dashboard){
-    titles.dashboard = ["Good morning, <em>Aldo</em>", `${dateLine} · ${uniqCityCount} cities · ${properties.length} properties · ${totalTenants} active tenants`];
+    titles.dashboard = [greeting, `${dateLine} · ${uniqCityCount} cities · ${properties.length} properties · ${totalTenants} active tenants`];
   }
 
   // 2. KPI strip
