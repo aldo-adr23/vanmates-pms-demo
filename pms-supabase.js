@@ -52,6 +52,28 @@
   async function restoreRow(an, idOrKey){ const cfg=TABLES[an]; if(!cfg) return false; const id=String(idOrKey); const {error}=await sb.from(cfg.table).update({deleted_at:null}).eq('id',id); if(error){toast(`Restore failed: ${error.message}`,'error'); return false;} return true; }
   async function listDeleted(an){ const cfg=TABLES[an]; if(!cfg) return []; const {data,error}=await sb.from(cfg.table).select('id, data, deleted_at, updated_by').not('deleted_at','is',null).order('deleted_at',{ascending:false}); if(error){console.warn(error.message); return [];} return (data||[]).map(r=>({...r.data,_id:r.id,_deletedAt:r.deleted_at,_updatedBy:r.updated_by})); }
   function toast(msg, kind){ if (typeof window.showToast==='function'){window.showToast(msg);return;} let el=document.getElementById('vmdb-toast'); if(!el){el=document.createElement('div');el.id='vmdb-toast';el.style.cssText='position:fixed;top:16px;right:16px;z-index:99999;background:#2B211A;color:#FAF5ED;padding:10px 14px;border-radius:8px;font:500 13px/1.4 system-ui,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.18);max-width:380px;transition:opacity .3s ease';document.body.appendChild(el);} el.textContent=msg; el.style.background=kind==='error'?'#A13A30':'#2B211A'; el.style.opacity='1'; clearTimeout(el._t); el._t=setTimeout(()=>{el.style.opacity='0';},4000); }
-  window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted, toast, sb };
-  console.log('[vmDb] persistence layer ready (Phase 2.4: soft delete + audit)');
+  /* ---- Storage helpers (Phase 2.4d) ---- */
+  async function uploadFile(file, folder='misc'){
+    if(!file) return null;
+    const ts=Date.now();
+    const safe=String(file.name||'upload').replace(/[^a-zA-Z0-9._-]/g,'_').slice(0,80);
+    const path=`${folder}/${ts}-${safe}`;
+    const {data,error}=await sb.storage.from('lease-docs').upload(path,file,{cacheControl:'3600',upsert:false,contentType:file.type||'application/octet-stream'});
+    if(error){console.error('[vmDb] upload failed:',error.message); toast(`Upload failed: ${error.message}`,'error'); return null;}
+    return {path:data.path,name:file.name,size:file.size,type:file.type};
+  }
+  async function fileUrl(path,expiresIn=3600){
+    if(!path) return null;
+    const {data,error}=await sb.storage.from('lease-docs').createSignedUrl(path,expiresIn);
+    if(error){console.warn('[vmDb] signed URL failed:',error.message); return null;}
+    return data.signedUrl;
+  }
+  async function deleteFile(path){
+    if(!path) return false;
+    const {error}=await sb.storage.from('lease-docs').remove([path]);
+    if(error){console.warn('[vmDb] file delete failed:',error.message); return false;}
+    return true;
+  }
+  window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted, uploadFile, fileUrl, deleteFile, toast, sb };
+  console.log('[vmDb] persistence layer ready (Phase 2.4d: soft delete + audit + storage)');
 })();
