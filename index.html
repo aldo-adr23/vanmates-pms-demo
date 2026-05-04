@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30o"></script>
+<script src="pms-supabase.js?v=2026-04-30p"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -8728,7 +8728,11 @@ function openHost(id){
       <div class="panel-kpi">
         <div class="l">Monthly we pay</div>
         <div class="v red">−$${monthlyEarning.toLocaleString()}</div>
-        <div class="s">${fmt(h.payPerGuest)}/guest × ${activeGuests.length}</div>
+        <div class="s">
+          ${(h.payTwoMeals != null || h.payThreeMeals != null)
+            ? `${fmt(h.payTwoMeals  ?? h.payPerGuest ?? 0)} (2 meals) · ${fmt(h.payThreeMeals ?? Math.round((h.payPerGuest ?? 0)*1.22))} (3 meals)`
+            : `${fmt(h.payPerGuest)}/guest × ${activeGuests.length}`}
+        </div>
       </div>
       <div class="panel-kpi">
         <div class="l">Hosting since</div>
@@ -12093,12 +12097,28 @@ function openAddHostModal(existingHost){
         </div>
         <div class="form-row">
           <div class="form-field">
-            <label>We pay host (per guest / month)</label>
-            <input id="ah-pay" type="number" class="form-input" value="900" min="0" step="50"/>
+            <label>We pay host — 2 meals/day <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(per guest / month)</span></label>
+            <input id="ah-pay-2meals" type="number" class="form-input" value="900" min="0" step="50" placeholder="900"/>
           </div>
+          <div class="form-field">
+            <label>We pay host — 3 meals/day <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(per guest / month)</span></label>
+            <input id="ah-pay-3meals" type="number" class="form-input" value="1100" min="0" step="50" placeholder="1100"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <!-- Hidden legacy field — written by the save handler so existing
+               code that reads payPerGuest keeps working (defaults to the
+               2-meals tier). Not shown to users. -->
+          <input id="ah-pay" type="hidden" value="900"/>
           <div class="form-field">
             <label>Initial rating</label>
             <input id="ah-rating" type="number" class="form-input" value="4.8" min="1" max="5" step="0.1"/>
+          </div>
+          <div class="form-field" style="display:flex;align-items:flex-end">
+            <div style="font-size:11.5px;color:var(--muted);line-height:1.5;padding:0 0 9px">
+              💡 2 meals = breakfast + dinner. 3 meals = full board.
+              We use the relevant rate when matching a client based on their meal plan.
+            </div>
           </div>
         </div>
         <div class="form-row">
@@ -12161,7 +12181,12 @@ function openAddHostModal(existingHost){
     setVal("#ah-name",         existingHost.name);
     setVal("#ah-neighborhood", existingHost.neighborhood || "");
     setVal("#ah-capacity",     existingHost.capacity);
-    setVal("#ah-pay",          existingHost.payPerGuest || existingHost.pay || 0);
+    // Pre-fill both meal-plan rates. Fall back to legacy payPerGuest for the
+    // 2-meals tier if only the legacy value exists.
+    const legacyHostPay = existingHost.payPerGuest || existingHost.pay || 0;
+    setVal("#ah-pay-2meals",   existingHost.payTwoMeals  != null ? existingHost.payTwoMeals  : legacyHostPay);
+    setVal("#ah-pay-3meals",   existingHost.payThreeMeals != null ? existingHost.payThreeMeals : Math.round(legacyHostPay * 1.22));
+    setVal("#ah-pay",          legacyHostPay);  // hidden legacy field stays in sync
     setVal("#ah-rating",       existingHost.rating);
     setVal("#ah-nationality",  existingHost.nationality || "");
     setVal("#ah-languages",    Array.isArray(existingHost.languages) ? existingHost.languages.join(", ") : (existingHost.languages || ""));
@@ -12212,6 +12237,21 @@ function openAddHostModal(existingHost){
     const capacity = num("ah-capacity");
     if(!capacity || capacity < 1){ showErr("Capacity must be at least 1."); return; }
 
+    // Two-tier meal pricing. We pay the host more for full board (3 meals)
+    // than half board (2 meals). Either tier may be 0 if the host doesn't
+    // offer that plan, but at least one must be > 0.
+    const payTwoMeals  = num("ah-pay-2meals");
+    const payThreeMeals = num("ah-pay-3meals");
+    if (payTwoMeals <= 0 && payThreeMeals <= 0) {
+      showErr("Enter at least one meal-plan rate (2 meals or 3 meals).");
+      return;
+    }
+    // Keep the legacy single-rate field in sync for any code that still reads
+    // payPerGuest. Use the 2-meals rate as the default; fall back to 3 if 2 is 0.
+    const legacyPay = payTwoMeals > 0 ? payTwoMeals : payThreeMeals;
+    const legacyEl = document.getElementById("ah-pay");
+    if (legacyEl) legacyEl.value = legacyPay;
+
     const flagMap = {
       "canadian":"🇨🇦","quebecois":"🇨🇦","mexican":"🇲🇽","brazilian":"🇧🇷","french":"🇫🇷",
       "german":"🇩🇪","spanish":"🇪🇸","italian":"🇮🇹","british":"🇬🇧","irish":"🇮🇪",
@@ -12246,7 +12286,9 @@ function openAddHostModal(existingHost){
       target.name = name;
       target.city = city;
       target.capacity = capacity;
-      target.payPerGuest = num("ah-pay");
+      target.payPerGuest  = legacyPay;        // legacy field
+      target.payTwoMeals  = payTwoMeals;       // 2 meals/day rate
+      target.payThreeMeals = payThreeMeals;    // 3 meals/day rate
       // keep existing color so visual identity stays consistent
       target.phone = v("ah-phone");
       target.email = v("ah-email");
@@ -12284,7 +12326,9 @@ function openAddHostModal(existingHost){
       name,
       city,
       capacity,
-      payPerGuest: num("ah-pay"),
+      payPerGuest: legacyPay,           // legacy single-rate field
+      payTwoMeals,                       // 2 meals/day per guest/month
+      payThreeMeals,                     // 3 meals/day per guest/month (full board)
       color: defaultColor,
       phone: v("ah-phone"),
       email: v("ah-email"),
