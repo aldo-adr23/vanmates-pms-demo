@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30n"></script>
+<script src="pms-supabase.js?v=2026-04-30o"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -8835,7 +8835,10 @@ function openHost(id){
         Email host
       </a>
       <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="document.getElementById('panel-close').click(); setTimeout(()=>goToView('homestay-matching'), 250)">Match a guest</button>
-      <button class="btn btn-ghost">⋯</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('panel-close').click(); setTimeout(()=>openAddHostModal((typeof homestayHosts!=='undefined'?homestayHosts:[]).find(x=>x.id==='${h.id}')), 250)" title="Edit host">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+        Edit
+      </button>
     </div>
   `;
 
@@ -12030,7 +12033,11 @@ refreshDashboard();
 })();
 
 /* ============ ADD HOMESTAY HOST modal ============ */
-function openAddHostModal(){
+function openAddHostModal(existingHost){
+  // When existingHost is passed, the modal opens in edit mode: pre-filled
+  // with the host's current values, title changes, save updates instead of
+  // creating a new row.
+  const isEdit = !!(existingHost && existingHost.id);
   let modal = document.getElementById("add-host-modal");
   if(!modal){
     modal = document.createElement("div");
@@ -12040,7 +12047,7 @@ function openAddHostModal(){
   }
 
   const palette = ["#A88965","#B0855A","#C19A6B","#9b6b53","#8E6F4A","#7d6041","#A6724E","#D17262"];
-  const defaultColor = palette[Math.floor(Math.random() * palette.length)];
+  const defaultColor = isEdit ? (existingHost.color || palette[0]) : palette[Math.floor(Math.random() * palette.length)];
 
   modal.innerHTML = `
     <div class="modal-dialog" style="max-width:640px">
@@ -12049,8 +12056,8 @@ function openAddHostModal(){
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-7H10v7H4a1 1 0 0 1-1-1z"/></svg>
         </div>
         <div style="flex:1;min-width:0">
-          <div class="modal-title">Add a <em>host family</em></div>
-          <div class="modal-sub">Partner family for homestays</div>
+          <div class="modal-title">${isEdit ? `Edit <em>host family</em>` : `Add a <em>host family</em>`}</div>
+          <div class="modal-sub">${isEdit ? 'Update host details, capacity, contact, or PDF' : 'Partner family for homestays'}</div>
         </div>
         <button class="modal-close" id="ah-close" aria-label="Close">&times;</button>
       </div>
@@ -12133,7 +12140,7 @@ function openAddHostModal(){
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" id="ah-cancel">Cancel</button>
-        <button class="btn btn-primary" id="ah-save">+ Add host</button>
+        <button class="btn btn-primary" id="ah-save">${isEdit ? 'Save changes' : '+ Add host'}</button>
       </div>
     </div>
   `;
@@ -12147,6 +12154,34 @@ function openAddHostModal(){
   const escHandler = (e) => { if(e.key === "Escape" && modal.classList.contains("open")){ close(); document.removeEventListener("keydown", escHandler); } };
   document.addEventListener("keydown", escHandler);
   setTimeout(() => modal.querySelector("#ah-name").focus(), 80);
+
+  // EDIT MODE: pre-fill every input from the existingHost row
+  if (isEdit) {
+    const setVal = (id, val) => { const el = modal.querySelector(id); if (el && val !== undefined && val !== null) el.value = val; };
+    setVal("#ah-name",         existingHost.name);
+    setVal("#ah-neighborhood", existingHost.neighborhood || "");
+    setVal("#ah-capacity",     existingHost.capacity);
+    setVal("#ah-pay",          existingHost.payPerGuest || existingHost.pay || 0);
+    setVal("#ah-rating",       existingHost.rating);
+    setVal("#ah-nationality",  existingHost.nationality || "");
+    setVal("#ah-languages",    Array.isArray(existingHost.languages) ? existingHost.languages.join(", ") : (existingHost.languages || ""));
+    setVal("#ah-email",        existingHost.email || "");
+    setVal("#ah-phone",        existingHost.phone || "");
+    setVal("#ah-bio",          existingHost.bio || "");
+
+    // Pre-select city: match a preset option, otherwise switch to "Other"
+    const citySelEl = modal.querySelector("#ah-city");
+    const cityOtherEl = modal.querySelector("#ah-city-other");
+    if (citySelEl && existingHost.city) {
+      const preset = [...citySelEl.options].some(o => o.value === existingHost.city);
+      if (preset) {
+        citySelEl.value = existingHost.city;
+      } else {
+        citySelEl.value = "__other__";
+        if (cityOtherEl) { cityOtherEl.value = existingHost.city; cityOtherEl.style.display = ""; }
+      }
+    }
+  }
 
   // Show/hide the "Other city" text input when the city select changes
   const citySel = modal.querySelector("#ah-city");
@@ -12198,6 +12233,51 @@ function openAddHostModal(){
     const pdfUrl = pdfFile ? URL.createObjectURL(pdfFile) : null;
     const pdfName = pdfFile ? pdfFile.name : null;
     const pdfSize = pdfFile ? `${Math.round(pdfFile.size/1024).toLocaleString()} KB` : null;
+
+    if (isEdit) {
+      // Edit mode: update the existing host row in place (find by id) so all
+      // references (clients hosted by this host, dashboards) keep working.
+      const idx = homestayHosts.findIndex(x => x.id === existingHost.id);
+      if (idx < 0) {
+        showErr("Couldn't find the host to update — please reload and try again.");
+        return;
+      }
+      const target = homestayHosts[idx];
+      target.name = name;
+      target.city = city;
+      target.capacity = capacity;
+      target.payPerGuest = num("ah-pay");
+      // keep existing color so visual identity stays consistent
+      target.phone = v("ah-phone");
+      target.email = v("ah-email");
+      target.rating = Math.min(5, Math.max(1, num("ah-rating") || target.rating || 4.8));
+      target.nationality = nationality || target.nationality || "—";
+      target.flag = flag;
+      target.languages = languages.length ? languages : target.languages;
+      target.bio = v("ah-bio");
+      target.neighborhood = v("ah-neighborhood");
+      // Only overwrite PDF metadata if the admin actually picked a new file
+      if (pdfFile) {
+        target.pdf = pdfUrl;
+        target.pdfName = pdfName;
+        target.pdfSize = pdfSize;
+        target.pdfPath = null;
+      }
+
+      if (window.vmDb) window.vmDb.upsert('homestayHosts', target);
+      if (pdfFile && window.vmDb?.uploadFile) {
+        window.vmDb.uploadFile(pdfFile, `host-profiles/${target.id}`).then(res => {
+          if (res?.path) { target.pdfPath = res.path; window.vmDb.upsert('homestayHosts', target); }
+        });
+      }
+
+      close();
+      showToast(`Updated ${name}${pdfFile ? " · new PDF attached" : ""}`);
+
+      if(typeof renderHomestayHosts === "function") renderHomestayHosts();
+      if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+      return;
+    }
 
     const newHost = {
       id: "h" + Date.now().toString(36),
