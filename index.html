@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30m"></script>
+<script src="pms-supabase.js?v=2026-04-30n"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -12069,7 +12069,9 @@ function openAddHostModal(){
               <option value="Montréal">Montréal</option>
               <option value="Québec City">Québec City</option>
               <option value="Guadalajara">Guadalajara</option>
+              <option value="__other__">Other — type below</option>
             </select>
+            <input id="ah-city-other" type="text" class="form-input" placeholder="e.g. Calgary, Mexico City…" autocomplete="off" style="display:none;margin-top:8px"/>
           </div>
         </div>
         <div class="form-row">
@@ -12146,6 +12148,18 @@ function openAddHostModal(){
   document.addEventListener("keydown", escHandler);
   setTimeout(() => modal.querySelector("#ah-name").focus(), 80);
 
+  // Show/hide the "Other city" text input when the city select changes
+  const citySel = modal.querySelector("#ah-city");
+  const cityOther = modal.querySelector("#ah-city-other");
+  if (citySel && cityOther) {
+    citySel.addEventListener("change", () => {
+      const isOther = citySel.value === "__other__";
+      cityOther.style.display = isOther ? "" : "none";
+      if (isOther) setTimeout(() => cityOther.focus(), 30);
+      else cityOther.value = "";
+    });
+  }
+
   modal.querySelector("#ah-save").onclick = () => {
     const v = (id) => document.getElementById(id).value.trim();
     const num = (id) => Number(document.getElementById(id).value) || 0;
@@ -12154,7 +12168,12 @@ function openAddHostModal(){
 
     const name = v("ah-name");
     if(!name){ showErr("Family name is required."); return; }
-    const city = v("ah-city");
+    // City: use the dropdown value, or the typed-in value if "Other" is selected
+    let city = v("ah-city");
+    if (city === "__other__") {
+      city = v("ah-city-other");
+      if (!city) { showErr("Please type the host's city."); return; }
+    }
     const capacity = num("ah-capacity");
     if(!capacity || capacity < 1){ showErr("Capacity must be at least 1."); return; }
 
