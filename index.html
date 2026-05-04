@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30p"></script>
+<script src="pms-supabase.js?v=2026-04-30q"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -8760,6 +8760,18 @@ function openHost(id){
       </div>
     </div>
 
+    <!-- Pets (matters for student allergies / matching) -->
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Pets</em></span></div>
+      <div class="card card-pad" style="font-size:13.5px;line-height:1.55;display:flex;align-items:center;gap:10px">
+        ${(h.pets && String(h.pets).trim())
+          ? `<span class="badge badge-amber" style="font-size:12.5px;padding:5px 12px"><span class="dot"></span>Has pets</span>
+             <span style="color:var(--ink)">${h.pets}</span>`
+          : `<span class="badge badge-green" style="font-size:12.5px;padding:5px 12px"><span class="dot"></span>No pets</span>
+             <span style="color:var(--muted)">Pet-free household</span>`}
+      </div>
+    </div>
+
     ${safePdf ? `
     <!-- PDF profile -->
     <div class="panel-section">
@@ -12133,6 +12145,19 @@ function openAddHostModal(existingHost){
         </div>
         <div class="form-row">
           <div class="form-field">
+            <label>Has pets?</label>
+            <select id="ah-pets-toggle" class="form-input">
+              <option value="no">No pets</option>
+              <option value="yes">Yes — describe below</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Pet details <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(matters for student allergies)</span></label>
+            <input id="ah-pets" type="text" class="form-input" placeholder="e.g. 1 cat (hypoallergenic), 2 small dogs" autocomplete="off"/>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
             <label>Email</label>
             <input id="ah-email" type="email" class="form-input" placeholder="family@example.ca" autocomplete="off"/>
           </div>
@@ -12193,6 +12218,10 @@ function openAddHostModal(existingHost){
     setVal("#ah-email",        existingHost.email || "");
     setVal("#ah-phone",        existingHost.phone || "");
     setVal("#ah-bio",          existingHost.bio || "");
+    // Pets: toggle "Yes" if the host has any pets text saved, otherwise "No"
+    const hasPets = !!(existingHost.pets && String(existingHost.pets).trim());
+    setVal("#ah-pets-toggle",  hasPets ? "yes" : "no");
+    setVal("#ah-pets",         existingHost.pets || "");
 
     // Pre-select city: match a preset option, otherwise switch to "Other"
     const citySelEl = modal.querySelector("#ah-city");
@@ -12218,6 +12247,25 @@ function openAddHostModal(existingHost){
       if (isOther) setTimeout(() => cityOther.focus(), 30);
       else cityOther.value = "";
     });
+  }
+
+  // Pets toggle — auto-focus the details input when "Yes" is picked, clear it
+  // when switching to "No pets" so we don't accidentally save stale text.
+  const petsToggle = modal.querySelector("#ah-pets-toggle");
+  const petsInput  = modal.querySelector("#ah-pets");
+  const syncPetsUI = () => {
+    if (!petsToggle || !petsInput) return;
+    const isYes = petsToggle.value === "yes";
+    petsInput.disabled = !isYes;
+    petsInput.style.opacity = isYes ? "1" : "0.5";
+    if (!isYes) petsInput.value = "";
+  };
+  if (petsToggle) {
+    petsToggle.addEventListener("change", () => {
+      syncPetsUI();
+      if (petsToggle.value === "yes") setTimeout(() => petsInput.focus(), 30);
+    });
+    syncPetsUI();
   }
 
   modal.querySelector("#ah-save").onclick = () => {
@@ -12267,6 +12315,11 @@ function openAddHostModal(existingHost){
     const rawLangs = v("ah-languages");
     const languages = rawLangs ? rawLangs.split(/[,;]/).map(s => s.trim()).filter(Boolean) : [];
 
+    // Pets: store the description if "Yes" toggle is on AND text isn't blank,
+    // otherwise store empty string (= no pets).
+    const petsToggleVal = document.getElementById("ah-pets-toggle")?.value || "no";
+    const pets = petsToggleVal === "yes" ? v("ah-pets") : "";
+
     // Capture the uploaded PDF (if any) as a Blob URL — works for the
     // current session. For real persistence you'd POST to S3/Drive instead.
     const pdfFile = document.getElementById("ah-pdf-input")?.files[0] || null;
@@ -12297,6 +12350,7 @@ function openAddHostModal(existingHost){
       target.flag = flag;
       target.languages = languages.length ? languages : target.languages;
       target.bio = v("ah-bio");
+      target.pets = pets;
       target.neighborhood = v("ah-neighborhood");
       // Only overwrite PDF metadata if the admin actually picked a new file
       if (pdfFile) {
@@ -12338,6 +12392,7 @@ function openAddHostModal(existingHost){
       flag,
       languages,
       bio: v("ah-bio"),
+      pets,
       pdf: pdfUrl,
       pdfName,
       pdfSize,
