@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30q"></script>
+<script src="pms-supabase.js?v=2026-04-30r"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -3288,6 +3288,100 @@ hello@vanmates.com · vanmates.com</textarea>
     <div class="modal-body" id="share-body"></div>
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" id="share-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ EDIT TENANT MODAL ============ -->
+<div class="modal-backdrop" id="edit-tenant-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="edit-tenant-title">
+    <div class="modal-head">
+      <div class="ic" style="background:#F1E2DC;color:#B94A3F">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="edit-tenant-title">Edit <em>tenant</em></div>
+        <div class="modal-sub" id="edit-tenant-sub">Update lease, room, rent, payment status, or contact</div>
+      </div>
+      <button class="modal-close" id="edit-tenant-close" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <form class="modal-body" id="edit-tenant-form" autocomplete="off" novalidate>
+      <input type="hidden" name="tenantEmail" />
+      <div class="form-error" id="edit-tenant-error"></div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Full name</label>
+          <input class="form-input" name="name" type="text" />
+        </div>
+        <div class="form-field">
+          <label>Email <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(used as id)</span></label>
+          <input class="form-input" name="email" type="email" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Phone</label>
+          <input class="form-input" name="phone" type="tel" placeholder="+1 (604) 555-0123" />
+        </div>
+        <div class="form-field">
+          <label>School / program</label>
+          <input class="form-input" name="school" type="text" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Property</label>
+          <select class="form-input" name="property" id="edit-tenant-property">
+            <option value="">Select property…</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Room #</label>
+          <input class="form-input" name="room" type="text" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Monthly rent (CAD)</label>
+          <input class="form-input" name="rent" type="number" min="0" step="50" />
+        </div>
+        <div class="form-field">
+          <label>Lease end</label>
+          <input class="form-input" name="leaseEnd" type="date" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Payment status</label>
+          <select class="form-input" name="pay">
+            <option value="on-time">On-time</option>
+            <option value="grace">Within grace period</option>
+            <option value="late">Late</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Lease status</label>
+          <select class="form-input" name="status">
+            <option value="active">Active</option>
+            <option value="upcoming">Upcoming</option>
+            <option value="past">Past (moved out)</option>
+          </select>
+        </div>
+      </div>
+    </form>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" id="edit-tenant-cancel">Cancel</button>
+      <button type="submit" form="edit-tenant-form" class="btn btn-primary" id="edit-tenant-save">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save changes
+      </button>
     </div>
   </div>
 </div>
@@ -11093,9 +11187,55 @@ function wireTenantActionButtons(emailOrTenant){
   }
 
   if(moreBtn){
-    moreBtn.onclick = () => {
-      // Simple action menu
-      showToast(`More actions for ${t.name} — coming soon`);
+    moreBtn.onclick = (e) => {
+      e.stopPropagation();
+      // Show a small floating action menu anchored to the button
+      let menu = document.getElementById("tenant-more-menu");
+      if (menu) menu.remove(); // close if already open
+      menu = document.createElement("div");
+      menu.id = "tenant-more-menu";
+      menu.style.cssText = "position:fixed;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:180px;z-index:9999;font-family:var(--sans)";
+      menu.innerHTML = `
+        <button data-action="edit" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--ink);text-align:left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+          Edit tenant
+        </button>
+        <button data-action="delete" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--red-dark);text-align:left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete tenant
+        </button>
+      `;
+      // Hover affordance
+      menu.querySelectorAll(".menu-item").forEach(b => {
+        b.addEventListener("mouseenter", () => b.style.background = "var(--cream-2)");
+        b.addEventListener("mouseleave", () => b.style.background = "transparent");
+      });
+      document.body.appendChild(menu);
+
+      // Position above the button so it doesn't go off-screen at the bottom
+      const r = moreBtn.getBoundingClientRect();
+      const menuH = menu.getBoundingClientRect().height || 90;
+      const top = (r.top - menuH - 8 > 8) ? (r.top - menuH - 8) : (r.bottom + 8);
+      const left = Math.min(window.innerWidth - 200, Math.max(8, r.right - 180));
+      menu.style.top = top + "px";
+      menu.style.left = left + "px";
+
+      const closeMenu = () => { menu?.remove(); document.removeEventListener("click", closeMenuOnOutside, true); };
+      const closeMenuOnOutside = (ev) => { if (!menu.contains(ev.target)) closeMenu(); };
+      setTimeout(() => document.addEventListener("click", closeMenuOnOutside, true), 0);
+
+      menu.querySelector('[data-action="edit"]').onclick = () => {
+        closeMenu();
+        if (typeof openEditTenant === "function") openEditTenant(t);
+      };
+      menu.querySelector('[data-action="delete"]').onclick = () => {
+        closeMenu();
+        if (typeof confirmRemoveTenant === "function") {
+          // Close the panel first so the row update is visible
+          document.getElementById("panel-close")?.click();
+          setTimeout(() => confirmRemoveTenant(t, t.property), 120);
+        }
+      };
     };
   }
 }
@@ -11106,6 +11246,147 @@ if(typeof openHost === "function"){
     document.querySelector(".panel-head .header-edit-btn")?.remove();
   };
 }
+
+/* ============ EDIT TENANT MODAL ============
+   Pre-fills the focused edit-tenant modal with the tenant's current values
+   and updates the existing record on save (instead of creating a new one). */
+let _editingTenant = null;
+
+function openEditTenant(tenant){
+  if(!tenant) return;
+  _editingTenant = tenant;
+  const modal = document.getElementById("edit-tenant-backdrop");
+  const form = document.getElementById("edit-tenant-form");
+  if(!modal || !form) return;
+  document.getElementById("edit-tenant-error").classList.remove("show");
+
+  // Populate property dropdown
+  const propSel = document.getElementById("edit-tenant-property");
+  propSel.innerHTML = `<option value="">Select property…</option>` +
+    (typeof properties !== "undefined" ? properties : [])
+      .filter(p => !p.deleted_at)
+      .map(p => `<option value="${p.name}" ${p.name===tenant.property?'selected':''}>${p.name}${p.city?' · '+p.city:''}</option>`)
+      .join("");
+
+  // Pre-fill every input
+  const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
+  setVal("tenantEmail", tenant.email || "");
+  setVal("name",     tenant.name || "");
+  setVal("email",    tenant.email || "");
+  setVal("phone",    tenant.phone || "");
+  setVal("school",   tenant.school || "");
+  setVal("room",     tenant.room || "");
+  setVal("rent",     tenant.rent || 0);
+  setVal("leaseEnd", tenant.leaseEnd || "");
+  setVal("pay",      tenant.pay || "on-time");
+  setVal("status",   tenant.status || "active");
+
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden","false");
+  document.body.style.overflow = "hidden";
+  setTimeout(() => form.querySelector('[name="name"]').focus(), 200);
+}
+
+function closeEditTenant(){
+  const modal = document.getElementById("edit-tenant-backdrop");
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden","true");
+  document.body.style.overflow = "";
+  _editingTenant = null;
+}
+
+document.getElementById("edit-tenant-close")?.addEventListener("click", closeEditTenant);
+document.getElementById("edit-tenant-cancel")?.addEventListener("click", closeEditTenant);
+document.getElementById("edit-tenant-backdrop")?.addEventListener("click", e => {
+  if(e.target.id === "edit-tenant-backdrop") closeEditTenant();
+});
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && document.getElementById("edit-tenant-backdrop")?.classList.contains("open")){
+    closeEditTenant();
+  }
+});
+
+document.getElementById("edit-tenant-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  if(!_editingTenant) return;
+  const errEl = document.getElementById("edit-tenant-error");
+  errEl.classList.remove("show");
+  const failEdit = (msg) => {
+    errEl.textContent = msg; errEl.classList.add("show");
+    try { errEl.scrollIntoView({behavior:"smooth", block:"center"}); } catch(_){}
+    if(typeof showToast === "function") showToast(msg);
+  };
+
+  const data = new FormData(e.target);
+  const origEmail = (data.get("tenantEmail")||"").toString();
+  const name = (data.get("name")||"").toString().trim();
+  const email = (data.get("email")||"").toString().trim();
+  const phone = (data.get("phone")||"").toString().trim();
+  const school = (data.get("school")||"").toString().trim();
+  const property = (data.get("property")||"").toString().trim();
+  const room = (data.get("room")||"").toString().trim();
+  const rent = parseInt(data.get("rent")||"0", 10);
+  const leaseEnd = (data.get("leaseEnd")||"").toString();
+  const pay = (data.get("pay")||"on-time").toString();
+  const status = (data.get("status")||"active").toString();
+
+  if(!name){ failEdit("Name can't be empty."); return; }
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ failEdit("A valid email is required."); return; }
+
+  // Find the tenant by original email (the id key); fall back to name match
+  const idx = tenants.findIndex(x =>
+    (x.email && x.email.toLowerCase() === origEmail.toLowerCase()) ||
+    (x.id === _editingTenant.id)
+  );
+  if(idx < 0){ failEdit("Couldn't find the tenant — please reload and try again."); return; }
+  const target = tenants[idx];
+
+  // If the user changed the email, make sure the new one isn't already taken
+  if(email.toLowerCase() !== origEmail.toLowerCase()){
+    const dup = tenants.find((x,i) => i !== idx && x.email && x.email.toLowerCase() === email.toLowerCase());
+    if(dup){ failEdit(`Another tenant already uses email ${email}.`); return; }
+  }
+
+  const saveBtn = document.getElementById("edit-tenant-save");
+  saveBtn.disabled = true; const origLabel = saveBtn.textContent; saveBtn.textContent = "Saving…";
+
+  try {
+    target.name = name;
+    target.email = email;
+    target.phone = phone;
+    target.school = school || target.school;
+    target.property = property || target.property;
+    target.room = room;
+    target.rent = isNaN(rent) ? target.rent : rent;
+    target.leaseEnd = leaseEnd || target.leaseEnd;
+    target.pay = pay;
+    target.status = status;
+
+    // Re-derive initials
+    const parts = (target.name || "").split(/\s+/).filter(Boolean);
+    if(parts.length >= 2) target.ini = (parts[0][0] + parts[1][0]).toUpperCase();
+    else if(parts.length === 1) target.ini = parts[0].slice(0,2).toUpperCase();
+
+    if(window.vmDb && window.vmDb.upsert){
+      // If email changed, the row id might have changed too — upsert under the
+      // new id. The old row stays harmlessly (or admin can clean up later).
+      await window.vmDb.upsert('tenants', target);
+    }
+
+    if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
+    if(typeof renderProperties === "function") renderProperties();
+    if(typeof refreshDashboard === "function") refreshDashboard();
+    if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+
+    if(typeof showToast === "function") showToast(`Updated ${name}`);
+    closeEditTenant();
+  } catch(err){
+    console.error("[edit-tenant] threw:", err);
+    failEdit("Couldn't save: " + (err.message || err));
+  } finally {
+    saveBtn.disabled = false; saveBtn.textContent = origLabel;
+  }
+});
 
 function injectAddDeleteTenantUI(propName){
   const body = document.getElementById("panel-body");
