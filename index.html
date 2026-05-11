@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30u"></script>
+<script src="pms-supabase.js?v=2026-04-30v"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -3379,6 +3379,21 @@ hello@vanmates.com · vanmates.com</textarea>
         <div class="form-field">
           <label>Inspector notes</label>
           <textarea class="form-input" name="notes" rows="3" placeholder="Anything worth flagging about this refund / move-out…"></textarea>
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="form-field">
+          <label>Proof of payment <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(screenshot or receipt — required for completed refunds)</span></label>
+          <label for="edit-deposit-proof-input" class="form-pdf" id="edit-deposit-proof-label" style="cursor:pointer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span id="edit-deposit-proof-text">Click to upload screenshot / receipt</span>
+          </label>
+          <input id="edit-deposit-proof-input" type="file" accept="image/*,application/pdf" style="display:none"/>
+          <div id="edit-deposit-proof-existing" style="margin-top:10px;display:none;font-size:12px;color:var(--muted)">
+            <span>Currently attached: <a id="edit-deposit-proof-link" href="#" target="_blank" style="color:var(--red-dark);text-decoration:underline"></a></span>
+            <button type="button" id="edit-deposit-proof-remove" style="background:transparent;border:0;color:var(--red-dark);font-size:11px;text-decoration:underline;margin-left:8px;cursor:pointer">Remove</button>
+          </div>
         </div>
       </div>
     </form>
@@ -9686,6 +9701,45 @@ function openDeposit(id){
       </div>
     </div>
 
+    <!-- Proof of payment (screenshot / receipt) -->
+    <div class="panel-section">
+      <div class="panel-section-title">
+        <span>Proof of <em>payment</em></span>
+        ${(r.proofUrl || r.proofName)
+          ? '<span class="ct" style="color:var(--green-dark)">On file</span>'
+          : (r.status === "completed" ? '<span class="ct" style="color:var(--red-dark)">Missing</span>' : '<span class="ct">Not yet uploaded</span>')}
+      </div>
+      <div class="card card-pad">
+        ${(r.proofUrl || r.proofName) ? `
+          ${(r.proofType && r.proofType.startsWith("image/")) || (r.proofName && /\.(png|jpg|jpeg|webp|gif)$/i.test(r.proofName))
+            ? `<a href="${r.proofUrl || '#'}" target="_blank" style="display:block">
+                 <img src="${r.proofUrl || ''}" alt="Proof of payment for ${r.name}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
+                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="${r.proofUrl || '#'}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
+               </a>
+               <div style="margin-top:10px;font-size:12px;color:var(--muted)">
+                 ${r.proofName || 'attachment'}${r.proofSize ? ' · ' + r.proofSize : ''}
+                 ${(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.role === 'admin')
+                    ? ` · <a href="${r.proofUrl || '#'}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
+                    : ''}
+               </div>`
+            : `<div style="display:flex;align-items:center;gap:14px">
+                 <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:16px">PDF</div>
+                 <div style="flex:1;min-width:0">
+                   <div style="font-weight:600;font-size:14px">${r.proofName || 'Proof of payment'}</div>
+                   <div style="font-size:12px;color:var(--muted);margin-top:2px">${r.proofSize || 'On file'}</div>
+                 </div>
+                 <a href="${r.proofUrl || '#'}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
+               </div>`}
+        ` : `
+          <div style="font-size:13px;color:var(--muted);line-height:1.5">
+            ${r.status === "completed"
+              ? 'No proof of payment is attached to this completed refund. Click the ⋯ button below and choose "Edit refund" to upload one.'
+              : 'A screenshot or receipt will be required before this refund can be marked completed. Use the ⋯ menu → Edit refund to upload.'}
+          </div>
+        `}
+      </div>
+    </div>
+
     <!-- Actions -->
     <div style="display:flex;gap:8px;margin-top:24px">
       ${r.status === "completed"
@@ -9769,15 +9823,35 @@ function openDeposit(id){
     });
   }
 
-  // Wire the Mark complete button
+  // Wire the Mark complete button. We require a proof-of-payment attachment;
+  // if none is on file we open the Edit Refund modal so the admin can upload
+  // one before marking the record complete.
   const markBtn = document.getElementById("dd-mark-complete");
   if(markBtn){
     markBtn.addEventListener("click", () => {
+      const hasProof = !!(r.proofUrl || r.proofPath || r.proofName);
+      if (!hasProof) {
+        showToast("Attach a proof of payment before marking this refund as completed.");
+        document.getElementById("panel-close")?.click();
+        setTimeout(() => {
+          if (typeof openEditDeposit === "function") {
+            openEditDeposit(r);
+            // Pre-select "completed" so the user just needs to attach proof + save
+            setTimeout(() => {
+              const statusSel = document.querySelector('#edit-deposit-form [name="status"]');
+              if (statusSel) statusSel.value = "completed";
+              document.getElementById("edit-deposit-proof-input")?.focus();
+            }, 250);
+          }
+        }, 150);
+        return;
+      }
       // Update the deposit record
       r.status = "completed";
       r.refundDate = new Date(TODAY).toISOString().slice(0, 10);
       r.processedBy = (typeof activeRole === "function" ? activeRole().name : "Aldo Diaz Rodriguez");
       if(!r.method) r.method = "e-transfer"; // default if not chosen
+      if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', r);
       // Close panel and refresh
       document.getElementById("detail-panel").classList.remove("open");
       document.getElementById("detail-panel").setAttribute("aria-hidden","true");
@@ -11617,6 +11691,42 @@ function openEditDeposit(rec){
   setVal("damageDesc", firstDamageDesc);
   setVal("notes",      rec.notes || "");
 
+  // Reset proof-of-payment file input and show any existing attachment
+  const proofInput   = document.getElementById("edit-deposit-proof-input");
+  const proofLabel   = document.getElementById("edit-deposit-proof-text");
+  const proofExBlk   = document.getElementById("edit-deposit-proof-existing");
+  const proofExLink  = document.getElementById("edit-deposit-proof-link");
+  const proofExClear = document.getElementById("edit-deposit-proof-remove");
+  if (proofInput) proofInput.value = "";
+  if (proofLabel) proofLabel.textContent = "Click to upload screenshot / receipt";
+  if (proofExBlk && proofExLink) {
+    if (rec.proofUrl || rec.proofName) {
+      proofExBlk.style.display = "block";
+      proofExLink.textContent = rec.proofName || "View attachment";
+      proofExLink.href = rec.proofUrl || "#";
+    } else {
+      proofExBlk.style.display = "none";
+    }
+  }
+  if (proofInput) {
+    proofInput.onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (proofLabel) proofLabel.textContent = f ? `${f.name} · ${(f.size/1024).toFixed(0)} KB` : "Click to upload screenshot / receipt";
+    };
+  }
+  if (proofExClear && _editingDeposit) {
+    proofExClear.onclick = () => {
+      if (!confirm("Remove the existing proof-of-payment file from this refund?")) return;
+      delete _editingDeposit.proofUrl;
+      delete _editingDeposit.proofName;
+      delete _editingDeposit.proofSize;
+      delete _editingDeposit.proofPath;
+      proofExBlk.style.display = "none";
+      if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', _editingDeposit);
+      showToast("Proof of payment removed");
+    };
+  }
+
   modal.classList.add("open");
   modal.setAttribute("aria-hidden","false");
   document.body.style.overflow = "hidden";
@@ -11675,6 +11785,14 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
   if(idx < 0){ failEdit("Couldn't find this refund record — please reload."); return; }
   const target = damageDeposits[idx];
 
+  // Proof-of-payment: REQUIRED when marking status as "completed"
+  const proofFile = document.getElementById("edit-deposit-proof-input")?.files?.[0] || null;
+  const hadProof  = !!(target.proofUrl || target.proofPath);
+  if (status === "completed" && !proofFile && !hadProof) {
+    failEdit("Please attach a proof of payment (screenshot / receipt) before marking the refund as completed.");
+    return;
+  }
+
   const saveBtn = document.getElementById("edit-deposit-save");
   saveBtn.disabled = true; const origLabel = saveBtn.textContent; saveBtn.textContent = "Saving…";
 
@@ -11702,6 +11820,28 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
     if(parts.length >= 2) target.ini = (parts[0][0] + parts[1][0]).toUpperCase();
     else if(parts.length === 1) target.ini = parts[0].slice(0,2).toUpperCase();
 
+    // Proof-of-payment: if user picked a new file, store metadata + upload to
+    // Supabase Storage in the background. Local preview uses an object URL so
+    // the proof shows immediately even before the upload finishes.
+    if (proofFile) {
+      target.proofUrl  = URL.createObjectURL(proofFile);
+      target.proofName = proofFile.name;
+      target.proofSize = `${Math.round(proofFile.size/1024).toLocaleString()} KB`;
+      target.proofType = proofFile.type || "application/octet-stream";
+      target.proofPath = null;  // filled in after upload completes
+      if (window.vmDb && window.vmDb.uploadFile) {
+        window.vmDb.uploadFile(proofFile, `deposit-proofs/${target.id}-${Date.now()}`).then(res => {
+          if (res && res.path) {
+            target.proofPath = res.path;
+            // If the helper exposes a signed URL, prefer that for cross-device viewing
+            if (res.signedUrl) target.proofUrl = res.signedUrl;
+            if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', target);
+            if (typeof renderDeposits === "function") renderDeposits();
+          }
+        }).catch(err => console.warn("[proof upload] failed:", err));
+      }
+    }
+
     if(window.vmDb && window.vmDb.upsert){
       await window.vmDb.upsert('damageDeposits', target);
     }
@@ -11709,7 +11849,7 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
     if(typeof renderDeposits === "function") renderDeposits();
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
 
-    if(typeof showToast === "function") showToast(`Updated refund for ${name}`);
+    if(typeof showToast === "function") showToast(`Updated refund for ${name}${proofFile ? ' · proof of payment attached' : ''}`);
     closeEditDeposit();
   } catch(err){
     console.error("[edit-deposit] threw:", err);
