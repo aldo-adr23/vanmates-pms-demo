@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30v"></script>
+<script src="pms-supabase.js?v=2026-04-30w"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -9023,18 +9023,21 @@ function openHost(id){
         ? '<div class="card card-pad" style="text-align:center;color:var(--muted)">No guests staying right now</div>'
         : `<div class="card" style="padding:0">
             ${[...activeGuests, ...upcomingGuests].map((c, i, arr) => `
-              <div class="list-row" style="padding:12px 16px;${i===arr.length-1?'border-bottom:none':''}">
+              <div class="list-row guest-row" data-hc-id="${c.id}" data-hc-name="${(c.name||'').replace(/"/g,'&quot;')}" style="padding:12px 16px;cursor:pointer;${i===arr.length-1?'border-bottom:none':''}">
                 ${avatar(c.ini)}
                 <div class="list-main">
-                  <div class="list-title">${c.name} <span class="flag">${c.flag}</span></div>
-                  <div class="list-sub">${fmtDate(c.arrival)} → ${fmtDate(c.departure)} · ${c.school}</div>
+                  <div class="list-title">${c.name} <span class="flag">${c.flag || ''}</span></div>
+                  <div class="list-sub">${fmtDate(c.arrival)} → ${fmtDate(c.departure)} · ${c.school || '—'}</div>
                 </div>
-                <div style="text-align:right">
+                <div style="text-align:right;margin-right:6px">
                   <div class="num" style="font-size:13px;color:#3e6049">+${fmt(c.weCollect)}</div>
                   ${c.status === "upcoming"
                     ? `<span class="badge badge-blue"><span class="dot"></span>Arriving</span>`
                     : `<span class="badge badge-green"><span class="dot"></span>Hosted</span>`}
                 </div>
+                <button class="btn btn-ghost guest-unmatch-btn" data-unmatch-id="${c.id}" title="Unmatch from host" style="padding:5px 8px;font-size:11px;flex-shrink:0;color:var(--red-dark)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                </button>
               </div>
             `).join("")}
           </div>`}
@@ -9070,6 +9073,47 @@ function openHost(id){
       </button>
     </div>
   `;
+
+  // Wire guest rows on the host detail panel:
+  //  • Clicking the row body opens the student's homestay-client detail
+  //  • The small red "unmatch" icon disassociates the student from this host
+  //    (sets hostId=null) so they go back to the matching queue. Used for
+  //    cancellations by either family or student — no need to recreate records.
+  const _hostPanelBody = document.getElementById("panel-body");
+  if (_hostPanelBody) {
+    _hostPanelBody.querySelectorAll(".guest-row").forEach(row => {
+      row.addEventListener("click", (ev) => {
+        if (ev.target.closest("[data-unmatch-id]")) return;
+        const cid = row.dataset.hcId;
+        if (!cid) return;
+        document.getElementById("panel-close")?.click();
+        setTimeout(() => {
+          if (typeof openHomestayClient === "function") openHomestayClient(cid);
+        }, 150);
+      });
+    });
+    _hostPanelBody.querySelectorAll("[data-unmatch-id]").forEach(btn => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const cid = btn.dataset.unmatchId;
+        const client = homestayClients.find(c => c.id === cid);
+        if (!client) return;
+        const ok = confirm(`Unmatch ${client.name} from ${h.name}?\n\n• The student stays in the system\n• They go back to the matching queue so you can pair them with another host\n• Use this for cancellations from either side (family or student)\n\nThis does NOT delete the student record. You can re-match them anytime.`);
+        if (!ok) return;
+        client.hostId = null;
+        // 'active' -> 'upcoming' since they're no longer actively hosted
+        if (client.status === "active") client.status = "upcoming";
+        if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('homestayClients', client);
+        showToast(`${client.name} unmatched from ${h.name} — back in matching queue`);
+        document.getElementById("panel-close")?.click();
+        setTimeout(() => {
+          if (typeof renderHomestayClients === "function") renderHomestayClients(document.getElementById("hc-search")?.value || "");
+          if (typeof renderHomestayHosts === "function") renderHomestayHosts();
+          if (typeof openHost === "function") openHost(h.id);
+        }, 150);
+      });
+    });
+  }
 
   document.getElementById("detail-panel").classList.add("open");
   document.getElementById("detail-panel").setAttribute("aria-hidden","false");
