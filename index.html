@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30s"></script>
+<script src="pms-supabase.js?v=2026-04-30t"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -3288,6 +3288,106 @@ hello@vanmates.com · vanmates.com</textarea>
     <div class="modal-body" id="share-body"></div>
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" id="share-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ EDIT DEPOSIT MODAL ============ -->
+<div class="modal-backdrop" id="edit-deposit-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="edit-deposit-title">
+    <div class="modal-head">
+      <div class="ic" style="background:#F1E2DC;color:#B94A3F">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="edit-deposit-title">Edit <em>refund</em></div>
+        <div class="modal-sub" id="edit-deposit-sub">Update status, deposit amount, deductions, payment method, or notes</div>
+      </div>
+      <button class="modal-close" id="edit-deposit-close" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <form class="modal-body" id="edit-deposit-form" autocomplete="off" novalidate>
+      <input type="hidden" name="depositId" />
+      <div class="form-error" id="edit-deposit-error"></div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Tenant name</label>
+          <input class="form-input" name="name" type="text" />
+        </div>
+        <div class="form-field">
+          <label>City</label>
+          <input class="form-input" name="city" type="text" placeholder="Vancouver / Toronto / Montréal" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Move-out date</label>
+          <input class="form-input" name="moveOut" type="date" />
+        </div>
+        <div class="form-field">
+          <label>Refund date</label>
+          <input class="form-input" name="refundDate" type="date" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Deposit amount (CAD)</label>
+          <input class="form-input" name="deposit" type="number" min="0" step="25" />
+        </div>
+        <div class="form-field">
+          <label>Total deductions (CAD)</label>
+          <input class="form-input" name="deductions" type="number" min="0" step="5" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Status</label>
+          <select class="form-input" name="status">
+            <option value="pending-inspection">Pending inspection</option>
+            <option value="inspection-done">Inspection done</option>
+            <option value="awaiting-approval">Awaiting approval (Need to review)</option>
+            <option value="disputed">Disputed (Blocked)</option>
+            <option value="processing">Processing payment (In progress)</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Payment method</label>
+          <select class="form-input" name="method">
+            <option value="">— Not chosen —</option>
+            <option value="e-transfer">e-Transfer</option>
+            <option value="wire">Wire transfer</option>
+            <option value="credit-card-reversal">Credit card reversal</option>
+            <option value="cheque">Cheque</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="form-field">
+          <label>Deduction description <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(what the deduction was for)</span></label>
+          <input class="form-input" name="damageDesc" type="text" placeholder="e.g. Carpet shampoo, lost key, wall touch-up" />
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="form-field">
+          <label>Inspector notes</label>
+          <textarea class="form-input" name="notes" rows="3" placeholder="Anything worth flagging about this refund / move-out…"></textarea>
+        </div>
+      </div>
+    </form>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" id="edit-deposit-cancel">Cancel</button>
+      <button type="submit" form="edit-deposit-form" class="btn btn-primary" id="edit-deposit-save">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save changes
+      </button>
     </div>
   </div>
 </div>
@@ -9566,10 +9666,80 @@ function openDeposit(id){
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="5 12 10 17 19 7"/></svg>
             Mark refund as completed
           </button>`}
-      <button class="btn btn-ghost" style="flex:1;justify-content:center">Send statement</button>
-      <button class="btn btn-ghost">⋯</button>
+      <button class="btn btn-ghost" id="dd-send-statement" data-id="${r.id}" style="flex:1;justify-content:center">Send statement</button>
+      <button class="btn btn-ghost" id="dd-more-btn" data-id="${r.id}" title="Edit or delete">⋯</button>
     </div>
   `;
+
+  // Wire Send statement (placeholder for now)
+  const sendBtn = document.getElementById("dd-send-statement");
+  if(sendBtn){
+    sendBtn.addEventListener("click", () => {
+      showToast(`Send statement to ${r.name} — coming soon`);
+    });
+  }
+
+  // Wire the "⋯" action menu (Edit + Delete)
+  const moreBtn = document.getElementById("dd-more-btn");
+  if(moreBtn){
+    moreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      let menu = document.getElementById("dd-more-menu");
+      if (menu) menu.remove();
+      menu = document.createElement("div");
+      menu.id = "dd-more-menu";
+      menu.style.cssText = "position:fixed;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:180px;z-index:9999;font-family:var(--sans)";
+      menu.innerHTML = `
+        <button data-action="edit" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--ink);text-align:left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+          Edit refund
+        </button>
+        <button data-action="delete" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--red-dark);text-align:left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete refund
+        </button>
+      `;
+      menu.querySelectorAll(".menu-item").forEach(b => {
+        b.addEventListener("mouseenter", () => b.style.background = "var(--cream-2)");
+        b.addEventListener("mouseleave", () => b.style.background = "transparent");
+      });
+      document.body.appendChild(menu);
+
+      const rect = moreBtn.getBoundingClientRect();
+      const menuH = menu.getBoundingClientRect().height || 90;
+      const top = (rect.top - menuH - 8 > 8) ? (rect.top - menuH - 8) : (rect.bottom + 8);
+      const left = Math.min(window.innerWidth - 200, Math.max(8, rect.right - 180));
+      menu.style.top = top + "px";
+      menu.style.left = left + "px";
+
+      const closeMenu = () => { menu?.remove(); document.removeEventListener("click", closeMenuOnOutside, true); };
+      const closeMenuOnOutside = (ev) => { if (!menu.contains(ev.target)) closeMenu(); };
+      setTimeout(() => document.addEventListener("click", closeMenuOnOutside, true), 0);
+
+      menu.querySelector('[data-action="edit"]').onclick = () => {
+        closeMenu();
+        if (typeof openEditDeposit === "function") openEditDeposit(r);
+      };
+      menu.querySelector('[data-action="delete"]').onclick = () => {
+        closeMenu();
+        const refund = r.deposit - depositTotalDeductions(r);
+        const ok = confirm(`Delete refund for ${r.name}?\n\nDeposit: ${fmt(r.deposit)}\nRefund: ${fmt(refund)}\nStatus: ${(depositStatuses[r.status]||{}).label || r.status}\n\nThis hides the record from the list. You can restore it later from the Settings → Trash panel.`);
+        if(!ok) return;
+        // Soft-delete via vmDb (uses deleted_at column)
+        const idx = damageDeposits.findIndex(d => d.id === r.id);
+        if(idx >= 0){
+          damageDeposits.splice(idx, 1);
+          if(window.vmDb && window.vmDb.delete) window.vmDb.delete('damageDeposits', r.id);
+        }
+        document.getElementById("panel-close")?.click();
+        setTimeout(() => {
+          if(typeof renderDeposits === "function") renderDeposits();
+          if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+        }, 100);
+        showToast(`Deleted refund for ${r.name}`);
+      };
+    });
+  }
 
   // Wire the Mark complete button
   const markBtn = document.getElementById("dd-mark-complete");
@@ -11383,6 +11553,138 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
     closeEditTenant();
   } catch(err){
     console.error("[edit-tenant] threw:", err);
+    failEdit("Couldn't save: " + (err.message || err));
+  } finally {
+    saveBtn.disabled = false; saveBtn.textContent = origLabel;
+  }
+});
+
+/* ============ EDIT REFUND/DEPOSIT MODAL ============
+   Pre-fills the focused edit-deposit modal with the record's current values
+   and updates the existing entry on save (in-memory + Supabase). */
+let _editingDeposit = null;
+
+function openEditDeposit(rec){
+  if(!rec) return;
+  _editingDeposit = rec;
+  const modal = document.getElementById("edit-deposit-backdrop");
+  const form = document.getElementById("edit-deposit-form");
+  if(!modal || !form) return;
+  document.getElementById("edit-deposit-error").classList.remove("show");
+
+  const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
+  // Compute current total deductions (sum of damages array)
+  const curDed = (rec.damages || []).reduce((s,d) => s + (d.amt||0), 0);
+  const firstDamageDesc = (rec.damages && rec.damages[0]) ? (rec.damages[0].desc || "") : "";
+
+  setVal("depositId",  rec.id || "");
+  setVal("name",       rec.name || "");
+  setVal("city",       rec.city || "");
+  setVal("moveOut",    rec.moveOut || "");
+  setVal("refundDate", rec.refundDate || "");
+  setVal("deposit",    rec.deposit || 0);
+  setVal("deductions", curDed);
+  setVal("status",     rec.status || "pending-inspection");
+  setVal("method",     rec.method || "");
+  setVal("damageDesc", firstDamageDesc);
+  setVal("notes",      rec.notes || "");
+
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden","false");
+  document.body.style.overflow = "hidden";
+  setTimeout(() => form.querySelector('[name="status"]').focus(), 200);
+}
+
+function closeEditDeposit(){
+  const modal = document.getElementById("edit-deposit-backdrop");
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden","true");
+  document.body.style.overflow = "";
+  _editingDeposit = null;
+}
+
+document.getElementById("edit-deposit-close")?.addEventListener("click", closeEditDeposit);
+document.getElementById("edit-deposit-cancel")?.addEventListener("click", closeEditDeposit);
+document.getElementById("edit-deposit-backdrop")?.addEventListener("click", e => {
+  if(e.target.id === "edit-deposit-backdrop") closeEditDeposit();
+});
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && document.getElementById("edit-deposit-backdrop")?.classList.contains("open")){
+    closeEditDeposit();
+  }
+});
+
+document.getElementById("edit-deposit-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  if(!_editingDeposit) return;
+  const errEl = document.getElementById("edit-deposit-error");
+  errEl.classList.remove("show");
+  const failEdit = (msg) => {
+    errEl.textContent = msg; errEl.classList.add("show");
+    try { errEl.scrollIntoView({behavior:"smooth", block:"center"}); } catch(_){}
+    if(typeof showToast === "function") showToast(msg);
+  };
+
+  const data = new FormData(e.target);
+  const id = (data.get("depositId")||"").toString();
+  const name = (data.get("name")||"").toString().trim();
+  const city = (data.get("city")||"").toString().trim();
+  const moveOut = (data.get("moveOut")||"").toString();
+  const refundDate = (data.get("refundDate")||"").toString();
+  const deposit = parseInt(data.get("deposit")||"0", 10);
+  const deductions = parseInt(data.get("deductions")||"0", 10);
+  const status = (data.get("status")||"pending-inspection").toString();
+  const method = (data.get("method")||"").toString();
+  const damageDesc = (data.get("damageDesc")||"").toString().trim();
+  const notes = (data.get("notes")||"").toString().trim();
+
+  if(!name){ failEdit("Tenant name can't be empty."); return; }
+  if(deposit < 0){ failEdit("Deposit must be 0 or greater."); return; }
+  if(deductions < 0){ failEdit("Deductions must be 0 or greater."); return; }
+  if(deductions > deposit){ failEdit("Deductions can't exceed the deposit amount."); return; }
+
+  const idx = damageDeposits.findIndex(d => d.id === id);
+  if(idx < 0){ failEdit("Couldn't find this refund record — please reload."); return; }
+  const target = damageDeposits[idx];
+
+  const saveBtn = document.getElementById("edit-deposit-save");
+  saveBtn.disabled = true; const origLabel = saveBtn.textContent; saveBtn.textContent = "Saving…";
+
+  try {
+    target.name = name;
+    target.city = city || target.city;
+    target.moveOut = moveOut || target.moveOut;
+    target.refundDate = refundDate || target.refundDate;
+    target.deposit = isNaN(deposit) ? target.deposit : deposit;
+    target.status = status;
+    if (method) target.method = method;
+    else delete target.method;
+    // Rebuild damages array from the single description + deductions amount.
+    // (We use a single combined deduction line — matches how the spreadsheet
+    // and table render. If multi-line damages are needed later we'll extend.)
+    if (deductions > 0) {
+      target.damages = [{ desc: damageDesc || "Move-out deductions", amt: deductions }];
+    } else {
+      target.damages = [];
+    }
+    target.notes = notes;
+
+    // Re-derive initials in case name changed
+    const parts = (target.name || "").split(/\s+/).filter(Boolean);
+    if(parts.length >= 2) target.ini = (parts[0][0] + parts[1][0]).toUpperCase();
+    else if(parts.length === 1) target.ini = parts[0].slice(0,2).toUpperCase();
+
+    if(window.vmDb && window.vmDb.upsert){
+      await window.vmDb.upsert('damageDeposits', target);
+    }
+
+    if(typeof renderDeposits === "function") renderDeposits();
+    if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+
+    if(typeof showToast === "function") showToast(`Updated refund for ${name}`);
+    closeEditDeposit();
+  } catch(err){
+    console.error("[edit-deposit] threw:", err);
     failEdit("Couldn't save: " + (err.message || err));
   } finally {
     saveBtn.disabled = false; saveBtn.textContent = origLabel;
