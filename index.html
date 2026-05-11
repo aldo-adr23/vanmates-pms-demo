@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30w"></script>
+<script src="pms-supabase.js?v=2026-04-30x"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -10730,10 +10730,17 @@ function openHomestayClientAdd(){
       .map(h => `<option value="${h.id}">${h.name}${h.city ? ' · ' + h.city : ''}${typeof h.capacity === "number" ? ' (cap ' + h.capacity + ')' : ''}</option>`)
       .join("");
 
-  // Default check-in to today, check-out to +6 months
-  const today = new Date();
+  // Default check-in to the portal's "today" (so the new entry lands in the
+  // currently-selected month view, not a future month that the filter hides).
+  // Fall back to the real today if TODAY isn't defined.
+  const today = (typeof TODAY !== "undefined" && TODAY instanceof Date) ? new Date(TODAY) : new Date();
   const sixMonths = new Date(today.getTime() + 1000*60*60*24*30*6);
-  const isoDate = d => d.toISOString().slice(0,10);
+  const isoDate = d => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,"0");
+    const day = String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${day}`;
+  };
   form.querySelector('input[name="checkIn"]').value  = isoDate(today);
   form.querySelector('input[name="checkOut"]').value = isoDate(sixMonths);
 
@@ -10826,6 +10833,23 @@ document.getElementById("hc-add-form")?.addEventListener("submit", async e => {
   try {
     // Push to in-memory array immediately so the UI updates fast
     if(typeof homestayClients !== "undefined") homestayClients.push(newClient);
+
+    // The Homestay clients page filters by month by default. If the new
+    // client's stay doesn't overlap the currently-selected month, the row
+    // would silently disappear. Switch the picker to the new client's
+    // arrival month so users see what they just created.
+    if (typeof homestayMonth !== "undefined" && checkIn) {
+      const arrivalYM = checkIn.slice(0, 7);   // "YYYY-MM"
+      const departureYM = (checkOut || "").slice(0, 7);
+      const currentYM = homestayMonth;
+      const stayOverlapsCurrent = checkIn && checkOut &&
+        arrivalYM <= currentYM && departureYM >= currentYM;
+      if (!stayOverlapsCurrent && typeof setHomestayMonth === "function") {
+        console.log("[hc-add] new client stay (" + arrivalYM + "→" + departureYM + ") doesn't overlap current month (" + currentYM + ") — switching to " + arrivalYM);
+        setHomestayMonth(arrivalYM);
+      }
+    }
+
     if(typeof renderHomestayClients === "function") renderHomestayClients(document.getElementById("hc-search")?.value || "");
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
 
