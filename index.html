@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30t"></script>
+<script src="pms-supabase.js?v=2026-04-30u"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -8255,7 +8255,10 @@ let homestayMode = "month"; // "month" | "all"
 
 function parseLocalDate(s){
   // Parse "YYYY-MM-DD" to a local-midnight Date (avoid UTC parsing surprises).
+  // Returns null for null/empty inputs so callers can guard against missing dates.
+  if (!s || typeof s !== "string") return null;
   const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return null;
   return new Date(y, m - 1, d);
 }
 function clientsActiveInMonth(ym){
@@ -9257,8 +9260,10 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
 const DD_FILTERS = { search:"", status:new Set(), city:new Set(), sort:"recent" };
 
 function dedDays(rec){
-  // Days since move-out (or until move-out if future)
-  return daysBetween(parseLocalDate(rec.moveOut), TODAY);
+  // Days since move-out (or until move-out if future). Returns null when no move-out date set.
+  const d = parseLocalDate(rec.moveOut);
+  if (!d) return null;
+  return daysBetween(d, TODAY);
 }
 function depositTotalDeductions(rec){
   return (rec.damages || []).reduce((s, d) => s + d.amt, 0);
@@ -9267,22 +9272,33 @@ function depositTotalDeductions(rec){
 function applyDepositFilters(){
   let list = damageDeposits.slice();
   const q = DD_FILTERS.search.toLowerCase().trim();
+  // Null-safe lowercase helper — new records from the spreadsheet may have
+  // null name/property/city/country fields, and toLowerCase() on null throws.
+  const lc = (v) => (v == null ? "" : String(v).toLowerCase());
   if(q){
     list = list.filter(r =>
-      r.name.toLowerCase().includes(q) ||
-      r.property.toLowerCase().includes(q) ||
-      r.city.toLowerCase().includes(q) ||
-      r.country.toLowerCase().includes(q)
+      lc(r.name).includes(q) ||
+      lc(r.property).includes(q) ||
+      lc(r.city).includes(q) ||
+      lc(r.country).includes(q) ||
+      lc(r.program).includes(q)
     );
   }
   if(DD_FILTERS.status.size) list = list.filter(r => DD_FILTERS.status.has(r.status));
   if(DD_FILTERS.city.size)   list = list.filter(r => DD_FILTERS.city.has(r.city));
 
+  // Sort with null-safe move-out comparison: records without a move-out date
+  // sort to the end (so the table doesn't get NaN-ordered, which is what was
+  // emptying the list before).
+  const moveOutMs = (rec) => {
+    const d = parseLocalDate(rec.moveOut);
+    return d ? d.getTime() : -Infinity;
+  };
   const sorters = {
-    "recent":      (a,b) => parseLocalDate(b.moveOut) - parseLocalDate(a.moveOut),
-    "oldest":      (a,b) => parseLocalDate(a.moveOut) - parseLocalDate(b.moveOut),
-    "amount-desc": (a,b) => b.deposit - a.deposit,
-    "status":      (a,b) => a.status.localeCompare(b.status),
+    "recent":      (a,b) => moveOutMs(b) - moveOutMs(a),
+    "oldest":      (a,b) => (moveOutMs(a)===-Infinity ? 1 : (moveOutMs(b)===-Infinity ? -1 : moveOutMs(a) - moveOutMs(b))),
+    "amount-desc": (a,b) => (b.deposit||0) - (a.deposit||0),
+    "status":      (a,b) => String(a.status||"").localeCompare(String(b.status||"")),
   };
   list.sort(sorters[DD_FILTERS.sort] || sorters.recent);
   return list;
@@ -9321,33 +9337,45 @@ function renderDeposits(){
 
   body.innerHTML = list.map(r => {
     const ded = depositTotalDeductions(r);
-    const refund = r.deposit - ded;
-    const dDays = dedDays(r);
-    const moveOutLabel = dDays >= 0 ? `${dDays} day${dDays===1?"":"s"} ago` : `in ${Math.abs(dDays)} day${Math.abs(dDays)===1?"":"s"}`;
-    const sm = depositStatuses[r.status];
+    const refund = (r.deposit || 0) - ded;
+    const dDays = dedDays(r);   // may be null if no move-out date set
+    const moveOutLabel = dDays == null
+      ? ""
+      : (dDays >= 0
+          ? `${dDays} day${dDays===1?"":"s"} ago`
+          : `in ${Math.abs(dDays)} day${Math.abs(dDays)===1?"":"s"}`);
+    const sm = depositStatuses[r.status] || {cls:"badge-grey", label:r.status || "Unknown"};
+    const color = r.color || "#A88965";
+    const ini = r.ini || (r.name||"?").slice(0,2).toUpperCase();
+    const flag = r.flag || "";
+    const country = r.country || (r.program ? r.program + " program" : "");
+    const property = r.property || "—";
+    const room = r.room || "";
+    const city = r.city || "—";
+    const moveOutDisplay = r.moveOut ? fmtDate(r.moveOut) : "—";
     return `
       <tr data-deposit-id="${r.id}" style="cursor:pointer">
         <td>
           <div class="name-cell">
-            <div class="avatar" style="background:linear-gradient(135deg, ${r.color}, ${shade(r.color,-25)})">${r.ini}</div>
+            <div class="avatar" style="background:linear-gradient(135deg, ${color}, ${shade(color,-25)})">${ini}</div>
             <div>
-              <div class="name-main">${r.name} <span class="flag">${r.flag}</span></div>
-              <div class="name-sub">${r.country}</div>
+              <div class="name-main">${r.name}${flag ? ' <span class="flag">'+flag+'</span>' : ''}</div>
+              <div class="name-sub">${country}</div>
             </div>
           </div>
         </td>
         <td>
-          <div class="name-main">${r.property}</div>
-          <div class="name-sub">${r.room}</div>
+          <div class="name-main">${property}</div>
+          <div class="name-sub">${room}</div>
         </td>
-        <td>${r.city}</td>
+        <td>${city}</td>
         <td>
-          <div class="name-main">${fmtDate(r.moveOut)}</div>
-          <div class="name-sub" style="font-size:11px;color:${dDays > 14 && r.status !== "completed" ? "var(--red-dark)" : "var(--muted)"}">${moveOutLabel}</div>
+          <div class="name-main">${moveOutDisplay}</div>
+          <div class="name-sub" style="font-size:11px;color:${(dDays != null && dDays > 14 && r.status !== "completed") ? "var(--red-dark)" : "var(--muted)"}">${moveOutLabel}</div>
         </td>
         <td class="right"><span class="num">${fmt(r.deposit)}</span></td>
         <td class="right">${ded > 0
-          ? `<span class="num" style="color:var(--red-dark)">−${fmt(ded)}</span><div class="name-sub" style="font-size:11px">${r.damages.length} item${r.damages.length===1?"":"s"}</div>`
+          ? `<span class="num" style="color:var(--red-dark)">−${fmt(ded)}</span><div class="name-sub" style="font-size:11px">${(r.damages||[]).length} item${(r.damages||[]).length===1?"":"s"}</div>`
           : `<span class="card-sub" style="font-size:12px">no deductions</span>`}</td>
         <td class="right"><span class="num" style="color:#3e6049">${fmt(refund)}</span></td>
         <td><span class="badge ${sm.cls}"><span class="dot"></span>${sm.label}</span></td>
