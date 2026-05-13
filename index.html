@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01a"></script>
+<script src="pms-supabase.js?v=2026-05-01b"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -10355,6 +10355,67 @@ openLandlord = function(id){
     headerEditBtn.onclick = () => openLandlordEdit(l.id);
     if(closeBtn) head.insertBefore(headerEditBtn, closeBtn);
     else head.appendChild(headerEditBtn);
+
+    /* === "⋯" menu next to Edit — admin-only, currently houses Delete === */
+    const isAdmin = (typeof CURRENT_USER !== "undefined" && CURRENT_USER && CURRENT_USER.role === "admin");
+    if (isAdmin) {
+      const moreBtn = document.createElement("button");
+      moreBtn.className = "header-edit-btn btn btn-ghost";  // reuse class so the panel cleanup removes it on close
+      moreBtn.setAttribute("data-more-landlord-header", l.id);
+      moreBtn.title = "More actions";
+      moreBtn.style.cssText = "padding:8px 10px;font-size:14px;margin-right:10px;flex-shrink:0";
+      moreBtn.textContent = "⋯";
+      moreBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        let menu = document.getElementById("ll-more-menu");
+        if (menu) { menu.remove(); return; }
+        menu = document.createElement("div");
+        menu.id = "ll-more-menu";
+        menu.style.cssText = "position:fixed;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:200px;z-index:9999;font-family:var(--sans)";
+        menu.innerHTML = `
+          <button data-action="delete" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--red-dark);text-align:left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Delete landlord
+          </button>
+        `;
+        menu.querySelectorAll(".menu-item").forEach(b => {
+          b.addEventListener("mouseenter", () => b.style.background = "var(--cream-2)");
+          b.addEventListener("mouseleave", () => b.style.background = "transparent");
+        });
+        document.body.appendChild(menu);
+        const rect = moreBtn.getBoundingClientRect();
+        const menuH = menu.getBoundingClientRect().height || 50;
+        const top = (rect.bottom + 8 + menuH < window.innerHeight) ? (rect.bottom + 8) : (rect.top - menuH - 8);
+        const left = Math.min(window.innerWidth - 220, Math.max(8, rect.right - 200));
+        menu.style.top = top + "px";
+        menu.style.left = left + "px";
+        const closeMenu = () => { menu?.remove(); document.removeEventListener("click", closeOnOutside, true); };
+        const closeOnOutside = (e) => { if (!menu.contains(e.target)) closeMenu(); };
+        setTimeout(() => document.addEventListener("click", closeOnOutside, true), 0);
+        menu.querySelector('[data-action="delete"]').onclick = () => {
+          closeMenu();
+          const tenantCount = (typeof tenants !== "undefined" ? tenants : [])
+            .filter(t => (l.properties || [l.property]).includes(t.property)).length;
+          const propsLine = (l.properties || [l.property]).filter(Boolean).join(", ") || "—";
+          const msg = `Delete ${l.name}?\n\n• Owns: ${propsLine}\n• ${tenantCount} tenant${tenantCount===1?"":"s"} currently linked to those properties\n\nThis hides the landlord from the list. The properties and tenant records stay untouched. You can restore the landlord from Settings → Trash later.`;
+          if (!confirm(msg)) return;
+          const idx = landlords.findIndex(x => x.id === l.id);
+          if (idx < 0) return;
+          landlords.splice(idx, 1);
+          if (window.vmDb && window.vmDb.delete) window.vmDb.delete('landlords', l.id);
+          // Close the panel and refresh the landlords list + KPIs
+          document.getElementById("panel-close")?.click();
+          setTimeout(() => {
+            if (typeof renderLandlords === "function") renderLandlords(document.getElementById("ll-search")?.value || "");
+            if (typeof updateLandlordKPIs === "function") updateLandlordKPIs();
+            if (typeof updateSidebarCounts === "function") updateSidebarCounts();
+          }, 100);
+          showToast(`Deleted ${l.name} — restorable from Trash`);
+        };
+      };
+      if (closeBtn) head.insertBefore(moreBtn, closeBtn);
+      else head.appendChild(moreBtn);
+    }
   }
 
   // Find the "Email landlord" button at the bottom and wire it
