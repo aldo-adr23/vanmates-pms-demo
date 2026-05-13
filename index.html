@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01i"></script>
+<script src="pms-supabase.js?v=2026-05-01j"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -11682,12 +11682,30 @@ function renderMatchCandidates(){
     if(subEl) subEl.textContent = "Pick an applicant on the left";
     return;
   }
-  // Score every host
-  const ranked = homestayHosts.map(h => ({...h, match: scoreHostForApplicant(h, a)}))
+  // Score every host (with diagnostic counts so we can see why hosts were excluded)
+  const totalHosts = homestayHosts.length;
+  let wrongCity = 0, noCapacity = 0;
+  const ranked = homestayHosts.map(h => {
+    const m = scoreHostForApplicant(h, a);
+    if (m === null) {
+      if ((h.city||"").toLowerCase() !== (a.city||"").toLowerCase()) wrongCity++;
+      else noCapacity++;
+    }
+    return {...h, match: m};
+  })
     .filter(h => h.match !== null)
     .sort((a,b) => b.match.score - a.match.score);
 
-  if(subEl) subEl.textContent = `${ranked.length} host${ranked.length===1?"":"s"} matched for ${a.name}`;
+  if(subEl) {
+    let txt = `${ranked.length} host${ranked.length===1?"":"s"} matched for ${a.name}`;
+    if (wrongCity + noCapacity > 0) {
+      const bits = [];
+      if (wrongCity)   bits.push(`${wrongCity} different city`);
+      if (noCapacity)  bits.push(`${noCapacity} no available beds`);
+      txt += ` · ${bits.join(", ")} excluded`;
+    }
+    subEl.textContent = txt;
+  }
 
   if(ranked.length === 0){
     container.innerHTML = `<div class="card card-pad" style="text-align:center;color:var(--muted);padding:36px 20px">
