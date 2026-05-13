@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01e"></script>
+<script src="pms-supabase.js?v=2026-05-01f"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -3288,6 +3288,85 @@ hello@vanmates.com · vanmates.com</textarea>
     <div class="modal-body" id="share-body"></div>
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" id="share-cancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ EDIT PROPERTY MODAL ============ -->
+<div class="modal-backdrop" id="edit-property-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="edit-property-title">
+    <div class="modal-head">
+      <div class="ic" style="background:#F1E2DC;color:#B94A3F">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="edit-property-title">Edit <em>property</em></div>
+        <div class="modal-sub">Update address, type, capacity, rent range, or city</div>
+      </div>
+      <button class="modal-close" id="edit-property-close" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <form class="modal-body" id="edit-property-form" autocomplete="off" novalidate>
+      <input type="hidden" name="originalName" />
+      <div class="form-error" id="edit-property-error"></div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Property name <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(used to link tenants — be careful)</span></label>
+          <input class="form-input" name="name" type="text" />
+        </div>
+        <div class="form-field">
+          <label>City</label>
+          <select class="form-input" name="city">
+            <option value="">Select city…</option>
+            <option value="Vancouver">Vancouver</option>
+            <option value="Toronto">Toronto</option>
+            <option value="Montréal">Montréal</option>
+            <option value="Guadalajara">Guadalajara</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="form-field">
+          <label>Address</label>
+          <input class="form-input" name="addr" type="text" placeholder="e.g. 715 W 14 Ave, Vancouver BC V5Z 1R2" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Type</label>
+          <select class="form-input" name="type">
+            <option value="Co-living">Co-living</option>
+            <option value="Student housing">Student housing</option>
+            <option value="Homestay">Homestay</option>
+            <option value="Furnished">Furnished apartment</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Total rooms</label>
+          <input class="form-input" name="rooms" type="number" min="1" step="1" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Monthly rent range <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(e.g. "$950–1,400" or "$1,300")</span></label>
+          <input class="form-input" name="rent" type="text" placeholder="$950–1,400" />
+        </div>
+        <div class="form-field">
+          <!-- spacer -->
+        </div>
+      </div>
+    </form>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" id="edit-property-cancel">Cancel</button>
+      <button type="submit" form="edit-property-form" class="btn btn-primary" id="edit-property-save">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save changes
+      </button>
     </div>
   </div>
 </div>
@@ -6017,7 +6096,7 @@ function openProperty(propName){
         View full P&amp;L (PDF)
       </a>
       <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="goToView('properties'); document.getElementById('panel-close').click();">Manage rooms</button>
-      <button class="btn btn-ghost">⋯</button>
+      <button class="btn btn-ghost" id="prop-more-btn" data-prop-name="${propName}" title="Edit or delete">⋯</button>
     </div>
   `;
 
@@ -6030,6 +6109,73 @@ function openProperty(propName){
       utilExpanded.style.display = open ? "none" : "block";
       utilRow.classList.toggle("expanded", !open);
     });
+  }
+
+  // Wire the property "⋯" button (Edit / Delete menu)
+  const propMoreBtn = document.getElementById("prop-more-btn");
+  if (propMoreBtn) {
+    propMoreBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      let menu = document.getElementById("prop-more-menu");
+      if (menu) { menu.remove(); return; }
+      const isAdmin = (typeof CURRENT_USER !== "undefined" && CURRENT_USER && CURRENT_USER.role === "admin");
+      menu = document.createElement("div");
+      menu.id = "prop-more-menu";
+      menu.style.cssText = "position:fixed;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:200px;z-index:9999;font-family:var(--sans)";
+      menu.innerHTML = `
+        <button data-action="edit" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--ink);text-align:left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
+          Edit property
+        </button>
+        ${isAdmin ? `
+        <button data-action="delete" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--red-dark);text-align:left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete property
+        </button>` : ''}
+      `;
+      menu.querySelectorAll(".menu-item").forEach(b => {
+        b.addEventListener("mouseenter", () => b.style.background = "var(--cream-2)");
+        b.addEventListener("mouseleave", () => b.style.background = "transparent");
+      });
+      document.body.appendChild(menu);
+      const rect = propMoreBtn.getBoundingClientRect();
+      const menuH = menu.getBoundingClientRect().height || 90;
+      const top = (rect.top - menuH - 8 > 8) ? (rect.top - menuH - 8) : (rect.bottom + 8);
+      const left = Math.min(window.innerWidth - 220, Math.max(8, rect.right - 200));
+      menu.style.top = top + "px";
+      menu.style.left = left + "px";
+      const closeMenu = () => { menu?.remove(); document.removeEventListener("click", closeOnOutside, true); };
+      const closeOnOutside = (e) => { if (!menu.contains(e.target)) closeMenu(); };
+      setTimeout(() => document.addEventListener("click", closeOnOutside, true), 0);
+
+      menu.querySelector('[data-action="edit"]').onclick = () => {
+        closeMenu();
+        if (typeof openEditProperty === "function") openEditProperty(propMeta);
+      };
+      const delBtn = menu.querySelector('[data-action="delete"]');
+      if (delBtn) {
+        delBtn.onclick = () => {
+          closeMenu();
+          const tenantsHere = (typeof tenants !== "undefined" ? tenants : [])
+            .filter(t => t.property === propMeta.name && t.status === "active");
+          const msg = `Delete ${propMeta.name}?\n\n• ${propMeta.rooms || 0} rooms\n• ${tenantsHere.length} active tenant${tenantsHere.length===1?"":"s"} currently linked\n\nThis hides the property from the list. Tenants, landlords, and the address record stay untouched. Restorable from Settings → Trash later.`;
+          if (!confirm(msg)) return;
+          const idx = properties.findIndex(x => x.name === propMeta.name);
+          if (idx < 0) return;
+          properties.splice(idx, 1);
+          if (window.vmDb && window.vmDb.delete) window.vmDb.delete('properties', propMeta.name);
+          document.getElementById("panel-close")?.click();
+          setTimeout(() => {
+            if (typeof renderProperties === "function") renderProperties();
+            if (typeof renderPropertiesGrid === "function") renderPropertiesGrid();
+            if (typeof refreshPortfolio === "function") refreshPortfolio();
+            if (typeof updateSidebarCounts === "function") updateSidebarCounts();
+            if (typeof refreshDashboard === "function") refreshDashboard();
+          }, 100);
+          showToast(`Deleted ${propMeta.name} — restorable from Trash`);
+        };
+      }
+    };
   }
 
   // Open the panel
@@ -11891,6 +12037,122 @@ if(typeof openHost === "function"){
    Pre-fills the focused edit-tenant modal with the tenant's current values
    and updates the existing record on save (instead of creating a new one). */
 let _editingTenant = null;
+
+/* ============ EDIT PROPERTY MODAL ============ */
+let _editingProperty = null;
+
+function openEditProperty(prop){
+  if(!prop) return;
+  _editingProperty = prop;
+  const modal = document.getElementById("edit-property-backdrop");
+  const form = document.getElementById("edit-property-form");
+  if(!modal || !form) return;
+  document.getElementById("edit-property-error").classList.remove("show");
+  const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
+  setVal("originalName", prop.name || "");
+  setVal("name",         prop.name || "");
+  setVal("city",         prop.city || "");
+  setVal("addr",         prop.addr || "");
+  setVal("type",         prop.type || "Co-living");
+  setVal("rooms",        prop.rooms || 0);
+  setVal("rent",         prop.rent || "");
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden","false");
+  document.body.style.overflow = "hidden";
+  setTimeout(() => form.querySelector('[name="addr"]').focus(), 200);
+}
+
+function closeEditProperty(){
+  const modal = document.getElementById("edit-property-backdrop");
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden","true");
+  document.body.style.overflow = "";
+  _editingProperty = null;
+}
+
+document.getElementById("edit-property-close")?.addEventListener("click", closeEditProperty);
+document.getElementById("edit-property-cancel")?.addEventListener("click", closeEditProperty);
+document.getElementById("edit-property-backdrop")?.addEventListener("click", e => {
+  if(e.target.id === "edit-property-backdrop") closeEditProperty();
+});
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && document.getElementById("edit-property-backdrop")?.classList.contains("open")){
+    closeEditProperty();
+  }
+});
+
+document.getElementById("edit-property-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  if(!_editingProperty) return;
+  const errEl = document.getElementById("edit-property-error");
+  errEl.classList.remove("show");
+  const failEdit = (msg) => {
+    errEl.textContent = msg; errEl.classList.add("show");
+    try { errEl.scrollIntoView({behavior:"smooth", block:"center"}); } catch(_){}
+    if(typeof showToast === "function") showToast(msg);
+  };
+  const data = new FormData(e.target);
+  const originalName = (data.get("originalName")||"").toString();
+  const name = (data.get("name")||"").toString().trim();
+  const city = (data.get("city")||"").toString().trim();
+  const addr = (data.get("addr")||"").toString().trim();
+  const type = (data.get("type")||"Co-living").toString();
+  const rooms = parseInt(data.get("rooms")||"0", 10);
+  const rent = (data.get("rent")||"").toString().trim();
+
+  if(!name){ failEdit("Property name can't be empty."); return; }
+  if(rooms < 1){ failEdit("A property must have at least 1 room."); return; }
+
+  const target = properties.find(p => p.name === originalName);
+  if(!target){ failEdit("Couldn't find this property — please reload."); return; }
+
+  // If user is renaming, check for collisions + propagate to tenants
+  if(name !== originalName){
+    const dup = properties.find(p => p.name === name);
+    if(dup){ failEdit(`Another property already uses the name "${name}".`); return; }
+    if(!confirm(`Renaming "${originalName}" to "${name}" will also update the property field on every tenant linked to it. Continue?`)) return;
+    // Propagate rename
+    (typeof tenants !== "undefined" ? tenants : []).forEach(t => {
+      if(t.property === originalName) t.property = name;
+    });
+    (typeof vacancies !== "undefined" ? vacancies : []).forEach(v => {
+      if(v.prop === originalName) v.prop = name;
+    });
+    // Propagate on landlord records too
+    (typeof landlords !== "undefined" ? landlords : []).forEach(l => {
+      if(l.property === originalName) l.property = name;
+      if(Array.isArray(l.properties)) l.properties = l.properties.map(p => p === originalName ? name : p);
+    });
+  }
+
+  const saveBtn = document.getElementById("edit-property-save");
+  saveBtn.disabled = true; const origLabel = saveBtn.textContent; saveBtn.textContent = "Saving…";
+
+  try {
+    target.name = name;
+    target.city = city || target.city;
+    target.addr = addr || target.addr;
+    target.type = type;
+    target.rooms = isNaN(rooms) ? target.rooms : rooms;
+    target.rent = rent || target.rent;
+
+    if(window.vmDb && window.vmDb.upsert){
+      await window.vmDb.upsert('properties', target);
+    }
+    if(typeof renderProperties === "function") renderProperties();
+    if(typeof renderPropertiesGrid === "function") renderPropertiesGrid();
+    if(typeof refreshPortfolio === "function") refreshPortfolio();
+    if(typeof refreshDashboard === "function") refreshDashboard();
+    if(typeof updateSidebarCounts === "function") updateSidebarCounts();
+    if(typeof showToast === "function") showToast(`Updated ${name}`);
+    closeEditProperty();
+  } catch(err){
+    console.error("[edit-property] threw:", err);
+    failEdit("Couldn't save: " + (err.message || err));
+  } finally {
+    saveBtn.disabled = false; saveBtn.textContent = origLabel;
+  }
+});
 
 function openEditTenant(tenant){
   if(!tenant) return;
