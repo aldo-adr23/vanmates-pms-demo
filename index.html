@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01g"></script>
+<script src="pms-supabase.js?v=2026-05-01h"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6119,6 +6119,8 @@ function openProperty(propName){
       if (ev.target.closest(".room-del")) return;  // don't navigate when removing
       const email = card.dataset.tenantEmail;
       if (!email) return;
+      // Stash the "back" target so the tenant panel can offer a return link
+      _tenantBackTo = { type: "property", name: propMeta.name };
       // Close the property panel, then open the tenant panel
       document.getElementById("panel-close")?.click();
       setTimeout(() => {
@@ -7603,9 +7605,17 @@ function openLandlord(id){
 function monthDiff(d1, d2){
   return (d2.getFullYear()-d1.getFullYear())*12 + (d2.getMonth()-d1.getMonth());
 }
+// Tracks where the tenant panel was opened FROM, so we can offer a "back"
+// link. Cleared each time we render the tenant panel. Set by callers right
+// before they call openTenant (e.g., the property panel's room-card click).
+let _tenantBackTo = null;
+
 function openTenant(email){
   const t = tenants.find(x => x.email === email);
   if(!t) return;
+  // Capture and clear the back-target so it only applies to this one render
+  const backTo = _tenantBackTo;
+  _tenantBackTo = null;
 
   // Hero — colored avatar
   const hues = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041"];
@@ -7660,7 +7670,14 @@ function openTenant(email){
   }
 
   const body = document.getElementById("panel-body");
-  body.innerHTML = `
+  // Optional "back" pill — only rendered when we know where the user came from
+  const backPillHtml = backTo
+    ? `<div style="margin:-4px 0 14px"><button id="tenant-back-pill" data-back-type="${backTo.type}" data-back-name="${(backTo.name||'').replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:6px;background:var(--cream-2);border:1px solid var(--line);color:var(--ink);padding:6px 12px;border-radius:999px;font-size:12.5px;cursor:pointer;font-family:var(--sans)" title="Return to ${backTo.name}">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+         Back to <strong style="font-weight:700;margin-left:2px">${backTo.name}</strong>
+       </button></div>`
+    : "";
+  body.innerHTML = backPillHtml + `
     <!-- KPI strip -->
     <div class="panel-kpis">
       <div class="panel-kpi">
@@ -7823,6 +7840,21 @@ function openTenant(email){
     closeProperty();
     setTimeout(() => openProperty(b.dataset.goProp), 300);
   }));
+
+  // Wire the optional "Back to <property>" pill
+  const backPill = document.getElementById("tenant-back-pill");
+  if (backPill) {
+    backPill.addEventListener("click", () => {
+      const type = backPill.dataset.backType;
+      const name = backPill.dataset.backName;
+      document.getElementById("panel-close")?.click();
+      setTimeout(() => {
+        if (type === "property" && typeof openProperty === "function") openProperty(name);
+        else if (type === "host" && typeof openHost === "function") openHost(name);
+        else if (type === "landlord" && typeof openLandlord === "function") openLandlord(name);
+      }, 150);
+    });
+  }
 
   // Open the panel
   document.getElementById("detail-panel").classList.add("open");
