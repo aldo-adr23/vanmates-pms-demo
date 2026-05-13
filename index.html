@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01d"></script>
+<script src="pms-supabase.js?v=2026-05-01e"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5656,6 +5656,12 @@ function openProperty(propName){
   const propMeta = properties.find(p => p.name === propName);
   const propPL = portfolio.find(p => p.name === propName);
   if(!propMeta) return;
+
+  // Clear any header buttons left over from another panel type (landlord
+  // Edit/⋯ etc.). The property panel doesn't render its own buttons here,
+  // so anything in .panel-head .header-edit-btn is stale.
+  document.querySelectorAll(".panel-head .header-edit-btn").forEach(b => b.remove());
+  document.getElementById("ll-more-menu")?.remove();
 
   // Color the hero block
   const hero = document.getElementById("panel-hero");
@@ -10439,8 +10445,10 @@ openLandlord = function(id){
   const head = document.querySelector(".panel-head");
   const closeBtn = document.getElementById("panel-close");
   if(head){
-    const oldHeaderEdit = head.querySelector(".header-edit-btn");
-    if(oldHeaderEdit) oldHeaderEdit.remove();
+    // Remove ALL leftover header buttons (both Edit and ⋯ share this class)
+    head.querySelectorAll(".header-edit-btn").forEach(b => b.remove());
+    // Also nuke any stale floating menu we may have left over
+    document.getElementById("ll-more-menu")?.remove();
 
     const headerEditBtn = document.createElement("button");
     headerEditBtn.className = "header-edit-btn btn btn-primary";
@@ -10838,7 +10846,7 @@ function openHomestayClient(id){
   `;
 
   // Remove leftover landlord-only header Edit button
-  document.querySelector(".panel-head .header-edit-btn")?.remove();
+  document.querySelectorAll(".panel-head .header-edit-btn").forEach(b => b.remove());
 
   const body = document.getElementById("panel-body");
   body.innerHTML = `
@@ -11756,7 +11764,7 @@ const _origOpenProperty_at = openProperty;
 openProperty = function(propName){
   _origOpenProperty_at(propName);
   // Remove leftover landlord-only header Edit button if present
-  document.querySelector(".panel-head .header-edit-btn")?.remove();
+  document.querySelectorAll(".panel-head .header-edit-btn").forEach(b => b.remove());
   injectAddDeleteTenantUI(propName);
 };
 
@@ -11765,7 +11773,7 @@ if(typeof openTenant === "function"){
   const _origOpenTenant_he = openTenant;
   openTenant = function(arg){
     _origOpenTenant_he(arg);
-    document.querySelector(".panel-head .header-edit-btn")?.remove();
+    document.querySelectorAll(".panel-head .header-edit-btn").forEach(b => b.remove());
     wireTenantActionButtons(arg);
   };
 }
@@ -11875,7 +11883,7 @@ if(typeof openHost === "function"){
   const _origOpenHost_he = openHost;
   openHost = function(arg){
     _origOpenHost_he(arg);
-    document.querySelector(".panel-head .header-edit-btn")?.remove();
+    document.querySelectorAll(".panel-head .header-edit-btn").forEach(b => b.remove());
   };
 }
 
@@ -14115,7 +14123,7 @@ function openVacancy(id){
   `;
 
   // Remove leftover landlord-only header Edit
-  document.querySelector(".panel-head .header-edit-btn")?.remove();
+  document.querySelectorAll(".panel-head .header-edit-btn").forEach(b => b.remove());
 
   // Build a Google Maps link from the address (works whether or not we have a street view)
   const mapsUrl = v.addr
