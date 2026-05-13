@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30z"></script>
+<script src="pms-supabase.js?v=2026-05-01a"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -7265,11 +7265,13 @@ function openLandlord(id){
             <div class="prop-addr">${pdfSize || 'On file'}${l.contractStart ? ' · uploaded ' + fmtDate(l.contractStart) : ''}</div>
             <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Signed</span>${totalMonths ? ' <span class="badge badge-grey"><span class="dot"></span>'+totalMonths+'-month term</span>' : ''}</div>
           </div>
-          ${pdfUrl
-            ? `<a href="${pdfUrl}" target="_blank" class="btn btn-primary">
+          ${(pdfUrl || l.contractPdfPath || l.pdfPath)
+            ? `<button type="button" class="btn btn-primary"
+                 data-open-pdf="${l.contractPdfPath || l.pdfPath || ''}"
+                 data-fallback-url="${pdfUrl || ''}">
                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                  Open PDF
-               </a>`
+               </button>`
             : `<span class="badge badge-grey"><span class="dot"></span>Uploading…</span>`}
         </div>
         ${l.notes ? `<div class="narrative"><b>Note:</b> ${l.notes}</div>` : ''}
@@ -7356,6 +7358,39 @@ function openLandlord(id){
     closeProperty();
     setTimeout(() => openProperty(b.dataset.goProp), 300);
   }));
+
+  // Open PDF buttons: fetch a fresh signed URL on each click. Previously we
+  // stored a blob URL from URL.createObjectURL() which dies after the upload
+  // session ends — clicking it gave ERR_FILE_NOT_FOUND. Now we hit
+  // vmDb.fileUrl(path) which returns a 1-hour signed Storage URL.
+  body.querySelectorAll("[data-open-pdf]").forEach(btn => {
+    btn.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const path = btn.dataset.openPdf;
+      const fallback = btn.dataset.fallbackUrl;
+      const origLabel = btn.textContent.trim();
+      btn.disabled = true; btn.textContent = "Opening…";
+      try {
+        let url = null;
+        if (path && window.vmDb && window.vmDb.fileUrl) {
+          url = await window.vmDb.fileUrl(path, 3600);
+        }
+        // Fall back to whatever URL was on the record (still works for legacy
+        // landlord PDFs that ship as static files in the repo).
+        if (!url && fallback && !fallback.startsWith("blob:")) url = fallback;
+        if (!url) {
+          showToast("Couldn't open the PDF — please re-upload via Edit.");
+          return;
+        }
+        window.open(url, "_blank", "noopener");
+      } catch (e) {
+        console.error("[open-pdf]", e);
+        showToast("Error opening PDF: " + (e.message || e));
+      } finally {
+        btn.disabled = false; btn.textContent = origLabel;
+      }
+    });
+  });
 
   document.getElementById("detail-panel").classList.add("open");
   document.getElementById("detail-panel").setAttribute("aria-hidden","false");
