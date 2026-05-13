@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01f"></script>
+<script src="pms-supabase.js?v=2026-05-01g"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5809,10 +5809,10 @@ function openProperty(propName){
       </div>
       <div class="room-grid">
         ${rooms.map(r => r.occupied ? `
-          <div class="room-card occupied">
+          <div class="room-card occupied" data-tenant-email="${(r.tenant.email||'').replace(/"/g,'&quot;')}" style="cursor:pointer" title="Click to view ${r.tenant.name}'s profile">
             <div class="room-num">${r.label.replace(/Room |Suite /,'')}</div>
             <div class="room-info">
-              <div class="room-name">${r.tenant.name} <span class="flag">${r.tenant.flag}</span></div>
+              <div class="room-name">${r.tenant.name} <span class="flag">${r.tenant.flag||''}</span></div>
               <div class="room-status">Lease ends ${fmtDate(r.tenant.leaseEnd)}</div>
             </div>
             <div class="room-rent">${fmt(r.rent)}<span class="lbl">/month</span></div>
@@ -6110,6 +6110,22 @@ function openProperty(propName){
       utilRow.classList.toggle("expanded", !open);
     });
   }
+
+  // Wire room-card clicks to open the tenant detail panel (admin path to
+  // quick-edit). Skips clicks on the small "remove tenant" affordance
+  // (.room-del) which has its own handler.
+  document.querySelectorAll('#panel-body .room-card.occupied[data-tenant-email]').forEach(card => {
+    card.addEventListener("click", (ev) => {
+      if (ev.target.closest(".room-del")) return;  // don't navigate when removing
+      const email = card.dataset.tenantEmail;
+      if (!email) return;
+      // Close the property panel, then open the tenant panel
+      document.getElementById("panel-close")?.click();
+      setTimeout(() => {
+        if (typeof openTenant === "function") openTenant(email);
+      }, 150);
+    });
+  });
 
   // Wire the property "⋯" button (Edit / Delete menu)
   const propMoreBtn = document.getElementById("prop-more-btn");
