@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-04-30x"></script>
+<script src="pms-supabase.js?v=2026-04-30y"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -7240,25 +7240,41 @@ function openLandlord(id){
       </div>
     </div>
 
-    <!-- PDF contract block -->
-    <div class="panel-section">
-      <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">PDF on file</span></div>
-      <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
-        <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
-        <div style="flex:1;min-width:0">
-          <div class="prop-name" style="font-size:15px">${l.property} — Master Lease ${start.getFullYear()}.pdf</div>
-          <div class="prop-addr">${l.pdfSize} · uploaded ${fmtDate(l.contractStart)}</div>
-          <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Signed</span> <span class="badge badge-grey"><span class="dot"></span>${totalMonths}-month term</span></div>
+    <!-- PDF contract block: prefers new contractPdf* fields, falls back to legacy l.pdf -->
+    ${(() => {
+      const pdfUrl  = l.contractPdfUrl || l.pdf || null;
+      const pdfName = l.contractPdfName || (l.property ? `${l.property} — Master Lease.pdf` : null);
+      const pdfSize = l.contractPdfSize || l.pdfSize || null;
+      if (!pdfUrl && !l.contractPdfName) {
+        return `
+        <div class="panel-section">
+          <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">Not uploaded</span></div>
+          <div class="card card-pad" style="font-size:13.5px;line-height:1.55;color:var(--muted)">
+            No lease agreement on file. Click <strong style="color:var(--red-dark)">Edit</strong> in the header to upload the signed PDF (or a scan).
+          </div>
+          ${l.notes ? `<div class="narrative"><b>Note:</b> ${l.notes}</div>` : ''}
+        </div>`;
+      }
+      return `
+      <div class="panel-section">
+        <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">PDF on file</span></div>
+        <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
+          <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
+          <div style="flex:1;min-width:0">
+            <div class="prop-name" style="font-size:15px">${pdfName || 'Lease agreement'}</div>
+            <div class="prop-addr">${pdfSize || 'On file'}${l.contractStart ? ' · uploaded ' + fmtDate(l.contractStart) : ''}</div>
+            <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Signed</span>${totalMonths ? ' <span class="badge badge-grey"><span class="dot"></span>'+totalMonths+'-month term</span>' : ''}</div>
+          </div>
+          ${pdfUrl
+            ? `<a href="${pdfUrl}" target="_blank" class="btn btn-primary">
+                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                 Open PDF
+               </a>`
+            : `<span class="badge badge-grey"><span class="dot"></span>Uploading…</span>`}
         </div>
-        <a href="${l.pdf}" target="_blank" class="btn btn-primary">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Open PDF
-        </a>
-      </div>
-      <div class="narrative">
-        <b>Note:</b> ${l.notes}
-      </div>
-    </div>
+        ${l.notes ? `<div class="narrative"><b>Note:</b> ${l.notes}</div>` : ''}
+      </div>`;
+    })()}
 
     <!-- Properties they own -->
     <div class="panel-section">
@@ -10394,6 +10410,36 @@ function openLandlordEdit(id){
     </div>
 
     <div class="panel-section">
+      <div class="panel-section-title">
+        <span><em>Lease</em> agreement</span>
+        ${(l.contractPdfPath || l.contractPdfName)
+          ? `<span class="ct" style="color:var(--green-dark)">On file</span>`
+          : `<span class="ct">Not uploaded</span>`}
+      </div>
+      <div class="card card-pad">
+        ${(l.contractPdfPath || l.contractPdfName) ? `
+          <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
+            <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:16px">PDF</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:14px">${l.contractPdfName || 'Lease agreement'}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">${l.contractPdfSize || 'On file'}</div>
+            </div>
+            ${l.contractPdfUrl
+              ? `<a href="${l.contractPdfUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>`
+              : ''}
+            <button type="button" id="ed-pdf-remove" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0;color:var(--red-dark)">Remove</button>
+          </div>
+        ` : ''}
+        <label for="ed-pdf-input" class="form-pdf" id="ed-pdf-label" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px dashed var(--line);border-radius:9px;color:var(--muted);font-size:13px">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span id="ed-pdf-label-text">${(l.contractPdfPath || l.contractPdfName) ? "Replace lease PDF" : "Click to upload signed lease PDF"}</span>
+        </label>
+        <input id="ed-pdf-input" type="file" accept="application/pdf,image/*" style="display:none"/>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">PDF preferred. Images (scans / photos) also accepted. Max ~20 MB.</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
       <div class="panel-section-title"><span><em>Properties</em> owned</span><span class="ct">one per line</span></div>
       <div class="card card-pad">
         <textarea id="ed-properties" rows="4" placeholder="715 W 14 Ave&#10;2066 Maple" class="ed-input" style="font-family:var(--slab);resize:vertical">${(l.properties || [l.property] || []).join("\n")}</textarea>
@@ -10430,6 +10476,34 @@ function openLandlordEdit(id){
 
   document.getElementById("ed-cancel-btn").onclick = () => openLandlord(id);
 
+  // Lease PDF upload — label updates as the user picks a file
+  const pdfInput = document.getElementById("ed-pdf-input");
+  const pdfLabelTxt = document.getElementById("ed-pdf-label-text");
+  if (pdfInput && pdfLabelTxt) {
+    pdfInput.onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      pdfLabelTxt.textContent = f
+        ? `${f.name} · ${(f.size/1024).toFixed(0)} KB`
+        : ((l.contractPdfPath || l.contractPdfName) ? "Replace lease PDF" : "Click to upload signed lease PDF");
+    };
+  }
+  // Remove existing lease
+  const pdfRemoveBtn = document.getElementById("ed-pdf-remove");
+  if (pdfRemoveBtn) {
+    pdfRemoveBtn.onclick = () => {
+      if (!confirm("Remove the lease PDF from " + l.name + "?")) return;
+      delete l.contractPdfUrl;
+      delete l.contractPdfName;
+      delete l.contractPdfSize;
+      delete l.contractPdfPath;
+      delete l.contractPdfType;
+      if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('landlords', l);
+      showToast("Lease removed");
+      // Re-open the edit panel to refresh the rendered state
+      openLandlordEdit(id);
+    };
+  }
+
   document.getElementById("ed-save-btn").onclick = () => {
     const v = (sel) => document.getElementById(sel).value.trim();
     const num = (sel) => { const x = v(sel); return x === "" ? null : Number(x); };
@@ -10460,8 +10534,31 @@ function openLandlordEdit(id){
     }
     l.notes = v("ed-notes");
 
+    // Lease PDF: if a new file was picked, attach metadata immediately for a
+    // local preview, then upload to Supabase Storage in the background.
+    const pdfFile = document.getElementById("ed-pdf-input")?.files?.[0] || null;
+    if (pdfFile) {
+      l.contractPdfUrl  = URL.createObjectURL(pdfFile);
+      l.contractPdfName = pdfFile.name;
+      l.contractPdfSize = `${Math.round(pdfFile.size/1024).toLocaleString()} KB`;
+      l.contractPdfType = pdfFile.type || "application/pdf";
+      l.contractPdfPath = null;  // filled in after upload completes
+      if (window.vmDb && window.vmDb.uploadFile) {
+        window.vmDb.uploadFile(pdfFile, `landlord-leases/${l.id}-${Date.now()}`).then(res => {
+          if (res && res.path) {
+            l.contractPdfPath = res.path;
+            if (res.signedUrl) l.contractPdfUrl = res.signedUrl;
+            if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('landlords', l);
+          }
+        }).catch(err => console.warn("[landlord lease upload] failed:", err));
+      }
+    }
+
+    // Persist to Supabase
+    if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('landlords', l);
+
     // Re-render: panel + table + KPIs
-    showToast(`Updated ${l.name}`);
+    showToast(`Updated ${l.name}${pdfFile ? ' · lease PDF attached' : ''}`);
     if(typeof renderLandlords === "function") renderLandlords(document.getElementById("ll-search")?.value || "");
     if(typeof updateLandlordKPIs === "function") updateLandlordKPIs();
     openLandlord(id);
