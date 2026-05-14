@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01o"></script>
+<script src="pms-supabase.js?v=2026-05-01p"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6230,7 +6230,7 @@ function openProperty(propName){
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         View full P&amp;L (PDF)
       </a>
-      <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="goToView('properties'); document.getElementById('panel-close').click();">Manage rooms</button>
+      <button class="btn btn-ghost" id="prop-manage-rooms-btn" data-prop-name="${propName}" style="flex:1;justify-content:center">Manage rooms</button>
       <button class="btn btn-ghost" id="prop-more-btn" data-prop-name="${propName}" title="Edit or delete">⋯</button>
     </div>
   `;
@@ -6263,6 +6263,40 @@ function openProperty(propName){
       }, 150);
     });
   });
+
+  // Wire "Manage rooms" — close the panel, navigate to Properties, scroll to
+  // the specific property card, and highlight it briefly so it's obvious WHERE
+  // we landed. Without this, the button just navigated to the Properties page
+  // and the user couldn't tell anything happened.
+  const manageBtn = document.getElementById("prop-manage-rooms-btn");
+  if (manageBtn) {
+    manageBtn.onclick = () => {
+      const targetName = manageBtn.dataset.propName;
+      document.getElementById("panel-close")?.click();
+      setTimeout(() => {
+        if (typeof goToView === "function") goToView("properties");
+        // Wait for the Properties view to render, then scroll + highlight
+        setTimeout(() => {
+          const card = document.querySelector(`.prop-card[data-prop-name="${targetName.replace(/"/g,'\\"')}"]`);
+          if (!card) {
+            showToast(`Couldn't locate ${targetName} card — maybe a filter is hiding it.`);
+            return;
+          }
+          card.scrollIntoView({behavior:"smooth", block:"center"});
+          // Pulse the border so the user sees where they landed
+          const oldBorder = card.style.borderColor;
+          const oldShadow = card.style.boxShadow;
+          card.style.transition = "border-color 0.4s ease, box-shadow 0.4s ease";
+          card.style.borderColor = "#B94A3F";
+          card.style.boxShadow = "0 0 0 3px var(--red-soft)";
+          setTimeout(() => {
+            card.style.borderColor = oldBorder;
+            card.style.boxShadow = oldShadow;
+          }, 2200);
+        }, 200);
+      }, 150);
+    };
+  }
 
   // Wire the property "⋯" button (Edit / Delete menu)
   const propMoreBtn = document.getElementById("prop-more-btn");
