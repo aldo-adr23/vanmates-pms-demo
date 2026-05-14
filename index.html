@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01l"></script>
+<script src="pms-supabase.js?v=2026-05-01m"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5875,23 +5875,34 @@ function openProperty(propName){
   document.getElementById("panel-title").innerHTML = propName.replace(/\s(\w+)$/, " <em>$1</em>");
   document.getElementById("panel-sub").textContent = propMeta.addr;
 
-  // Meta badges
-  document.getElementById("panel-meta").innerHTML = `
-    <span class="badge badge-grey"><span class="dot"></span>${propMeta.type}</span>
-    <span class="badge ${propMeta.ratePct===100?'badge-red':propMeta.ratePct>=85?'badge-green':'badge-amber'}">
-      <span class="dot"></span>${propMeta.ratePct}% occupied
-    </span>
-    <span class="badge badge-grey"><span class="dot"></span>${propMeta.rent} /mo range</span>
-  `;
-
+  // Single source of truth for room counts: derive from LIVE tenant data so
+  // every surface in the panel (badge, KPI, header) shows reconciled numbers.
   const rooms = buildRoomList(propMeta);
   const occupiedTenants = rooms.filter(r => r.occupied);
-  const vacantCount = rooms.length - occupiedTenants.length;
-
-  // Compute revenue from tenant rents if no portfolio entry (Asana-imported properties)
   const propTenants = tenants.filter(t => t.property === propName && t.status === "active");
   const tenantRevenue = propTenants.reduce((s, t) => s + (t.rent || 0), 0);
   const tenantDeposits = propTenants.reduce((s, t) => s + (t.deposit || 0), 0);
+
+  const totalRoomsConfigured = Math.max(propMeta.rooms || 0, rooms.length, propTenants.length);
+  const liveOccupied = propTenants.length;
+  const vacantCount = Math.max(0, totalRoomsConfigured - liveOccupied);
+  const liveRatePct = totalRoomsConfigured > 0 ? Math.round((liveOccupied / totalRoomsConfigured) * 100) : 0;
+
+  // Sync propMeta.occ / ratePct so Properties grid + Portfolio + Dashboard match
+  if (propMeta.occ !== liveOccupied || propMeta.ratePct !== liveRatePct) {
+    propMeta.occ = liveOccupied;
+    propMeta.ratePct = liveRatePct;
+    if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('properties', propMeta);
+  }
+
+  // Meta badges — use live values now that everything is reconciled
+  document.getElementById("panel-meta").innerHTML = `
+    <span class="badge badge-grey"><span class="dot"></span>${propMeta.type}</span>
+    <span class="badge ${liveRatePct===100?'badge-red':liveRatePct>=85?'badge-green':'badge-amber'}">
+      <span class="dot"></span>${liveRatePct}% occupied
+    </span>
+    <span class="badge badge-grey"><span class="dot"></span>${propMeta.rent} /mo range</span>
+  `;
 
   const rev = propPL ? propPL.rev : tenantRevenue;
   const exp = propPL ? propPL.exp : 0;
@@ -5905,7 +5916,7 @@ function openProperty(propName){
     <div class="panel-kpis">
       <div class="panel-kpi">
         <div class="l">Rooms</div>
-        <div class="v">${propMeta.occ}/${propMeta.rooms}</div>
+        <div class="v">${liveOccupied}/${totalRoomsConfigured}</div>
         <div class="s">${vacantCount} vacant</div>
       </div>
       <div class="panel-kpi">
@@ -5929,7 +5940,7 @@ function openProperty(propName){
     <div class="panel-section">
       <div class="panel-section-title">
         <span><em>Rooms</em></span>
-        <span class="ct">${propMeta.occ} occupied · ${vacantCount} vacant</span>
+        <span class="ct">${liveOccupied} occupied · ${vacantCount} vacant</span>
       </div>
       <div class="room-grid">
         ${rooms.map(r => r.occupied ? `
