@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01r"></script>
+<script src="pms-supabase.js?v=2026-05-01s"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -1236,7 +1236,7 @@
       <div class="topbar-spacer"></div>
       <div class="search">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input placeholder="Search tenants, rooms, invoices…" />
+        <input id="global-search" placeholder="Search tenants, rooms, invoices…" autocomplete="off" />
         <span style="font-size:11px;border:1px solid var(--line);padding:1px 6px;border-radius:5px">⌘K</span>
       </div>
       <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open menu">
@@ -5726,6 +5726,33 @@ function _bindTenantSearchDirect() {
 _bindTenantSearchDirect();
 // Re-bind every second in case the input element is recreated by some render
 setInterval(_bindTenantSearchDirect, 1000);
+
+/* Global header search (top-right) — Aldo was typing here and nothing was
+   happening because there was no handler. Wire it to: navigate to Tenants
+   view + push the value into the filter bar's ft-search input + apply.
+   Also handles ⌘K / Ctrl+K shortcut to focus this input. */
+document.addEventListener("input", e => {
+  if (!e.target || e.target.id !== "global-search") return;
+  const q = (e.target.value || "").trim();
+  // If user is anywhere else, jump to Tenants view first
+  const activeView = document.querySelector(".view.active")?.dataset.view;
+  if (activeView !== "tenants" && typeof goToView === "function") goToView("tenants");
+  // Push the same value into the filter bar so chips and result count match
+  const filterInput = document.getElementById("ft-search");
+  if (filterInput) {
+    filterInput.value = q;
+    F.search = q;
+    if (typeof resetPage === "function") resetPage();
+    if (typeof renderTenants === "function") renderTenants();
+  }
+});
+// ⌘K / Ctrl+K shortcut to focus the global search
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    document.getElementById("global-search")?.focus();
+  }
+});
 
 /* Sort */
 document.getElementById("sort-select").addEventListener("change", e => {
