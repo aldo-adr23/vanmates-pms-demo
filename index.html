@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01j"></script>
+<script src="pms-supabase.js?v=2026-05-01k"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -10384,7 +10384,8 @@ bindDropdown("tenants-email-btn", "tenants-email-menu", "tenants-email-wrap", ()
 
 /* === PROPERTIES — Add property + Map view === */
 document.getElementById("props-add-btn")?.addEventListener("click", () => {
-  showToast("Add property — opening builder…");
+  if (typeof openAddProperty === "function") openAddProperty();
+  else showToast("Add property is unavailable in this session — please reload.");
 });
 document.getElementById("props-map-btn")?.addEventListener("click", () => {
   // Simple inline map view: show all property locations as a list with city pins
@@ -12437,14 +12438,21 @@ document.getElementById("edit-hc-form")?.addEventListener("submit", async e => {
 
 /* ============ EDIT PROPERTY MODAL ============ */
 let _editingProperty = null;
+let _isAddingProperty = false;
 
 function openEditProperty(prop){
   if(!prop) return;
   _editingProperty = prop;
+  _isAddingProperty = false;
   const modal = document.getElementById("edit-property-backdrop");
   const form = document.getElementById("edit-property-form");
   if(!modal || !form) return;
   document.getElementById("edit-property-error").classList.remove("show");
+  // Reset modal title + save button label to edit mode
+  const titleEl = document.getElementById("edit-property-title");
+  if (titleEl) titleEl.innerHTML = 'Edit <em>property</em>';
+  const saveBtn = document.getElementById("edit-property-save");
+  if (saveBtn) saveBtn.querySelector("svg")?.parentElement.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = " Save changes"; });
   const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
   setVal("originalName", prop.name || "");
   setVal("name",         prop.name || "");
@@ -12457,6 +12465,33 @@ function openEditProperty(prop){
   modal.setAttribute("aria-hidden","false");
   document.body.style.overflow = "hidden";
   setTimeout(() => form.querySelector('[name="addr"]').focus(), 200);
+}
+
+/* Open the same modal in "add" mode — empty fields, save creates a new property */
+function openAddProperty(){
+  _editingProperty = { name:"", city:"Vancouver", addr:"", type:"Co-living", rooms:1, rent:"" };
+  _isAddingProperty = true;
+  const modal = document.getElementById("edit-property-backdrop");
+  const form = document.getElementById("edit-property-form");
+  if(!modal || !form) return;
+  document.getElementById("edit-property-error").classList.remove("show");
+  // Switch the modal title + save button label
+  const titleEl = document.getElementById("edit-property-title");
+  if (titleEl) titleEl.innerHTML = 'Add a new <em>property</em>';
+  const saveBtn = document.getElementById("edit-property-save");
+  if (saveBtn) saveBtn.querySelector("svg")?.parentElement.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = " Create property"; });
+  const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
+  setVal("originalName", "");
+  setVal("name",         "");
+  setVal("city",         "Vancouver");
+  setVal("addr",         "");
+  setVal("type",         "Co-living");
+  setVal("rooms",        1);
+  setVal("rent",         "");
+  modal.classList.add("open");
+  modal.setAttribute("aria-hidden","false");
+  document.body.style.overflow = "hidden";
+  setTimeout(() => form.querySelector('[name="name"]').focus(), 200);
 }
 
 function closeEditProperty(){
@@ -12500,26 +12535,48 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
   if(!name){ failEdit("Property name can't be empty."); return; }
   if(rooms < 1){ failEdit("A property must have at least 1 room."); return; }
 
-  const target = properties.find(p => p.name === originalName);
-  if(!target){ failEdit("Couldn't find this property — please reload."); return; }
-
-  // If user is renaming, check for collisions + propagate to tenants
-  if(name !== originalName){
-    const dup = properties.find(p => p.name === name);
-    if(dup){ failEdit(`Another property already uses the name "${name}".`); return; }
-    if(!confirm(`Renaming "${originalName}" to "${name}" will also update the property field on every tenant linked to it. Continue?`)) return;
-    // Propagate rename
-    (typeof tenants !== "undefined" ? tenants : []).forEach(t => {
-      if(t.property === originalName) t.property = name;
-    });
-    (typeof vacancies !== "undefined" ? vacancies : []).forEach(v => {
-      if(v.prop === originalName) v.prop = name;
-    });
-    // Propagate on landlord records too
-    (typeof landlords !== "undefined" ? landlords : []).forEach(l => {
-      if(l.property === originalName) l.property = name;
-      if(Array.isArray(l.properties)) l.properties = l.properties.map(p => p === originalName ? name : p);
-    });
+  // Branch: add new vs update existing
+  let target;
+  if (_isAddingProperty) {
+    // Add mode — make sure the name doesn't collide with an existing property
+    if (properties.find(p => p.name === name)) {
+      failEdit(`A property called "${name}" already exists. Pick a different name.`);
+      return;
+    }
+    const palette = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041","#6E5236","#A6724E","#D17262","#5C8A6B","#3F6E94","#C8923A","#8A7B6C"];
+    target = {
+      name,
+      city: city || "Vancouver",
+      addr: addr || (city ? city + ", —" : "—"),
+      type: type || "Co-living",
+      rooms: isNaN(rooms) ? 1 : rooms,
+      rent: rent || "—",
+      occ: 0,
+      ratePct: 0,
+      color: palette[properties.length % palette.length],
+    };
+    properties.push(target);
+  } else {
+    target = properties.find(p => p.name === originalName);
+    if(!target){ failEdit("Couldn't find this property — please reload."); return; }
+    // If user is renaming, check for collisions + propagate to tenants
+    if(name !== originalName){
+      const dup = properties.find(p => p.name === name);
+      if(dup){ failEdit(`Another property already uses the name "${name}".`); return; }
+      if(!confirm(`Renaming "${originalName}" to "${name}" will also update the property field on every tenant linked to it. Continue?`)) return;
+      // Propagate rename
+      (typeof tenants !== "undefined" ? tenants : []).forEach(t => {
+        if(t.property === originalName) t.property = name;
+      });
+      (typeof vacancies !== "undefined" ? vacancies : []).forEach(v => {
+        if(v.prop === originalName) v.prop = name;
+      });
+      // Propagate on landlord records too
+      (typeof landlords !== "undefined" ? landlords : []).forEach(l => {
+        if(l.property === originalName) l.property = name;
+        if(Array.isArray(l.properties)) l.properties = l.properties.map(p => p === originalName ? name : p);
+      });
+    }
   }
 
   const saveBtn = document.getElementById("edit-property-save");
@@ -12541,13 +12598,14 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
     if(typeof refreshPortfolio === "function") refreshPortfolio();
     if(typeof refreshDashboard === "function") refreshDashboard();
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
-    if(typeof showToast === "function") showToast(`Updated ${name}`);
+    if(typeof showToast === "function") showToast(_isAddingProperty ? `Added ${name}` : `Updated ${name}`);
     closeEditProperty();
   } catch(err){
     console.error("[edit-property] threw:", err);
     failEdit("Couldn't save: " + (err.message || err));
   } finally {
     saveBtn.disabled = false; saveBtn.textContent = origLabel;
+    _isAddingProperty = false;
   }
 });
 
