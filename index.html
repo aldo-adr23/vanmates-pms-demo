@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01n"></script>
+<script src="pms-supabase.js?v=2026-05-01o"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -10505,11 +10505,22 @@ renderLandlords = function(){
       endsCell = `<div class="name-main">${fmtDate(l.contractEnd)}</div><div class="name-sub" style="color:${endingSoon?'var(--red-dark)':'var(--muted)'}">${days>=0?'in '+days+' days':Math.abs(days)+' days ago'}</div>`;
     }
 
-    const pdfCell = l.pdf
-      ? `<a href="${l.pdf}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          PDF
-        </a>`
+    // A lease can come from either the legacy l.pdf static file OR the new
+    // contractPdf* fields written by the Edit Landlord upload. When the new
+    // fields are present we fetch a fresh signed Storage URL on click instead
+    // of relying on a stale blob URL.
+    const hasAnyContract = !!(l.pdf || l.contractPdfUrl || l.contractPdfPath || l.contractPdfName);
+    const legacyPdfUrl = l.pdf || null;
+    const pdfCell = hasAnyContract
+      ? (legacyPdfUrl && !l.contractPdfPath
+          ? `<a href="${legacyPdfUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              PDF
+            </a>`
+          : `<button type="button" class="btn btn-ghost" data-list-open-pdf="${l.contractPdfPath || ''}" data-list-fallback="${(l.contractPdfUrl || l.pdf || '').replace(/"/g, '&quot;')}" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              PDF
+            </button>`)
       : `<span class="card-sub" style="font-size:11px">no contract</span>`;
 
     return `
@@ -10534,6 +10545,33 @@ renderLandlords = function(){
   }).join("");
   document.querySelectorAll("tr[data-landlord]").forEach(row => {
     row.addEventListener("click", () => openLandlord(row.dataset.landlord));
+  });
+
+  // Wire any "List PDF" buttons that point to Storage paths — fetch fresh
+  // signed URL on click (the contractPdfUrl persisted on the record may be a
+  // dead blob: URL from the upload session).
+  document.querySelectorAll("button[data-list-open-pdf]").forEach(btn => {
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      const path = btn.dataset.listOpenPdf;
+      const fallback = btn.dataset.listFallback;
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      try {
+        let url = null;
+        if (path && window.vmDb && window.vmDb.fileUrl) {
+          url = await window.vmDb.fileUrl(path, 3600);
+        }
+        if (!url && fallback && !fallback.startsWith("blob:")) url = fallback;
+        if (!url) { showToast("Couldn't open the PDF — please re-upload via the landlord's Edit panel."); return; }
+        window.open(url, "_blank", "noopener");
+      } catch (e) {
+        showToast("Error opening PDF: " + (e.message || e));
+      } finally {
+        btn.disabled = false; btn.innerHTML = orig;
+      }
+    });
   });
 };
 renderLandlords();
