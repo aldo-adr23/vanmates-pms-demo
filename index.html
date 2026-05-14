@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01q"></script>
+<script src="pms-supabase.js?v=2026-05-01r"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5699,10 +5699,33 @@ document.querySelectorAll('.saved-view[data-saved]').forEach(b => {
    Listens at document level for input events whose target id is ft-search. */
 document.addEventListener("input", e => {
   if (!e.target || e.target.id !== "ft-search") return;
-  F.search = (e.target.value || "").trim();
+  const newValue = (e.target.value || "").trim();
+  console.log("[ft-search] input event. Value:", JSON.stringify(newValue), "F.search was:", JSON.stringify(F.search));
+  F.search = newValue;
   resetPage();
   renderTenants();
 });
+// Belt-and-suspenders: also bind directly on the element AND on keyup. The
+// document delegation above is the primary; these are extra fallbacks in case
+// the input event is being suppressed somewhere upstream.
+function _bindTenantSearchDirect() {
+  const el = document.getElementById("ft-search");
+  if (!el || el.dataset.directBound) return;
+  el.dataset.directBound = "1";
+  const handler = (ev) => {
+    const newValue = (ev.target.value || "").trim();
+    if (F.search === newValue) return;
+    console.log("[ft-search] direct handler fired. Value:", JSON.stringify(newValue), "via", ev.type);
+    F.search = newValue;
+    resetPage();
+    renderTenants();
+  };
+  el.addEventListener("input", handler);
+  el.addEventListener("keyup", handler);
+}
+_bindTenantSearchDirect();
+// Re-bind every second in case the input element is recreated by some render
+setInterval(_bindTenantSearchDirect, 1000);
 
 /* Sort */
 document.getElementById("sort-select").addEventListener("change", e => {
