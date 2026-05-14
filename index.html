@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01p"></script>
+<script src="pms-supabase.js?v=2026-05-01q"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -1565,7 +1565,7 @@
       <div class="filter-bar">
         <div class="filter-search">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input id="ft-search" placeholder="Search by name, email, or room…" />
+          <input id="ft-search" placeholder="Search by name, email, or room…" autocomplete="off" />
         </div>
         <div class="filter-chip" data-filter="city">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg>
@@ -5692,9 +5692,14 @@ document.querySelectorAll('.saved-view[data-saved]').forEach(b => {
   });
 });
 
-/* Search */
-document.getElementById("ft-search").addEventListener("input", e => {
-  F.search = e.target.value.trim();
+/* Search — delegated handler so it survives any DOM re-render that might
+   detach a direct listener on the element. The previous direct-bind handler
+   only fired for the first keystroke when the filter bar was re-rendered
+   mid-typing (input element gets recreated, original listener orphaned).
+   Listens at document level for input events whose target id is ft-search. */
+document.addEventListener("input", e => {
+  if (!e.target || e.target.id !== "ft-search") return;
+  F.search = (e.target.value || "").trim();
   resetPage();
   renderTenants();
 });
