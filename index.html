@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01m"></script>
+<script src="pms-supabase.js?v=2026-05-01n"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -14353,6 +14353,9 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
     const sub = document.getElementById("set-team-sub");
     if(sub) sub.textContent = `${teamMembers.length} member${teamMembers.length===1?"":"s"} · ${typeof pendingInvites !== "undefined" ? pendingInvites.length : 0} pending`;
 
+    // Only admins can edit + remove team members
+    const isCurrentAdmin = (typeof CURRENT_USER !== "undefined" && CURRENT_USER && CURRENT_USER.role === "admin");
+
     list.innerHTML = teamMembers.map(m => {
       const roleClass = m.role === "admin" ? "admin" : m.role === "ops" ? "ops" : m.role === "property" ? "property" : "viewer";
       const roleLabel = (typeof roles === "object" && roles[m.role]?.label) || m.role;
@@ -14367,9 +14370,21 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
             </div>
             <div style="font-size:12.5px;color:var(--muted);font-family:var(--slab)">${m.email || ""}${m.title ? " · " + m.title : ""}</div>
           </div>
-          ${isYou ? '' : `<button class="btn btn-ghost" data-team-action="remove" data-id="${m.id}" style="padding:5px 10px;font-size:12px;color:var(--red-dark)">Remove</button>`}
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            ${isCurrentAdmin
+              ? `<button class="btn btn-ghost" data-team-action="edit" data-id="${m.id}" style="padding:5px 10px;font-size:12px">Edit</button>`
+              : ''}
+            ${(isYou || !isCurrentAdmin) ? '' : `<button class="btn btn-ghost" data-team-action="remove" data-id="${m.id}" style="padding:5px 10px;font-size:12px;color:var(--red-dark)">Remove</button>`}
+          </div>
         </div>`;
     }).join("");
+
+    list.querySelectorAll('[data-team-action="edit"]').forEach(btn => {
+      btn.onclick = () => {
+        const m = teamMembers.find(x => x.id === btn.dataset.id);
+        if(m && typeof openEditMember === "function") openEditMember(m);
+      };
+    });
 
     list.querySelectorAll('[data-team-action="remove"]').forEach(btn => {
       btn.onclick = () => {
