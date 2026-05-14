@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01t"></script>
+<script src="pms-supabase.js?v=2026-05-01u"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -3701,6 +3701,28 @@ hello@vanmates.com · vanmates.com</textarea>
             <option value="upcoming">Upcoming</option>
             <option value="past">Past (moved out)</option>
           </select>
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="form-field">
+          <label>Signed lease agreement <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(PDF or scan — store the contract for this tenant)</span></label>
+          <label for="edit-tenant-pdf-input" class="form-pdf" id="edit-tenant-pdf-label" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px dashed var(--line);border-radius:9px;color:var(--muted);font-size:13px">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span id="edit-tenant-pdf-label-text">Click to upload signed lease PDF</span>
+          </label>
+          <input id="edit-tenant-pdf-input" type="file" accept="application/pdf,image/*" style="display:none"/>
+          <div id="edit-tenant-pdf-existing" style="margin-top:10px;display:none;font-size:12px;color:var(--muted)">
+            <span>Currently attached: <a id="edit-tenant-pdf-link" href="#" target="_blank" style="color:var(--red-dark);text-decoration:underline"></a></span>
+            <button type="button" id="edit-tenant-pdf-remove" style="background:transparent;border:0;color:var(--red-dark);font-size:11px;text-decoration:underline;margin-left:8px;cursor:pointer">Remove</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="form-field">
+          <label>PandaDoc link <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(optional — if the contract lives in PandaDoc)</span></label>
+          <input class="form-input" name="contractPandaDoc" type="url" placeholder="https://app.pandadoc.com/..." />
         </div>
       </div>
     </form>
@@ -7970,31 +7992,54 @@ function openTenant(email){
       </div>
     </div>
 
-    <!-- Contract / signed lease -->
-    <div class="panel-section">
-      <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">${t.tags && t.tags.includes("flex") ? "Flex (month-to-month)" : "Fixed lease (12 months)"}</span></div>
-      <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
-        <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
-        <div style="flex:1;min-width:0">
-          <div class="prop-name" style="font-size:15px">${t.property} — ${t.name.split(" ")[0]} sub-lease.pdf</div>
-          <div class="prop-addr">Vanmates standard tenant agreement · signed ${fmtDate(t.moveIn)}</div>
-          <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
-            <span class="badge badge-green"><span class="dot"></span>Signed</span>
-            ${t.contractPandaDoc ? '<span class="badge badge-blue"><span class="dot"></span>PandaDoc</span>' : ''}
+    <!-- Contract / signed lease — supports both legacy t.contractPdf static URLs
+         AND the new contractPdfPath in Storage. New uploads click-fetch a fresh
+         signed URL via vmDb.fileUrl(path). -->
+    ${(() => {
+      const hasNewPdf = !!(t.contractPdfUrl || t.contractPdfPath || t.contractPdfName);
+      const hasLegacy = !!t.contractPdf;
+      const hasPanda  = !!t.contractPandaDoc;
+      const hasAny = hasNewPdf || hasLegacy || hasPanda;
+      if (!hasAny) {
+        return `
+        <div class="panel-section">
+          <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">Not uploaded</span></div>
+          <div class="card card-pad" style="font-size:13.5px;line-height:1.55;color:var(--muted)">
+            No lease agreement on file for ${t.name}. Open the <strong style="color:var(--red-dark)">Edit</strong> menu (\u22EF) and use the "Signed lease agreement" field to upload a PDF or scan.
+          </div>
+        </div>`;
+      }
+      const pdfName = t.contractPdfName || `${t.property} — ${t.name.split(" ")[0]} sub-lease.pdf`;
+      const pdfMeta = t.contractPdfSize ? `${t.contractPdfSize} · attached ${fmtDate(t.moveIn)}` : `Vanmates standard tenant agreement · signed ${fmtDate(t.moveIn)}`;
+      return `
+      <div class="panel-section">
+        <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">${t.tags && t.tags.includes("flex") ? "Flex (month-to-month)" : "Fixed lease (12 months)"}</span></div>
+        <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
+          <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
+          <div style="flex:1;min-width:0">
+            <div class="prop-name" style="font-size:15px">${pdfName}</div>
+            <div class="prop-addr">${pdfMeta}</div>
+            <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+              <span class="badge badge-green"><span class="dot"></span>Signed</span>
+              ${hasPanda ? '<span class="badge badge-blue"><span class="dot"></span>PandaDoc</span>' : ''}
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+            ${(hasNewPdf || hasLegacy) ? `<button type="button" class="btn btn-primary tenant-pdf-open-btn"
+              data-pdf-path="${t.contractPdfPath || ''}"
+              data-pdf-fallback="${(t.contractPdfUrl || t.contractPdf || '').replace(/"/g,'&quot;')}"
+              style="padding:6px 12px;font-size:12px">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Open PDF
+            </button>` : ''}
+            ${hasPanda ? `<a href="${t.contractPandaDoc}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              Open in PandaDoc
+            </a>` : ''}
           </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-          ${t.contractPdf ? `<a href="${t.contractPdf}" target="_blank" class="btn btn-primary" style="padding:6px 12px;font-size:12px">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Open PDF
-          </a>` : ''}
-          ${t.contractPandaDoc ? `<a href="${t.contractPandaDoc}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            Open in PandaDoc
-          </a>` : ''}
-        </div>
-      </div>
-    </div>
+      </div>`;
+    })()}
 
     <!-- Contact info -->
     <div class="panel-section">
@@ -12336,6 +12381,31 @@ function wireTenantActionButtons(emailOrTenant){
   const body = document.getElementById("panel-body");
   if(!body) return;
 
+  // Wire Open PDF buttons in the Signed contract section — fetch fresh signed
+  // Storage URL on click so the link works across sessions/devices.
+  body.querySelectorAll("button.tenant-pdf-open-btn").forEach(btn => {
+    btn.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const path = btn.dataset.pdfPath;
+      const fallback = btn.dataset.pdfFallback;
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      try {
+        let url = null;
+        if (path && window.vmDb && window.vmDb.fileUrl) {
+          url = await window.vmDb.fileUrl(path, 3600);
+        }
+        if (!url && fallback && !fallback.startsWith("blob:")) url = fallback;
+        if (!url) { showToast("Couldn't open the PDF — please re-upload via Edit."); return; }
+        window.open(url, "_blank", "noopener");
+      } catch (e) {
+        showToast("Error opening PDF: " + (e.message || e));
+      } finally {
+        btn.disabled = false; btn.innerHTML = orig;
+      }
+    });
+  });
+
   // Find the action footer (the div with margin-top:24px containing the action buttons)
   const footer = [...body.querySelectorAll("div[style*='margin-top:24px']")].find(d => {
     const txt = d.textContent.replace(/\s+/g," ").trim();
@@ -12781,6 +12851,49 @@ function openEditTenant(tenant){
   setVal("leaseEnd", tenant.leaseEnd || "");
   setVal("pay",      tenant.pay || "on-time");
   setVal("status",   tenant.status || "active");
+  setVal("contractPandaDoc", tenant.contractPandaDoc || "");
+
+  // Reset contract PDF input and show any existing attachment
+  const pdfInput   = document.getElementById("edit-tenant-pdf-input");
+  const pdfLabel   = document.getElementById("edit-tenant-pdf-label-text");
+  const pdfExBlk   = document.getElementById("edit-tenant-pdf-existing");
+  const pdfExLink  = document.getElementById("edit-tenant-pdf-link");
+  const pdfExClear = document.getElementById("edit-tenant-pdf-remove");
+  if (pdfInput) pdfInput.value = "";
+  if (pdfLabel) pdfLabel.textContent = (tenant.contractPdfUrl || tenant.contractPdfName || tenant.contractPdfPath)
+    ? "Replace lease PDF"
+    : "Click to upload signed lease PDF";
+  if (pdfExBlk && pdfExLink) {
+    if (tenant.contractPdfUrl || tenant.contractPdfName || tenant.contractPdfPath) {
+      pdfExBlk.style.display = "block";
+      pdfExLink.textContent = tenant.contractPdfName || "View attachment";
+      pdfExLink.href = tenant.contractPdfUrl || "#";
+    } else {
+      pdfExBlk.style.display = "none";
+    }
+  }
+  if (pdfInput) {
+    pdfInput.onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (pdfLabel) pdfLabel.textContent = f
+        ? `${f.name} · ${(f.size/1024).toFixed(0)} KB`
+        : ((tenant.contractPdfUrl || tenant.contractPdfName) ? "Replace lease PDF" : "Click to upload signed lease PDF");
+    };
+  }
+  if (pdfExClear) {
+    pdfExClear.onclick = () => {
+      if (!confirm("Remove the lease PDF for " + (tenant.name || "this tenant") + "?")) return;
+      delete tenant.contractPdfUrl;
+      delete tenant.contractPdfName;
+      delete tenant.contractPdfSize;
+      delete tenant.contractPdfPath;
+      delete tenant.contractPdfType;
+      if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('tenants', tenant);
+      pdfExBlk.style.display = "none";
+      if (pdfLabel) pdfLabel.textContent = "Click to upload signed lease PDF";
+      showToast("Lease removed");
+    };
+  }
 
   modal.classList.add("open");
   modal.setAttribute("aria-hidden","false");
@@ -12830,6 +12943,8 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
   const leaseEnd = (data.get("leaseEnd")||"").toString();
   const pay = (data.get("pay")||"on-time").toString();
   const status = (data.get("status")||"active").toString();
+  const pandaDoc = (data.get("contractPandaDoc")||"").toString().trim();
+  const pdfFile = document.getElementById("edit-tenant-pdf-input")?.files?.[0] || null;
 
   if(!name){ failEdit("Name can't be empty."); return; }
   if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ failEdit("A valid email is required."); return; }
@@ -12862,6 +12977,27 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
     target.leaseEnd = leaseEnd || target.leaseEnd;
     target.pay = pay;
     target.status = status;
+    if (pandaDoc) target.contractPandaDoc = pandaDoc;
+    else if (target.contractPandaDoc) delete target.contractPandaDoc;
+
+    // Lease PDF: if a new file was picked, attach metadata immediately for a
+    // local preview, then upload to Supabase Storage in the background.
+    if (pdfFile) {
+      target.contractPdfUrl  = URL.createObjectURL(pdfFile);
+      target.contractPdfName = pdfFile.name;
+      target.contractPdfSize = `${Math.round(pdfFile.size/1024).toLocaleString()} KB`;
+      target.contractPdfType = pdfFile.type || "application/pdf";
+      target.contractPdfPath = null;
+      if (window.vmDb && window.vmDb.uploadFile) {
+        window.vmDb.uploadFile(pdfFile, `tenant-leases/${(target.email || target.id || 'unknown').replace(/[^a-zA-Z0-9._-]/g,'_')}-${Date.now()}`).then(res => {
+          if (res && res.path) {
+            target.contractPdfPath = res.path;
+            if (res.signedUrl) target.contractPdfUrl = res.signedUrl;
+            if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('tenants', target);
+          }
+        }).catch(err => console.warn("[tenant lease upload] failed:", err));
+      }
+    }
 
     // Re-derive initials
     const parts = (target.name || "").split(/\s+/).filter(Boolean);
@@ -12879,7 +13015,7 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
     if(typeof refreshDashboard === "function") refreshDashboard();
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
 
-    if(typeof showToast === "function") showToast(`Updated ${name}`);
+    if(typeof showToast === "function") showToast(`Updated ${name}${pdfFile ? ' · lease PDF attached' : ''}`);
     closeEditTenant();
   } catch(err){
     console.error("[edit-tenant] threw:", err);
