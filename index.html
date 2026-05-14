@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01s"></script>
+<script src="pms-supabase.js?v=2026-05-01t"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5327,16 +5327,22 @@ function applyFilters(){
   if(F.saved==="moving-in") list = list.filter(t => t.status==="pending");
   if(F.saved==="notice") list = list.filter(t => t.status==="notice");
 
-  // Search
+  // Search — null-safe. Some tenant records have undefined room/school/country
+  // (records added via the portal don't always fill those). Calling
+  // .toLowerCase() on undefined threw a TypeError mid-filter, which halted
+  // renderTenants before the chip-render call, leaving the chip stuck on
+  // whatever F.search was on the previous successful render (usually the
+  // first character).
   if(F.search) {
     const q = F.search.toLowerCase();
+    const lc = (v) => (v == null ? "" : String(v).toLowerCase());
     list = list.filter(t =>
-      t.name.toLowerCase().includes(q) ||
-      t.email.toLowerCase().includes(q) ||
-      t.property.toLowerCase().includes(q) ||
-      t.room.toLowerCase().includes(q) ||
-      t.school.toLowerCase().includes(q) ||
-      t.country.toLowerCase().includes(q)
+      lc(t.name).includes(q) ||
+      lc(t.email).includes(q) ||
+      lc(t.property).includes(q) ||
+      lc(t.room).includes(q) ||
+      lc(t.school).includes(q) ||
+      lc(t.country).includes(q)
     );
   }
 
