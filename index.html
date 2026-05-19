@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01v"></script>
+<script src="pms-supabase.js?v=2026-05-01w"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -10552,12 +10552,22 @@ document.getElementById("props-map-btn")?.addEventListener("click", () => {
   const grid = document.getElementById("props-grid");
   if(!grid) return;
   if(grid.dataset.mode === "map"){
-    // toggle back
+    // toggle back to grid — must re-render the cards (wirePropertyCards
+    // alone only re-binds handlers on the *current* HTML, which is still
+    // the map view). Also reset the single-column layout the map sets.
     delete grid.dataset.mode;
-    wirePropertyCards();
+    grid.style.gridTemplateColumns = "";
+    if(typeof renderPropertiesGrid === "function") renderPropertiesGrid();
+    else if(typeof wirePropertyCards === "function") wirePropertyCards();
+    // Restore the button label
+    const btn = document.getElementById("props-map-btn");
+    if(btn) btn.textContent = "Map view";
     return;
   }
   grid.dataset.mode = "map";
+  // Flip the toggle button label so users always see how to exit
+  const btn = document.getElementById("props-map-btn");
+  if(btn) btn.textContent = "Back to grid";
   const byCity = {};
   properties.forEach(p => { (byCity[p.addr.split(",").pop().trim()] ||= []).push(p); });
   grid.style.gridTemplateColumns = "1fr";
