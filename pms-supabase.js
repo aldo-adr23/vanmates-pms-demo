@@ -107,15 +107,33 @@
 
     for (const [name, cfg] of Object.entries(TABLES)) {
       try {
-        // Exclude soft-deleted rows. Admins can still read them via RLS, but
-        // they belong in the Trash (listDeleted), not the main lists.
-        const { data, error } = await sb.from(cfg.table).select('data, id').is('deleted_at', null);
+        // Fetch active (non-deleted) rows AND the set of tombstone IDs in
+        // parallel. We apply the tombstone list to the local seed even when
+        // we decide not to replace the array — this is how seed-only deletes
+        // stick across refreshes (e.g. damage_deposits where the seed is
+        // 133 rows but Supabase only has 10).
+        const [{ data, error }, { data: deletedRows, error: delErr }] = await Promise.all([
+          sb.from(cfg.table).select('data, id').is('deleted_at', null),
+          sb.from(cfg.table).select('id').not('deleted_at', 'is', null)
+        ]);
         if (error) { summary.errors.push({ name, error: error.message }); continue; }
         const arr = targets[name];
         if (!arr || !Array.isArray(arr)) {
           summary.errors.push({ name, error:'local array not found on window' });
           continue;
         }
+        const deletedIds = new Set((deletedRows || []).map(r => String(r.id)));
+        const keyField = cfg.key; // e.g. 'name' for properties, 'id' for landlords, 'email' for tenants
+
+        // Helper to check if a local record matches a tombstone id.
+        const isDeleted = (record) => {
+          if (!record) return false;
+          const candidates = [
+            record.id, record[keyField], record.email, record.name
+          ].filter(v => v != null).map(String);
+          return candidates.some(c => deletedIds.has(c));
+        };
+
         // Defensive: never blank a populated local array with empty Postgres
         // results. RLS denials and auth/network failures show up as `data=[]`
         // here, and overwriting in that case would wipe the seed data the UI
@@ -123,17 +141,25 @@
         // ~10% of the local array's rows (or local is also empty).
         const incoming = (data || []).length;
         const local = arr.length;
-        if (incoming === 0 && local > 0) {
-          summary.errors.push({ name, error:`got 0 rows but local has ${local} — keeping local (likely RLS/auth)` });
-          summary.counts[name] = local;
+        const keepLocal = (incoming === 0 && local > 0)
+                       || (local > 0 && incoming < Math.max(1, Math.floor(local * 0.1)));
+
+        if (keepLocal) {
+          // Still apply the tombstone list to the local seed so user deletes
+          // persist across refreshes even when we don't trust Supabase counts.
+          let removed = 0;
+          if (deletedIds.size > 0) {
+            for (let i = arr.length - 1; i >= 0; i--) {
+              if (isDeleted(arr[i])) { arr.splice(i, 1); removed++; }
+            }
+          }
+          summary.errors.push({ name, error:`kept local (Supabase returned ${incoming} of ${local}); applied ${removed} tombstone(s)` });
+          summary.counts[name] = arr.length;
           continue;
         }
-        if (local > 0 && incoming < Math.max(1, Math.floor(local * 0.1))) {
-          summary.errors.push({ name, error:`got only ${incoming} of ${local} expected — keeping local` });
-          summary.counts[name] = local;
-          continue;
-        }
-        // Safe to replace — Postgres returned a plausible row count.
+
+        // Safe to replace — Postgres returned a plausible row count. Tombstone
+        // rows are already excluded by the `is('deleted_at', null)` filter.
         arr.length = 0;
         for (const row of data) arr.push(row.data || row);
         summary.counts[name] = arr.length;
