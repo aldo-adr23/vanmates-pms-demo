@@ -163,16 +163,41 @@
   // policy filters out deleted_at IS NOT NULL by default, so the row
   // disappears from hydrate() without any data loss. Admins can restore via
   // vmDb.restore(arrayName, id) below.
-  async function deleteRow(arrayName, idOrKey) {
+  //
+  // IMPORTANT: A plain UPDATE only works for records that already exist in
+  // Supabase. Seed-baked records (loaded from the static JSON in the HTML
+  // before the user ever edited them) have no row in Postgres yet — so the
+  // UPDATE matches 0 rows, succeeds silently, and the seed re-spawns the
+  // record on the next refresh. The third argument lets callers pass the
+  // full local record so we can insert a tombstone in that case.
+  async function deleteRow(arrayName, idOrKey, fullRecord) {
     const cfg = TABLES[arrayName];
     if (!cfg) return false;
     const id = String(idOrKey);
-    const { error } = await sb.from(cfg.table)
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id);
-    if (error) {
-      console.error(`[vmDb] soft-delete ${cfg.table}/${id} failed:`, error.message);
-      toast(`Sync failed: ${cfg.table} — ${error.message}`, 'error');
+    const nowIso = new Date().toISOString();
+
+    // Phase 1: try a plain UPDATE — preserves existing `data` JSON.
+    const { data: updated, error: updErr } = await sb.from(cfg.table)
+      .update({ deleted_at: nowIso })
+      .eq('id', id)
+      .select('id');
+    if (updErr) {
+      console.error(`[vmDb] soft-delete ${cfg.table}/${id} failed:`, updErr.message);
+      toast(`Sync failed: ${cfg.table} — ${updErr.message}`, 'error');
+      return false;
+    }
+    if (updated && updated.length > 0) return true;
+
+    // Phase 2: nothing was updated → seed-only record. Insert a tombstone so
+    // hydrate() filters it out on the next refresh.
+    const row = fullRecord
+      ? buildRow(arrayName, fullRecord)
+      : { id, data: { _tombstone: true, id, name: id } };
+    row.deleted_at = nowIso;
+    const { error: insErr } = await sb.from(cfg.table).upsert(row);
+    if (insErr) {
+      console.error(`[vmDb] tombstone ${cfg.table}/${id} failed:`, insErr.message);
+      toast(`Sync failed: ${cfg.table} — ${insErr.message}`, 'error');
       return false;
     }
     return true;
