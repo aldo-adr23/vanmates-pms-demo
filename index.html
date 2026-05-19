@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01u"></script>
+<script src="pms-supabase.js?v=2026-05-01v"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5827,17 +5827,26 @@ renderTenants();
 
 /* Properties grid */
 let PROPS_CITY = "";
-// Build a property → city map from tenant data (more reliable than parsing addr strings)
-const propertyCity = (() => {
+// Rebuilt every render from the *current* tenants list — the static const
+// version missed properties added/edited after page boot and never saw the
+// new p.city field that Add/Edit Property now writes. Order of precedence:
+//   1. p.city (authoritative — set by Add/Edit Property)
+//   2. tenant-derived map (a tenant living there knows the city)
+//   3. address substring match (last-ditch fallback for legacy data)
+function buildPropertyCityMap(){
   const map = {};
-  tenants.forEach(t => { if(t.property && t.city && !map[t.property]) map[t.property] = t.city; });
+  (window.tenants || []).forEach(t => {
+    if(t.property && t.city && !map[t.property]) map[t.property] = t.city;
+  });
   return map;
-})();
+}
 function renderPropertiesGrid(){
-  const list = PROPS_CITY ? properties.filter(p =>
-    propertyCity[p.name] === PROPS_CITY ||
-    (!propertyCity[p.name] && (p.addr || "").toLowerCase().includes(PROPS_CITY.toLowerCase()))
-  ) : properties;
+  const propertyCity = buildPropertyCityMap();
+  const list = PROPS_CITY ? properties.filter(p => {
+    if(p.city) return p.city === PROPS_CITY;
+    if(propertyCity[p.name]) return propertyCity[p.name] === PROPS_CITY;
+    return (p.addr || "").toLowerCase().includes(PROPS_CITY.toLowerCase());
+  }) : properties;
   document.getElementById("props-grid").innerHTML = list.map(p => `
   <div class="prop-card" data-prop-name="${p.name.replace(/"/g,"&quot;")}">
     <div class="prop-img" style="background:linear-gradient(135deg, ${p.color}33, ${p.color}66), radial-gradient(circle at 30% 30%, #FFFFFF55, transparent 60%)">
@@ -6433,7 +6442,7 @@ function openProperty(propName){
           const idx = properties.findIndex(x => x.name === propMeta.name);
           if (idx < 0) return;
           properties.splice(idx, 1);
-          if (window.vmDb && window.vmDb.delete) window.vmDb.delete('properties', propMeta.name);
+          if (window.vmDb && window.vmDb.delete) window.vmDb.delete('properties', propMeta.name, propMeta);
           document.getElementById("panel-close")?.click();
           setTimeout(() => {
             if (typeof renderProperties === "function") renderProperties();
@@ -10416,8 +10425,8 @@ function openDeposit(id){
         // Soft-delete via vmDb (uses deleted_at column)
         const idx = damageDeposits.findIndex(d => d.id === r.id);
         if(idx >= 0){
-          damageDeposits.splice(idx, 1);
-          if(window.vmDb && window.vmDb.delete) window.vmDb.delete('damageDeposits', r.id);
+          const removed = damageDeposits.splice(idx, 1)[0];
+          if(window.vmDb && window.vmDb.delete) window.vmDb.delete('damageDeposits', r.id, removed || r);
         }
         document.getElementById("panel-close")?.click();
         setTimeout(() => {
@@ -10932,8 +10941,8 @@ openLandlord = function(id){
               if (!confirm(msg)) return;
               const idx = landlords.findIndex(x => x.id === l.id);
               if (idx < 0) return;
-              landlords.splice(idx, 1);
-              if (window.vmDb && window.vmDb.delete) window.vmDb.delete('landlords', l.id);
+              const removed = landlords.splice(idx, 1)[0];
+              if (window.vmDb && window.vmDb.delete) window.vmDb.delete('landlords', l.id, removed || l);
               document.getElementById("panel-close")?.click();
               setTimeout(() => {
                 if (typeof renderLandlords === "function") renderLandlords(document.getElementById("ll-search")?.value || "");
@@ -11013,8 +11022,8 @@ openLandlord = function(id){
           if (!confirm(msg)) return;
           const idx = landlords.findIndex(x => x.id === l.id);
           if (idx < 0) return;
-          landlords.splice(idx, 1);
-          if (window.vmDb && window.vmDb.delete) window.vmDb.delete('landlords', l.id);
+          const removed = landlords.splice(idx, 1)[0];
+          if (window.vmDb && window.vmDb.delete) window.vmDb.delete('landlords', l.id, removed || l);
           // Close the panel and refresh the landlords list + KPIs
           document.getElementById("panel-close")?.click();
           setTimeout(() => {
@@ -11529,8 +11538,8 @@ function openHomestayClient(id){
         if (!confirm(`Delete homestay client ${c.name}?\n\nThis hides the record from the list. The host stays untouched. Restorable from Settings → Trash.`)) return;
         const idx = homestayClients.findIndex(x => x.id === c.id);
         if (idx < 0) return;
-        homestayClients.splice(idx, 1);
-        if (window.vmDb && window.vmDb.delete) window.vmDb.delete('homestayClients', c.id);
+        const removed = homestayClients.splice(idx, 1)[0];
+        if (window.vmDb && window.vmDb.delete) window.vmDb.delete('homestayClients', c.id, removed || c);
         document.getElementById("panel-close")?.click();
         setTimeout(() => {
           if (typeof renderHomestayClients === "function") renderHomestayClients(document.getElementById("hc-search")?.value || "");
@@ -11968,7 +11977,7 @@ function renderMatchCandidates(){
       const addedClientIdx = homestayClients.length - 1;
       if(idx >= 0) {
         homestayApplicants.splice(idx, 1);
-        if (window.vmDb) window.vmDb.delete('homestayApplicants', aid);
+        if (window.vmDb) window.vmDb.delete('homestayApplicants', aid, removedApplicant);
       }
 
       HM_STATE.selectedApplicantId = null;
@@ -11977,7 +11986,7 @@ function renderMatchCandidates(){
       document.getElementById("hm-kpi-apps").textContent = homestayApplicants.length;
       const undoFn = () => {
         homestayClients.splice(addedClientIdx, 1);
-        if (window.vmDb) window.vmDb.delete('homestayClients', newId);
+        if (window.vmDb) window.vmDb.delete('homestayClients', newId, newClient);
         if(removedApplicant) {
           homestayApplicants.splice(idx, 0, removedApplicant);
           if (window.vmDb) window.vmDb.upsert('homestayApplicants', removedApplicant);
@@ -13505,7 +13514,7 @@ function confirmRemoveTenant(t, propName){
   if(idx === -1) return;
   _lastRemoved = { tenant: {...t}, idx, propName };
   tenants.splice(idx, 1);
-  if (window.vmDb) window.vmDb.delete('tenants', t.email || t.id);
+  if (window.vmDb) window.vmDb.delete('tenants', t.email || t.id, t);
 
   const propMeta = properties.find(p => p.name === propName);
   if(propMeta){
