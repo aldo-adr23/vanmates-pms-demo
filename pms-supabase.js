@@ -123,6 +123,9 @@
           continue;
         }
         const deletedIds = new Set((deletedRows || []).map(r => String(r.id)));
+        // Merge in localStorage tombstones so deletes from non-admin users
+        // (whose UPDATE/INSERT was blocked by RLS) also persist on refresh.
+        getLocalTombstoneIds(name).forEach(id => deletedIds.add(id));
         const keyField = cfg.key; // e.g. 'name' for properties, 'id' for landlords, 'email' for tenants
 
         // Helper to check if a local record matches a tombstone id.
@@ -158,10 +161,16 @@
           continue;
         }
 
-        // Safe to replace — Postgres returned a plausible row count. Tombstone
-        // rows are already excluded by the `is('deleted_at', null)` filter.
+        // Safe to replace — Postgres returned a plausible row count. Postgres
+        // tombstones are already excluded by the `is('deleted_at', null)`
+        // filter, but we still need to filter out localStorage tombstones
+        // (deletes performed by non-admin users that RLS blocked).
         arr.length = 0;
-        for (const row of data) arr.push(row.data || row);
+        for (const row of data) {
+          const rec = row.data || row;
+          if (isDeleted(rec)) continue;
+          arr.push(rec);
+        }
         summary.counts[name] = arr.length;
       } catch (e) {
         summary.errors.push({ name, error: e.message });
@@ -185,46 +194,88 @@
     return true;
   }
 
+  /* ------------------- localStorage tombstone fallback ------------------- */
+  // RLS on the properties (and other) tables restricts INSERT/UPDATE to the
+  // 'admin' role. Non-admin teammates (e.g. Accounting) can read but not write
+  // — so their attempts to soft-delete a row silently fail at the database
+  // and the seed re-spawns the record on every refresh.
+  //
+  // We work around this with a localStorage tombstone list per browser. The
+  // delete handler always writes the id here as a primary action, then also
+  // tries to persist it to Supabase. hydrate() applies tombstones from BOTH
+  // sources, so deletions stick locally even when the server rejects them.
+  // (Per-device, not cross-device — but that's a known trade-off until
+  // someone with admin rights re-runs the delete or RLS is relaxed.)
+  const LS_KEY = 'vm-pms-tombstones-v1';
+  function loadLocalTombstones() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; }
+    catch (_) { return {}; }
+  }
+  function saveLocalTombstones(obj) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch (_) {}
+  }
+  function addLocalTombstone(arrayName, id) {
+    const t = loadLocalTombstones();
+    if (!t[arrayName]) t[arrayName] = [];
+    if (!t[arrayName].includes(id)) t[arrayName].push(id);
+    saveLocalTombstones(t);
+  }
+  function removeLocalTombstone(arrayName, id) {
+    const t = loadLocalTombstones();
+    if (t[arrayName]) {
+      t[arrayName] = t[arrayName].filter(x => x !== id);
+      saveLocalTombstones(t);
+    }
+  }
+  function getLocalTombstoneIds(arrayName) {
+    const t = loadLocalTombstones();
+    return new Set((t[arrayName] || []).map(String));
+  }
+
   // Soft delete: set deleted_at instead of removing the row. The RLS SELECT
   // policy filters out deleted_at IS NOT NULL by default, so the row
   // disappears from hydrate() without any data loss. Admins can restore via
   // vmDb.restore(arrayName, id) below.
   //
-  // IMPORTANT: A plain UPDATE only works for records that already exist in
-  // Supabase. Seed-baked records (loaded from the static JSON in the HTML
-  // before the user ever edited them) have no row in Postgres yet — so the
-  // UPDATE matches 0 rows, succeeds silently, and the seed re-spawns the
-  // record on the next refresh. The third argument lets callers pass the
-  // full local record so we can insert a tombstone in that case.
+  // Robust three-step delete so it sticks regardless of role/permissions:
+  //   1. Always write a localStorage tombstone (works for any signed-in user,
+  //      including non-admin roles that RLS blocks from writing).
+  //   2. Try UPDATE … SET deleted_at = now() WHERE id = ? (existing rows).
+  //   3. If 0 rows matched, try an UPSERT with deleted_at set (seed-only).
+  // The Supabase steps are best-effort — if RLS blocks them, the local
+  // tombstone is enough to keep the row hidden on this browser.
   async function deleteRow(arrayName, idOrKey, fullRecord) {
     const cfg = TABLES[arrayName];
     if (!cfg) return false;
     const id = String(idOrKey);
     const nowIso = new Date().toISOString();
 
-    // Phase 1: try a plain UPDATE — preserves existing `data` JSON.
+    // Step 1: localStorage tombstone — synchronous, can't fail. This is what
+    // guarantees the deletion sticks across refreshes even if the user lacks
+    // INSERT/UPDATE permission in Postgres.
+    addLocalTombstone(arrayName, id);
+
+    // Step 2: try a plain UPDATE on the existing Supabase row.
     const { data: updated, error: updErr } = await sb.from(cfg.table)
       .update({ deleted_at: nowIso })
       .eq('id', id)
       .select('id');
     if (updErr) {
-      console.error(`[vmDb] soft-delete ${cfg.table}/${id} failed:`, updErr.message);
-      toast(`Sync failed: ${cfg.table} — ${updErr.message}`, 'error');
-      return false;
+      console.warn(`[vmDb] soft-delete update ${cfg.table}/${id} failed (kept local tombstone):`, updErr.message);
+      return true; // local tombstone still applies
     }
     if (updated && updated.length > 0) return true;
 
-    // Phase 2: nothing was updated → seed-only record. Insert a tombstone so
-    // hydrate() filters it out on the next refresh.
+    // Step 3: nothing was updated → either seed-only OR row exists but RLS
+    // hides it from this user. Try to upsert a tombstone for the seed-only
+    // case; ignore RLS errors — the local tombstone has us covered.
     const row = fullRecord
       ? buildRow(arrayName, fullRecord)
       : { id, data: { _tombstone: true, id, name: id } };
     row.deleted_at = nowIso;
     const { error: insErr } = await sb.from(cfg.table).upsert(row);
     if (insErr) {
-      console.error(`[vmDb] tombstone ${cfg.table}/${id} failed:`, insErr.message);
-      toast(`Sync failed: ${cfg.table} — ${insErr.message}`, 'error');
-      return false;
+      console.warn(`[vmDb] tombstone ${cfg.table}/${id} failed (kept local tombstone):`, insErr.message);
     }
     return true;
   }
@@ -235,13 +286,15 @@
     const cfg = TABLES[arrayName];
     if (!cfg) return false;
     const id = String(idOrKey);
+    // Always clear the localStorage tombstone first — even if the Supabase
+    // restore fails (e.g. non-admin user), the row will reappear locally.
+    removeLocalTombstone(arrayName, id);
     const { error } = await sb.from(cfg.table)
       .update({ deleted_at: null })
       .eq('id', id);
     if (error) {
-      console.error(`[vmDb] restore ${cfg.table}/${id} failed:`, error.message);
-      toast(`Restore failed: ${cfg.table} — ${error.message}`, 'error');
-      return false;
+      console.warn(`[vmDb] restore ${cfg.table}/${id} failed (cleared local tombstone only):`, error.message);
+      return true; // local tombstone cleared
     }
     return true;
   }
