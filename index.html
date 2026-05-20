@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01y"></script>
+<script src="pms-supabase.js?v=2026-05-01z"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6404,7 +6404,10 @@ function openProperty(propName){
       ev.stopPropagation();
       let menu = document.getElementById("prop-more-menu");
       if (menu) { menu.remove(); return; }
-      const isAdmin = (typeof CURRENT_USER !== "undefined" && CURRENT_USER && CURRENT_USER.role === "admin");
+      // Delete is no longer admin-gated: the localStorage tombstone fallback
+      // in pms-supabase.js makes the deletion stick locally for any role,
+      // even when RLS blocks the cross-device Supabase write. Admins still
+      // get the cross-device sync as before.
       menu = document.createElement("div");
       menu.id = "prop-more-menu";
       menu.style.cssText = "position:fixed;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:200px;z-index:9999;font-family:var(--sans)";
@@ -6413,11 +6416,10 @@ function openProperty(propName){
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="m18.5 2.5 3 3L12 15l-4 1 1-4z"/></svg>
           Edit property
         </button>
-        ${isAdmin ? `
         <button data-action="delete" class="menu-item" style="display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--red-dark);text-align:left">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           Delete property
-        </button>` : ''}
+        </button>
       `;
       menu.querySelectorAll(".menu-item").forEach(b => {
         b.addEventListener("mouseenter", () => b.style.background = "var(--cream-2)");
