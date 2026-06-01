@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-02a"></script>
+<script src="pms-supabase.js?v=2026-05-02b"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -6310,11 +6310,11 @@ function openProperty(propName){
       ${occupiedTenants.length === 0 ? '<div class="card card-pad" style="text-align:center;color:var(--muted)">No active tenants</div>' : `
         <div class="card" style="padding:0">
           ${occupiedTenants.map((r,i) => `
-            <div class="list-row" style="padding:12px 16px;border-bottom:${i===occupiedTenants.length-1?'none':'1px dashed var(--line)'}">
+            <div class="list-row prop-tenant-row" data-tenant-key="${(r.tenant.email || r.tenant.id || '').replace(/"/g,'&quot;')}" style="padding:12px 16px;border-bottom:${i===occupiedTenants.length-1?'none':'1px dashed var(--line)'};cursor:pointer">
               ${avatar(r.tenant.ini)}
               <div class="list-main">
-                <div class="list-title">${r.tenant.name} <span class="flag">${r.tenant.flag}</span></div>
-                <div class="list-sub">${r.label} · ${r.tenant.school} · ${r.tenant.country}</div>
+                <div class="list-title">${r.tenant.name} <span class="flag">${r.tenant.flag || ""}</span></div>
+                <div class="list-sub">${r.label} · ${r.tenant.school || "—"} · ${r.tenant.country || "—"}</div>
               </div>
               <div style="text-align:right">
                 <div class="num" style="font-size:13px">${fmt(r.rent)}</div>
@@ -6370,6 +6370,20 @@ function openProperty(propName){
   // the specific property card, and highlight it briefly so it's obvious WHERE
   // we landed. Without this, the button just navigated to the Properties page
   // and the user couldn't tell anything happened.
+  // Wire the Current tenants rows — clicking a tenant in this list opens
+  // their detail panel. Without this, the rows look clickable (cursor:pointer)
+  // but do nothing, which was the most common "I can't open this tenant"
+  // report from non-admin teammates who navigate via the property panel.
+  document.querySelectorAll('#panel-body .prop-tenant-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const key = row.dataset.tenantKey;
+      if (!key) return;
+      // Set the "back to <property>" pill so the user can return to this property
+      _tenantBackTo = { type: "property", name: propName };
+      if (typeof openTenant === "function") openTenant(key);
+    });
+  });
+
   const manageBtn = document.getElementById("prop-manage-rooms-btn");
   if (manageBtn) {
     manageBtn.onclick = () => {
