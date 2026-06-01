@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-01z"></script>
+<script src="pms-supabase.js?v=2026-05-02a"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5440,10 +5440,13 @@ function renderTenants(){
   document.getElementById("empty-state").style.display = list.length ? "none" : "block";
 
   body.innerHTML = paged.map(t => {
-    const sel = F.selected.has(t.email);
+    // Use email when available; fall back to the generated id for tenants
+    // added via the quick "+ Add tenant" flow where email is optional.
+    const tKey = t.email || t.id || "";
+    const sel = F.selected.has(tKey);
     return `
-    <tr data-email="${t.email}" style="cursor:pointer">
-      <td><div class="check ${sel?'on':''}" data-row="${t.email}"></div></td>
+    <tr data-email="${tKey}" style="cursor:pointer">
+      <td><div class="check ${sel?'on':''}" data-row="${tKey}"></div></td>
       <td>
         <div class="name-cell">
           ${avatar(t.ini)}
@@ -7880,9 +7883,26 @@ function monthDiff(d1, d2){
 // before they call openTenant (e.g., the property panel's room-card click).
 let _tenantBackTo = null;
 
-function openTenant(email){
-  const t = tenants.find(x => x.email === email);
+function openTenant(emailOrId){
+  // Look up by email first (the legacy key), then by id (newly-added tenants
+  // may have empty email or be looked up by their generated id).
+  let t = tenants.find(x => x.email && x.email === emailOrId);
+  if(!t) t = tenants.find(x => x.id && String(x.id) === String(emailOrId));
   if(!t) return;
+
+  // Defensive defaults so tenants added via the quick "+ Add tenant" flow
+  // (which doesn't fill every field) don't crash the renderer below.
+  if(!t.ini) {
+    const parts = (t.name || "?").split(/\s+/).filter(Boolean);
+    t.ini = parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase()
+                              : (parts[0] || "?").slice(0,2).toUpperCase();
+  }
+  if(t.flag == null) t.flag = "🌐";
+  if(t.country == null) t.country = "—";
+  if(t.school == null) t.school = "—";
+  if(t.pay == null) t.pay = "on-time";
+  if(!Array.isArray(t.tags)) t.tags = [];
+
   // Capture and clear the back-target so it only applies to this one render
   const backTo = _tenantBackTo;
   _tenantBackTo = null;
@@ -13500,6 +13520,12 @@ function openAddTenantModal(propName, roomLabel){
       paymentMethod: v("at-pay") || "e-Transfer",
       email: v("at-email"),
       status: "active",
+      // Fields openTenant() relies on but the basic Add form doesn't ask for.
+      // Without these defaults, openTenant crashes (t.pay.split is undefined)
+      // and the detail panel silently fails to open.
+      pay: "on-time",
+      school: "—",
+      tags: [],
       lastPayDays: 0,
       arrears: 0,
       notes: v("at-notes"),
