@@ -1105,10 +1105,10 @@
         hasSession = true;
       }
     }
-    if (!hasSession) {
-      var vm = sessionStorage.getItem('vm_session');
-      if (vm) hasSession = !!JSON.parse(vm).email;
-    }
+    // The previous `vm_session` sessionStorage fallback was removed: it was
+    // client-writable, so anyone could forge `{email:...}` to load the portal
+    // shell + in-memory seed data without authenticating. Require the real
+    // Supabase auth token only. (Server-side RLS remains the true data gate.)
   } catch(e) { hasSession = false; }
   if (!hasSession) {
     var next = encodeURIComponent(location.pathname + location.search);
@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-05-02b"></script>
+<script src="pms-supabase.js?v=2026-06-05a"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -5231,7 +5231,7 @@ function statusBadge(s){
 function avatar(ini, hue){
   const hues = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041"];
   const c = hue || hues[ini.charCodeAt(0)%hues.length];
-  return `<div class="avatar" style="background:linear-gradient(135deg,${c},${shade(c,-25)})">${ini}</div>`;
+  return `<div class="avatar" style="background:linear-gradient(135deg,${c},${shade(c,-25)})">${esc(ini)}</div>`;
 }
 function shade(hex, p){
   const n = parseInt(hex.slice(1),16);
@@ -5239,13 +5239,25 @@ function shade(hex, p){
   r = Math.max(0,Math.min(255,r)); g = Math.max(0,Math.min(255,g)); b = Math.max(0,Math.min(255,b));
   return "#" + ((r<<16)|(g<<8)|b).toString(16).padStart(6,"0");
 }
-function fmt(n){return "$" + n.toLocaleString();}
+function fmt(n){ const neg = (+n < 0); return (neg ? "-$" : "$") + Math.abs(Number(n)||0).toLocaleString(); }
+// ---- shared safety helpers (added in bug-fix pass) ----
+// HTML-escape any value before interpolating it into innerHTML (safe for both
+// element-body and double/single-quoted attribute contexts).
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Null-safe lowercase for search/filter comparisons (one bad record must not
+// throw and freeze a whole list render).
+function lc(v){ return v==null ? "" : String(v).toLowerCase(); }
+// Scheme allowlist for hrefs/srcs built from stored data — blocks javascript:.
+function safeHref(u){ const s = String(u==null?"":u).trim(); return /^(https?:|mailto:|tel:|\/|#|\.)/i.test(s) ? s : "#"; }
 
 /* ============ TENANTS FILTERING ENGINE ============ */
 const TODAY = new Date("2026-04-25");
 
 function daysBetween(a,b){return Math.round((b-a)/(1000*60*60*24));}
 function fmtDate(s){
+  // Guard null/empty: new Date(null) is the epoch and would render "Dec 31, 1969"
+  // (e.g. landlords with no contract dates on file).
+  if (s == null || s === "") return "—";
   // Parse YYYY-MM-DD strings as local dates (avoid UTC timezone shifts).
   let d;
   if (typeof s === "string" && /^\d{4}-\d{2}-\d{2}/.test(s)) {
@@ -5254,6 +5266,7 @@ function fmtDate(s){
   } else {
     d = new Date(s);
   }
+  if (isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
 }
 function leaseChip(leaseEnd){
@@ -5305,7 +5318,7 @@ function buildCheckDropdown(filterId, options, getCount){
       const v = typeof o === "string" ? o : o.value;
       const l = typeof o === "string" ? o : o.label;
       const c = getCount ? getCount(v) : "";
-      return `<label class="opt"><input type="checkbox" data-filter="${filterId}" value="${v}"/><span>${l}</span><span class="ct">${c}</span></label>`;
+      return `<label class="opt"><input type="checkbox" data-filter="${filterId}" value="${esc(v)}"/><span>${esc(l)}</span><span class="ct">${c}</span></label>`;
     }).join("")}
     <div class="filter-dropdown-foot">
       <button class="filter-link" data-action="clear" data-filter="${filterId}">Clear</button>
@@ -5445,28 +5458,28 @@ function renderTenants(){
     const tKey = t.email || t.id || "";
     const sel = F.selected.has(tKey);
     return `
-    <tr data-email="${tKey}" style="cursor:pointer">
-      <td><div class="check ${sel?'on':''}" data-row="${tKey}"></div></td>
+    <tr data-email="${esc(tKey)}" style="cursor:pointer">
+      <td><div class="check ${sel?'on':''}" data-row="${esc(tKey)}"></div></td>
       <td>
         <div class="name-cell">
           ${avatar(t.ini)}
           <div>
-            <div class="name-main">${t.name} <span class="flag">${t.flag}</span></div>
-            <div class="name-sub">${t.email}${t.school !== "—" ? " · " + t.school : ""}</div>
+            <div class="name-main">${esc(t.name)} <span class="flag">${esc(t.flag)}</span></div>
+            <div class="name-sub">${esc(t.email)}${t.school !== "—" ? " · " + esc(t.school) : ""}</div>
           </div>
         </div>
       </td>
       <td>
-        <div class="name-main">${t.property}</div>
-        <div class="name-sub">${t.room && t.room !== "—" ? "Room " + t.room : ""}</div>
+        <div class="name-main">${esc(t.property)}</div>
+        <div class="name-sub">${t.room && t.room !== "—" ? "Room " + esc(t.room) : ""}</div>
       </td>
-      <td>${t.city}</td>
+      <td>${esc(t.city)}</td>
       <td>${leaseChip(t.leaseEnd)}</td>
       <td><span class="num">${fmt(t.rent)}</span><div class="name-sub" style="font-size:11px">/month</div></td>
       <td>${payBadge(t.pay)}</td>
       <td>${tagPills(t.tags)}</td>
       <td>${badge(t.status, t.pay)}</td>
-      <td class="right"><button class="btn btn-ghost view-tenant" data-tenant="${t.email}" style="padding:6px 12px;font-size:12px">View</button></td>
+      <td class="right"><button class="btn btn-ghost view-tenant" data-tenant="${esc(t.email)}" style="padding:6px 12px;font-size:12px">View</button></td>
     </tr>
   `}).join("");
 
@@ -5550,7 +5563,7 @@ function renderActiveChips(){
   if(F.search) chips.push({k:"search",v:F.search,l:'Search: "'+F.search+'"'});
 
   if(!chips.length) { c.innerHTML = ""; return; }
-  c.innerHTML = chips.map(ch => `<span class="active-chip">${ch.l}<span class="x" data-rm="${ch.k}|${ch.v}">✕</span></span>`).join("") +
+  c.innerHTML = chips.map(ch => `<span class="active-chip">${esc(ch.l)}<span class="x" data-rm="${esc(ch.k)}|${esc(ch.v)}">✕</span></span>`).join("") +
     `<button class="clear" id="clear-all">Clear all</button>`;
 
   c.querySelectorAll(".x").forEach(x => x.addEventListener("click", () => {
@@ -5738,32 +5751,11 @@ document.querySelectorAll('.saved-view[data-saved]').forEach(b => {
 document.addEventListener("input", e => {
   if (!e.target || e.target.id !== "ft-search") return;
   const newValue = (e.target.value || "").trim();
-  console.log("[ft-search] input event. Value:", JSON.stringify(newValue), "F.search was:", JSON.stringify(F.search));
+  if (F.search === newValue) return;
   F.search = newValue;
   resetPage();
   renderTenants();
 });
-// Belt-and-suspenders: also bind directly on the element AND on keyup. The
-// document delegation above is the primary; these are extra fallbacks in case
-// the input event is being suppressed somewhere upstream.
-function _bindTenantSearchDirect() {
-  const el = document.getElementById("ft-search");
-  if (!el || el.dataset.directBound) return;
-  el.dataset.directBound = "1";
-  const handler = (ev) => {
-    const newValue = (ev.target.value || "").trim();
-    if (F.search === newValue) return;
-    console.log("[ft-search] direct handler fired. Value:", JSON.stringify(newValue), "via", ev.type);
-    F.search = newValue;
-    resetPage();
-    renderTenants();
-  };
-  el.addEventListener("input", handler);
-  el.addEventListener("keyup", handler);
-}
-_bindTenantSearchDirect();
-// Re-bind every second in case the input element is recreated by some render
-setInterval(_bindTenantSearchDirect, 1000);
 
 /* Global header search (top-right) — Aldo was typing here and nothing was
    happening because there was no handler. Wire it to: navigate to Tenants
@@ -5860,7 +5852,7 @@ function renderPropertiesGrid(){
   document.getElementById("props-grid").innerHTML = list.map(p => `
   <div class="prop-card" data-prop-name="${p.name.replace(/"/g,"&quot;")}">
     <div class="prop-img" style="background:linear-gradient(135deg, ${p.color}33, ${p.color}66), radial-gradient(circle at 30% 30%, #FFFFFF55, transparent 60%)">
-      <div class="prop-tag ${p.ratePct===100?'red':''}">${p.ratePct===100?'Fully booked':p.type}</div>
+      <div class="prop-tag ${p.ratePct===100?'red':''}">${p.ratePct===100?'Fully booked':esc(p.type)}</div>
       <svg viewBox="0 0 200 110" width="100%" height="100%" preserveAspectRatio="none" style="opacity:.45">
         <rect x="20" y="40" width="60" height="55" fill="${p.color}" />
         <rect x="85" y="25" width="50" height="70" fill="${shade(p.color,-15)}" />
@@ -5878,8 +5870,8 @@ function renderPropertiesGrid(){
       </svg>
     </div>
     <div class="prop-body">
-      <div class="prop-name">${p.name}</div>
-      <div class="prop-addr">${p.addr}</div>
+      <div class="prop-name">${esc(p.name)}</div>
+      <div class="prop-addr">${esc(p.addr)}</div>
       <div class="prop-meta">
         <div><div class="lbl">Rooms</div><b>${p.occ}/${p.rooms}</b></div>
         <div><div class="lbl">Occupied</div><b>${p.ratePct}%</b></div>
@@ -5974,7 +5966,7 @@ function openProperty(propName){
   hero.style.background = `linear-gradient(135deg, ${propMeta.color}, ${shade(propMeta.color, -25)})`;
 
   // Title + sub
-  document.getElementById("panel-title").innerHTML = propName.replace(/\s(\w+)$/, " <em>$1</em>");
+  document.getElementById("panel-title").innerHTML = esc(propName).replace(/\s(\w+)$/, " <em>$1</em>");
   document.getElementById("panel-sub").textContent = propMeta.addr;
 
   // Single source of truth for room counts: derive from LIVE tenant data so
@@ -5999,11 +5991,11 @@ function openProperty(propName){
 
   // Meta badges — use live values now that everything is reconciled
   document.getElementById("panel-meta").innerHTML = `
-    <span class="badge badge-grey"><span class="dot"></span>${propMeta.type}</span>
+    <span class="badge badge-grey"><span class="dot"></span>${esc(propMeta.type)}</span>
     <span class="badge ${liveRatePct===100?'badge-red':liveRatePct>=85?'badge-green':'badge-amber'}">
       <span class="dot"></span>${liveRatePct}% occupied
     </span>
-    <span class="badge badge-grey"><span class="dot"></span>${propMeta.rent} /mo range</span>
+    <span class="badge badge-grey"><span class="dot"></span>${esc(propMeta.rent)} /mo range</span>
   `;
 
   const rev = propPL ? propPL.rev : tenantRevenue;
@@ -6029,7 +6021,7 @@ function openProperty(propName){
       <div class="panel-kpi">
         <div class="l">${propPL ? "Expenses · MTD" : "Avg rent / tenant"}</div>
         <div class="v ${propPL ? 'red' : ''}">${propPL ? "−"+fmt(exp) : (propTenants.length ? fmt(Math.round(rev/propTenants.length)) : "$0")}</div>
-        <div class="s">${propPL ? (exp ? ((exp/rev)*100).toFixed(0) + "% of revenue" : "—") : `Range ${propMeta?propMeta.rent:""}`}</div>
+        <div class="s">${propPL ? (exp ? ((exp/rev)*100).toFixed(0) + "% of revenue" : "—") : `Range ${propMeta?esc(propMeta.rent):""}`}</div>
       </div>
       <div class="panel-kpi">
         <div class="l">${propPL ? "Net profit · MTD" : "Total deposits held"}</div>
@@ -6046,17 +6038,17 @@ function openProperty(propName){
       </div>
       <div class="room-grid">
         ${rooms.map(r => r.occupied ? `
-          <div class="room-card occupied" data-tenant-email="${(r.tenant.email||'').replace(/"/g,'&quot;')}" style="cursor:pointer" title="Click to view ${r.tenant.name}'s profile">
-            <div class="room-num">${r.label.replace(/Room |Suite /,'')}</div>
+          <div class="room-card occupied" data-tenant-email="${(r.tenant.email||'').replace(/"/g,'&quot;')}" data-tenant-id="${esc(String(r.tenant.id ?? ''))}" style="cursor:pointer" title="Click to view ${esc(r.tenant.name)}'s profile">
+            <div class="room-num">${esc(r.label.replace(/Room |Suite /,''))}</div>
             <div class="room-info">
-              <div class="room-name">${r.tenant.name} <span class="flag">${r.tenant.flag||''}</span></div>
+              <div class="room-name">${esc(r.tenant.name)} <span class="flag">${esc(r.tenant.flag||'')}</span></div>
               <div class="room-status">Lease ends ${fmtDate(r.tenant.leaseEnd)}</div>
             </div>
             <div class="room-rent">${fmt(r.rent)}<span class="lbl">/month</span></div>
           </div>
         ` : `
           <div class="room-card vacant">
-            <div class="room-num">${r.label.replace(/Room |Suite /,'')}</div>
+            <div class="room-num">${esc(r.label.replace(/Room |Suite /,''))}</div>
             <div class="room-info">
               <div class="room-name">Vacant</div>
               <div class="room-status">Available now</div>
@@ -6084,7 +6076,7 @@ function openProperty(propName){
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
               ${pp.addr ? `<div>
                 <div class="card-sub" style="font-size:10px;letter-spacing:.6px;text-transform:uppercase;font-weight:700">Address</div>
-                <div style="font-weight:600;font-size:13px;margin-top:2px">${pp.addr}</div>
+                <div style="font-weight:600;font-size:13px;margin-top:2px">${esc(pp.addr)}</div>
               </div>` : ""}
               ${totalRooms ? `<div>
                 <div class="card-sub" style="font-size:10px;letter-spacing:.6px;text-transform:uppercase;font-weight:700">Total rooms</div>
@@ -6095,7 +6087,7 @@ function openProperty(propName){
               <div style="margin-bottom:10px">
                 <div class="card-sub" style="font-size:10px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;margin-bottom:6px">Wi-Fi networks</div>
                 ${allWifis.map(w => `<div style="font-family:var(--slab);font-size:12.5px;color:var(--ink);padding:4px 0">
-                  <b>${w.name || "—"}</b> ${w.password ? '· <span style="color:var(--muted)">' + w.password + '</span>' : ''}
+                  <b>${esc(w.name || "—")}</b> ${w.password ? '· <span style="color:var(--muted)">' + esc(w.password) + '</span>' : ''}
                 </div>`).join("")}
               </div>
             ` : ""}
@@ -6103,7 +6095,7 @@ function openProperty(propName){
               <div style="margin-bottom:6px">
                 <div class="card-sub" style="font-size:10px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;margin-bottom:6px">Door / lock codes</div>
                 ${allDoors.map(d => `<div style="font-family:var(--slab);font-size:12.5px;color:var(--ink);padding:4px 0">
-                  ${pp.units.length > 1 ? '<span style="color:var(--muted);font-weight:600">' + d.section + ':</span> ' : ''}<b>${d.code}</b>
+                  ${pp.units.length > 1 ? '<span style="color:var(--muted);font-weight:600">' + esc(d.section) + ':</span> ' : ''}<b>${esc(d.code)}</b>
                 </div>`).join("")}
               </div>
             ` : ""}
@@ -6117,10 +6109,10 @@ function openProperty(propName){
                   <div class="list-row" style="padding:11px 14px;${i === pp.units.length - 1 ? 'border-bottom:none' : ''}">
                     <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v11H3z"/></svg></div>
                     <div class="list-main">
-                      <div class="list-title">${u.section}</div>
-                      <div class="list-sub">${u.rooms ? u.rooms + " room" + (u.rooms === 1 ? "" : "s") : "—"}${u.addr ? " · " + u.addr : ""}</div>
+                      <div class="list-title">${esc(u.section)}</div>
+                      <div class="list-sub">${u.rooms ? u.rooms + " room" + (u.rooms === 1 ? "" : "s") : "—"}${u.addr ? " · " + esc(u.addr) : ""}</div>
                     </div>
-                    ${u.wifi && u.wifi.name ? `<div class="list-meta" style="font-family:var(--slab);font-size:11px">${u.wifi.name}</div>` : ""}
+                    ${u.wifi && u.wifi.name ? `<div class="list-meta" style="font-family:var(--slab);font-size:11px">${esc(u.wifi.name)}</div>` : ""}
                   </div>
                 `).join("")}
               </div>
@@ -6158,11 +6150,11 @@ function openProperty(propName){
                 <div class="ic list-icon ${utilityKindClass[u.kind]}">${utilityIcons[u.kind]}</div>
                 <div class="body">
                   <div class="kind">${utilityKindLabel[u.kind]}</div>
-                  <div class="prov">${u.provider}</div>
-                  <div class="acc">Account · <b>${u.account}</b></div>
+                  <div class="prov">${esc(u.provider)}</div>
+                  <div class="acc">Account · <b>${esc(u.account)}</b></div>
                   ${u.term ? `
                     <div class="term-row">
-                      <span class="pill">${u.term} term</span>
+                      <span class="pill">${esc(u.term)} term</span>
                       <span class="pill">Ends ${fmtDate(u.termEnd)}</span>
                     </div>
                   ` : ''}
@@ -6270,7 +6262,7 @@ function openProperty(propName){
             <span style="margin-left:auto;font-family:var(--slab);font-weight:700">Hover any month for detail</span>
           </div>
           <div class="narrative">
-            ${propName} has averaged <b>${avg.toFixed(1)}%</b> occupancy across <b>${monthsOpen} months</b> since opening in ${openedFmt}.
+            ${esc(propName)} has averaged <b>${avg.toFixed(1)}%</b> occupancy across <b>${monthsOpen} months</b> since opening in ${openedFmt}.
             ${longest>1 ? `Its longest soft-occupancy stretch (under 80%) was <b>${longest} months</b>.` : `It has rarely dipped below 80% occupancy.`}
             Estimated lost revenue from vacancies: <b>${fmt(lostRevenue)}</b>.
           </div>
@@ -6313,8 +6305,8 @@ function openProperty(propName){
             <div class="list-row prop-tenant-row" data-tenant-key="${(r.tenant.email || r.tenant.id || '').replace(/"/g,'&quot;')}" style="padding:12px 16px;border-bottom:${i===occupiedTenants.length-1?'none':'1px dashed var(--line)'};cursor:pointer">
               ${avatar(r.tenant.ini)}
               <div class="list-main">
-                <div class="list-title">${r.tenant.name} <span class="flag">${r.tenant.flag || ""}</span></div>
-                <div class="list-sub">${r.label} · ${r.tenant.school || "—"} · ${r.tenant.country || "—"}</div>
+                <div class="list-title">${esc(r.tenant.name)} <span class="flag">${esc(r.tenant.flag || "")}</span></div>
+                <div class="list-sub">${esc(r.label)} · ${esc(r.tenant.school || "—")} · ${esc(r.tenant.country || "—")}</div>
               </div>
               <div style="text-align:right">
                 <div class="num" style="font-size:13px">${fmt(r.rent)}</div>
@@ -6332,8 +6324,8 @@ function openProperty(propName){
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         View full P&amp;L (PDF)
       </a>
-      <button class="btn btn-ghost" id="prop-manage-rooms-btn" data-prop-name="${propName}" style="flex:1;justify-content:center">Manage rooms</button>
-      <button class="btn btn-ghost" id="prop-more-btn" data-prop-name="${propName}" title="Edit or delete">⋯</button>
+      <button class="btn btn-ghost" id="prop-manage-rooms-btn" data-prop-name="${esc(propName)}" style="flex:1;justify-content:center">Manage rooms</button>
+      <button class="btn btn-ghost" id="prop-more-btn" data-prop-name="${esc(propName)}" title="Edit or delete">⋯</button>
     </div>
   `;
 
@@ -6354,14 +6346,17 @@ function openProperty(propName){
   document.querySelectorAll('#panel-body .room-card.occupied[data-tenant-email]').forEach(card => {
     card.addEventListener("click", (ev) => {
       if (ev.target.closest(".room-del")) return;  // don't navigate when removing
-      const email = card.dataset.tenantEmail;
-      if (!email) return;
+      // Prefer email (legacy key) but fall back to id so email-less tenants
+      // (e.g. quick-added before email was required) still open. openTenant()
+      // accepts either.
+      const key = card.dataset.tenantEmail || card.dataset.tenantId;
+      if (!key) return;
       // Stash the "back" target so the tenant panel can offer a return link
       _tenantBackTo = { type: "property", name: propMeta.name };
       // Close the property panel, then open the tenant panel
       document.getElementById("panel-close")?.click();
       setTimeout(() => {
-        if (typeof openTenant === "function") openTenant(email);
+        if (typeof openTenant === "function") openTenant(key);
       }, 150);
     });
   });
@@ -6529,7 +6524,7 @@ function renderRoleLegend(){
   legend.innerHTML = Object.entries(roles).map(([k,r]) => `
     <div class="item">
       <span class="sw" style="background:${r.color}"></span>
-      <div class="info"><div class="t">${r.label}</div><div class="d">${r.desc}</div></div>
+      <div class="info"><div class="t">${esc(r.label)}</div><div class="d">${esc(r.desc)}</div></div>
     </div>
   `).join("");
 }
@@ -6551,24 +6546,24 @@ function renderTeam(searchTxt = ""){
     // the literal string "null" when both were unset).
     const secondaryBadge =
       (m.assigned && m.assigned !== "null")
-        ? `<span class="badge badge-grey"><span class="dot"></span>${m.assigned}</span>`
+        ? `<span class="badge badge-grey"><span class="dot"></span>${esc(m.assigned)}</span>`
         : (m.city && m.city !== "null"
-            ? `<span class="badge badge-grey"><span class="dot"></span>${m.city}</span>`
+            ? `<span class="badge badge-grey"><span class="dot"></span>${esc(m.city)}</span>`
             : "");
     const colorBase = m.color || "#A88965";
     return `
       <div class="team-card">
-        <div class="av" style="background:linear-gradient(135deg, ${colorBase}, ${shade(colorBase,-25)})">${m.ini || (m.name||"?").slice(0,2).toUpperCase()}</div>
+        <div class="av" style="background:linear-gradient(135deg, ${colorBase}, ${shade(colorBase,-25)})">${esc(m.ini || (m.name||"?").slice(0,2).toUpperCase())}</div>
         <div class="body">
-          <div class="nm">${m.name}${m.id===CURRENT_USER.id?' <span style="font-size:11px;color:var(--muted);font-weight:500">(you)</span>':''}</div>
-          <div class="em">${m.email}</div>
+          <div class="nm">${esc(m.name)}${m.id===CURRENT_USER.id?' <span style="font-size:11px;color:var(--muted);font-weight:500">(you)</span>':''}</div>
+          <div class="em">${esc(m.email)}</div>
           <div class="meta">
-            <span class="role-badge"><span class="dot" style="background:${r.color}"></span>${r.label}</span>
+            <span class="role-badge"><span class="dot" style="background:${r.color}"></span>${esc(r.label)}</span>
             ${secondaryBadge}
           </div>
-          <div class="em" style="margin-top:6px">Last seen ${m.lastLogin || "today"}</div>
+          <div class="em" style="margin-top:6px">Last seen ${esc(m.lastLogin || "today")}</div>
           <div class="actions">
-            <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-view-as="${m.id}">View as ${m.name.split(" ")[0]}</button>
+            <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-view-as="${m.id}">View as ${esc(m.name.split(" ")[0])}</button>
             <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px">Message</button>
             ${isAdminViewing ? `<button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-edit-member="${m.id}">Edit</button>` : ''}
           </div>
@@ -6619,13 +6614,13 @@ function renderPendingInvites(){
           : '<span class="badge badge-green"><span class="dot"></span>Accepted</span>';
         return `
           <div class="invite-card ${i.status==='expired'?'expired':''}">
-            <div class="av">${ini}</div>
+            <div class="av">${esc(ini)}</div>
             <div class="body">
-              <div class="nm">${i.name}</div>
-              <div class="em">${i.email}</div>
+              <div class="nm">${esc(i.name)}</div>
+              <div class="em">${esc(i.email)}</div>
               <div class="meta">
                 ${statusBadge}
-                <span class="role-badge"><span class="dot" style="background:${r.color}"></span>${r.label}${i.assigned?' · '+i.assigned:''}</span>
+                <span class="role-badge"><span class="dot" style="background:${r.color}"></span>${esc(r.label)}${i.assigned?' · '+esc(i.assigned):''}</span>
                 <span style="font-size:11.5px;color:var(--muted);font-weight:600">Sent ${i.sentDaysAgo===0?'today':i.sentDaysAgo+' day'+(i.sentDaysAgo===1?'':'s')+' ago'}</span>
               </div>
             </div>
@@ -6803,7 +6798,7 @@ function openInviteMember(){
   // Populate property dropdown
   const sel = document.getElementById("invite-assigned");
   sel.innerHTML = `<option value="">Select a property…</option>` +
-    properties.map(p => `<option value="${p.name}">${p.name} · ${p.city}</option>`).join("");
+    properties.map(p => `<option value="${esc(p.name)}">${esc(p.name)} · ${esc(p.city)}</option>`).join("");
   document.getElementById("invite-scope").classList.remove("show");
   modal.classList.add("open");
   modal.setAttribute("aria-hidden","false");
@@ -6921,7 +6916,7 @@ function openEditMember(member){
   const assignedSel = document.getElementById("edit-member-assigned");
   assignedSel.innerHTML = `<option value="">Select a property…</option>` +
     (typeof properties !== "undefined" ? properties : []).map(p =>
-      `<option value="${p.name}" ${p.name===member.assigned?'selected':''}>${p.name}${p.city?' · '+p.city:''}</option>`
+      `<option value="${esc(p.name)}" ${p.name===member.assigned?'selected':''}>${esc(p.name)}${p.city?' · '+esc(p.city):''}</option>`
     ).join("");
 
   buildEditRolePicker(member.role || "ops", member.allowed_pages);
@@ -7084,8 +7079,13 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   if(existing){ failInvite("Someone with that email already has access or a pending invite."); return; }
 
   // Create the invite — local UI state (id will be replaced with DB UUID
-  // once we get a successful insert).
-  const tempId = "i" + (pendingInvites.length + 1);
+  // once we get a successful insert). Use the highest existing suffix + 1 (not
+  // array length) so a prior removed invite can't cause a temp-id collision.
+  const maxInviteNum = pendingInvites.reduce((m, i) => {
+    const n = parseInt(String(i.id).replace(/\D/g, ""), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  const tempId = "i" + (maxInviteNum + 1);
   const localInvite = {
     id: tempId, name, email, role,
     title: title || roles[role].label,
@@ -7299,9 +7299,9 @@ function applyRolePermissions(){
   // Banner shows when viewing as someone else
   const banner = document.getElementById("viewing-banner");
   if(VIEWING_AS){
-    const scope = VIEWING_AS.assigned ? ` · scoped to <b>${VIEWING_AS.assigned}</b>` : "";
+    const scope = VIEWING_AS.assigned ? ` · scoped to <b>${esc(VIEWING_AS.assigned)}</b>` : "";
     document.getElementById("viewing-banner-msg").innerHTML =
-      `You are viewing as <b>${VIEWING_AS.name}</b> (${roles[VIEWING_AS.role].label})${scope}. The sidebar and data reflect what they would see.`;
+      `You are viewing as <b>${esc(VIEWING_AS.name)}</b> (${roles[VIEWING_AS.role].label})${scope}. The sidebar and data reflect what they would see.`;
     banner.classList.add("active");
   } else {
     banner.classList.remove("active");
@@ -7335,24 +7335,24 @@ function buildRoleMenu(){
   menu.innerHTML = `
     <div class="head">Current</div>
     <div class="opt current">
-      <div class="av" style="background:linear-gradient(135deg, ${CURRENT_USER.color}, ${shade(CURRENT_USER.color,-25)})">${CURRENT_USER.ini}</div>
+      <div class="av" style="background:linear-gradient(135deg, ${CURRENT_USER.color}, ${shade(CURRENT_USER.color,-25)})">${esc(CURRENT_USER.ini)}</div>
       <div class="info">
-        <div class="nm">${CURRENT_USER.name}</div>
-        <div class="rl">${CURRENT_USER.title || roles[CURRENT_USER.role].label} · Signed in</div>
+        <div class="nm">${esc(CURRENT_USER.name)}</div>
+        <div class="rl">${esc(CURRENT_USER.title || roles[CURRENT_USER.role].label)} · Signed in</div>
       </div>
     </div>
     <div class="head">View as someone else</div>
     ${teamMembers.filter(m => m.id !== CURRENT_USER.id).map(m => `
       <div class="opt" data-pick="${m.id}">
-        <div class="av" style="background:linear-gradient(135deg, ${m.color}, ${shade(m.color,-25)})">${m.ini}</div>
+        <div class="av" style="background:linear-gradient(135deg, ${m.color}, ${shade(m.color,-25)})">${esc(m.ini)}</div>
         <div class="info">
-          <div class="nm">${m.name}</div>
-          <div class="rl">${roles[m.role].label}${m.assigned?' · '+m.assigned:''}</div>
+          <div class="nm">${esc(m.name)}</div>
+          <div class="rl">${roles[m.role].label}${m.assigned?' · '+esc(m.assigned):''}</div>
         </div>
         <span class="badge-sm" style="background:${roles[m.role].color}22;color:${roles[m.role].color}">${roles[m.role].label.split(' ')[0]}</span>
       </div>
     `).join("")}
-    <div class="footer">Switching just changes what you can see. The actual signed-in user is <b>${CURRENT_USER.name}</b>.</div>
+    <div class="footer">Switching just changes what you can see. The actual signed-in user is <b>${esc(CURRENT_USER.name)}</b>.</div>
     <div style="height:1px;background:var(--line);margin:6px 0"></div>
     <a class="opt" href="signin.html" id="role-menu-signout" style="color:var(--red-dark);font-weight:600;text-decoration:none">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:8px"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -7390,10 +7390,10 @@ function renderLandlords(filterTxt = ""){
   const q = filterTxt.toLowerCase().trim();
   const list = landlords.filter(l =>
     !q ||
-    l.name.toLowerCase().includes(q) ||
-    l.company.toLowerCase().includes(q) ||
-    l.property.toLowerCase().includes(q) ||
-    l.city.toLowerCase().includes(q)
+    lc(l.name).includes(q) ||
+    lc(l.company).includes(q) ||
+    lc(l.property).includes(q) ||
+    lc(l.city).includes(q)
   );
   if(list.length === 0){
     document.getElementById("landlords-body").innerHTML = `
@@ -7414,18 +7414,18 @@ function renderLandlords(filterTxt = ""){
     <tr data-landlord="${l.id}" style="cursor:pointer">
       <td>
         <div class="name-cell">
-          <div class="avatar" style="background:linear-gradient(135deg, ${l.color}, ${shade(l.color,-25)})">${l.ini}</div>
+          <div class="avatar" style="background:linear-gradient(135deg, ${l.color}, ${shade(l.color,-25)})">${esc(l.ini)}</div>
           <div>
-            <div class="name-main">${l.name}</div>
-            <div class="name-sub">${l.company}</div>
+            <div class="name-main">${esc(l.name)}</div>
+            <div class="name-sub">${esc(l.company)}</div>
           </div>
         </div>
       </td>
       <td>
-        <div class="name-main">${l.property}</div>
-        <div class="name-sub">${l.email}</div>
+        <div class="name-main">${esc(l.property)}</div>
+        <div class="name-sub">${esc(l.email)}</div>
       </td>
-      <td>${l.city}</td>
+      <td>${esc(l.city)}</td>
       <td>
         <span class="num">${fmt(l.monthlyRent)}</span>
         <div class="name-sub" style="font-size:11px">/month</div>
@@ -7439,7 +7439,7 @@ function renderLandlords(filterTxt = ""){
         <div class="name-sub" style="color:${endingSoon?'var(--red-dark)':'var(--muted)'}">${days>=0?'in '+days+' days':Math.abs(days)+' days ago'}</div>
       </td>
       <td>
-        <a href="${l.pdf}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
+        <a href="${safeHref(l.pdf)}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h6M9 17h4"/></svg>
           PDF
         </a>
@@ -7465,7 +7465,7 @@ function refreshLandlordPropertySelect(selectedName){
   const taken = new Set(landlords.map(l => l.property));
   select.innerHTML = `<option value="">Select a property…</option>` +
     properties.map(p =>
-      `<option value="${p.name}" ${taken.has(p.name)?'disabled':''} ${selectedName===p.name?'selected':''}>${p.name}${taken.has(p.name)?' (already assigned)':''}</option>`
+      `<option value="${esc(p.name)}" ${taken.has(p.name)?'disabled':''} ${selectedName===p.name?'selected':''}>${esc(p.name)}${taken.has(p.name)?' (already assigned)':''}</option>`
     ).join("") +
     `<option value="__new__">+ Add a new property…</option>`;
 }
@@ -7594,7 +7594,13 @@ document.getElementById("add-landlord-form").addEventListener("submit", e => {
 
   // Build new landlord
   const ini = name.split(/\s+/).map(p => p[0]).slice(0,2).join("").toUpperCase();
-  const id = "ll-" + String(landlords.length + 1).padStart(3, "0");
+  // Derive the next id from the highest existing suffix (not array length) so a
+  // prior delete can't make us reuse an id that still belongs to another record.
+  const maxLlNum = landlords.reduce((m, l) => {
+    const n = parseInt(String(l.id).replace(/\D/g, ""), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  const id = "ll-" + String(maxLlNum + 1).padStart(3, "0");
   const color = landlordPalette[landlords.length % landlordPalette.length];
   const pdfFile = document.getElementById("pdf-input").files[0];
   const pdfName = pdfFile ? pdfFile.name : "lease-annex-house.pdf";
@@ -7660,7 +7666,7 @@ function openLandlord(id){
   hero.style.background = `linear-gradient(135deg, ${l.color}, ${shade(l.color,-25)})`;
 
   // Title and subtitle
-  document.getElementById("panel-title").innerHTML = `${l.name}`;
+  document.getElementById("panel-title").innerHTML = `${esc(l.name)}`;
   document.getElementById("panel-sub").textContent = `${l.company} · ${l.city}`;
 
   // Status badges
@@ -7742,7 +7748,7 @@ function openLandlord(id){
           <div class="card card-pad" style="font-size:13.5px;line-height:1.55;color:var(--muted)">
             No lease agreement on file. Click <strong style="color:var(--red-dark)">Edit</strong> in the header to upload the signed PDF (or a scan).
           </div>
-          ${l.notes ? `<div class="narrative"><b>Note:</b> ${l.notes}</div>` : ''}
+          ${l.notes ? `<div class="narrative"><b>Note:</b> ${esc(l.notes)}</div>` : ''}
         </div>`;
       }
       return `
@@ -7751,20 +7757,20 @@ function openLandlord(id){
         <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
           <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
           <div style="flex:1;min-width:0">
-            <div class="prop-name" style="font-size:15px">${pdfName || 'Lease agreement'}</div>
-            <div class="prop-addr">${pdfSize || 'On file'}${l.contractStart ? ' · uploaded ' + fmtDate(l.contractStart) : ''}</div>
+            <div class="prop-name" style="font-size:15px">${esc(pdfName || 'Lease agreement')}</div>
+            <div class="prop-addr">${esc(pdfSize || 'On file')}${l.contractStart ? ' · uploaded ' + fmtDate(l.contractStart) : ''}</div>
             <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Signed</span>${totalMonths ? ' <span class="badge badge-grey"><span class="dot"></span>'+totalMonths+'-month term</span>' : ''}</div>
           </div>
           ${(pdfUrl || l.contractPdfPath || l.pdfPath)
             ? `<button type="button" class="btn btn-primary"
-                 data-open-pdf="${l.contractPdfPath || l.pdfPath || ''}"
-                 data-fallback-url="${pdfUrl || ''}">
+                 data-open-pdf="${safeHref(l.contractPdfPath || l.pdfPath || '')}"
+                 data-fallback-url="${safeHref(pdfUrl || '')}">
                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                  Open PDF
                </button>`
             : `<span class="badge badge-grey"><span class="dot"></span>Uploading…</span>`}
         </div>
-        ${l.notes ? `<div class="narrative"><b>Note:</b> ${l.notes}</div>` : ''}
+        ${l.notes ? `<div class="narrative"><b>Note:</b> ${esc(l.notes)}</div>` : ''}
       </div>`;
     })()}
 
@@ -7776,12 +7782,12 @@ function openLandlord(id){
           const meta = properties.find(p => p.name === propName) || properties.find(p => p.name.includes(propName.split(" ")[0]));
           return `
             <div class="list-row" style="padding:12px 16px;${i === arr.length - 1 ? 'border-bottom:none' : ''}">
-              <div class="panel-hero" style="width:36px;height:36px;font-size:14px;border-radius:8px;background:linear-gradient(135deg, ${meta?meta.color:l.color}, ${meta?shade(meta.color,-25):shade(l.color,-25)})">${propName[0]}</div>
+              <div class="panel-hero" style="width:36px;height:36px;font-size:14px;border-radius:8px;background:linear-gradient(135deg, ${meta?meta.color:l.color}, ${meta?shade(meta.color,-25):shade(l.color,-25)})">${esc(propName[0])}</div>
               <div class="list-main">
-                <div class="list-title">${propName}</div>
-                <div class="list-sub">${meta ? meta.addr : "—"}</div>
+                <div class="list-title">${esc(propName)}</div>
+                <div class="list-sub">${meta ? esc(meta.addr) : "—"}</div>
               </div>
-              ${meta ? `<button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-go-prop="${meta.name}">View →</button>` : ''}
+              ${meta ? `<button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-go-prop="${esc(meta.name)}">View →</button>` : ''}
             </div>
           `;
         }).join("")}
@@ -7795,17 +7801,17 @@ function openLandlord(id){
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
           <div class="list-main"><div class="list-title">Email</div><div class="list-sub">Primary</div></div>
-          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${l.email}</div>
+          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${esc(l.email)}</div>
         </div>
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
           <div class="list-main"><div class="list-title">Phone</div><div class="list-sub">Direct line</div></div>
-          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${l.phone}</div>
+          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${esc(l.phone)}</div>
         </div>
         <div class="list-row" style="padding:12px 16px;border-bottom:none">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/></svg></div>
           <div class="list-main"><div class="list-title">Company</div><div class="list-sub">Holding entity</div></div>
-          <div class="list-meta" style="color:var(--ink);font-weight:600">${l.company}</div>
+          <div class="list-meta" style="color:var(--ink);font-weight:600">${esc(l.company)}</div>
         </div>
       </div>
     </div>
@@ -7819,7 +7825,7 @@ function openLandlord(id){
           return `
           <div class="list-row" style="padding:12px 16px;${i===5?'border-bottom:none':''}">
             <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l4 4L19 6"/></svg></div>
-            <div class="list-main"><div class="list-title">${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()} rent</div><div class="list-sub">EFT to ${l.company.split(' ')[0]} account</div></div>
+            <div class="list-main"><div class="list-title">${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()} rent</div><div class="list-sub">EFT to ${esc(l.company.split(' ')[0])} account</div></div>
             <div class="list-meta">
               <div class="num">−${fmt(l.monthlyRent)}</div>
               <span class="badge badge-green"><span class="dot"></span>Paid on-time</span>
@@ -7831,7 +7837,7 @@ function openLandlord(id){
 
     <!-- Action footer -->
     <div style="display:flex;gap:8px;margin-top:24px">
-      <a class="btn btn-primary" style="flex:1;justify-content:center" href="mailto:${l.email}?subject=${encodeURIComponent("Hello from Vanmates")}">
+      <a class="btn btn-primary" style="flex:1;justify-content:center" href="mailto:${esc(l.email)}?subject=${encodeURIComponent("Hello from Vanmates")}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
         Email landlord
       </a>
@@ -7929,7 +7935,7 @@ function openTenant(emailOrId){
   hero.style.background = `linear-gradient(135deg, ${c}, ${shade(c,-25)})`;
 
   // Title and subtitle
-  document.getElementById("panel-title").innerHTML = `${t.name} <span class="flag" style="font-size:22px">${t.flag}</span>`;
+  document.getElementById("panel-title").innerHTML = `${esc(t.name)} <span class="flag" style="font-size:22px">${esc(t.flag)}</span>`;
   document.getElementById("panel-sub").textContent = `${t.country} · ${t.school}`;
 
   // Status badges
@@ -7976,9 +7982,9 @@ function openTenant(emailOrId){
   const body = document.getElementById("panel-body");
   // Optional "back" pill — only rendered when we know where the user came from
   const backPillHtml = backTo
-    ? `<div style="margin:-4px 0 14px"><button id="tenant-back-pill" data-back-type="${backTo.type}" data-back-name="${(backTo.name||'').replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:6px;background:var(--cream-2);border:1px solid var(--line);color:var(--ink);padding:6px 12px;border-radius:999px;font-size:12.5px;cursor:pointer;font-family:var(--sans)" title="Return to ${backTo.name}">
+    ? `<div style="margin:-4px 0 14px"><button id="tenant-back-pill" data-back-type="${esc(backTo.type)}" data-back-name="${(backTo.name||'').replace(/"/g,'&quot;')}" style="display:inline-flex;align-items:center;gap:6px;background:var(--cream-2);border:1px solid var(--line);color:var(--ink);padding:6px 12px;border-radius:999px;font-size:12.5px;cursor:pointer;font-family:var(--sans)" title="Return to ${esc(backTo.name)}">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-         Back to <strong style="font-weight:700;margin-left:2px">${backTo.name}</strong>
+         Back to <strong style="font-weight:700;margin-left:2px">${esc(backTo.name)}</strong>
        </button></div>`
     : "";
   body.innerHTML = backPillHtml + `
@@ -8057,7 +8063,7 @@ function openTenant(emailOrId){
         <div class="panel-section">
           <div class="panel-section-title"><span>Signed <em>contract</em></span><span class="ct">Not uploaded</span></div>
           <div class="card card-pad" style="font-size:13.5px;line-height:1.55;color:var(--muted)">
-            No lease agreement on file for ${t.name}. Open the <strong style="color:var(--red-dark)">Edit</strong> menu (\u22EF) and use the "Signed lease agreement" field to upload a PDF or scan.
+            No lease agreement on file for ${esc(t.name)}. Open the <strong style="color:var(--red-dark)">Edit</strong> menu (\u22EF) and use the "Signed lease agreement" field to upload a PDF or scan.
           </div>
         </div>`;
       }
@@ -8069,8 +8075,8 @@ function openTenant(emailOrId){
         <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
           <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
           <div style="flex:1;min-width:0">
-            <div class="prop-name" style="font-size:15px">${pdfName}</div>
-            <div class="prop-addr">${pdfMeta}</div>
+            <div class="prop-name" style="font-size:15px">${esc(pdfName)}</div>
+            <div class="prop-addr">${esc(pdfMeta)}</div>
             <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
               <span class="badge badge-green"><span class="dot"></span>Signed</span>
               ${hasPanda ? '<span class="badge badge-blue"><span class="dot"></span>PandaDoc</span>' : ''}
@@ -8084,7 +8090,7 @@ function openTenant(emailOrId){
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Open PDF
             </button>` : ''}
-            ${hasPanda ? `<a href="${t.contractPandaDoc}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px">
+            ${hasPanda ? `<a href="${safeHref(t.contractPandaDoc)}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
               Open in PandaDoc
             </a>` : ''}
@@ -8100,32 +8106,32 @@ function openTenant(emailOrId){
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
           <div class="list-main"><div class="list-title">Email</div><div class="list-sub">Primary</div></div>
-          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${t.email}</div>
+          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${esc(t.email)}</div>
         </div>
         <div class="list-row" style="padding:12px 16px">
-          <div class="list-icon"><span style="font-size:18px">${t.flag}</span></div>
+          <div class="list-icon"><span style="font-size:18px">${esc(t.flag)}</span></div>
           <div class="list-main"><div class="list-title">Country of origin</div><div class="list-sub">Hometown</div></div>
-          <div class="list-meta" style="color:var(--ink);font-weight:600">${t.country}</div>
+          <div class="list-meta" style="color:var(--ink);font-weight:600">${esc(t.country)}</div>
         </div>
         <div class="list-row" style="padding:12px 16px;border-bottom:none">
           <div class="list-icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5a6 3 0 0 0 12 0v-5"/></svg></div>
           <div class="list-main"><div class="list-title">School</div><div class="list-sub">Currently enrolled</div></div>
-          <div class="list-meta" style="color:var(--ink);font-weight:600">${t.school}</div>
+          <div class="list-meta" style="color:var(--ink);font-weight:600">${esc(t.school)}</div>
         </div>
       </div>
     </div>
 
     <!-- Property -->
     <div class="panel-section">
-      <div class="panel-section-title"><span>Living at <em>${t.property}</em></span></div>
+      <div class="panel-section-title"><span>Living at <em>${esc(t.property)}</em></span></div>
       <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
-        <div class="panel-hero" style="width:52px;height:52px;font-size:22px;border-radius:10px;background:linear-gradient(135deg, ${propMeta?propMeta.color:'#A88965'}, ${propMeta?shade(propMeta.color,-25):'#7d6041'})">${t.property[0]}</div>
+        <div class="panel-hero" style="width:52px;height:52px;font-size:22px;border-radius:10px;background:linear-gradient(135deg, ${propMeta?propMeta.color:'#A88965'}, ${propMeta?shade(propMeta.color,-25):'#7d6041'})">${esc(t.property[0])}</div>
         <div style="flex:1">
-          <div class="prop-name" style="font-size:16px">${t.property}</div>
-          <div class="prop-addr">${address}</div>
-          <div style="margin-top:4px"><span class="badge badge-grey"><span class="dot"></span>Room ${t.room}</span> <span class="badge badge-grey"><span class="dot"></span>${t.city}</span></div>
+          <div class="prop-name" style="font-size:16px">${esc(t.property)}</div>
+          <div class="prop-addr">${esc(address)}</div>
+          <div style="margin-top:4px"><span class="badge badge-grey"><span class="dot"></span>Room ${esc(t.room)}</span> <span class="badge badge-grey"><span class="dot"></span>${esc(t.city)}</span></div>
         </div>
-        <button class="btn btn-ghost" data-go-prop="${t.property}">View property →</button>
+        <button class="btn btn-ghost" data-go-prop="${esc(t.property)}">View property →</button>
       </div>
     </div>
 
@@ -8233,10 +8239,10 @@ function applyVacancyFilters(){
   const q = VAC_FILTERS.search.toLowerCase().trim();
   if(q){
     list = list.filter(v =>
-      v.room.toLowerCase().includes(q) ||
-      v.prop.toLowerCase().includes(q) ||
-      v.city.toLowerCase().includes(q) ||
-      v.type.toLowerCase().includes(q)
+      lc(v.room).includes(q) ||
+      lc(v.prop).includes(q) ||
+      lc(v.city).includes(q) ||
+      lc(v.type).includes(q)
     );
   }
   // Date range: availDate must fall within [from, to]
@@ -8283,10 +8289,10 @@ function renderVacancies(){
     const dateColor = days <= 14 ? "color:var(--red-dark)" : days <= 60 ? "color:#8a611f" : "color:var(--muted)";
     return `
       <tr data-open-vac="${v.id}" style="cursor:pointer">
-        <td><div class="name-main">${v.room}</div></td>
-        <td>${v.prop}</td>
-        <td>${v.city}</td>
-        <td><span class="badge badge-grey"><span class="dot"></span>${v.type}</span></td>
+        <td><div class="name-main">${esc(v.room)}</div></td>
+        <td>${esc(v.prop)}</td>
+        <td>${esc(v.city)}</td>
+        <td><span class="badge badge-grey"><span class="dot"></span>${esc(v.type)}</span></td>
         <td class="right"><span class="num">${fmt(v.rent)}</span></td>
         <td>
           <div class="name-main">${vacFmtAvail(v.availDate)}</div>
@@ -8503,11 +8509,11 @@ function openShareVacancy(id){
         </svg>
       </div>
       <div class="card-pad">
-        <div class="prop-name">${v.prop} — ${v.room}</div>
-        <div class="prop-addr">${propMeta?propMeta.addr:v.city}</div>
+        <div class="prop-name">${esc(v.prop)} — ${esc(v.room)}</div>
+        <div class="prop-addr">${propMeta?esc(propMeta.addr):esc(v.city)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-          <span class="badge badge-grey"><span class="dot"></span>${v.type}</span>
-          <span class="badge badge-grey"><span class="dot"></span>${v.city}</span>
+          <span class="badge badge-grey"><span class="dot"></span>${esc(v.type)}</span>
+          <span class="badge badge-grey"><span class="dot"></span>${esc(v.city)}</span>
           <span class="badge ${days<=14?'badge-red':days<=60?'badge-amber':'badge-green'}"><span class="dot"></span>${days>=0?`Available in ${days}d`:"Available now"}</span>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px">
@@ -8619,12 +8625,12 @@ document.addEventListener("keydown", e => {
 /* Maintenance table */
 document.getElementById("maint-body").innerHTML = maint.map(m => `
   <tr>
-    <td><div class="name-sub" style="font-family:var(--slab);color:var(--muted)">${m.id}</div><div class="name-main">${m.title}</div></td>
-    <td>${m.prop}</td>
-    <td>${m.reporter}</td>
+    <td><div class="name-sub" style="font-family:var(--slab);color:var(--muted)">${m.id}</div><div class="name-main">${esc(m.title)}</div></td>
+    <td>${esc(m.prop)}</td>
+    <td>${esc(m.reporter)}</td>
     <td>${priChip(m.pri)}</td>
     <td>${statusBadge(m.status)}</td>
-    <td>${m.assigned}</td>
+    <td>${esc(m.assigned)}</td>
   </tr>
 `).join("");
 
@@ -8632,9 +8638,9 @@ document.getElementById("maint-body").innerHTML = maint.map(m => `
 document.getElementById("tx-body").innerHTML = tx.map(t => `
   <tr>
     <td class="nowrap">${t.date}</td>
-    <td><div class="name-main">${t.desc}</div></td>
-    <td>${t.prop}</td>
-    <td><span class="badge badge-grey"><span class="dot"></span>${t.cat}</span></td>
+    <td><div class="name-main">${esc(t.desc)}</div></td>
+    <td>${esc(t.prop)}</td>
+    <td><span class="badge badge-grey"><span class="dot"></span>${esc(t.cat)}</span></td>
     <td class="right"><span class="num" style="color:${t.amt<0?'var(--red-dark)':'#3e6049'}">${t.amt<0?'−':'+'}${fmt(Math.abs(t.amt))}</span></td>
     <td>${t.status==='received'?'<span class="badge badge-green"><span class="dot"></span>Received</span>':'<span class="badge badge-blue"><span class="dot"></span>Paid</span>'}</td>
   </tr>
@@ -8665,7 +8671,7 @@ document.getElementById("rev-chart").innerHTML = revData.map(r=>{
   const h = (r.v/maxRev)*180;
   return `<div class="bar-col"><div class="bar" style="height:${h}px"></div><div class="bar-label num">$${(r.v/1000).toFixed(1)}k</div></div>`;
 }).join("");
-document.getElementById("rev-labels").innerHTML = revData.map(r=>`<span>${r.name}</span>`).join("");
+document.getElementById("rev-labels").innerHTML = revData.map(r=>`<span>${esc(r.name)}</span>`).join("");
 
 /* ============ PORTFOLIO RENDERING ============ */
 // Compute totals
@@ -8698,14 +8704,14 @@ document.getElementById("pf-body").innerHTML = portfolio.map((p,i) => `
   <tr>
     <td>
       <div class="name-cell">
-        <div style="width:30px;height:30px;border-radius:8px;background:${palette[i%palette.length]}33;display:grid;place-items:center;color:${palette[i%palette.length]};font-weight:700;font-family:var(--serif);font-style:italic">${p.name[0]}</div>
+        <div style="width:30px;height:30px;border-radius:8px;background:${palette[i%palette.length]}33;display:grid;place-items:center;color:${palette[i%palette.length]};font-weight:700;font-family:var(--serif);font-style:italic">${esc(p.name[0])}</div>
         <div>
-          <div class="name-main">${p.name}</div>
-          <div class="name-sub">${p.type}</div>
+          <div class="name-main">${esc(p.name)}</div>
+          <div class="name-sub">${esc(p.type)}</div>
         </div>
       </div>
     </td>
-    <td>${p.city}</td>
+    <td>${esc(p.city)}</td>
     <td><span class="num">${p.occ}/${p.rooms}</span></td>
     <td>
       <div style="display:flex;align-items:center;gap:8px">
@@ -8742,7 +8748,7 @@ document.getElementById("rp-chart").innerHTML = portfolio.map((p,i) => {
   `;
 }).join("");
 document.getElementById("rp-labels").innerHTML = portfolio.map(p =>
-  `<span style="font-size:10.5px;text-align:center;line-height:1.2">${p.name.split(' ').slice(0,2).join('<br>')}</span>`
+  `<span style="font-size:10.5px;text-align:center;line-height:1.2">${p.name.split(' ').slice(0,2).map(esc).join('<br>')}</span>`
 ).join("");
 
 // Revenue mix donut
@@ -8763,7 +8769,7 @@ document.getElementById("mix-donut").innerHTML =
 document.getElementById("mix-legend").innerHTML = portfolio.map((p,i) => `
   <div class="legend-row">
     <span class="legend-sw" style="background:${palette[i%palette.length]}"></span>
-    <span style="font-size:12px">${p.name}</span>
+    <span style="font-size:12px">${esc(p.name)}</span>
     <span class="legend-val">${((p.rev/totalRev)*100).toFixed(1)}%</span>
   </div>
 `).join("");
@@ -8773,8 +8779,8 @@ document.getElementById("pf-top").innerHTML = portfolio.slice(0,4).map((p,i) => 
   <div class="list-row">
     <div style="width:28px;height:28px;border-radius:50%;background:var(--green-soft);color:#3e6049;display:grid;place-items:center;font-weight:700;font-size:12px;font-family:var(--slab)">#${i+1}</div>
     <div class="list-main">
-      <div class="list-title">${p.name}</div>
-      <div class="list-sub">${p.city} · ${p.margin.toFixed(1)}% margin · ${p.occPct}% full</div>
+      <div class="list-title">${esc(p.name)}</div>
+      <div class="list-sub">${esc(p.city)} · ${p.margin.toFixed(1)}% margin · ${p.occPct}% full</div>
     </div>
     <div class="list-meta num" style="color:#3e6049">${fmt(p.profit)}</div>
   </div>
@@ -8790,7 +8796,7 @@ document.getElementById("pf-bottom").innerHTML = attention.map(p => {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/></svg>
     </div>
     <div class="list-main">
-      <div class="list-title">${p.name}</div>
+      <div class="list-title">${esc(p.name)}</div>
       <div class="list-sub">${flag} · ${p.margin.toFixed(1)}% margin · YoY ${p.yoy>=0?'+':''}${p.yoy.toFixed(1)}%</div>
     </div>
     <div class="list-meta num">${fmt(p.profit)}</div>
@@ -8925,11 +8931,11 @@ function renderHomestayClients(searchTxt = ""){
   const list = monthList.filter(c => {
     const host = homestayHosts.find(h => h.id === c.hostId);
     return !q ||
-      c.name.toLowerCase().includes(q) ||
-      c.country.toLowerCase().includes(q) ||
-      c.school.toLowerCase().includes(q) ||
-      (host && host.name.toLowerCase().includes(q)) ||
-      (host && host.city.toLowerCase().includes(q));
+      lc(c.name).includes(q) ||
+      lc(c.country).includes(q) ||
+      lc(c.school).includes(q) ||
+      (host && lc(host.name).includes(q)) ||
+      (host && lc(host.city).includes(q));
   });
 
   // Compute per-month totals (use list before search? we use list — what user sees)
@@ -9061,20 +9067,20 @@ function renderHomestayClients(searchTxt = ""){
     const depYr = departureDate.getFullYear();
     const stayStr = `${_short(c.arrival, depYr)} → ${_short(c.departure, depYr)}`;
     return `
-      <tr>
+      <tr data-hc-id="${esc(String(c.id ?? ''))}">
         <td>
           <div class="name-cell">
             ${avatar(c.ini)}
             <div>
-              <div class="name-main">${c.name}</div>
-              <div class="name-sub">${c.email} · ${c.school}</div>
+              <div class="name-main">${esc(c.name)}</div>
+              <div class="name-sub">${esc(c.email)} · ${esc(c.school)}</div>
             </div>
           </div>
         </td>
-        <td><span class="flag" style="font-size:16px">${c.flag}</span> <span style="font-size:12.5px;color:var(--ink)">${c.country}</span></td>
+        <td><span class="flag" style="font-size:16px">${esc(c.flag)}</span> <span style="font-size:12.5px;color:var(--ink)">${esc(c.country)}</span></td>
         <td>
-          <div class="name-main">${host ? host.name : "—"}</div>
-          <div class="name-sub">${host ? host.city : "—"}</div>
+          <div class="name-main">${host ? esc(host.name) : "—"}</div>
+          <div class="name-sub">${host ? esc(host.city) : "—"}</div>
         </td>
         <td>
           <div style="font-size:12.5px">${stayStr}</div>
@@ -9204,10 +9210,10 @@ function renderHomestayFinance(){
   if(topEl){
     topEl.innerHTML = topRanked.map(h => `
       <div class="list-row">
-        <div class="avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg, ${h.color}, ${shade(h.color,-25)})">${h.name.split(" ")[0][0]}${h.name.split(" ")[1] ? h.name.split(" ")[1][0] : ""}</div>
+        <div class="avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg, ${h.color}, ${shade(h.color,-25)})">${esc(h.name.split(" ")[0][0])}${h.name.split(" ")[1] ? esc(h.name.split(" ")[1][0]) : ""}</div>
         <div class="list-main">
-          <div class="list-title">${h.name}</div>
-          <div class="list-sub">${h.city} · ${h.count} guest${h.count===1?'':'s'} · margin ${fmt(h.revenue - h.payout)}</div>
+          <div class="list-title">${esc(h.name)}</div>
+          <div class="list-sub">${esc(h.city)} · ${h.count} guest${h.count===1?'':'s'} · margin ${fmt(h.revenue - h.payout)}</div>
           <div class="occ-bar"><div class="occ-fill" style="width:${(h.revenue/topMax*100).toFixed(0)}%"></div></div>
         </div>
         <div class="list-meta num">${fmt(h.revenue)}</div>
@@ -9229,8 +9235,8 @@ function renderHomestayFinance(){
     txEl.innerHTML = tx.slice(0, 10).map(t => `
       <tr>
         <td class="nowrap">${t.date}</td>
-        <td><div class="name-main">${t.desc}</div></td>
-        <td>${t.party}</td>
+        <td><div class="name-main">${esc(t.desc)}</div></td>
+        <td>${esc(t.party)}</td>
         <td class="right"><span class="num" style="color:${t.amt < 0 ? 'var(--red-dark)' : '#3e6049'}">${t.amt < 0 ? '−' : '+'}${fmt(Math.abs(t.amt))}</span></td>
         <td>${t.type === 'collect'
           ? '<span class="badge badge-green"><span class="dot"></span>Collected</span>'
@@ -9256,8 +9262,8 @@ function renderHomestayFinance(){
           <div class="list-row">
             ${avatar(c.ini)}
             <div class="list-main">
-              <div class="list-title">${c.name} <span class="flag">${c.flag}</span></div>
-              <div class="list-sub">${host?.name || "—"} · ${host?.city || ""}</div>
+              <div class="list-title">${esc(c.name)} <span class="flag">${esc(c.flag)}</span></div>
+              <div class="list-sub">${host?.name ? esc(host.name) : "—"} · ${host?.city ? esc(host.city) : ""}</div>
             </div>
             <div class="list-meta">
               <div style="color:${days<=14?'var(--red-dark)':'var(--muted)'};font-weight:700">in ${days}d</div>
@@ -9292,12 +9298,12 @@ function renderPlacementFees(){
           <div class="name-cell">
             ${avatar(c.ini)}
             <div>
-              <div class="name-main">${c.name} <span class="flag">${c.flag||""}</span></div>
-              <div class="name-sub">${c.country || "—"}${c.school ? " · " + c.school : ""}</div>
+              <div class="name-main">${esc(c.name)} <span class="flag">${esc(c.flag||"")}</span></div>
+              <div class="name-sub">${c.country ? esc(c.country) : "—"}${c.school ? " · " + esc(c.school) : ""}</div>
             </div>
           </div>
         </td>
-        <td>${host ? host.name : "—"}</td>
+        <td>${host ? esc(host.name) : "—"}</td>
         <td>${fmtDate(c.arrival)}</td>
         <td class="right"><span class="num">${stayMonths}</span> mo</td>
         <td class="right"><span class="num" style="color:#3e6049">${fmt(fee)}</span></td>
@@ -9338,7 +9344,7 @@ function hostPhotoSvg(h){
         <circle cx="118" cy="62" r="10"/>
         <path d="M104 95 q0 -16 14 -16 q14 0 14 16 z"/>
       </g>
-      <text x="100" y="118" text-anchor="middle" font-family="Playfair Display, Georgia, serif" font-style="italic" font-size="11" fill="#FAF5ED" opacity=".85">${h.name.replace(" family","")}</text>
+      <text x="100" y="118" text-anchor="middle" font-family="Playfair Display, Georgia, serif" font-style="italic" font-size="11" fill="#FAF5ED" opacity=".85">${esc(h.name.replace(" family",""))}</text>
     </svg>
   `;
 }
@@ -9352,11 +9358,11 @@ function renderHomestayHosts(){
     if(HH_FILTERS.capacity.size && !HH_FILTERS.capacity.has(String(h.capacity))) return false;
     if(HH_FILTERS.nationality.size && !HH_FILTERS.nationality.has(h.nationality)) return false;
     if(!q) return true;
-    return h.name.toLowerCase().includes(q) ||
-           h.city.toLowerCase().includes(q) ||
-           h.neighborhood.toLowerCase().includes(q) ||
-           h.nationality.toLowerCase().includes(q) ||
-           h.languages.some(l => l.toLowerCase().includes(q));
+    return lc(h.name).includes(q) ||
+           lc(h.city).includes(q) ||
+           lc(h.neighborhood).includes(q) ||
+           lc(h.nationality).includes(q) ||
+           (h.languages||[]).some(l => lc(l).includes(q));
   });
 
   document.getElementById("hh-count").textContent = list.length;
@@ -9376,13 +9382,13 @@ function renderHomestayHosts(){
         <div class="prop-card" data-host-id="${h.id}" style="cursor:pointer">
           <div class="prop-img" style="background:${h.color}">
             ${hostPhotoSvg(h)}
-            <div class="prop-tag">${h.flag} ${h.nationality}</div>
+            <div class="prop-tag">${esc(h.flag)} ${esc(h.nationality)}</div>
           </div>
           <div class="prop-body">
-            <div class="prop-name">${h.name}</div>
-            <div class="prop-addr">${h.neighborhood} · ${h.city}</div>
+            <div class="prop-name">${esc(h.name)}</div>
+            <div class="prop-addr">${esc(h.neighborhood)} · ${esc(h.city)}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-              ${h.languages.slice(0,3).map(l => `<span class="badge badge-grey"><span class="dot"></span>${l}</span>`).join("")}
+              ${h.languages.slice(0,3).map(l => `<span class="badge badge-grey"><span class="dot"></span>${esc(l)}</span>`).join("")}
             </div>
             <div class="prop-meta">
               <div><div class="lbl">Rooms</div><b>${guests}/${h.capacity}</b></div>
@@ -9520,10 +9526,10 @@ function openHost(id){
   const nameWords = (h.name || "?").replace(" family", "").split(/\s+/).filter(Boolean);
   hero.textContent = (nameWords[0]?.[0] || "?") + (nameWords[1]?.[0] || "");
 
-  document.getElementById("panel-title").innerHTML = h.name;
+  document.getElementById("panel-title").innerHTML = esc(h.name);
   document.getElementById("panel-sub").textContent = `${safeNeighborhood} · ${h.city}`;
   document.getElementById("panel-meta").innerHTML = `
-    <span class="badge badge-grey"><span class="dot"></span>${safeFlag} ${safeNationality}</span>
+    <span class="badge badge-grey"><span class="dot"></span>${esc(safeFlag)} ${esc(safeNationality)}</span>
     <span class="badge badge-green"><span class="dot"></span>${h.rating || 4.7} ★ rating</span>
     ${hasSince ? `<span class="badge badge-grey"><span class="dot"></span>Hosting since ${sinceLabel}</span>` : ""}
   `;
@@ -9573,14 +9579,14 @@ function openHost(id){
     <!-- About -->
     <div class="panel-section">
       <div class="panel-section-title"><span><em>About</em> the family</span></div>
-      <div class="card card-pad" style="font-size:13.5px;line-height:1.55">${h.bio}</div>
+      <div class="card card-pad" style="font-size:13.5px;line-height:1.55">${esc(h.bio)}</div>
     </div>
 
     <!-- Languages -->
     <div class="panel-section">
       <div class="panel-section-title"><span><em>Languages</em> spoken</span></div>
       <div class="card card-pad" style="display:flex;gap:8px;flex-wrap:wrap">
-        ${(h.languages || ["English"]).map(l => `<span class="badge badge-blue" style="font-size:13px;padding:6px 14px"><span class="dot"></span>${l}</span>`).join("")}
+        ${(h.languages || ["English"]).map(l => `<span class="badge badge-blue" style="font-size:13px;padding:6px 14px"><span class="dot"></span>${esc(l)}</span>`).join("")}
       </div>
     </div>
 
@@ -9590,7 +9596,7 @@ function openHost(id){
       <div class="card card-pad" style="font-size:13.5px;line-height:1.55;display:flex;align-items:center;gap:10px">
         ${(h.pets && String(h.pets).trim())
           ? `<span class="badge badge-amber" style="font-size:12.5px;padding:5px 12px"><span class="dot"></span>Has pets</span>
-             <span style="color:var(--ink)">${h.pets}</span>`
+             <span style="color:var(--ink)">${esc(h.pets)}</span>`
           : `<span class="badge badge-green" style="font-size:12.5px;padding:5px 12px"><span class="dot"></span>No pets</span>
              <span style="color:var(--muted)">Pet-free household</span>`}
       </div>
@@ -9603,11 +9609,11 @@ function openHost(id){
       <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
         <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:18px">PDF</div>
         <div style="flex:1;min-width:0">
-          <div class="prop-name" style="font-size:15px">${h.pdfName || h.name + " — Host Profile.pdf"}</div>
-          <div class="prop-addr">${h.pdfSize ? h.pdfSize + " · " : ""}Bio, photos, dietary notes — what we share with clients</div>
+          <div class="prop-name" style="font-size:15px">${esc(h.pdfName || h.name + " — Host Profile.pdf")}</div>
+          <div class="prop-addr">${h.pdfSize ? esc(h.pdfSize) + " · " : ""}Bio, photos, dietary notes — what we share with clients</div>
           <div style="margin-top:4px"><span class="badge badge-green"><span class="dot"></span>Attached</span>${hasSince?` <span class="badge badge-grey"><span class="dot"></span>Updated ${sinceLabel}</span>`:""}</div>
         </div>
-        <a href="${safePdf}" target="_blank" class="btn btn-primary">
+        <a href="${safeHref(safePdf)}" target="_blank" class="btn btn-primary">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Open profile
         </a>
@@ -9620,7 +9626,7 @@ function openHost(id){
       <div class="panel-section-title"><span><em>Address</em></span></div>
       <div class="card card-pad" style="font-size:13.5px;color:var(--ink)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;color:var(--muted)"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-        ${h.address}
+        ${esc(h.address)}
       </div>
     </div>` : ""}
 
@@ -9637,8 +9643,8 @@ function openHost(id){
               <div class="list-row guest-row" data-hc-id="${c.id}" data-hc-name="${(c.name||'').replace(/"/g,'&quot;')}" style="padding:12px 16px;cursor:pointer;${i===arr.length-1?'border-bottom:none':''}">
                 ${avatar(c.ini)}
                 <div class="list-main">
-                  <div class="list-title">${c.name} <span class="flag">${c.flag || ''}</span></div>
-                  <div class="list-sub">${fmtDate(c.arrival)} → ${fmtDate(c.departure)} · ${c.school || '—'}</div>
+                  <div class="list-title">${esc(c.name)} <span class="flag">${esc(c.flag || '')}</span></div>
+                  <div class="list-sub">${fmtDate(c.arrival)} → ${fmtDate(c.departure)} · ${c.school ? esc(c.school) : '—'}</div>
                 </div>
                 <div style="text-align:right;margin-right:6px">
                   <div class="num" style="font-size:13px;color:#3e6049">+${fmt(c.weCollect)}</div>
@@ -9661,19 +9667,19 @@ function openHost(id){
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
           <div class="list-main"><div class="list-title">Email</div><div class="list-sub">Primary</div></div>
-          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${h.email}</div>
+          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${esc(h.email)}</div>
         </div>
         <div class="list-row" style="padding:12px 16px;border-bottom:none">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
           <div class="list-main"><div class="list-title">Phone</div><div class="list-sub">Primary</div></div>
-          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${h.phone}</div>
+          <div class="list-meta" style="font-family:var(--slab);color:var(--ink)">${esc(h.phone)}</div>
         </div>
       </div>
     </div>
 
     <!-- Action footer -->
     <div style="display:flex;gap:8px;margin-top:24px">
-      <a class="btn btn-primary" style="flex:1;justify-content:center" href="mailto:${h.email}?subject=${encodeURIComponent("Hello from Vanmates")}">
+      <a class="btn btn-primary" style="flex:1;justify-content:center" href="mailto:${esc(h.email)}?subject=${encodeURIComponent("Hello from Vanmates")}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
         Email host
       </a>
@@ -9790,7 +9796,7 @@ function openAddTenant(){
   // Property dropdown
   const propSel = document.getElementById("tenant-property");
   propSel.innerHTML = `<option value="">Select a property…</option>` +
-    properties.map(p => `<option value="${p.name}">${p.name} · ${p.city}</option>`).join("");
+    properties.map(p => `<option value="${esc(p.name)}">${esc(p.name)} · ${esc(p.city)}</option>`).join("");
 
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
@@ -10029,21 +10035,21 @@ function renderDeposits(){
           <div class="name-cell">
             <div class="avatar" style="background:linear-gradient(135deg, ${color}, ${shade(color,-25)})">${ini}</div>
             <div>
-              <div class="name-main">${r.name}${flag ? ' <span class="flag">'+flag+'</span>' : ''}</div>
-              <div class="name-sub">${country}</div>
+              <div class="name-main">${esc(r.name)}${flag ? ' <span class="flag">'+esc(flag)+'</span>' : ''}</div>
+              <div class="name-sub">${esc(country)}</div>
             </div>
           </div>
         </td>
         <td>
-          <div class="name-main">${property}</div>
-          <div class="name-sub">${room}</div>
+          <div class="name-main">${esc(property)}</div>
+          <div class="name-sub">${esc(room)}</div>
         </td>
-        <td>${city}</td>
+        <td>${esc(city)}</td>
         <td>
           <div class="name-main">${moveOutDisplay}</div>
           <div class="name-sub" style="font-size:11px;color:${(dDays != null && dDays > 14 && r.status !== "completed") ? "var(--red-dark)" : "var(--muted)"}">${moveOutLabel}</div>
           ${r.expectedPaymentDate && r.status !== "completed"
-            ? `<div class="name-sub" style="font-size:10.5px;color:var(--blue, #3F6E94);margin-top:2px;font-weight:600">Expected: ${r.expectedPaymentDate}</div>`
+            ? `<div class="name-sub" style="font-size:10.5px;color:var(--blue, #3F6E94);margin-top:2px;font-weight:600">Expected: ${esc(r.expectedPaymentDate)}</div>`
             : ''}
         </td>
         <td class="right"><span class="num">${fmt(r.deposit)}</span></td>
@@ -10128,7 +10134,7 @@ function renderDeposits(){
   if(chips.length === 0) ac.innerHTML = "";
   else {
     ac.innerHTML = chips.map(c =>
-      `<span class="active-chip">${c.l}<span class="x" data-ddrm="${c.k}|${c.v}">✕</span></span>`
+      `<span class="active-chip">${esc(c.l)}<span class="x" data-ddrm="${c.k}|${esc(c.v)}">✕</span></span>`
     ).join("") + `<button class="clear" id="dd-clear-all">Clear all</button>`;
     ac.querySelectorAll(".x").forEach(x => x.addEventListener("click", () => {
       const [k, v] = x.dataset.ddrm.split("|");
@@ -10161,7 +10167,7 @@ function attachDDDropdown(filterKey, options, labelMap){
   dd.className = "filter-dropdown";
   dd.dataset.dd = "1";
   dd.innerHTML = options.map(o =>
-    `<label class="opt"><input type="checkbox" value="${o}"/><span>${labelMap ? labelMap[o] || o : o}</span></label>`
+    `<label class="opt"><input type="checkbox" value="${esc(o)}"/><span>${esc(labelMap ? labelMap[o] || o : o)}</span></label>`
   ).join("") + `
     <div class="filter-dropdown-foot">
       <button class="filter-link" data-action="clear">Clear</button>
@@ -10211,7 +10217,10 @@ function openDeposit(id){
   const refund = r.deposit - ded;
   const dedRate = (ded / r.deposit * 100).toFixed(1);
   const dDays = dedDays(r);
-  const sm = depositStatuses[r.status];
+  // Guards: unknown/missing status and a missing damages array both crash the
+  // panel (the list renderer already defends against these — mirror it here).
+  const sm = depositStatuses[r.status] || {cls:"badge-grey", label:(r.status || "Unknown")};
+  if(!Array.isArray(r.damages)) r.damages = [];
 
   // Hero
   const hero = document.getElementById("panel-hero");
@@ -10220,7 +10229,7 @@ function openDeposit(id){
   hero.style.fontSize = "20px";
   hero.textContent = r.ini;
 
-  document.getElementById("panel-title").innerHTML = `${r.name} <span class="flag" style="font-size:22px">${r.flag}</span>`;
+  document.getElementById("panel-title").innerHTML = `${esc(r.name)} <span class="flag" style="font-size:22px">${esc(r.flag)}</span>`;
   document.getElementById("panel-sub").textContent = `${r.property} · Room ${r.room} · ${r.city}`;
   document.getElementById("panel-meta").innerHTML = `
     <span class="badge ${sm.cls}"><span class="dot"></span>${sm.label}</span>
@@ -10311,8 +10320,8 @@ function openDeposit(id){
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
                 </div>
                 <div class="list-main">
-                  <div class="list-title">${d.desc}</div>
-                  <div class="list-sub">Photo on file · approved by ${r.inspector}</div>
+                  <div class="list-title">${esc(d.desc)}</div>
+                  <div class="list-sub">Photo on file · approved by ${esc(r.inspector)}</div>
                 </div>
                 <div class="list-meta num" style="color:var(--red-dark)">−${fmt(d.amt)}</div>
               </div>
@@ -10340,12 +10349,12 @@ function openDeposit(id){
         </div>
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
-          <div class="list-main"><div class="list-title">Inspection date</div><div class="list-sub">By ${r.inspector}</div></div>
+          <div class="list-main"><div class="list-title">Inspection date</div><div class="list-sub">By ${esc(r.inspector)}</div></div>
           <div class="list-meta num">${r.inspectedOn ? fmtDate(r.inspectedOn) : "Not yet inspected"}</div>
         </div>
         <div class="list-row" style="padding:12px 16px;border-bottom:none">
           <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
-          <div class="list-main"><div class="list-title">Refund issued</div><div class="list-sub">${r.processedBy ? `By ${r.processedBy}` : "Pending processing"}</div></div>
+          <div class="list-main"><div class="list-title">Refund issued</div><div class="list-sub">${r.processedBy ? `By ${esc(r.processedBy)}` : "Pending processing"}</div></div>
           <div class="list-meta num">${r.refundDate ? fmtDate(r.refundDate) : "—"}</div>
         </div>
       </div>
@@ -10355,7 +10364,7 @@ function openDeposit(id){
     <div class="panel-section">
       <div class="panel-section-title"><span>Inspector <em>notes</em></span></div>
       <div class="card card-pad" style="font-size:13.5px;line-height:1.5;color:var(--ink)">
-        ${r.notes || '<span style="color:var(--muted)">No notes recorded.</span>'}
+        ${r.notes ? esc(r.notes) : '<span style="color:var(--muted)">No notes recorded.</span>'}
       </div>
     </div>
 
@@ -10370,23 +10379,23 @@ function openDeposit(id){
       <div class="card card-pad">
         ${(r.proofUrl || r.proofName) ? `
           ${(r.proofType && r.proofType.startsWith("image/")) || (r.proofName && /\.(png|jpg|jpeg|webp|gif)$/i.test(r.proofName))
-            ? `<a href="${r.proofUrl || '#'}" target="_blank" style="display:block">
-                 <img src="${r.proofUrl || ''}" alt="Proof of payment for ${r.name}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
-                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="${r.proofUrl || '#'}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
+            ? `<a href="${safeHref(r.proofUrl || '#')}" target="_blank" style="display:block">
+                 <img src="${safeHref(r.proofUrl || '')}" alt="Proof of payment for ${esc(r.name)}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
+                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="${safeHref(r.proofUrl || '#')}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
                </a>
                <div style="margin-top:10px;font-size:12px;color:var(--muted)">
-                 ${r.proofName || 'attachment'}${r.proofSize ? ' · ' + r.proofSize : ''}
+                 ${esc(r.proofName || 'attachment')}${r.proofSize ? ' · ' + esc(r.proofSize) : ''}
                  ${(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.role === 'admin')
-                    ? ` · <a href="${r.proofUrl || '#'}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
+                    ? ` · <a href="${safeHref(r.proofUrl || '#')}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
                     : ''}
                </div>`
             : `<div style="display:flex;align-items:center;gap:14px">
                  <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:16px">PDF</div>
                  <div style="flex:1;min-width:0">
-                   <div style="font-weight:600;font-size:14px">${r.proofName || 'Proof of payment'}</div>
-                   <div style="font-size:12px;color:var(--muted);margin-top:2px">${r.proofSize || 'On file'}</div>
+                   <div style="font-weight:600;font-size:14px">${esc(r.proofName || 'Proof of payment')}</div>
+                   <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(r.proofSize || 'On file')}</div>
                  </div>
-                 <a href="${r.proofUrl || '#'}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
+                 <a href="${safeHref(r.proofUrl || '#')}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
                </div>`}
         ` : `
           <div style="font-size:13px;color:var(--muted);line-height:1.5">
@@ -10567,7 +10576,7 @@ bindDropdown("tenants-email-btn", "tenants-email-menu", "tenants-email-wrap", ()
   const byHouse = {};
   active.forEach(t => { byHouse[t.property] = (byHouse[t.property]||0) + 1; });
   houseList.innerHTML = Object.entries(byHouse).sort()
-    .map(([p, c]) => `<label class="opt" data-email-scope="house:${p}">${p}<span class="ct">${c}</span></label>`)
+    .map(([p, c]) => `<label class="opt" data-email-scope="house:${esc(p)}">${esc(p)}<span class="ct">${c}</span></label>`)
     .join("");
 
   // Wire opt clicks
@@ -10626,13 +10635,13 @@ document.getElementById("props-map-btn")?.addEventListener("click", () => {
       </div>
       ${Object.entries(byCity).map(([city, props]) => `
         <div style="margin-top:14px">
-          <div style="font-family:var(--serif);font-size:18px;font-weight:700;margin-bottom:8px">📍 ${city} <span class="card-sub" style="font-weight:500">· ${props.length} ${props.length===1?"property":"properties"}</span></div>
+          <div style="font-family:var(--serif);font-size:18px;font-weight:700;margin-bottom:8px">📍 ${esc(city)} <span class="card-sub" style="font-weight:500">· ${props.length} ${props.length===1?"property":"properties"}</span></div>
           ${props.map((p, i) => `
-            <div class="list-row" style="padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;margin-bottom:6px;cursor:pointer" data-map-prop="${p.name}">
-              <div class="avatar" style="background:linear-gradient(135deg, ${p.color}, ${shade(p.color,-25)})">${p.name[0]}</div>
+            <div class="list-row" style="padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:10px;margin-bottom:6px;cursor:pointer" data-map-prop="${esc(p.name)}">
+              <div class="avatar" style="background:linear-gradient(135deg, ${p.color}, ${shade(p.color,-25)})">${esc(p.name[0])}</div>
               <div class="list-main">
-                <div class="list-title">${p.name}</div>
-                <div class="list-sub">${p.addr}</div>
+                <div class="list-title">${esc(p.name)}</div>
+                <div class="list-sub">${esc(p.addr)}</div>
               </div>
               <div class="list-meta">
                 <div class="num">${p.occ}/${p.rooms}</div>
@@ -10660,8 +10669,8 @@ function applyLandlordFilters(){
   // Re-apply existing search filter
   const q = (document.getElementById("ll-search")?.value || "").toLowerCase().trim();
   if(q){
-    list = list.filter(l => l.name.toLowerCase().includes(q) || l.company.toLowerCase().includes(q) ||
-      l.property.toLowerCase().includes(q) || l.city.toLowerCase().includes(q));
+    list = list.filter(l => lc(l.name).includes(q) || lc(l.company).includes(q) ||
+      lc(l.property).includes(q) || lc(l.city).includes(q));
   }
   if(LL_CITY) list = list.filter(l => l.city === LL_CITY);
   if(LL_SORT_ENDS){
@@ -10691,8 +10700,8 @@ renderLandlords = function(){
     const propsArr = l.properties || (l.property ? [l.property] : []);
     const propCount = propsArr.length;
     const propLabel = propCount === 1
-      ? `<div class="name-main">${propsArr[0]}</div>${l.email ? '<div class="name-sub">'+l.email+'</div>' : ''}`
-      : `<div class="name-main">${propsArr[0]}</div><div class="name-sub" style="color:var(--red-dark);font-weight:600">+ ${propCount-1} more propert${propCount-1===1?"y":"ies"}</div>`;
+      ? `<div class="name-main">${esc(propsArr[0])}</div>${l.email ? '<div class="name-sub">'+esc(l.email)+'</div>' : ''}`
+      : `<div class="name-main">${esc(propsArr[0])}</div><div class="name-sub" style="color:var(--red-dark);font-weight:600">+ ${propCount-1} more propert${propCount-1===1?"y":"ies"}</div>`;
 
     const rent = l.monthlyRent ? `<span class="num">${fmt(l.monthlyRent)}</span><div class="name-sub" style="font-size:11px">/month</div>` : `<span class="card-sub" style="font-size:12px">—</span>`;
 
@@ -10715,11 +10724,11 @@ renderLandlords = function(){
     const legacyPdfUrl = l.pdf || null;
     const pdfCell = hasAnyContract
       ? (legacyPdfUrl && !l.contractPdfPath
-          ? `<a href="${legacyPdfUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
+          ? `<a href="${safeHref(legacyPdfUrl)}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               PDF
             </a>`
-          : `<button type="button" class="btn btn-ghost" data-list-open-pdf="${l.contractPdfPath || ''}" data-list-fallback="${(l.contractPdfUrl || l.pdf || '').replace(/"/g, '&quot;')}" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
+          : `<button type="button" class="btn btn-ghost" data-list-open-pdf="${esc(l.contractPdfPath || '')}" data-list-fallback="${(l.contractPdfUrl || l.pdf || '').replace(/"/g, '&quot;')}" style="padding:6px 12px;font-size:12px" onclick="event.stopPropagation()">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               PDF
             </button>`)
@@ -10729,15 +10738,15 @@ renderLandlords = function(){
     <tr data-landlord="${l.id}" style="cursor:pointer">
       <td>
         <div class="name-cell">
-          <div class="avatar" style="background:linear-gradient(135deg, ${l.color}, ${shade(l.color,-25)})">${l.ini}</div>
+          <div class="avatar" style="background:linear-gradient(135deg, ${l.color}, ${shade(l.color,-25)})">${esc(l.ini)}</div>
           <div>
-            <div class="name-main">${l.name}</div>
-            <div class="name-sub">${l.phone || "—"}</div>
+            <div class="name-main">${esc(l.name)}</div>
+            <div class="name-sub">${esc(l.phone || "—")}</div>
           </div>
         </div>
       </td>
       <td>${propLabel}</td>
-      <td>${l.city}</td>
+      <td>${esc(l.city)}</td>
       <td>${rent}</td>
       <td>${contractCell}</td>
       <td>${endsCell}</td>
@@ -10787,7 +10796,7 @@ bindDropdown("ll-city-btn", "ll-city-menu", "ll-city-wrap", menu => {
     </div>
     ${cities.map(c => {
       const ct = landlords.filter(l => l.city === c).length;
-      return `<div class="opt" data-ll-city="${c}">${c}<span class="ct">${ct}</span></div>`;
+      return `<div class="opt" data-ll-city="${esc(c)}">${esc(c)}<span class="ct">${ct}</span></div>`;
     }).join("")}
   `;
   menu.querySelectorAll("[data-ll-city]").forEach(o => {
@@ -11120,7 +11129,7 @@ function openLandlordEdit(id){
 
   body.innerHTML = `
     <div class="panel-section">
-      <div class="panel-section-title"><span><em>Edit</em> landlord</span><span class="ct">${l.name}</span></div>
+      <div class="panel-section-title"><span><em>Edit</em> landlord</span><span class="ct">${esc(l.name)}</span></div>
       <div class="card card-pad">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 16px">
           <div style="grid-column:1/-1">
@@ -11193,11 +11202,11 @@ function openLandlordEdit(id){
           <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
             <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:16px">PDF</div>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:600;font-size:14px">${l.contractPdfName || 'Lease agreement'}</div>
-              <div style="font-size:12px;color:var(--muted);margin-top:2px">${l.contractPdfSize || 'On file'}</div>
+              <div style="font-weight:600;font-size:14px">${esc(l.contractPdfName || 'Lease agreement')}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(l.contractPdfSize || 'On file')}</div>
             </div>
             ${l.contractPdfUrl
-              ? `<a href="${l.contractPdfUrl}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>`
+              ? `<a href="${safeHref(l.contractPdfUrl)}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>`
               : ''}
             <button type="button" id="ed-pdf-remove" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0;color:var(--red-dark)">Remove</button>
           </div>
@@ -11214,7 +11223,7 @@ function openLandlordEdit(id){
     <div class="panel-section">
       <div class="panel-section-title"><span><em>Properties</em> owned</span><span class="ct">one per line</span></div>
       <div class="card card-pad">
-        <textarea id="ed-properties" rows="4" placeholder="715 W 14 Ave&#10;2066 Maple" class="ed-input" style="font-family:var(--slab);resize:vertical">${(l.properties || [l.property] || []).join("\n")}</textarea>
+        <textarea id="ed-properties" rows="4" placeholder="715 W 14 Ave&#10;2066 Maple" class="ed-input" style="font-family:var(--slab);resize:vertical">${esc((l.properties || [l.property] || []).join("\n"))}</textarea>
         <div style="font-size:12px;color:var(--muted);margin-top:6px">First line becomes the primary property. Use exact house names so they link to your Properties section.</div>
       </div>
     </div>
@@ -11359,13 +11368,13 @@ renderHomestayClients = function(searchTxt = ""){
   const body = document.getElementById("homestay-clients-body");
   if(body){
     const visibleClients = (typeof homestayClients !== "undefined") ? homestayClients : [];
-    [...body.querySelectorAll("tr")].forEach((row, i) => {
-      // Match each row to a client by visible name in the first cell
-      const nameMain = row.querySelector("td:first-child .name-main")?.textContent.trim();
-      if(!nameMain) return;
-      const client = visibleClients.find(c => c.name === nameMain);
+    [...body.querySelectorAll("tr")].forEach((row) => {
+      // Match each row to a client by its id (rendered as data-hc-id), not by
+      // visible name — two clients can share a name and the first match wins.
+      const cid = row.dataset.hcId;
+      if(!cid) return;
+      const client = visibleClients.find(c => String(c.id) === String(cid));
       if(!client) return;
-      row.dataset.hcId = client.id;
       row.style.cursor = "pointer";
       // The View button — last cell
       const viewBtn = row.querySelector("td:last-child button");
@@ -11393,7 +11402,7 @@ function openHomestayClient(id){
     hero.style.background = `linear-gradient(135deg, ${col}, ${shade(col,-25)})`;
   }
 
-  document.getElementById("panel-title").innerHTML = `${c.name} <span class="flag">${c.flag||"🌐"}</span>`;
+  document.getElementById("panel-title").innerHTML = `${esc(c.name)} <span class="flag">${esc(c.flag||"🌐")}</span>`;
   document.getElementById("panel-sub").textContent = `${c.country || "—"}${c.school ? " · " + c.school : ""}${host ? " · " + host.city : ""}`;
 
   // Status badges
@@ -11412,7 +11421,7 @@ function openHomestayClient(id){
   document.getElementById("panel-meta").innerHTML = `
     ${statusBadge}
     ${stayMonths != null ? `<span class="badge badge-grey"><span class="dot"></span>${stayMonths} month${stayMonths===1?"":"s"} stay</span>` : ""}
-    ${host ? `<span class="badge badge-grey"><span class="dot"></span>${host.name}</span>` : ""}
+    ${host ? `<span class="badge badge-grey"><span class="dot"></span>${esc(host.name)}</span>` : ""}
   `;
 
   // Remove leftover landlord-only header Edit button
@@ -11429,7 +11438,7 @@ function openHomestayClient(id){
       <div class="panel-kpi">
         <div class="l">We pay host</div>
         <div class="v red">−${fmt(c.wePay || 0)}</div>
-        <div class="s">/ month to ${host ? host.name.split(" ")[0] : "host"}</div>
+        <div class="s">/ month to ${host ? esc(host.name.split(" ")[0]) : "host"}</div>
       </div>
       <div class="panel-kpi">
         <div class="l">Net margin</div>
@@ -11444,7 +11453,7 @@ function openHomestayClient(id){
     </div>
 
     <div class="panel-section">
-      <div class="panel-section-title"><span><em>Stay</em> details</span><span class="ct">${c.paymentMethod || "—"}</span></div>
+      <div class="panel-section-title"><span><em>Stay</em> details</span><span class="ct">${esc(c.paymentMethod || "—")}</span></div>
       <div class="card" style="padding:0">
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
@@ -11464,27 +11473,27 @@ function openHomestayClient(id){
         ${c.house ? `
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v11H3z"/></svg></div>
-          <div class="list-main"><div class="list-title">House</div><div class="list-sub">${c.room ? "Room " + c.room : "—"}</div></div>
-          <div class="list-meta num">${c.house}</div>
+          <div class="list-main"><div class="list-title">House</div><div class="list-sub">${c.room ? "Room " + esc(c.room) : "—"}</div></div>
+          <div class="list-meta num">${esc(c.house)}</div>
         </div>` : ""}
         <div class="list-row" style="padding:12px 16px;border-bottom:none">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="2"/><line x1="3" y1="11" x2="21" y2="11"/></svg></div>
           <div class="list-main"><div class="list-title">Payment method</div><div class="list-sub">How student pays Vanmates</div></div>
-          <div class="list-meta">${c.paymentMethod || "—"}</div>
+          <div class="list-meta">${esc(c.paymentMethod || "—")}</div>
         </div>
       </div>
     </div>
 
     ${host ? `
     <div class="panel-section">
-      <div class="panel-section-title"><span><em>Host</em> family</span><span class="ct">${host.city || ""}</span></div>
+      <div class="panel-section-title"><span><em>Host</em> family</span><span class="ct">${esc(host.city || "")}</span></div>
       <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
         <div class="avatar" style="width:42px;height:42px;font-size:14px;background:linear-gradient(135deg,${host.color||"#A88965"},${shade(host.color||"#A88965",-25)})">${(host.name||"?").split(/\s+/).map(p=>p[0]).slice(0,2).join("").toUpperCase()}</div>
         <div style="flex:1;min-width:0">
-          <div class="prop-name" style="font-size:15px">${host.name} <span class="flag">${host.flag||""}</span></div>
-          <div class="prop-addr">${host.neighborhood ? host.neighborhood + " · " : ""}${host.city || ""}${host.capacity ? " · capacity " + host.capacity : ""}</div>
+          <div class="prop-name" style="font-size:15px">${esc(host.name)} <span class="flag">${esc(host.flag||"")}</span></div>
+          <div class="prop-addr">${host.neighborhood ? esc(host.neighborhood) + " · " : ""}${esc(host.city || "")}${host.capacity ? " · capacity " + esc(host.capacity) : ""}</div>
           <div style="margin-top:4px">
-            ${host.languages ? host.languages.slice(0,3).map(l => `<span class="badge badge-grey"><span class="dot"></span>${l}</span>`).join(" ") : ""}
+            ${host.languages ? host.languages.slice(0,3).map(l => `<span class="badge badge-grey"><span class="dot"></span>${esc(l)}</span>`).join(" ") : ""}
           </div>
         </div>
         <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-go-host="${host.id}">View →</button>
@@ -11503,18 +11512,18 @@ function openHomestayClient(id){
         <div class="list-row" style="padding:12px 16px">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
           <div class="list-main"><div class="list-title">Email</div></div>
-          <div class="list-meta" style="font-family:var(--slab);font-size:13px">${c.email || '<span style="color:var(--muted)">Not on file</span>'}</div>
+          <div class="list-meta" style="font-family:var(--slab);font-size:13px">${c.email ? esc(c.email) : '<span style="color:var(--muted)">Not on file</span>'}</div>
         </div>
         <div class="list-row" style="padding:12px 16px;border-bottom:none">
           <div class="list-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
           <div class="list-main"><div class="list-title">Phone</div></div>
-          <div class="list-meta" style="font-family:var(--slab);font-size:13px">${c.phone || '<span style="color:var(--muted)">Not on file</span>'}</div>
+          <div class="list-meta" style="font-family:var(--slab);font-size:13px">${c.phone ? esc(c.phone) : '<span style="color:var(--muted)">Not on file</span>'}</div>
         </div>
       </div>
     </div>
 
     <div style="display:flex;gap:8px;margin-top:24px">
-      <a class="btn btn-primary" href="${c.email ? `mailto:${c.email}?subject=${encodeURIComponent("Hello from Vanmates")}` : "#"}" style="flex:1;justify-content:center;${c.email?'':'opacity:.5;pointer-events:none'}">
+      <a class="btn btn-primary" href="${c.email ? `mailto:${esc(c.email)}?subject=${encodeURIComponent("Hello from Vanmates")}` : "#"}" style="flex:1;justify-content:center;${c.email?'':'opacity:.5;pointer-events:none'}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
         Email student
       </a>
@@ -11620,7 +11629,7 @@ bindDropdown("hc-city-btn", "hc-city-menu", "hc-city-wrap", menu => {
         const h = homestayHosts.find(x => x.id === cl.hostId);
         return h && h.city === c;
       }).length;
-      return `<div class="opt" data-hc-city="${c}">${c}<span class="ct">${ct}</span></div>`;
+      return `<div class="opt" data-hc-city="${esc(c)}">${esc(c)}<span class="ct">${ct}</span></div>`;
     }).join("")}
   `;
   menu.querySelectorAll("[data-hc-city]").forEach(o => {
@@ -11638,7 +11647,7 @@ bindDropdown("hc-host-btn", "hc-host-menu", "hc-host-wrap", menu => {
     <div class="opt" data-hc-host=""><span style="font-weight:600">All hosts</span></div>
     ${homestayHosts.map(h => {
       const ct = homestayClients.filter(c => c.hostId === h.id).length;
-      return `<div class="opt" data-hc-host="${h.name}">${h.name}<span class="ct">${ct}</span></div>`;
+      return `<div class="opt" data-hc-host="${esc(h.name)}">${esc(h.name)}<span class="ct">${ct}</span></div>`;
     }).join("")}
   `;
   menu.querySelectorAll("[data-hc-host]").forEach(o => {
@@ -11664,7 +11673,7 @@ function openHomestayClientAdd(){
   hostSel.innerHTML = `<option value="">Select host family…</option>` +
     (typeof homestayHosts !== "undefined" ? homestayHosts : [])
       .filter(h => !h.deleted_at)
-      .map(h => `<option value="${h.id}">${h.name}${h.city ? ' · ' + h.city : ''}${typeof h.capacity === "number" ? ' (cap ' + h.capacity + ')' : ''}</option>`)
+      .map(h => `<option value="${esc(h.id)}">${esc(h.name)}${h.city ? ' · ' + esc(h.city) : ''}${typeof h.capacity === "number" ? ' (cap ' + h.capacity + ')' : ''}</option>`)
       .join("");
 
   // Default check-in to the portal's "today" (so the new entry lands in the
@@ -11894,17 +11903,17 @@ function renderMatchingApplicants(){
     return `
       <div class="card card-pad" style="margin-bottom:10px;cursor:pointer;${sel?'border-color:var(--red);box-shadow:0 0 0 3px var(--red-soft)':''}" data-applicant="${a.id}">
         <div style="display:flex;align-items:flex-start;gap:14px">
-          <div class="avatar" style="background:linear-gradient(135deg, ${a.color}, ${shade(a.color,-25)})">${a.ini}</div>
+          <div class="avatar" style="background:linear-gradient(135deg, ${a.color}, ${shade(a.color,-25)})">${esc(a.ini)}</div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <div class="prop-name" style="font-size:15px">${a.name} <span class="flag">${a.flag}</span></div>
+              <div class="prop-name" style="font-size:15px">${esc(a.name)} <span class="flag">${esc(a.flag)}</span></div>
               <span class="badge badge-amber" style="font-size:10px"><span class="dot"></span>Applied ${arrLabel}</span>
             </div>
-            <div class="prop-addr" style="font-size:12.5px">${a.school} · ${a.city}</div>
+            <div class="prop-addr" style="font-size:12.5px">${esc(a.school)} · ${esc(a.city)}</div>
             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">
               <span class="badge badge-grey"><span class="dot"></span>${fmtDate(a.arrival)} → ${fmtDate(a.departure)}</span>
-              <span class="badge badge-blue"><span class="dot"></span>${a.languages.join(" · ")}</span>
-              ${a.dietary !== "None" ? `<span class="badge badge-grey"><span class="dot"></span>${a.dietary}</span>` : ""}
+              <span class="badge badge-blue"><span class="dot"></span>${esc(a.languages.join(" · "))}</span>
+              ${a.dietary !== "None" ? `<span class="badge badge-grey"><span class="dot"></span>${esc(a.dietary)}</span>` : ""}
             </div>
           </div>
         </div>
@@ -11961,7 +11970,7 @@ function renderMatchCandidates(){
 
   if(ranked.length === 0){
     container.innerHTML = `<div class="card card-pad" style="text-align:center;color:var(--muted);padding:36px 20px">
-      <div class="prop-name" style="margin-bottom:4px">No host capacity in ${a.city}</div>
+      <div class="prop-name" style="margin-bottom:4px">No host capacity in ${esc(a.city)}</div>
       <div>Recruit a new host family in this city — there's demand.</div>
     </div>`;
     return;
@@ -11970,24 +11979,24 @@ function renderMatchCandidates(){
   container.innerHTML = ranked.map((h, i) => `
     <div class="card card-pad" style="margin-bottom:10px;${i===0?'border-color:#5C8A6B;box-shadow:0 0 0 2px var(--green-soft)':''}">
       <div style="display:flex;align-items:flex-start;gap:14px">
-        <div class="avatar" style="width:42px;height:42px;font-size:14px;background:linear-gradient(135deg, ${h.color}, ${shade(h.color,-25)})">${h.name.split(" ")[0][0]}${h.name.split(" ")[1] ? h.name.split(" ")[1][0] : ""}</div>
+        <div class="avatar" style="width:42px;height:42px;font-size:14px;background:linear-gradient(135deg, ${h.color}, ${shade(h.color,-25)})">${esc(h.name.split(" ")[0][0])}${h.name.split(" ")[1] ? esc(h.name.split(" ")[1][0]) : ""}</div>
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <div class="prop-name" style="font-size:15px">${h.name}</div>
+            <div class="prop-name" style="font-size:15px">${esc(h.name)}</div>
             ${i===0 ? '<span class="badge badge-green" style="font-size:10px"><span class="dot"></span>★ Best match</span>' : ''}
             <span class="badge ${h.match.score>=80?'badge-green':h.match.score>=60?'badge-amber':'badge-grey'}" style="font-size:10.5px;font-family:var(--slab)">
               <span class="dot"></span>Score ${h.match.score}
             </span>
           </div>
-          <div class="prop-addr" style="font-size:12.5px">${h.neighborhood} · ${h.match.free} bed${h.match.free===1?"":"s"} available · ${h.rating} ★</div>
+          <div class="prop-addr" style="font-size:12.5px">${esc(h.neighborhood)} · ${h.match.free} bed${h.match.free===1?"":"s"} available · ${h.rating} ★</div>
 
           ${i===0 ? `<div style="margin-top:10px;padding:10px 12px;background:var(--cream-2);border-left:3px solid var(--red);border-radius:6px;font-size:12.5px;line-height:1.5;font-style:italic;color:var(--ink)">
             <span style="font-style:normal;font-weight:700;font-size:10px;letter-spacing:1px;color:var(--red);text-transform:uppercase">AI summary</span><br>
-            ${h.match.narrative}
+            ${esc(h.match.narrative)}
           </div>` : ''}
 
           <div style="margin-top:8px;font-size:12px;color:var(--muted)">
-            ${h.match.reasons.map(r => `<div style="margin-top:3px"><span style="color:#5C8A6B;font-weight:700">✓</span> ${r}</div>`).join("")}
+            ${h.match.reasons.map(r => `<div style="margin-top:3px"><span style="color:#5C8A6B;font-weight:700">✓</span> ${esc(r)}</div>`).join("")}
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
@@ -12011,8 +12020,13 @@ function renderMatchCandidates(){
       const ap = homestayApplicants.find(x => x.id === aid);
       if(!h || !ap) return;
 
-      // Add as a new active homestay client
-      const newId = "hc" + String(homestayClients.length + 1).padStart(2, "0");
+      // Add as a new active homestay client. Use the highest existing suffix
+      // (not array length) so a prior delete can't cause an id collision.
+      const maxHcNum = homestayClients.reduce((m, c) => {
+        const n = parseInt(String(c.id).replace(/\D/g, ""), 10);
+        return Number.isFinite(n) && n > m ? n : m;
+      }, 0);
+      const newId = "hc" + String(maxHcNum + 1).padStart(2, "0");
       const newClient = {
         id: newId, ini: ap.ini, name: ap.name, email: ap.email, phone: "—",
         flag: ap.flag, country: ap.country, school: ap.school,
@@ -12309,8 +12323,8 @@ function openNotifications(){
               <div class="list-row" style="padding:14px 16px;cursor:pointer;${i===grp.length-1?'border-bottom:none':''}" data-notif="${it.id}">
                 <div class="list-icon ${it.iconCls}">${it.icon}</div>
                 <div class="list-main">
-                  <div class="list-title">${it.title}</div>
-                  <div class="list-sub">${it.sub}</div>
+                  <div class="list-title">${esc(it.title)}</div>
+                  <div class="list-sub">${esc(it.sub)}</div>
                 </div>
                 <button class="btn btn-ghost" data-notif-action="${it.id}" style="padding:5px 12px;font-size:12px">${it.action.label}</button>
               </div>
@@ -12589,7 +12603,7 @@ function openEditHomestayClient(client){
   hostSel.innerHTML = `<option value="">— Unassigned (looking for host) —</option>` +
     (typeof homestayHosts !== "undefined" ? homestayHosts : [])
       .filter(h => !h.deleted_at)
-      .map(h => `<option value="${h.id}" ${h.id===client.hostId?'selected':''}>${h.name}${h.city ? ' · ' + h.city : ''}</option>`)
+      .map(h => `<option value="${esc(h.id)}" ${h.id===client.hostId?'selected':''}>${esc(h.name)}${h.city ? ' · ' + esc(h.city) : ''}</option>`)
       .join("");
 
   const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
@@ -12811,6 +12825,11 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
   if(!name){ failEdit("Property name can't be empty."); return; }
   if(rooms < 1){ failEdit("A property must have at least 1 room."); return; }
 
+  // Rename bookkeeping: track the old name and every dependent record we
+  // re-link, so they can be persisted (not just mutated in memory) below.
+  let _renamedFrom = null;
+  const _changed = { tenants: [], vacancies: [], landlords: [] };
+
   // Branch: add new vs update existing
   let target;
   if (_isAddingProperty) {
@@ -12840,17 +12859,22 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
       const dup = properties.find(p => p.name === name);
       if(dup){ failEdit(`Another property already uses the name "${name}".`); return; }
       if(!confirm(`Renaming "${originalName}" to "${name}" will also update the property field on every tenant linked to it. Continue?`)) return;
-      // Propagate rename
+      _renamedFrom = originalName;
+      // Propagate rename — collect each touched record so we can persist it.
       (typeof tenants !== "undefined" ? tenants : []).forEach(t => {
-        if(t.property === originalName) t.property = name;
+        if(t.property === originalName){ t.property = name; _changed.tenants.push(t); }
       });
       (typeof vacancies !== "undefined" ? vacancies : []).forEach(v => {
-        if(v.prop === originalName) v.prop = name;
+        if(v.prop === originalName){ v.prop = name; _changed.vacancies.push(v); }
       });
       // Propagate on landlord records too
       (typeof landlords !== "undefined" ? landlords : []).forEach(l => {
-        if(l.property === originalName) l.property = name;
-        if(Array.isArray(l.properties)) l.properties = l.properties.map(p => p === originalName ? name : p);
+        let touched = false;
+        if(l.property === originalName){ l.property = name; touched = true; }
+        if(Array.isArray(l.properties) && l.properties.includes(originalName)){
+          l.properties = l.properties.map(p => p === originalName ? name : p); touched = true;
+        }
+        if(touched) _changed.landlords.push(l);
       });
     }
   }
@@ -12868,6 +12892,14 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
 
     if(window.vmDb && window.vmDb.upsert){
       await window.vmDb.upsert('properties', target);
+      // Rename cleanup: delete the stale old-name row and persist every
+      // dependent record we re-linked, so the rename survives a hydrate.
+      if(_renamedFrom && _renamedFrom !== name){
+        if(window.vmDb.delete){ try { await window.vmDb.delete('properties', _renamedFrom, null); } catch(_){} }
+        for(const t of _changed.tenants)   { try { await window.vmDb.upsert('tenants', t); } catch(_){} }
+        for(const v of _changed.vacancies) { try { await window.vmDb.upsert('vacancies', v); } catch(_){} }
+        for(const l of _changed.landlords) { try { await window.vmDb.upsert('landlords', l); } catch(_){} }
+      }
     }
     if(typeof renderProperties === "function") renderProperties();
     if(typeof renderPropertiesGrid === "function") renderPropertiesGrid();
@@ -12898,7 +12930,7 @@ function openEditTenant(tenant){
   propSel.innerHTML = `<option value="">Select property…</option>` +
     (typeof properties !== "undefined" ? properties : [])
       .filter(p => !p.deleted_at)
-      .map(p => `<option value="${p.name}" ${p.name===tenant.property?'selected':''}>${p.name}${p.city?' · '+p.city:''}</option>`)
+      .map(p => `<option value="${esc(p.name)}" ${p.name===tenant.property?'selected':''}>${esc(p.name)}${p.city?' · '+esc(p.city):''}</option>`)
       .join("");
 
   // Pre-fill every input
@@ -13013,13 +13045,17 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
   if(!name){ failEdit("Name can't be empty."); return; }
   if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ failEdit("A valid email is required."); return; }
 
-  // Find the tenant by original email (the id key); fall back to name match
-  const idx = tenants.findIndex(x =>
-    (x.email && x.email.toLowerCase() === origEmail.toLowerCase()) ||
-    (x.id === _editingTenant.id)
-  );
+  // Find the exact tenant being edited by object identity. Matching by
+  // email/id is unsafe for records with no email: origEmail is "" and
+  // _editingTenant.id is undefined, so `x.id === undefined` matches the FIRST
+  // id-less tenant and overwrites the wrong record.
+  const idx = tenants.indexOf(_editingTenant);
   if(idx < 0){ failEdit("Couldn't find the tenant — please reload and try again."); return; }
   const target = tenants[idx];
+  // Capture the persistence key (row id) BEFORE mutation. Tenants are keyed by
+  // email in Postgres, so if the email changes we must delete the old-key row
+  // or it reappears as a duplicate on the next hydrate.
+  const oldRowKey = String(target.email || target.id || target.name || "");
 
   // If the user changed the email, make sure the new one isn't already taken
   if(email.toLowerCase() !== origEmail.toLowerCase()){
@@ -13070,9 +13106,13 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
     else if(parts.length === 1) target.ini = parts[0].slice(0,2).toUpperCase();
 
     if(window.vmDb && window.vmDb.upsert){
-      // If email changed, the row id might have changed too — upsert under the
-      // new id. The old row stays harmlessly (or admin can clean up later).
       await window.vmDb.upsert('tenants', target);
+      // If the email (row id) changed, soft-delete the stale old-key row so it
+      // doesn't reappear as a duplicate after the next hydrate.
+      const newRowKey = String(target.email || target.id || target.name || "");
+      if(oldRowKey && oldRowKey !== newRowKey && window.vmDb.delete){
+        try { await window.vmDb.delete('tenants', oldRowKey, null); } catch(_){}
+      }
     }
 
     if(typeof renderTenants === "function") renderTenants(document.getElementById("tenant-search")?.value || "");
@@ -13393,7 +13433,7 @@ function openAddTenantModal(propName, roomLabel){
         </div>
         <div style="flex:1;min-width:0">
           <div class="modal-title">Add <em>tenant</em></div>
-          <div class="modal-sub">${propName} · ${propMeta.city || ""}</div>
+          <div class="modal-sub">${esc(propName)} · ${esc(propMeta.city || "")}</div>
         </div>
         <button class="modal-close" id="at-close" aria-label="Close">&times;</button>
       </div>
@@ -13416,7 +13456,7 @@ function openAddTenantModal(propName, roomLabel){
           </div>
           <div class="form-field">
             <label>Room <span class="req">*</span></label>
-            <input id="at-room" type="text" class="form-input" value="${suggestedRoom}" placeholder="Room 4 / Suite B"/>
+            <input id="at-room" type="text" class="form-input" value="${esc(suggestedRoom)}" placeholder="Room 4 / Suite B"/>
           </div>
         </div>
         <div class="form-row">
@@ -13493,10 +13533,14 @@ function openAddTenantModal(propName, roomLabel){
     const rent = num("at-rent");
     const moveIn = v("at-movein");
     const leaseEnd = v("at-leaseend");
+    const email = v("at-email");
     const err = document.getElementById("at-err");
 
     const showErr = (msg) => { err.textContent = msg; err.style.display = "block"; err.scrollIntoView({behavior:"smooth", block:"nearest"}); };
     if(!name){ showErr("Full name is required."); return; }
+    // Email is the tenant's primary key (lookup, dedup, DB row). A blank one
+    // creates an unreachable record, so require a valid address like the full form.
+    if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ showErr("A valid email is required."); return; }
     if(!room){ showErr("Room is required."); return; }
     if(!rent || rent <= 0){ showErr("Monthly rent must be positive."); return; }
     if(!moveIn || !leaseEnd){ showErr("Move-in and lease-end dates are required."); return; }
@@ -13532,7 +13576,7 @@ function openAddTenantModal(propName, roomLabel){
       leaseEnd,
       leaseType: v("at-leasetype") || "Long-term",
       paymentMethod: v("at-pay") || "e-Transfer",
-      email: v("at-email"),
+      email,
       status: "active",
       // Fields openTenant() relies on but the basic Add form doesn't ask for.
       // Without these defaults, openTenant crashes (t.pay.split is undefined)
@@ -13601,7 +13645,7 @@ function showRemoveUndoToast(name){
     toast.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 16px;border-radius:10px;display:flex;align-items:center;gap:14px;z-index:9000;box-shadow:0 6px 24px rgba(0,0,0,.25);font-family:var(--sans);font-size:13.5px";
     document.body.appendChild(toast);
   }
-  toast.innerHTML = `<span>Removed <b>${name}</b></span><button id="rm-undo-btn" style="background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 12px;border-radius:7px;font-weight:700;cursor:pointer;font-size:12px">Undo</button>`;
+  toast.innerHTML = `<span>Removed <b>${esc(name)}</b></span><button id="rm-undo-btn" style="background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 12px;border-radius:7px;font-weight:700;cursor:pointer;font-size:12px">Undo</button>`;
   toast.style.display = "flex";
   document.getElementById("rm-undo-btn").onclick = () => {
     if(!_lastRemoved) return;
@@ -13702,14 +13746,14 @@ function refreshPortfolio(){
         <tr style="cursor:pointer" data-pf-prop="${p.name.replace(/"/g,"&quot;")}">
           <td>
             <div class="name-cell">
-              <div style="width:30px;height:30px;border-radius:8px;background:${p.color}33;display:grid;place-items:center;color:${p.color};font-weight:700;font-family:var(--serif);font-style:italic">${p.name[0]}</div>
+              <div style="width:30px;height:30px;border-radius:8px;background:${p.color}33;display:grid;place-items:center;color:${p.color};font-weight:700;font-family:var(--serif);font-style:italic">${esc(p.name[0])}</div>
               <div>
-                <div class="name-main">${p.name}</div>
-                <div class="name-sub">${p.type}</div>
+                <div class="name-main">${esc(p.name)}</div>
+                <div class="name-sub">${esc(p.type)}</div>
               </div>
             </div>
           </td>
-          <td>${p.city || "—"}</td>
+          <td>${esc(p.city || "—")}</td>
           <td><span class="num">${p.occ}/${p.rooms}</span></td>
           <td>
             <div style="display:flex;align-items:center;gap:8px">
@@ -13721,7 +13765,7 @@ function refreshPortfolio(){
           <td class="right num" style="color:var(--muted)">${avgRent ? fmt(avgRent) : "—"}</td>
           <td class="right num">${p.occ}</td>
           <td class="right num">${p.occPct}%</td>
-          <td>${p.city || "—"}</td>
+          <td>${esc(p.city || "—")}</td>
           <td><button class="btn btn-ghost" style="padding:5px 12px;font-size:12px;pointer-events:none">Open</button></td>
         </tr>
       `;
@@ -13774,7 +13818,7 @@ function refreshPortfolio(){
     const labels = $("rp-labels");
     if(labels){
       labels.innerHTML = top12.map(p =>
-        `<span style="font-size:10.5px;text-align:center;line-height:1.2">${p.name.split(/\s+/).slice(0,2).join('<br>')}</span>`
+        `<span style="font-size:10.5px;text-align:center;line-height:1.2">${p.name.split(/\s+/).slice(0,2).map(esc).join('<br>')}</span>`
       ).join("");
     }
     // Update legend (we only have revenue now)
@@ -13814,7 +13858,7 @@ function refreshPortfolio(){
       legend.innerHTML = slices.map(s => `
         <div class="legend-row">
           <span class="legend-sw" style="background:${s.color}"></span>
-          <span style="font-size:12px">${s.name}</span>
+          <span style="font-size:12px">${esc(s.name)}</span>
           <span class="legend-val">${((s.rev/totalRev)*100).toFixed(1)}%</span>
         </div>
       `).join("");
@@ -13828,8 +13872,8 @@ function refreshPortfolio(){
       <div class="list-row" style="cursor:pointer" data-pf-go="${p.name.replace(/"/g,"&quot;")}">
         <div style="width:28px;height:28px;border-radius:50%;background:var(--green-soft);color:#3e6049;display:grid;place-items:center;font-weight:700;font-size:12px;font-family:var(--slab)">#${i+1}</div>
         <div class="list-main">
-          <div class="list-title">${p.name}</div>
-          <div class="list-sub">${p.city} · ${p.occ}/${p.rooms} occupied · ${p.occPct}% full</div>
+          <div class="list-title">${esc(p.name)}</div>
+          <div class="list-sub">${esc(p.city)} · ${p.occ}/${p.rooms} occupied · ${p.occPct}% full</div>
         </div>
         <div class="list-meta num" style="color:#3e6049">${fmt(p.rev)}</div>
       </div>
@@ -13855,7 +13899,7 @@ function refreshPortfolio(){
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.7 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/></svg>
           </div>
           <div class="list-main">
-            <div class="list-title">${p.name}</div>
+            <div class="list-title">${esc(p.name)}</div>
             <div class="list-sub">${flag} · ${p.occ}/${p.rooms} rooms · ${p.occPct}% occupied</div>
           </div>
           <div class="list-meta num">${fmt(p.rev)}</div>
@@ -13921,7 +13965,7 @@ function refreshDashboard(){
   const firstName = ((u && u.name) || "there").toString().split(/\s+/)[0];
   const hour = new Date().getHours();
   const partOfDay = hour < 12 ? "morning" : (hour < 18 ? "afternoon" : "evening");
-  const greeting = `Good ${partOfDay}, <em>${firstName}</em>`;
+  const greeting = `Good ${partOfDay}, <em>${esc(firstName)}</em>`;
 
   // Apply greeting to the live page-title element (so it changes immediately
   // even if the user is already on Dashboard) and to the titles map (so
@@ -14045,8 +14089,8 @@ function refreshDashboard(){
         const moveInDate = new Date(t.moveIn);
         const dateLabel = `${MONTH_NAMES[moveInDate.getMonth()]} ${moveInDate.getDate()}`;
         row.innerHTML = `
-          <div class="avatar" style="background:linear-gradient(135deg,${t.color || "#A88965"},${shade(t.color || "#A88965", -25)})">${t.ini}</div>
-          <div class="list-main"><div class="list-title">${t.name}</div><div class="list-sub">${t.property} · ${t.room || "—"} · ${t.city || ""}</div></div>
+          <div class="avatar" style="background:linear-gradient(135deg,${t.color || "#A88965"},${shade(t.color || "#A88965", -25)})">${esc(t.ini)}</div>
+          <div class="list-main"><div class="list-title">${esc(t.name)}</div><div class="list-sub">${esc(t.property)} · ${esc(t.room || "—")} · ${esc(t.city || "")}</div></div>
           <div class="list-meta">${dateLabel}</div>
         `;
         moveInsCard.appendChild(row);
@@ -14086,7 +14130,7 @@ function refreshDashboard(){
           <div class="list-icon ${isUrgent ? 'red' : 'amber'}">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
           </div>
-          <div class="list-main"><div class="list-title">${t.name}</div><div class="list-sub">${t.property} · ${t.room || "—"}</div></div>
+          <div class="list-main"><div class="list-title">${esc(t.name)}</div><div class="list-sub">${esc(t.property)} · ${esc(t.room || "—")}</div></div>
           <div class="list-meta" style="${isUrgent ? 'color:var(--red-dark)' : ''}">in ${t.days} day${t.days===1?"":"s"}</div>
         `;
         endingCard.appendChild(row);
@@ -14611,7 +14655,7 @@ function openAddHostModal(existingHost){
     const txt = document.getElementById("ah-pdf-text");
     if(!txt) return;
     if(f){
-      txt.innerHTML = `<b style="color:var(--ink)">${f.name}</b> · ${Math.round(f.size/1024).toLocaleString()} KB · ready to attach`;
+      txt.innerHTML = `<b style="color:var(--ink)">${esc(f.name)}</b> · ${Math.round(f.size/1024).toLocaleString()} KB · ready to attach`;
     } else {
       txt.textContent = "Click to upload PDF (or drag and drop)";
     }
@@ -14702,13 +14746,13 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
       const isYou = m.id === (typeof CURRENT_USER !== "undefined" ? CURRENT_USER.id : null);
       return `
         <div class="role-row">
-          <div class="avatar" style="background:linear-gradient(135deg,${m.color || "#A88965"},${shade(m.color || "#A88965", -25)})">${m.ini || (m.name||"?").slice(0,2).toUpperCase()}</div>
+          <div class="avatar" style="background:linear-gradient(135deg,${m.color || "#A88965"},${shade(m.color || "#A88965", -25)})">${esc(m.ini || (m.name||"?").slice(0,2).toUpperCase())}</div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <div style="font-weight:600">${m.name}${isYou ? ' <span style="font-size:11px;color:var(--muted);font-weight:500">(you)</span>' : ''}</div>
-              <span class="role-pill-mini ${roleClass}">${roleLabel}</span>
+              <div style="font-weight:600">${esc(m.name)}${isYou ? ' <span style="font-size:11px;color:var(--muted);font-weight:500">(you)</span>' : ''}</div>
+              <span class="role-pill-mini ${roleClass}">${esc(roleLabel)}</span>
             </div>
-            <div style="font-size:12.5px;color:var(--muted);font-family:var(--slab)">${m.email || ""}${m.title ? " · " + m.title : ""}</div>
+            <div style="font-size:12.5px;color:var(--muted);font-family:var(--slab)">${esc(m.email || "")}${m.title ? " · " + esc(m.title) : ""}</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             ${isCurrentAdmin
@@ -14755,8 +14799,8 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
             <div class="role-row">
               <div class="list-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 6 12 13 2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
               <div style="flex:1;min-width:0">
-                <div style="font-weight:600">${inv.name}</div>
-                <div style="font-size:12.5px;color:var(--muted);font-family:var(--slab)">${inv.email} · ${roleLabel} · sent ${inv.sentDaysAgo === 0 ? "today" : inv.sentDaysAgo + "d ago"}</div>
+                <div style="font-weight:600">${esc(inv.name)}</div>
+                <div style="font-size:12.5px;color:var(--muted);font-family:var(--slab)">${esc(inv.email)} · ${esc(roleLabel)} · sent ${inv.sentDaysAgo === 0 ? "today" : inv.sentDaysAgo + "d ago"}</div>
               </div>
               <button class="btn btn-ghost pi-resend" data-id="${inv.id}" style="padding:5px 10px;font-size:12px">Resend</button>
               <button class="btn btn-ghost pi-revoke" data-id="${inv.id}" style="padding:5px 10px;font-size:12px;color:var(--red-dark)">Revoke</button>
@@ -15194,12 +15238,12 @@ function openVacancy(id){
     hero.textContent = (v.room || "?").slice(0,2).toUpperCase();
   }
 
-  document.getElementById("panel-title").innerHTML = `${v.room}`;
+  document.getElementById("panel-title").innerHTML = `${esc(v.room)}`;
   document.getElementById("panel-sub").textContent = `${v.prop} · ${v.city}`;
 
   document.getElementById("panel-meta").innerHTML = `
     <span class="badge ${v.listed?'badge-green':'badge-amber'}"><span class="dot"></span>${v.listed?'Live listing':'Draft'}</span>
-    <span class="badge badge-grey"><span class="dot"></span>${v.type}</span>
+    <span class="badge badge-grey"><span class="dot"></span>${esc(v.type)}</span>
     ${days >= 0
       ? `<span class="badge ${days<=14?'badge-red':days<=60?'badge-amber':'badge-grey'}"><span class="dot"></span>Available in ${days} day${days===1?"":"s"}</span>`
       : `<span class="badge badge-grey"><span class="dot"></span>Available since ${Math.abs(days)} days ago</span>`}
@@ -15234,21 +15278,21 @@ function openVacancy(id){
       </div>
       <div class="panel-kpi">
         <div class="l">Lease type</div>
-        <div class="v" style="font-size:16px;line-height:1.1">${v.type}</div>
-        <div class="s">${v.section ? "Listed in " + v.section : "—"}</div>
+        <div class="v" style="font-size:16px;line-height:1.1">${esc(v.type)}</div>
+        <div class="s">${v.section ? "Listed in " + esc(v.section) : "—"}</div>
       </div>
     </div>
 
     <!-- Address -->
     ${v.addr ? `
     <div class="panel-section">
-      <div class="panel-section-title"><span><em>Address</em></span><span class="ct">${v.city}</span></div>
+      <div class="panel-section-title"><span><em>Address</em></span><span class="ct">${esc(v.city)}</span></div>
       <div class="card card-pad" style="display:flex;align-items:flex-start;gap:14px">
         <div class="list-icon" style="margin-top:2px">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
         </div>
         <div style="flex:1;min-width:0;font-size:13.5px;line-height:1.5">
-          ${v.addr}
+          ${esc(v.addr)}
         </div>
         ${mapsUrl ? `<a href="${mapsUrl}" target="_blank" class="btn btn-ghost" style="padding:5px 12px;font-size:12px;flex-shrink:0">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg>
@@ -15263,24 +15307,24 @@ function openVacancy(id){
       <div class="panel-section-title"><span><em>Listing</em> assets</span><span class="ct">photos · web</span></div>
       <div class="card" style="padding:0">
         ${v.pictures ? `
-        <a href="${v.pictures}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer">
+        <a href="${safeHref(v.pictures)}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer">
           <div class="list-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
           </div>
           <div class="list-main">
             <div class="list-title">Photos folder</div>
-            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${v.pictures}</div>
+            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${esc(v.pictures)}</div>
           </div>
           <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Open →</div>
         </a>` : ""}
         ${v.website ? `
-        <a href="${v.website}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer;${v.pictures?'border-top:none':''}">
+        <a href="${safeHref(v.website)}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer;${v.pictures?'border-top:none':''}">
           <div class="list-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M2 12h20"/><path d="M12 2a14.5 14.5 0 0 1 0 20"/><path d="M12 2a14.5 14.5 0 0 0 0 20"/></svg>
           </div>
           <div class="list-main">
             <div class="list-title">Public listing on vanmates.com</div>
-            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${v.website}</div>
+            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${esc(v.website)}</div>
           </div>
           <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Open →</div>
         </a>` : ""}
@@ -15299,10 +15343,10 @@ function openVacancy(id){
     <div class="panel-section">
       <div class="panel-section-title"><span>Linked <em>property</em></span></div>
       <div class="card card-pad" style="display:flex;align-items:center;gap:14px">
-        <div class="panel-hero" style="width:40px;height:40px;font-size:14px;border-radius:9px;background:linear-gradient(135deg,${propMeta.color||"#A88965"},${shade(propMeta.color||"#A88965",-25)})">${(propMeta.name||"?")[0]}</div>
+        <div class="panel-hero" style="width:40px;height:40px;font-size:14px;border-radius:9px;background:linear-gradient(135deg,${propMeta.color||"#A88965"},${shade(propMeta.color||"#A88965",-25)})">${esc((propMeta.name||"?")[0])}</div>
         <div style="flex:1;min-width:0">
-          <div class="prop-name" style="font-size:14.5px">${propMeta.name}</div>
-          <div class="prop-addr">${propMeta.addr || v.city}</div>
+          <div class="prop-name" style="font-size:14.5px">${esc(propMeta.name)}</div>
+          <div class="prop-addr">${esc(propMeta.addr || v.city)}</div>
         </div>
         <button class="btn btn-ghost" data-go-prop="${propMeta.name.replace(/"/g,'&quot;')}" style="padding:5px 12px;font-size:12px">View →</button>
       </div>
@@ -15314,7 +15358,7 @@ function openVacancy(id){
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
         Share listing
       </button>
-      ${v.website ? `<a class="btn btn-ghost" style="flex:1;justify-content:center" href="${v.website}" target="_blank">
+      ${v.website ? `<a class="btn btn-ghost" style="flex:1;justify-content:center" href="${safeHref(v.website)}" target="_blank">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v7H3V3h7"/></svg>
         Open public page
       </a>` : ""}
