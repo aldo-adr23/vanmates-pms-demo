@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-06-05a"></script>
+<script src="pms-supabase.js?v=2026-06-09a"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -1142,6 +1142,11 @@
     </button>
 
     <div class="nav-section-label">Operations</div>
+    <button class="nav-item" data-view="leads">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+      Leads
+      <span class="nav-count">—</span>
+    </button>
     <button class="nav-item" data-view="tenants">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M21.5 19a4.5 4.5 0 0 0-7-3.7"/></svg>
       Tenants
@@ -1695,6 +1700,57 @@
             Page <b id="page-num">1</b> of <b id="page-total">1</b>
           </div>
           <div class="page-btns" id="page-btns"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ LEADS ============ -->
+    <section class="view" data-view="leads">
+      <div class="filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="leads-search" placeholder="Search leads by name, email, message…" autocomplete="off" />
+        </div>
+        <select id="leads-filter-source" class="form-input" style="max-width:210px">
+          <option value="">All sources</option>
+          <option value="manual">Manual entry</option>
+          <option value="contact">Contact form</option>
+          <option value="room-search">Room search</option>
+          <option value="homestay">Homestay</option>
+          <option value="host-application">Host application</option>
+          <option value="manager-application">Manager application</option>
+          <option value="partner">Partner</option>
+          <option value="service">Service request</option>
+        </select>
+        <select id="leads-filter-status" class="form-input" style="max-width:170px">
+          <option value="">All statuses</option>
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="qualified">Qualified</option>
+          <option value="won">Won</option>
+          <option value="lost">Lost</option>
+        </select>
+        <button class="btn btn-primary" id="leads-add-btn" type="button" style="margin-left:auto">+ Add lead</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px">
+          <div class="card-title"><b id="leads-count">0</b> leads</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Source</th><th>Contact</th><th>City</th><th>Status</th><th>Assignee</th><th>Received</th>
+            </tr>
+          </thead>
+          <tbody id="leads-body"></tbody>
+        </table>
+        <div id="leads-empty" style="display:none">
+          <div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+            <div class="t">No leads yet</div>
+            <div>Website submissions will appear here automatically.</div>
+          </div>
         </div>
       </div>
     </section>
@@ -2909,6 +2965,94 @@ hello@vanmates.com · vanmates.com</textarea>
       <button type="button" class="btn btn-ghost" id="modal-cancel">Cancel</button>
       <button type="submit" form="add-landlord-form" class="btn btn-primary">Save landlord</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ LEAD DETAIL MODAL ============ -->
+<div class="modal-backdrop" id="lead-modal-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="lead-modal-title">
+    <div class="modal-head">
+      <div class="ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="lead-modal-title">Lead</div>
+        <div class="modal-sub" id="lead-modal-sub"></div>
+      </div>
+      <button class="modal-close" id="lead-modal-close" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-field"><label>Status</label><select class="form-input" id="lead-status"></select></div>
+        <div class="form-field"><label>Assignee</label><select class="form-input" id="lead-assignee"></select></div>
+      </div>
+      <div class="form-field"><label>Contact</label><div id="lead-contact" style="font-size:13px"></div></div>
+      <div class="form-field"><label>Notes</label><textarea class="form-input" id="lead-notes" rows="3" placeholder="Internal notes…"></textarea></div>
+      <div class="form-field"><label>Submission</label><pre id="lead-payload" style="background:var(--cream-2);padding:10px;border-radius:8px;font-size:12px;white-space:pre-wrap;overflow:auto;max-height:220px;margin:0"></pre></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-ghost" id="lead-email-btn" type="button">Email lead</button>
+        <button class="btn btn-primary" id="lead-save-btn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ADD LEAD MODAL ============ -->
+<div class="modal-backdrop" id="lead-add-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="lead-add-title">
+    <div class="modal-head">
+      <div class="ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="lead-add-title">Add a <em>lead</em></div>
+        <div class="modal-sub">Manually log an inbound enquiry</div>
+      </div>
+      <button class="modal-close" id="lead-add-close" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <form class="modal-body" id="lead-add-form" autocomplete="off" novalidate>
+      <div class="form-error" id="lead-add-error" style="display:none"></div>
+      <div class="form-row">
+        <div class="form-field"><label>Full name <span class="req">*</span></label><input class="form-input" name="name" type="text" required placeholder="e.g. Maria García" /></div>
+        <div class="form-field"><label>Email</label><input class="form-input" name="email" type="email" placeholder="maria@example.com" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Phone</label><input class="form-input" name="phone" type="text" placeholder="+1 604 555 0100" /></div>
+        <div class="form-field"><label>City</label><input class="form-input" name="city" type="text" placeholder="Vancouver" /></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Source</label>
+          <select class="form-input" name="source">
+            <option value="manual">Manual entry</option>
+            <option value="contact">Contact form</option>
+            <option value="room-search">Room search</option>
+            <option value="homestay">Homestay</option>
+            <option value="host-application">Host application</option>
+            <option value="manager-application">Manager application</option>
+            <option value="partner">Partner</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Status</label>
+          <select class="form-input" name="status">
+            <option value="new">New</option>
+            <option value="contacted">Contacted</option>
+            <option value="qualified">Qualified</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field"><label>Assignee</label><select class="form-input" name="assignee" id="lead-add-assignee"><option value="">Unassigned</option></select></div>
+      <div class="form-field"><label>Notes</label><textarea class="form-input" name="notes" rows="3" placeholder="Where did this lead come from? Any context…"></textarea></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-ghost" type="button" id="lead-add-cancel">Cancel</button>
+        <button class="btn btn-primary" type="submit">Add lead</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -6495,9 +6639,9 @@ function closeProperty(){
 /* ============ TEAM & ROLES ============ */
 const roles = {
   admin:       {label:"Admin",              color:"#B94A3F", desc:"Full access to everything",
-                nav:["dashboard","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-matching","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
+                nav:["dashboard","leads","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-matching","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
-                nav:["dashboard","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
+                nav:["dashboard","leads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
@@ -6512,6 +6656,7 @@ const teamMembers = [
 
 // Pending invitations — sent but not yet accepted
 const pendingInvites = [];
+const leads = [];   // hydrated from Supabase; website submissions land here
 
 let CURRENT_USER = teamMembers[0]; // Aldo (admin)
 let VIEWING_AS = null;             // when set, override active role
@@ -8808,6 +8953,7 @@ document.getElementById("pf-bottom").innerHTML = attention.map(p => {
 const titles = {
   dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
+  leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
   portfolio: ["<em>Portfolio</em> performance", "Revenue, profit, and margin per property · April 2026"],
   landlords: ["<em>Landlords</em>", "Owners we lease from · contracts, rent paid, and renewals"],
@@ -12387,6 +12533,7 @@ function updateSidebarCounts(){
     set("deposits", open);
   }
   if(typeof teamMembers !== "undefined")       set("team",              teamMembers.length);
+  if(typeof leads !== "undefined")             set("leads",             leads.filter(l => (l.status||'new') === 'new').length);
 }
 updateSidebarCounts();
 
@@ -15488,7 +15635,7 @@ async function renderTrashPanel(){
         if (typeof showToast === 'function') showToast(`Restored ${b.dataset.id}`);
         await window.vmDb.hydrate();
         renderTrashPanel();
-        ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies','renderHomestayClients','renderHomestayHosts','renderDeposits','updateSidebarCounts'].forEach(fn => {
+        ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies','renderHomestayClients','renderHomestayHosts','renderDeposits','renderLeads','updateSidebarCounts'].forEach(fn => {
           try { if (typeof window[fn]==='function') window[fn](); } catch(e){}
         });
       } else {
@@ -15517,6 +15664,183 @@ document.getElementById('trash-refresh')?.addEventListener('click', renderTrashP
 // Initialize role-based UI (last, after titles + goToView are defined)
 applyRolePermissions();
 
+/* ============ LEADS ============ */
+const LEAD_SOURCES = {
+  'manual': 'Manual entry',
+  'contact': 'Contact form',
+  'room-search': 'Room search',
+  'homestay': 'Homestay',
+  'host-application': 'Host application',
+  'manager-application': 'Manager application',
+  'partner': 'Partner',
+  'service': 'Service request'
+};
+const LEAD_STATUSES = ['new','contacted','qualified','won','lost'];
+const LEAD_FILTERS = { search:'', source:'', status:'' };
+let _editingLeadId = null;
+
+function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s || 'Lead'); }
+function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
+function leadCap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : '—'; }
+function leadStatusBadge(st){
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', won:'#1f9d57', lost:'#9aa0a6' };
+  const c = colors[st] || '#9aa0a6';
+  return `<span class="badge" style="background:${c}1a;color:${c};border-color:${c}33">${esc(leadCap(st))}</span>`;
+}
+function leadContactCell(l){
+  const parts = [];
+  if(l.email) parts.push(`<a href="${safeHref('mailto:'+l.email)}">${esc(l.email)}</a>`);
+  if(l.phone) parts.push(`<span class="name-sub">${esc(l.phone)}</span>`);
+  return parts.join(' · ') || '—';
+}
+
+function applyLeadFilters(){
+  const q = LEAD_FILTERS.search.trim().toLowerCase();
+  return leads.filter(l => {
+    if(LEAD_FILTERS.source && l.source !== LEAD_FILTERS.source) return false;
+    if(LEAD_FILTERS.status && (l.status || 'new') !== LEAD_FILTERS.status) return false;
+    if(q){
+      const hay = [l.name, l.email, l.phone, l.city, l.source, l.payload && l.payload.message]
+        .map(x => String(x == null ? '' : x).toLowerCase()).join(' ');
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b) => String(b.created_at||'').localeCompare(String(a.created_at||'')));
+}
+
+function renderLeads(){
+  const body = document.getElementById('leads-body');
+  if(!body) return;
+  const list = applyLeadFilters();
+  const countEl = document.getElementById('leads-count');
+  if(countEl) countEl.textContent = list.length;
+  const emptyEl = document.getElementById('leads-empty');
+  if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
+  body.innerHTML = list.map(l => `
+    <tr data-lead="${esc(l.id)}" style="cursor:pointer">
+      <td><div class="name-main">${esc(l.name || '—')}</div></td>
+      <td>${leadSourceLabel(l.source)}</td>
+      <td>${leadContactCell(l)}</td>
+      <td>${esc(l.city || '—')}</td>
+      <td>${leadStatusBadge(l.status || 'new')}</td>
+      <td>${esc(l.assignee || '—')}</td>
+      <td>${fmtDate(l.created_at)}</td>
+    </tr>`).join('');
+  body.querySelectorAll('tr[data-lead]').forEach(row => {
+    row.addEventListener('click', e => { if(e.target.closest('a')) return; openLead(row.dataset.lead); });
+  });
+}
+
+function openLead(id){
+  const l = leads.find(x => String(x.id) === String(id));
+  if(!l) return;
+  _editingLeadId = l.id;
+  document.getElementById('lead-modal-title').textContent = l.name || 'Lead';
+  document.getElementById('lead-modal-sub').textContent = `${leadSourceLabelText(l.source)} · ${fmtDate(l.created_at)}`;
+  document.getElementById('lead-status').innerHTML =
+    LEAD_STATUSES.map(s => `<option value="${s}" ${(l.status||'new')===s?'selected':''}>${leadCap(s)}</option>`).join('');
+  const cur = l.assignee || '';
+  document.getElementById('lead-assignee').innerHTML =
+    `<option value="">Unassigned</option>` +
+    (typeof teamMembers !== 'undefined' ? teamMembers : []).map(m => {
+      const v = m.email || m.name || '';
+      return `<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(m.name || m.email || v)}</option>`;
+    }).join('');
+  document.getElementById('lead-notes').value = l.notes || '';
+  document.getElementById('lead-contact').innerHTML = leadContactCell(l);
+  document.getElementById('lead-payload').textContent = JSON.stringify(l.payload || l.data || {}, null, 2);
+  document.getElementById('lead-modal-backdrop').classList.add('open');
+}
+
+function closeLeadModal(){
+  document.getElementById('lead-modal-backdrop').classList.remove('open');
+  _editingLeadId = null;
+}
+
+function saveLead(){
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  if(!l) return;
+  l.status   = document.getElementById('lead-status').value;
+  l.assignee = document.getElementById('lead-assignee').value;
+  l.notes    = document.getElementById('lead-notes').value;
+  if(window.vmDb && typeof vmDb.upsert === 'function') vmDb.upsert('leads', l);
+  closeLeadModal();
+  renderLeads();
+  if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
+  if(typeof showToast === 'function') showToast('Lead updated');
+}
+
+/* Filter + modal wiring */
+document.getElementById('leads-search')       && document.getElementById('leads-search').addEventListener('input',  e => { LEAD_FILTERS.search = e.target.value; renderLeads(); });
+document.getElementById('leads-filter-source')&& document.getElementById('leads-filter-source').addEventListener('change', e => { LEAD_FILTERS.source = e.target.value; renderLeads(); });
+document.getElementById('leads-filter-status')&& document.getElementById('leads-filter-status').addEventListener('change', e => { LEAD_FILTERS.status = e.target.value; renderLeads(); });
+document.getElementById('lead-modal-close')   && document.getElementById('lead-modal-close').addEventListener('click', closeLeadModal);
+document.getElementById('lead-save-btn')      && document.getElementById('lead-save-btn').addEventListener('click', saveLead);
+document.getElementById('lead-email-btn')     && document.getElementById('lead-email-btn').addEventListener('click', () => {
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  if(l && l.email) window.location.href = safeHref('mailto:' + l.email);
+});
+document.getElementById('lead-modal-backdrop')&& document.getElementById('lead-modal-backdrop').addEventListener('click', e => { if(e.target.id === 'lead-modal-backdrop') closeLeadModal(); });
+document.addEventListener('keydown', e => {
+  const bk = document.getElementById('lead-modal-backdrop');
+  if(e.key === 'Escape' && bk && bk.classList.contains('open')) closeLeadModal();
+});
+
+/* Manual add-lead */
+function openAddLead(){
+  const f = document.getElementById('lead-add-form');
+  if(f) f.reset();
+  const err = document.getElementById('lead-add-error');
+  if(err){ err.style.display = 'none'; err.textContent = ''; }
+  const asSel = document.getElementById('lead-add-assignee');
+  if(asSel) asSel.innerHTML = `<option value="">Unassigned</option>` +
+    (typeof teamMembers !== 'undefined' ? teamMembers : []).map(m => {
+      const v = m.email || m.name || '';
+      return `<option value="${esc(v)}">${esc(m.name || m.email || v)}</option>`;
+    }).join('');
+  document.getElementById('lead-add-backdrop').classList.add('open');
+}
+function closeAddLead(){ document.getElementById('lead-add-backdrop').classList.remove('open'); }
+function submitAddLead(e){
+  if(e && e.preventDefault) e.preventDefault();
+  const f = document.getElementById('lead-add-form');
+  if(!f) return;
+  const d = new FormData(f);
+  const name = String(d.get('name') || '').trim();
+  const err = document.getElementById('lead-add-error');
+  if(!name){ if(err){ err.textContent = 'Name is required.'; err.style.display = 'block'; } return; }
+  const lead = {
+    id: 'lead-' + Date.now(),
+    name,
+    email: String(d.get('email') || '').trim(),
+    phone: String(d.get('phone') || '').trim(),
+    city: String(d.get('city') || '').trim(),
+    source: String(d.get('source') || 'manual'),
+    status: String(d.get('status') || 'new'),
+    assignee: String(d.get('assignee') || ''),
+    notes: String(d.get('notes') || '').trim(),
+    created_at: new Date().toISOString(),
+    payload: { manual: true }
+  };
+  leads.unshift(lead);
+  if(window.vmDb && typeof vmDb.upsert === 'function') vmDb.upsert('leads', lead);
+  closeAddLead();
+  renderLeads();
+  if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
+  if(typeof showToast === 'function') showToast('Lead added');
+}
+document.getElementById('leads-add-btn')   && document.getElementById('leads-add-btn').addEventListener('click', openAddLead);
+document.getElementById('lead-add-close')  && document.getElementById('lead-add-close').addEventListener('click', closeAddLead);
+document.getElementById('lead-add-cancel') && document.getElementById('lead-add-cancel').addEventListener('click', closeAddLead);
+document.getElementById('lead-add-form')   && document.getElementById('lead-add-form').addEventListener('submit', submitAddLead);
+document.getElementById('lead-add-backdrop') && document.getElementById('lead-add-backdrop').addEventListener('click', e => { if(e.target.id === 'lead-add-backdrop') closeAddLead(); });
+document.addEventListener('keydown', e => {
+  const bk = document.getElementById('lead-add-backdrop');
+  if(e.key === 'Escape' && bk && bk.classList.contains('open')) closeAddLead();
+});
+
+renderLeads();
+
 /* ============ Phase 2.2 · Hydrate from Supabase, then re-render ============
    Expose the 8 const arrays on window so the persistence layer can reach them,
    then fetch the latest rows from Postgres and re-run all renders. The arrays
@@ -15531,6 +15855,7 @@ applyRolePermissions();
   window.vacancies          = vacancies;
   window.damageDeposits     = damageDeposits;
   window.homestayApplicants = homestayApplicants;
+  window.leads              = leads;
 
   // 2. After DOM ready, hydrate and re-render
   const start = async () => {
@@ -15547,7 +15872,7 @@ applyRolePermissions();
     const fns = [
       'renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies',
       'renderHomestayClients','renderHomestayFinance','renderHomestayHosts',
-      'renderDeposits','updateSidebarCounts'
+      'renderDeposits','renderLeads','updateSidebarCounts'
     ];
     for (const fn of fns) {
       try { if (typeof window[fn] === 'function') window[fn](); }
