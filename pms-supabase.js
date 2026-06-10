@@ -55,7 +55,8 @@
     homestayClients:   { table: 'homestay_clients',   key: 'id' },
     vacancies:         { table: 'vacancies',          key: 'id' },
     damageDeposits:    { table: 'damage_deposits',    key: 'id' },
-    homestayApplicants:{ table: 'homestay_applicants',key: 'id' }
+    homestayApplicants:{ table: 'homestay_applicants',key: 'id' },
+    leads:             { table: 'leads',              key: 'id' }
   };
 
   // Scalar columns mirrored on each table. Camel-case JS field → snake-case Postgres column.
@@ -67,7 +68,8 @@
     homestayClients:   [['name','name'],['email','email'],['hostId','host_id'],['status','status']],
     vacancies:         [['room','room'],['prop','prop'],['city','city'],['rent','rent'],['availDate','avail_date'],['listed','listed']],
     damageDeposits:    [['status','status']],
-    homestayApplicants:[['name','name'],['city','city']]
+    homestayApplicants:[['name','name'],['city','city']],
+    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['status','status'],['assignee','assignee'],['created_at','created_at']]
   };
 
   /* ------------------- helpers ------------------- */
@@ -102,7 +104,8 @@
       homestayClients:    window.homestayClients,
       vacancies:          window.vacancies,
       damageDeposits:     window.damageDeposits,
-      homestayApplicants: window.homestayApplicants
+      homestayApplicants: window.homestayApplicants,
+      leads:              window.leads
     };
 
     for (const [name, cfg] of Object.entries(TABLES)) {
@@ -396,7 +399,7 @@
       _rerenderTimer = null;
       const fns = ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies',
                    'renderHomestayClients','renderHomestayFinance','renderHomestayHosts',
-                   'renderDeposits','updateSidebarCounts'];
+                   'renderDeposits','renderLeads','updateSidebarCounts'];
       for (const fn of fns) {
         try { if (typeof window[fn] === 'function') window[fn](); }
         catch (e) { console.warn('[vmDb] rerender ' + fn + ' failed:', e.message); }
