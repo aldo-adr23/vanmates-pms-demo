@@ -1119,7 +1119,14 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-06-09a"></script>
+<script src="pms-supabase.js?v=2026-08-06a"></script>
+<!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
+     than copied, so there is one source of truth: scripts/n8n and the marketing
+     site already share it, and hand-mirrored copies of this maths have drifted
+     before. If it fails to load the preview hides itself rather than showing
+     numbers that might be wrong - booking-create computes the real split
+     server-side regardless. -->
+<script src="https://vanmates.com/assets/homestay-fee.js"></script>
 </head>
 <body>
 <div class="mobile-backdrop" id="mobile-backdrop"></div>
@@ -1180,6 +1187,11 @@
     <button class="nav-item" data-view="homestay-matching">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="12" r="3"/><path d="M9 12h6"/><path d="M12 4v3M12 17v3"/></svg>
       Homestay matching
+      <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="homestay-bookings">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/><path d="M9 15h6"/></svg>
+      Homestay bookings
       <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="homestay-finance">
@@ -2723,6 +2735,90 @@ hello@vanmates.com · vanmates.com</textarea>
     </section>
 
     <!-- ============ HOMESTAY FINANCE ============ -->
+    <section class="view" data-view="homestay-bookings">
+
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Bookings</div><div class="kpi-value" id="hb-kpi-total">—</div><div class="kpi-trend" id="hb-kpi-total-sub">not loaded yet</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Need attention</div><div class="kpi-value" id="hb-kpi-attention">—</div><div class="kpi-trend" id="hb-kpi-attention-sub">&nbsp;</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Awaiting payment</div><div class="kpi-value" id="hb-kpi-unpaid">—</div><div class="kpi-trend" id="hb-kpi-unpaid-sub">&nbsp;</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Payable hosts</div><div class="kpi-value" id="hb-kpi-hosts">—</div><div class="kpi-trend" id="hb-kpi-hosts-sub">only these can be booked</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-head">
+          <div>
+            <div class="card-title">New booking</div>
+            <div class="card-sub">The student pays from their own link — nothing is charged here</div>
+          </div>
+        </div>
+        <div class="card-pad">
+          <div class="form-row">
+            <div class="form-field"><label>Host</label>
+              <select class="form-input" id="hb-host"><option value="">Loading hosts…</option></select>
+            </div>
+            <div class="form-field"><label>Student email</label>
+              <input class="form-input" id="hb-email" type="email" autocomplete="off" placeholder="student@example.com">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label>Monthly rent (CAD)</label>
+              <input class="form-input" id="hb-rent" type="number" step="0.01" min="0" placeholder="1700.00">
+            </div>
+            <div class="form-field"><label>Vanmates fee (CAD)</label>
+              <input class="form-input" id="hb-fee" type="number" step="0.01" min="0" placeholder="200.00">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label>Move-in date</label>
+              <input class="form-input" id="hb-movein" type="date">
+            </div>
+            <div class="form-field"><label>Lease length (months)</label>
+              <input class="form-input" id="hb-months" type="number" step="1" min="1" value="8">
+            </div>
+          </div>
+
+          <div id="hb-preview" class="card-sub" style="margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;white-space:pre-line;line-height:1.7" hidden></div>
+          <div id="hb-warn" style="margin-top:12px;font-size:13px" hidden></div>
+
+          <div style="display:flex;gap:12px;align-items:center;margin-top:18px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="hb-create">Create booking &amp; get link</button>
+            <button class="btn btn-ghost" id="hb-refresh">Refresh</button>
+            <span id="hb-status" class="card-sub"></span>
+          </div>
+
+          <div id="hb-link-panel" style="margin-top:18px" hidden>
+            <div class="form-field"><label>Student payment link — send this to them</label>
+              <div style="display:flex;gap:10px">
+                <input class="form-input" id="hb-link" type="text" readonly style="flex:1">
+                <button class="btn btn-ghost" id="hb-copy">Copy</button>
+              </div>
+            </div>
+            <div class="card-sub" style="margin-top:8px">They also receive this by email automatically.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">All bookings</div>
+            <div class="card-sub" id="hb-table-sub">&nbsp;</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>
+              <th>Reference</th><th>Student</th><th>Move-in</th>
+              <th class="right">Rent</th><th class="right">Host gets</th>
+              <th>Status</th><th>Needs attention</th>
+            </tr></thead>
+            <tbody id="hb-rows"><tr><td colspan="7" class="card-sub">Not loaded yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
     <section class="view" data-view="homestay-finance">
 
       <div class="kpi-grid">
@@ -8962,6 +9058,7 @@ const titles = {
   "homestay-clients": ["Homestay <em>clients</em>", "Students hosted by partner families · contact, host, and rent"],
   "homestay-matching": ["Homestay <em>matching</em>", "New applicants & best-fit host candidates — same engine the website and app use"],
   "homestay-hosts": ["Homestay <em>hosts</em>", "Partner families across our cities · profiles, capacity, and history"],
+  "homestay-bookings": ["Homestay <em>bookings</em>", "Create a student payment link and chase what needs attention"],
   "homestay-finance": ["Homestay <em>finance</em>", "Revenue from clients, payouts to hosts, and net margin"],
   settings: ["<em>Settings</em>", "Workspace, notifications, integrations, and billing"],
   vacancies: ["<em>Vacancies</em>", "Empty rooms, applications, and listing status"],
@@ -15916,6 +16013,197 @@ renderLeads();
   // After initial render, again after Supabase hydration likely settled
   setTimeout(() => tick("post-hydrate"), 1500);
   setTimeout(() => tick("post-hydrate-2"), 4000);
+})();
+
+/* ============ HOMESTAY BOOKINGS (n8n + Stripe) ============
+   This view does NOT read Supabase. Bookings and hosts live in n8n data tables
+   with Stripe as the source of truth for money, so everything here goes through
+   staff-token-guarded webhooks. The portal's own homestayHosts list is a
+   separate record of the same families - see the note in the go-live runbook.  */
+(function () {
+  const HB_BASE = 'https://adr23.app.n8n.cloud/webhook';
+  const HB_TOKEN_KEY = 'vm_staff_token';
+
+  // Deliberately not stored in this file: the portal is a public static asset,
+  // so a token committed here would be readable by anyone. Prompted once and
+  // kept in this browser only; a 401 clears it so a rotation just re-prompts.
+  function hbToken() {
+    let v = localStorage.getItem(HB_TOKEN_KEY);
+    if (!v) {
+      v = (window.prompt('Staff token (asked once, stored in this browser only):') || '').trim();
+      if (v) localStorage.setItem(HB_TOKEN_KEY, v);
+    }
+    return v || '';
+  }
+  function hbForgetToken() { localStorage.removeItem(HB_TOKEN_KEY); }
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const cad = (cents) => '$' + (Number(cents || 0) / 100).toFixed(2);
+  const toCents = (v) => Math.round((Number(v) || 0) * 100);
+
+  function hbStatus(msg, bad) {
+    const el = $('hb-status'); if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = bad ? '#b4443a' : '';
+  }
+
+  async function hbPost(path, body) {
+    const resp = await fetch(HB_BASE + '/' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-vm-staff-token': hbToken() },
+      body: JSON.stringify(body || {}),
+    });
+    if (resp.status === 401) {
+      hbForgetToken();
+      throw new Error('Staff token rejected — you will be asked for it again next time.');
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    return data;
+  }
+
+  /* ---- hosts ---- */
+  let hbHosts = [];
+  async function hbLoadHosts() {
+    const d = await hbPost('hosts-list');
+    hbHosts = d.hosts || [];
+    const sel = $('hb-host'); if (!sel) return;
+    if (!hbHosts.length) {
+      sel.innerHTML = '<option value="">No hosts yet — onboard one first</option>';
+    } else {
+      // Unpayable hosts are shown but disabled: booking-pay refuses them with a
+      // 409, so offering them would only produce a link the student cannot use.
+      sel.innerHTML = '<option value="">Choose a host…</option>' + hbHosts.map((h) =>
+        '<option value="' + esc(h.host_id) + '"' + (h.payable ? '' : ' disabled') + '>' +
+        esc(h.display_name) + (h.payable ? '' : ' — ' + esc(h.blocker)) + '</option>').join('');
+    }
+    $('hb-kpi-hosts').textContent = d.payable;
+    $('hb-kpi-hosts-sub').textContent = d.count === d.payable
+      ? 'all hosts can be booked'
+      : (d.count - d.payable) + ' cannot be booked yet';
+  }
+
+  /* ---- bookings ---- */
+  async function hbLoadBookings() {
+    const d = await hbPost('bookings-list');
+    const rows = d.bookings || [];
+    $('hb-kpi-total').textContent = d.count;
+    $('hb-kpi-total-sub').textContent = d.count === 1 ? '1 booking' : d.count + ' bookings';
+    $('hb-kpi-attention').textContent = d.needs_attention;
+    $('hb-kpi-attention-sub').textContent = d.needs_attention ? 'chase these' : 'nothing to chase';
+    const unpaid = rows.filter((b) => b.status === 'created' || b.status === 'payment_failed').length;
+    $('hb-kpi-unpaid').textContent = unpaid;
+    $('hb-kpi-unpaid-sub').textContent = unpaid ? 'student has not paid' : 'all paid';
+    $('hb-table-sub').textContent = d.count ? ('newest first · ' + d.count + ' total') : '';
+
+    const tb = $('hb-rows');
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="card-sub">No bookings yet.</td></tr>'; return; }
+    tb.innerHTML = rows.map((b) => {
+      const flags = (b.needs_attention || []);
+      return '<tr>' +
+        '<td><code>' + esc(b.booking_ref) + '</code></td>' +
+        '<td>' + esc(b.student_email) + '</td>' +
+        '<td>' + esc(b.move_in_date || '—') + '</td>' +
+        '<td style="text-align:right">' + cad(b.monthly_gross) + '</td>' +
+        '<td style="text-align:right">' + cad(b.host_net) + '</td>' +
+        '<td>' + esc(b.status) + (b.billing_status ? ' <span class="card-sub">/ ' + esc(b.billing_status) + '</span>' : '') + '</td>' +
+        '<td>' + (flags.length
+          ? flags.map((f) => '<span class="badge badge-amber">' + esc(f) + '</span>').join(' ')
+          : '<span class="card-sub">—</span>') + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  async function hbLoadAll() {
+    hbStatus('Loading…');
+    try {
+      await Promise.all([hbLoadHosts(), hbLoadBookings()]);
+      hbStatus('');
+    } catch (e) { hbStatus(e.message, true); }
+  }
+
+  /* ---- preview ---- */
+  function hbPreview() {
+    const el = $('hb-preview'); const warn = $('hb-warn');
+    const F = window.HomestayFee;
+    // If the shared fee module did not load, show nothing rather than numbers
+    // that might disagree with what booking-create actually charges.
+    if (!F || !F.computeBooking) { el.hidden = true; return; }
+    const grossCents = toCents($('hb-rent').value);
+    const feeValue = toCents($('hb-fee').value);
+    if (!grossCents) { el.hidden = true; warn.hidden = true; return; }
+    const b = F.computeBooking({ grossCents, feeType: 'fixed', feeValue });
+    el.hidden = false;
+    el.textContent =
+      'Student pays now: ' + F.fmtCAD(b.totalDueNowCents) +
+      '  (rent ' + F.fmtCAD(b.grossCents) + ' + ' + F.TRANSACTION_FEE_LABEL.toLowerCase() + ' ' + F.fmtCAD(b.transactionFeeCents) + ')\n' +
+      'Host receives the day after check-in: ' + F.fmtCAD(b.hostNetCents) + '\n' +
+      'Vanmates keeps: ' + F.fmtCAD(b.vanmatesKeepsCents);
+    // The fee is capped at the rent, so an oversized fee silently leaves the
+    // host with nothing and Stripe rejects the zero transfer.
+    if (b.hostNetCents <= 0) {
+      warn.hidden = false;
+      warn.textContent = 'The host would receive $0.00 — the fee cannot be equal to or larger than the rent. Stripe rejects a zero transfer.';
+    } else { warn.hidden = true; }
+  }
+
+  /* ---- create ---- */
+  async function hbCreate() {
+    const host = $('hb-host').value;
+    const email = $('hb-email').value.trim();
+    const rent = toCents($('hb-rent').value);
+    const fee = toCents($('hb-fee').value);
+    const movein = $('hb-movein').value;
+    const months = Number($('hb-months').value) || 0;
+
+    if (!host) return hbStatus('Choose a host.', true);
+    if (!email) return hbStatus('Student email is required.', true);
+    if (!rent) return hbStatus('Monthly rent is required.', true);
+    if (!movein) return hbStatus('Move-in date is required.', true);
+    if (fee >= rent) return hbStatus('The fee must be smaller than the rent, or the host receives nothing.', true);
+
+    $('hb-create').disabled = true;
+    hbStatus('Creating…');
+    try {
+      const d = await hbPost('booking-create', {
+        host_id: host,
+        student_email: email,
+        gross_cents: rent,
+        fee_type: 'fixed',
+        fee_value: fee,
+        move_in_date: movein,
+        lease_months: months,
+      });
+      $('hb-link').value = d.link || '';
+      $('hb-link-panel').hidden = false;
+      hbStatus('Created ' + (d.booking_ref || '') + ' — link emailed to the student.');
+      await hbLoadBookings();
+    } catch (e) {
+      hbStatus(e.message, true);
+    } finally {
+      $('hb-create').disabled = false;
+    }
+  }
+
+  /* ---- wiring ---- */
+  document.addEventListener('DOMContentLoaded', function () {
+    const nav = document.querySelector('.nav-item[data-view="homestay-bookings"]');
+    if (nav) nav.addEventListener('click', hbLoadAll);
+    ['hb-rent', 'hb-fee'].forEach((id) => {
+      const el = $(id); if (el) el.addEventListener('input', hbPreview);
+    });
+    const c = $('hb-create'); if (c) c.addEventListener('click', hbCreate);
+    const r = $('hb-refresh'); if (r) r.addEventListener('click', hbLoadAll);
+    const cp = $('hb-copy');
+    if (cp) cp.addEventListener('click', function () {
+      const i = $('hb-link'); i.select();
+      navigator.clipboard.writeText(i.value).then(function () {
+        cp.textContent = 'Copied'; setTimeout(function () { cp.textContent = 'Copy'; }, 1500);
+      });
+    });
+  });
 })();
 </script>
 </body>
