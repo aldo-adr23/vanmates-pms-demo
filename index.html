@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-06a"></script>
+<script src="pms-supabase.js?v=2026-08-07a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2744,6 +2744,27 @@ hello@vanmates.com · vanmates.com</textarea>
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Payable hosts</div><div class="kpi-value" id="hb-kpi-hosts">—</div><div class="kpi-trend" id="hb-kpi-hosts-sub">only these can be booked</div></div>
       </div>
 
+      <!-- Shown only when there is no working token. A window.prompt was used here
+           originally; it blocks the whole renderer while open, and dismissing it is
+           indistinguishable from typing a wrong token. -->
+      <div class="card" id="hb-auth-card" style="margin-bottom:24px" hidden>
+        <div class="card-head">
+          <div>
+            <div class="card-title">Staff token</div>
+            <div class="card-sub">Asked once and kept in this browser only — it is sent to the booking webhooks and nowhere else</div>
+          </div>
+        </div>
+        <div class="card-pad">
+          <div class="form-field"><label for="hb-token">Token</label>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <input class="form-input" id="hb-token" type="password" autocomplete="off" spellcheck="false" placeholder="vmstaff_…" style="flex:1;min-width:240px">
+              <button class="btn btn-primary" id="hb-token-save">Save &amp; load</button>
+            </div>
+          </div>
+          <div id="hb-auth-msg" class="card-sub" style="margin-top:10px"></div>
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom:24px">
         <div class="card-head">
           <div>
@@ -2783,6 +2804,7 @@ hello@vanmates.com · vanmates.com</textarea>
           <div style="display:flex;gap:12px;align-items:center;margin-top:18px;flex-wrap:wrap">
             <button class="btn btn-primary" id="hb-create">Create booking &amp; get link</button>
             <button class="btn btn-ghost" id="hb-refresh">Refresh</button>
+            <button class="btn btn-ghost" id="hb-token-change">Change staff token</button>
             <span id="hb-status" class="card-sub"></span>
           </div>
 
@@ -16025,17 +16047,26 @@ renderLeads();
   const HB_TOKEN_KEY = 'vm_staff_token';
 
   // Deliberately not stored in this file: the portal is a public static asset,
-  // so a token committed here would be readable by anyone. Prompted once and
-  // kept in this browser only; a 401 clears it so a rotation just re-prompts.
-  function hbToken() {
-    let v = localStorage.getItem(HB_TOKEN_KEY);
-    if (!v) {
-      v = (window.prompt('Staff token (asked once, stored in this browser only):') || '').trim();
-      if (v) localStorage.setItem(HB_TOKEN_KEY, v);
-    }
-    return v || '';
-  }
+  // so a token committed here would be readable by anyone. Asked for once via
+  // the hb-auth-card and kept in this browser only; a 401 clears it, so a
+  // rotation just brings the card back.
+  //
+  // This used to be a window.prompt. Never reinstate that: the prompt blocks
+  // the entire renderer until it is answered, and a dismissed prompt returns
+  // '' — which reaches the webhook, comes back 401, and reads to the user as
+  // "your token is wrong" when in fact they never entered one.
+  function hbToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
   function hbForgetToken() { localStorage.removeItem(HB_TOKEN_KEY); }
+
+  // Reveals the token card. `msg` says why it appeared; empty for a plain
+  // "change it" request, so re-entering a token does not look like an error.
+  function hbAskForToken(msg) {
+    const card = $('hb-auth-card'); if (!card) return;
+    card.hidden = false;
+    const m = $('hb-auth-msg');
+    if (m) { m.textContent = msg || ''; m.style.color = msg ? '#b4443a' : ''; }
+    const i = $('hb-token'); if (i) { i.value = ''; i.focus(); }
+  }
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
@@ -16050,14 +16081,22 @@ renderLeads();
   }
 
   async function hbPost(path, body) {
+    // Never send an empty token: the 401 it earns is indistinguishable from a
+    // genuinely wrong one, and it would wrongly clear a token that was fine.
+    const token = hbToken();
+    if (!token) {
+      hbAskForToken('Enter the staff token to use this page.');
+      throw new Error('Staff token needed.');
+    }
     const resp = await fetch(HB_BASE + '/' + path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-vm-staff-token': hbToken() },
+      headers: { 'Content-Type': 'application/json', 'x-vm-staff-token': token },
       body: JSON.stringify(body || {}),
     });
     if (resp.status === 401) {
       hbForgetToken();
-      throw new Error('Staff token rejected — you will be asked for it again next time.');
+      hbAskForToken('That token was rejected. If it has been rotated, paste the new one.');
+      throw new Error('Staff token rejected.');
     }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
@@ -16117,10 +16156,18 @@ renderLeads();
   }
 
   async function hbLoadAll() {
+    // Checked here as well as in hbPost so opening the view with no token shows
+    // the card and nothing else, rather than two parallel failures.
+    if (!hbToken()) {
+      hbAskForToken('Enter the staff token to load hosts and bookings.');
+      hbStatus('');
+      return;
+    }
     hbStatus('Loading…');
     try {
       await Promise.all([hbLoadHosts(), hbLoadBookings()]);
       hbStatus('');
+      const card = $('hb-auth-card'); if (card) card.hidden = true;
     } catch (e) { hbStatus(e.message, true); }
   }
 
@@ -16196,6 +16243,25 @@ renderLeads();
     });
     const c = $('hb-create'); if (c) c.addEventListener('click', hbCreate);
     const r = $('hb-refresh'); if (r) r.addEventListener('click', hbLoadAll);
+
+    function hbSaveToken() {
+      const i = $('hb-token');
+      const v = (i.value || '').trim();
+      if (!v) { hbAskForToken('Paste the token first.'); return; }
+      localStorage.setItem(HB_TOKEN_KEY, v);
+      i.value = '';  // don't leave it sitting in the DOM once it is stored
+      const m = $('hb-auth-msg'); if (m) { m.textContent = ''; m.style.color = ''; }
+      hbLoadAll();
+    }
+    const ts = $('hb-token-save'); if (ts) ts.addEventListener('click', hbSaveToken);
+    const ti = $('hb-token');
+    if (ti) ti.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); hbSaveToken(); }
+    });
+    // Reveals the card without clearing the stored token, so backing out of a
+    // change leaves the working one in place. Saving overwrites it.
+    const tc = $('hb-token-change');
+    if (tc) tc.addEventListener('click', function () { hbAskForToken(''); });
     const cp = $('hb-copy');
     if (cp) cp.addEventListener('click', function () {
       const i = $('hb-link'); i.select();
