@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-07a"></script>
+<script src="pms-supabase.js?v=2026-08-07b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2832,9 +2832,9 @@ hello@vanmates.com · vanmates.com</textarea>
             <thead><tr>
               <th>Reference</th><th>Student</th><th>Move-in</th>
               <th class="right">Rent</th><th class="right">Host gets</th>
-              <th>Status</th><th>Needs attention</th>
+              <th>Status</th><th>Needs attention</th><th>Move-out</th>
             </tr></thead>
-            <tbody id="hb-rows"><tr><td colspan="7" class="card-sub">Not loaded yet.</td></tr></tbody>
+            <tbody id="hb-rows"><tr><td colspan="8" class="card-sub">Not loaded yet.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -16138,7 +16138,7 @@ renderLeads();
     $('hb-table-sub').textContent = d.count ? ('newest first · ' + d.count + ' total') : '';
 
     const tb = $('hb-rows');
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="card-sub">No bookings yet.</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="card-sub">No bookings yet.</td></tr>'; return; }
     tb.innerHTML = rows.map((b) => {
       const flags = (b.needs_attention || []);
       return '<tr>' +
@@ -16151,8 +16151,62 @@ renderLeads();
         '<td>' + (flags.length
           ? flags.map((f) => '<span class="badge badge-amber">' + esc(f) + '</span>').join(' ')
           : '<span class="card-sub">—</span>') + '</td>' +
+        hbMoveOutCell(b) +
         '</tr>';
     }).join('');
+  }
+
+  /* ---- move-out ---- */
+  function hbToday() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  // Billing already finished, so there is nothing left to end. A refunded booking
+  // is deliberately still endable: a refund does not stop the subscription.
+  function hbMoveOutCell(b) {
+    const done = b.billing_status === 'ended';
+    const dated = b.move_out_date ? '<span class="card-sub">' + esc(b.move_out_date) + '</span>' : '';
+    if (done) return '<td>' + (dated || '<span class="card-sub">ended</span>') + '</td>';
+    return '<td class="hb-act" data-ref="' + esc(b.booking_ref) + '">' +
+      (dated ? dated + ' ' : '') +
+      '<button type="button" class="btn btn-ghost hb-end-start">' +
+      (b.move_out_date ? 'Change' : 'End tenancy') + '</button></td>';
+  }
+
+  // Two-step by design: the button only opens the date field, and nothing is sent
+  // until Confirm. Ending a tenancy cancels a live Stripe subscription, so it must
+  // not be one stray click away.
+  function hbOpenEnd(cell) {
+    cell.innerHTML =
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        '<input type="date" class="form-input hb-end-date" value="' + hbToday() + '" style="width:150px;padding:6px 8px">' +
+        '<button type="button" class="btn btn-primary hb-end-go">Confirm</button>' +
+        '<button type="button" class="btn btn-ghost hb-end-cancel">Cancel</button>' +
+      '</div>';
+  }
+
+  async function hbEnd(cell) {
+    const ref = cell.getAttribute('data-ref');
+    const field = cell.querySelector('.hb-end-date');
+    const date = field ? field.value : '';
+    if (!date) return hbStatus('Pick a move-out date.', true);
+    const go = cell.querySelector('.hb-end-go');
+    if (go) go.disabled = true;
+    hbStatus('Ending ' + ref + '…');
+    try {
+      const d = await hbPost('booking-end', { booking_ref: ref, move_out_date: date });
+      hbStatus(d.cancelled_subscription
+        ? ref + ' ended — the monthly subscription was cancelled in Stripe.'
+        : (d.billing_status === 'ended'
+          ? ref + ' ended. There was no active subscription to cancel.'
+          : ref + ' will stop billing on ' + d.move_out_date + '.'));
+    } catch (e) {
+      hbStatus(e.message, true);
+    }
+    // Reload either way: on failure the row may still have been flagged
+    // cancel_failed, and that needs to show up rather than be hidden by the error.
+    await hbLoadBookings();
   }
 
   async function hbLoadAll() {
@@ -16243,6 +16297,16 @@ renderLeads();
     });
     const c = $('hb-create'); if (c) c.addEventListener('click', hbCreate);
     const r = $('hb-refresh'); if (r) r.addEventListener('click', hbLoadAll);
+
+    // Delegated: the tbody survives every re-render, the rows inside it do not.
+    const tbody = $('hb-rows');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const cell = e.target.closest ? e.target.closest('.hb-act') : null;
+      if (!cell) return;
+      if (e.target.closest('.hb-end-start')) return hbOpenEnd(cell);
+      if (e.target.closest('.hb-end-go')) return hbEnd(cell);
+      if (e.target.closest('.hb-end-cancel')) return hbLoadBookings();
+    });
 
     function hbSaveToken() {
       const i = $('hb-token');
