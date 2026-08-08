@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-07c"></script>
+<script src="pms-supabase.js?v=2026-08-07d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -6758,7 +6758,10 @@ function closeProperty(){
 /* ============ TEAM & ROLES ============ */
 const roles = {
   admin:       {label:"Admin",              color:"#B94A3F", desc:"Full access to everything",
-                nav:["dashboard","leads","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-matching","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
+                // homestay-bookings is admin-only and deliberately absent from
+                // ALL_PAGES, so it cannot be granted to anyone else from the
+                // pages checkbox list. See the note there.
+                nav:["dashboard","leads","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -6967,14 +6970,22 @@ function showToast(msg){
 }
 
 /* === Invite member modal === */
+// Drives the pages checkbox list an admin uses to restrict a member. Anything
+// listed here can be granted to a non-admin, so homestay-bookings is
+// deliberately NOT here: it creates Stripe charges and cancels live
+// subscriptions, and is meant to stay admin-only. Adding it would make it
+// grantable. (Note this gating is cosmetic — it hides nav, it does not secure
+// data. The booking webhooks are what actually gate that, via the staff token.)
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
+  ["leads",            "Leads"],
   ["tenants",          "Tenants"],
   ["properties",       "Properties & rooms"],
   ["portfolio",        "Portfolio"],
   ["landlords",        "Landlords"],
   ["homestay-clients", "Homestay clients"],
   ["homestay-hosts",   "Homestay hosts"],
+  ["homestay-matching","Homestay matching"],
   ["homestay-finance", "Homestay finance"],
   ["vacancies",        "Vacancies"],
   ["maintenance",      "Maintenance"],
@@ -7471,9 +7482,10 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
   const roleLabel = (typeof roles === "object" && roles[role]?.label) || role;
 
   const pageLabels = {
-    "dashboard":"Dashboard","tenants":"Tenants","properties":"Properties & rooms",
+    "dashboard":"Dashboard","leads":"Leads","tenants":"Tenants","properties":"Properties & rooms",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
+    "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
     "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits",
     "team":"Team","settings":"Settings"
@@ -9677,6 +9689,102 @@ function hhPayoutFor(h){
   return (nm && HH_PAYOUT.byName.get(nm)) || null;
 }
 
+/* ---- Payout setup links -------------------------------------------------
+   Two different problems wearing one label:
+
+   • Never onboarded — no Stripe record at all. They just need the public
+     onboarding page. No token, no webhook, works today.
+   • Started but blocked — a Stripe Express account exists and is stuck. Sending
+     them the public page again is WRONG: host-onboard creates a new Express
+     account, leaving the family with two (the onboarding page says as much in
+     its own resume branch). They need a fresh Account Link minted from their
+     existing account, which only n8n can do.
+
+   The second needs an endpoint that does not exist yet, so the button reports
+   that plainly instead of failing like a bug. Named host-resume-link to stay
+   clear of host-resume, which is the public token-exchange the onboarding page
+   already calls. */
+const HH_ONBOARD_URL = "https://vanmates.com/host-onboarding";
+const HH_RESUME_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/host-resume-link";
+
+function hhPayoutAction(h){
+  if(HH_PAYOUT.state !== "loaded") return "";     // unknown — don't guess
+  const r = hhPayoutFor(h);
+  if(r && r.payable) return "";                   // nothing to chase
+  const label = r ? "Resend payout setup" : "Send payout setup";
+  return `<button class="btn btn-ghost" data-hh-payout-link="${r ? "resume" : "new"}"
+                  style="flex:1;justify-content:center" title="Payout onboarding for this host">${label}</button>`;
+}
+
+function hhMailtoSetup(h, url){
+  const subject = "Setting up your Vanmates payouts";
+  const body = `Hi ${h.name || ""},\n\n` +
+    `To receive your homestay payments we need you to set up payouts through Stripe, ` +
+    `our payments partner. It takes about five minutes:\n\n${url}\n\n` +
+    `You'll enter your identity and bank details directly with Stripe — Vanmates never sees them.\n\n` +
+    `Thanks,\nVanmates`;
+  return `mailto:${encodeURIComponent(h.email || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+// Renders into the panel footer, replacing the button that was clicked.
+function hhShowPayoutLink(host, url, note){
+  const box = document.getElementById("hh-payout-link-box");
+  if(!box) return;
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="form-field" style="margin:0">
+      <label>${esc(note || "Payout setup link")}</label>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" id="hh-payout-link" type="text" readonly value="${esc(url)}" style="flex:1">
+        <button class="btn btn-ghost" id="hh-payout-copy">Copy</button>
+        <a class="btn btn-primary" href="${safeHref(hhMailtoSetup(host, url))}">Email it</a>
+      </div>
+    </div>`;
+  document.getElementById("hh-payout-copy")?.addEventListener("click", () => {
+    const i = document.getElementById("hh-payout-link");
+    i.select();
+    navigator.clipboard.writeText(i.value).then(() => {
+      const b = document.getElementById("hh-payout-copy");
+      b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500);
+    });
+  });
+}
+
+function hhShowPayoutNote(msg, bad){
+  const box = document.getElementById("hh-payout-link-box");
+  if(!box) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="card-sub" style="${bad ? "color:var(--red-dark)" : ""}">${esc(msg)}</div>`;
+}
+
+async function hhRequestResumeLink(host){
+  const token = hhPayoutToken();
+  if(!token){ hhShowPayoutNote("Enter a payout token on the Hosts page first.", true); return; }
+  hhShowPayoutNote("Requesting a fresh Stripe link…");
+  try {
+    const resp = await fetch(HH_RESUME_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "x-vm-staff-token": token.value },
+      body: JSON.stringify({ host_email: host.email || "", host_name: host.name || "" })
+    });
+    // 404/405 means the workflow isn't published. Say that, rather than letting
+    // it read as "this host is broken".
+    if(resp.status === 404 || resp.status === 405){
+      hhShowPayoutNote("The host-resume-link workflow isn't published in n8n yet — until it is, ask hello@vanmates.com to send this host a fresh link.", true);
+      return;
+    }
+    if(resp.status === 401){ hhShowPayoutNote("That payout token was rejected.", true); return; }
+    if(resp.status === 409){ hhShowPayoutNote("Stripe reports this host is already verified — nothing to send.", false); return; }
+    if(!resp.ok){ hhShowPayoutNote("Couldn't get a link (HTTP " + resp.status + ").", true); return; }
+    const d = await resp.json().catch(() => ({}));
+    if(!d.url){ hhShowPayoutNote("The endpoint returned no link.", true); return; }
+    hhShowPayoutLink(host, d.url,
+      d.sent ? "Fresh Stripe link — already emailed to the host" : "Fresh Stripe link — send this to the host");
+  } catch(e){
+    hhShowPayoutNote("Couldn't reach n8n to request a link.", true);
+  }
+}
+
 function hhPayoutBadge(h){
   if(HH_PAYOUT.state !== "loaded") return "";
   const r = hhPayoutFor(h);
@@ -10137,6 +10245,8 @@ function openHost(id){
         Edit
       </button>
     </div>
+    ${hhPayoutAction(h) ? `<div style="display:flex;gap:8px;margin-top:8px">${hhPayoutAction(h)}</div>` : ""}
+    <div id="hh-payout-link-box" style="margin-top:12px" hidden></div>
   `;
 
   // Wire guest rows on the host detail panel:
@@ -10145,6 +10255,17 @@ function openHost(id){
   //    (sets hostId=null) so they go back to the matching queue. Used for
   //    cancellations by either family or student — no need to recreate records.
   const _hostPanelBody = document.getElementById("panel-body");
+
+  // Payout setup button. "new" needs nothing from n8n — an un-onboarded host
+  // just gets the public page. "resume" must go through n8n, because sending
+  // the public page to a host who already has an Express account would create
+  // them a second one.
+  _hostPanelBody?.querySelector("[data-hh-payout-link]")?.addEventListener("click", ev => {
+    const kind = ev.currentTarget.getAttribute("data-hh-payout-link");
+    if(kind === "new") hhShowPayoutLink(h, HH_ONBOARD_URL, "Payout setup link — send this to the host");
+    else hhRequestResumeLink(h);
+  });
+
   if (_hostPanelBody) {
     _hostPanelBody.querySelectorAll(".guest-row").forEach(row => {
       row.addEventListener("click", (ev) => {
