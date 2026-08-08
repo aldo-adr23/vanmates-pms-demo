@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-07b"></script>
+<script src="pms-supabase.js?v=2026-08-07c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2669,6 +2669,7 @@ hello@vanmates.com · vanmates.com</textarea>
 
       <div class="results-bar" style="margin-bottom:14px">
         <div class="results-count">Showing <b id="hh-count">6</b> of <b id="hh-total">6</b> hosts</div>
+        <div class="results-count" id="hh-payout-summary" style="margin-left:auto;color:var(--muted)"></div>
       </div>
 
       <div class="prop-grid" id="hh-grid"></div>
@@ -9105,6 +9106,11 @@ function goToView(v, savedView){
     document.getElementById("page-sub").innerHTML = titles[v][1];
   }
 
+  // Fetch Stripe payout readiness the first time the Hosts page is opened.
+  // Hooked here rather than on the nav button because the page is also reached
+  // programmatically (KPI drill-downs, the host panel's back-links).
+  if(v === "homestay-hosts" && typeof loadHostPayoutStatus === "function") loadHostPayoutStatus();
+
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
     const sv = document.querySelector(`.saved-view[data-saved="${savedView}"]`);
@@ -9582,6 +9588,180 @@ renderPlacementFees();
 /* ============ HOMESTAY HOSTS ============ */
 const HH_FILTERS = { city:new Set(), capacity:new Set(), nationality:new Set(), search:"" };
 
+/* ---- Stripe payout readiness · read-only overlay ------------------------
+   This page's homestayHosts array (Supabase) and the host records behind the
+   booking console (n8n + Stripe) are two separate stores — see the note on the
+   HOMESTAY BOOKINGS block. Nothing here writes to either: it re-reads the same
+   hosts-list webhook the booking console uses and joins on email at render
+   time, purely so staff can see which families can actually be paid.
+
+   Deliberately silent when there is no staff token. Most people never open the
+   bookings page, and a token card or a page-wide error on the Hosts grid would
+   be noise for a decoration. No token, a rejected token, and a network failure
+   all mean the same thing here — no badges, host list otherwise untouched. */
+const HH_PAYOUT = { state:"idle", byEmail:new Map(), byName:new Map(), remote:0, usedReadOnly:false };
+
+// The badges only ever read. The staff token the booking console uses also
+// authorises booking-create and booking-end, so handing it to someone who just
+// wants to see who can be paid also hands them the ability to cancel a live
+// Stripe subscription. This page therefore prefers a separate read-only secret
+// and falls back to the full one, so it keeps working for admins who have only
+// that — and before the n8n side grows the second secret at all.
+const HH_RO_TOKEN_KEY = "vm_staff_token_ro";
+
+function hhPayoutToken(){
+  const ro = localStorage.getItem(HH_RO_TOKEN_KEY) || "";
+  if(ro) return { value: ro, readOnly: true };
+  const full = localStorage.getItem("vm_staff_token") || "";
+  return full ? { value: full, readOnly: false } : null;
+}
+
+async function loadHostPayoutStatus(){
+  // "error" and "rejected" are retried on the next visit; "loaded" and
+  // "no-token" are not — saving a token re-triggers this directly.
+  if(HH_PAYOUT.state === "loading" || HH_PAYOUT.state === "loaded") return;
+  const token = hhPayoutToken();
+  if(!token){ HH_PAYOUT.state = "no-token"; renderPayoutSummary(); return; }
+  HH_PAYOUT.state = "loading";
+  HH_PAYOUT.usedReadOnly = token.readOnly;
+  try {
+    const resp = await fetch("https://adr23.app.n8n.cloud/webhook/hosts-list", {
+      method: "POST",
+      // Same header either way, so n8n can accept either secret on its read
+      // endpoints without the portal needing to know which one it holds.
+      headers: { "Content-Type":"application/json", "x-vm-staff-token": token.value },
+      body: "{}"
+    });
+    // A rejected read-only token is this page's to clear — it owns that key and
+    // can offer re-entry. A rejected *staff* token is not: the bookings page
+    // owns it and explains the failure there, and silently clearing it from a
+    // page the user did not associate with tokens would log them out of it.
+    if(resp.status === 401 && token.readOnly){
+      localStorage.removeItem(HH_RO_TOKEN_KEY);
+      HH_PAYOUT.state = "rejected";
+      renderPayoutSummary();
+      return;
+    }
+    if(!resp.ok){ HH_PAYOUT.state = "error"; renderPayoutSummary(); return; }
+    const d = await resp.json();
+    const rows = Array.isArray(d && d.hosts) ? d.hosts : [];
+    HH_PAYOUT.byEmail.clear();
+    HH_PAYOUT.byName.clear();
+    rows.forEach(r => {
+      // Field name is defensive: the onboarding form posts host_email, but the
+      // hosts-list row shape is owned by n8n and only host_id / display_name /
+      // payable / blocker are known for certain from its use in the console.
+      const em = lc(r.host_email || r.email || r.contact_email).trim();
+      if(em && !HH_PAYOUT.byEmail.has(em)) HH_PAYOUT.byEmail.set(em, r);
+      const nm = lc(r.display_name || r.host_name || r.name).trim();
+      if(nm && !HH_PAYOUT.byName.has(nm)) HH_PAYOUT.byName.set(nm, r);
+    });
+    HH_PAYOUT.remote = rows.length;
+    HH_PAYOUT.state = "loaded";
+    renderHomestayHosts();
+  } catch(e){
+    HH_PAYOUT.state = "error";
+    renderPayoutSummary();
+  }
+}
+
+// Email is the only real join key: host-onboarding collects a name and an email
+// and nothing else, so the two stores share no id. Name is a fallback for rows
+// that carry no email — unreliable when two families share a name, so it is
+// only consulted when the email lookup misses.
+function hhPayoutFor(h){
+  if(HH_PAYOUT.state !== "loaded") return null;
+  const em = lc(h.email).trim();
+  if(em && HH_PAYOUT.byEmail.has(em)) return HH_PAYOUT.byEmail.get(em);
+  const nm = lc(h.name).trim();
+  return (nm && HH_PAYOUT.byName.get(nm)) || null;
+}
+
+function hhPayoutBadge(h){
+  if(HH_PAYOUT.state !== "loaded") return "";
+  const r = hhPayoutFor(h);
+  if(!r) return `<span class="badge badge-grey"><span class="dot"></span>No payout account</span>`;
+  if(r.payable) return `<span class="badge badge-green"><span class="dot"></span>Payouts ready</span>`;
+  return `<span class="badge badge-amber"><span class="dot"></span>${esc(r.blocker || "Stripe setup incomplete")}</span>`;
+}
+
+// Counts the whole host list, not the filtered view: the point of the line is
+// "how much of the roster can be paid", which a filter would misreport.
+function hhPayoutSummary(){
+  if(HH_PAYOUT.state !== "loaded") return "";
+  let matched = 0, payable = 0;
+  homestayHosts.forEach(h => {
+    const r = hhPayoutFor(h);
+    if(!r) return;
+    matched++;
+    if(r.payable) payable++;
+  });
+  const parts = [`${payable} of ${homestayHosts.length} payout-ready`];
+  if(matched - payable > 0) parts.push(`${matched - payable} started but blocked`);
+  // Stripe-side records that matched no portal host — the other half of the
+  // split, and the reason a count here can look wrong from the bookings page.
+  const orphans = HH_PAYOUT.remote - matched;
+  if(orphans > 0) parts.push(`${orphans} not in this list`);
+  return parts.join(" · ");
+}
+
+/* Renders the right-hand end of the results bar. Deliberately understated: the
+   entry affordance is a text link, not a card, because this page's job is the
+   host roster and the badges are a decoration on it. Nothing appears at all
+   once a token works — see the "silent by default" note above. */
+function renderPayoutSummary(){
+  const el = document.getElementById("hh-payout-summary");
+  if(!el) return;
+  const s = HH_PAYOUT.state;
+  if(s === "loaded"){
+    el.innerHTML = esc(hhPayoutSummary()) +
+      (HH_PAYOUT.usedReadOnly ? "" : ` <span title="Using the full staff token, which can also create and end bookings">·</span>`);
+    return;
+  }
+  if(s === "loading"){ el.textContent = "Checking payout status…"; return; }
+  if(s === "error"){ el.textContent = "Payout status unavailable"; return; }
+  if(s === "rejected"){
+    el.innerHTML = `<span style="color:var(--red-dark)">Payout token rejected</span> · <a href="#" data-hh-token-open="1">enter a new one</a>`;
+    return;
+  }
+  if(s === "no-token"){
+    el.innerHTML = `<a href="#" data-hh-token-open="1">Show payout status</a>`;
+    return;
+  }
+  el.textContent = "";
+}
+
+function openPayoutTokenEntry(){
+  const el = document.getElementById("hh-payout-summary");
+  if(!el) return;
+  el.innerHTML =
+    `<input type="password" class="form-input" id="hh-ro-token" autocomplete="off" spellcheck="false"
+            placeholder="read-only token" style="width:190px;padding:5px 9px;font-size:12.5px">
+     <button class="btn btn-ghost" data-hh-token-save="1" style="padding:5px 12px;font-size:12px;margin-left:6px">Save</button>`;
+  document.getElementById("hh-ro-token")?.focus();
+}
+
+function savePayoutToken(){
+  const i = document.getElementById("hh-ro-token");
+  const v = (i && i.value || "").trim();
+  if(!v) return;
+  localStorage.setItem(HH_RO_TOKEN_KEY, v);
+  if(i) i.value = "";                 // don't leave it sitting in the DOM
+  HH_PAYOUT.state = "idle";           // allow the guard in the loader to pass
+  renderPayoutSummary();
+  loadHostPayoutStatus();
+}
+
+// Delegated once at parse time: the summary element is stable, its contents are
+// replaced on every render.
+document.getElementById("hh-payout-summary")?.addEventListener("click", e => {
+  if(e.target.closest("[data-hh-token-open]")){ e.preventDefault(); openPayoutTokenEntry(); }
+  else if(e.target.closest("[data-hh-token-save]")) savePayoutToken();
+});
+document.getElementById("hh-payout-summary")?.addEventListener("keydown", e => {
+  if(e.key === "Enter" && e.target.id === "hh-ro-token"){ e.preventDefault(); savePayoutToken(); }
+});
+
 function uniqueValues(arr, key){ return [...new Set(arr.map(x => x[key]))]; }
 
 // SVG family illustration as photo placeholder — different shape per host based on color
@@ -9632,6 +9812,7 @@ function renderHomestayHosts(){
 
   document.getElementById("hh-count").textContent = list.length;
   document.getElementById("hh-total").textContent = homestayHosts.length;
+  renderPayoutSummary();
 
   if(list.length === 0){
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
@@ -9655,6 +9836,7 @@ function renderHomestayHosts(){
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
               ${h.languages.slice(0,3).map(l => `<span class="badge badge-grey"><span class="dot"></span>${esc(l)}</span>`).join("")}
             </div>
+            ${(() => { const b = hhPayoutBadge(h); return b ? `<div style="margin-top:8px">${b}</div>` : ""; })()}
             <div class="prop-meta">
               <div><div class="lbl">Rooms</div><b>${guests}/${h.capacity}</b></div>
               <div><div class="lbl">Rate</div><b>$${h.payPerGuest}</b></div>
@@ -9797,6 +9979,7 @@ function openHost(id){
     <span class="badge badge-grey"><span class="dot"></span>${esc(safeFlag)} ${esc(safeNationality)}</span>
     <span class="badge badge-green"><span class="dot"></span>${h.rating || 4.7} ★ rating</span>
     ${hasSince ? `<span class="badge badge-grey"><span class="dot"></span>Hosting since ${sinceLabel}</span>` : ""}
+    ${hhPayoutBadge(h)}
   `;
 
   // Active and past guests
