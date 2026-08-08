@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-07d"></script>
+<script src="pms-supabase.js?v=2026-08-08a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2798,6 +2798,20 @@ hello@vanmates.com · vanmates.com</textarea>
               <input class="form-input" id="hb-months" type="number" step="1" min="1" value="8">
             </div>
           </div>
+          <div class="form-row">
+            <!-- Recorded on the booking because it is what the student is buying and
+                 what the host is owed: two meals a day and three are different rates
+                 (payTwoMeals / payThreeMeals on the host profile). Until this was
+                 captured, the meal plan lived only in someone's head and the fee was
+                 typed by hand with nothing to check it against. -->
+            <div class="form-field"><label>Meal plan</label>
+              <select class="form-input" id="hb-meals">
+                <option value="two_meals">2 meals a day (breakfast + dinner)</option>
+                <option value="three_meals">3 meals a day (full board)</option>
+              </select>
+            </div>
+            <div class="form-field"></div>
+          </div>
 
           <div id="hb-preview" class="card-sub" style="margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;white-space:pre-line;line-height:1.7" hidden></div>
           <div id="hb-warn" style="margin-top:12px;font-size:13px" hidden></div>
@@ -2831,11 +2845,11 @@ hello@vanmates.com · vanmates.com</textarea>
         <div style="overflow-x:auto">
           <table>
             <thead><tr>
-              <th>Reference</th><th>Student</th><th>Move-in</th>
+              <th>Reference</th><th>Student</th><th>Move-in</th><th>Meals</th>
               <th class="right">Rent</th><th class="right">Host gets</th>
               <th>Status</th><th>Needs attention</th><th>Move-out</th>
             </tr></thead>
-            <tbody id="hb-rows"><tr><td colspan="8" class="card-sub">Not loaded yet.</td></tr></tbody>
+            <tbody id="hb-rows"><tr><td colspan="9" class="card-sub">Not loaded yet.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -9611,7 +9625,7 @@ const HH_FILTERS = { city:new Set(), capacity:new Set(), nationality:new Set(), 
    bookings page, and a token card or a page-wide error on the Hosts grid would
    be noise for a decoration. No token, a rejected token, and a network failure
    all mean the same thing here — no badges, host list otherwise untouched. */
-const HH_PAYOUT = { state:"idle", byEmail:new Map(), byName:new Map(), remote:0, usedReadOnly:false };
+const HH_PAYOUT = { state:"idle", byEmail:new Map(), byName:new Map(), remote:0, dupEmails:0, usedReadOnly:false };
 
 // The badges only ever read. The staff token the booking console uses also
 // authorises booking-create and booking-end, so handing it to someone who just
@@ -9659,15 +9673,20 @@ async function loadHostPayoutStatus(){
     const rows = Array.isArray(d && d.hosts) ? d.hosts : [];
     HH_PAYOUT.byEmail.clear();
     HH_PAYOUT.byName.clear();
+    const seenPerEmail = new Map();
     rows.forEach(r => {
       // Field name is defensive: the onboarding form posts host_email, but the
       // hosts-list row shape is owned by n8n and only host_id / display_name /
       // payable / blocker are known for certain from its use in the console.
       const em = lc(r.host_email || r.email || r.contact_email).trim();
-      if(em && !HH_PAYOUT.byEmail.has(em)) HH_PAYOUT.byEmail.set(em, r);
+      if(em){
+        HH_PAYOUT.byEmail.set(em, hhBetterRow(HH_PAYOUT.byEmail.get(em), r));
+        seenPerEmail.set(em, (seenPerEmail.get(em) || 0) + 1);
+      }
       const nm = lc(r.display_name || r.host_name || r.name).trim();
-      if(nm && !HH_PAYOUT.byName.has(nm)) HH_PAYOUT.byName.set(nm, r);
+      if(nm) HH_PAYOUT.byName.set(nm, hhBetterRow(HH_PAYOUT.byName.get(nm), r));
     });
+    HH_PAYOUT.dupEmails = [...seenPerEmail.values()].filter(n => n > 1).length;
     HH_PAYOUT.remote = rows.length;
     HH_PAYOUT.state = "loaded";
     renderHomestayHosts();
@@ -9675,6 +9694,19 @@ async function loadHostPayoutStatus(){
     HH_PAYOUT.state = "error";
     renderPayoutSummary();
   }
+}
+
+// Which record wins when several Stripe accounts share an email — not an edge
+// case: host-onboard mints a NEW Express account on every visit to the
+// onboarding page, so one address already carries three, two of them payable.
+// A payable record always wins. First-wins would show "Stripe setup incomplete"
+// for a host who can actually be paid, sending staff to chase a non-problem
+// while hiding the working account behind an abandoned one.
+function hhBetterRow(existing, candidate){
+  if(!existing) return candidate;
+  if(!candidate) return existing;
+  if(!!existing.payable !== !!candidate.payable) return existing.payable ? existing : candidate;
+  return existing;   // equally good — keep the first, order is the API's
 }
 
 // Email is the only real join key: host-onboarding collects a name and an email
@@ -9810,6 +9842,9 @@ function hhPayoutSummary(){
   // split, and the reason a count here can look wrong from the bookings page.
   const orphans = HH_PAYOUT.remote - matched;
   if(orphans > 0) parts.push(`${orphans} not in this list`);
+  // Surfaced because duplicate Express accounts are a payout hazard, not a
+  // cosmetic one: staff can send a booking to the abandoned account.
+  if(HH_PAYOUT.dupEmails > 0) parts.push(`${HH_PAYOUT.dupEmails} with duplicate Stripe accounts`);
   return parts.join(" · ");
 }
 
@@ -9827,7 +9862,15 @@ function renderPayoutSummary(){
     return;
   }
   if(s === "loading"){ el.textContent = "Checking payout status…"; return; }
-  if(s === "error"){ el.textContent = "Payout status unavailable"; return; }
+  // Every failure state must offer a way out. This one used to render as dead
+  // text: the stored token was still there, so a reload just re-failed, and
+  // there was no route back to the entry field — the page was stuck with no
+  // way to retry or to swap the token that was failing.
+  if(s === "error"){
+    el.innerHTML = `Payout status unavailable · <a href="#" data-hh-token-retry="1">retry</a>` +
+                   ` · <a href="#" data-hh-token-open="1">use a different token</a>`;
+    return;
+  }
   if(s === "rejected"){
     el.innerHTML = `<span style="color:var(--red-dark)">Payout token rejected</span> · <a href="#" data-hh-token-open="1">enter a new one</a>`;
     return;
@@ -9863,7 +9906,21 @@ function savePayoutToken(){
 // Delegated once at parse time: the summary element is stable, its contents are
 // replaced on every render.
 document.getElementById("hh-payout-summary")?.addEventListener("click", e => {
-  if(e.target.closest("[data-hh-token-open]")){ e.preventDefault(); openPayoutTokenEntry(); }
+  if(e.target.closest("[data-hh-token-open]")){
+    e.preventDefault();
+    // Clear the failing token as well as opening the field. Leaving it in place
+    // meant "use a different token" silently kept the old one if the user then
+    // backed out, and the next load failed identically with no explanation.
+    localStorage.removeItem(HH_RO_TOKEN_KEY);
+    HH_PAYOUT.state = "no-token";
+    openPayoutTokenEntry();
+  }
+  else if(e.target.closest("[data-hh-token-retry]")){
+    e.preventDefault();
+    HH_PAYOUT.state = "idle";          // release the loader's own guard
+    renderPayoutSummary();
+    loadHostPayoutStatus();
+  }
   else if(e.target.closest("[data-hh-token-save]")) savePayoutToken();
 });
 document.getElementById("hh-payout-summary")?.addEventListener("keydown", e => {
@@ -16442,13 +16499,14 @@ renderLeads();
     $('hb-table-sub').textContent = d.count ? ('newest first · ' + d.count + ' total') : '';
 
     const tb = $('hb-rows');
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="card-sub">No bookings yet.</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="card-sub">No bookings yet.</td></tr>'; return; }
     tb.innerHTML = rows.map((b) => {
       const flags = (b.needs_attention || []);
       return '<tr>' +
         '<td><code>' + esc(b.booking_ref) + '</code></td>' +
         '<td>' + esc(b.student_email) + '</td>' +
         '<td>' + esc(b.move_in_date || '—') + '</td>' +
+        '<td>' + hbMeals(b.meal_plan) + '</td>' +
         '<td style="text-align:right">' + cad(b.monthly_gross) + '</td>' +
         '<td style="text-align:right">' + cad(b.host_net) + '</td>' +
         '<td>' + esc(b.status) + (b.billing_status ? ' <span class="card-sub">/ ' + esc(b.billing_status) + '</span>' : '') + '</td>' +
@@ -16458,6 +16516,14 @@ renderLeads();
         hbMoveOutCell(b) +
         '</tr>';
     }).join('');
+  }
+
+  // Bookings created before meal_plan existed have no value; show a dash rather
+  // than inventing a plan, since the rate owed to the host depends on it.
+  function hbMeals(v) {
+    if (v === 'three_meals') return '3/day';
+    if (v === 'two_meals') return '2/day';
+    return '<span class="card-sub">—</span>';
   }
 
   /* ---- move-out ---- */
@@ -16562,11 +16628,15 @@ renderLeads();
     const fee = toCents($('hb-fee').value);
     const movein = $('hb-movein').value;
     const months = Number($('hb-months').value) || 0;
+    const meals = $('hb-meals') ? $('hb-meals').value : '';
 
     if (!host) return hbStatus('Choose a host.', true);
     if (!email) return hbStatus('Student email is required.', true);
     if (!rent) return hbStatus('Monthly rent is required.', true);
     if (!movein) return hbStatus('Move-in date is required.', true);
+    // 0 months is an open-ended tenancy: Tenancy Close reads it as "no scheduled
+    // end" and the subscription bills forever. Only ever set that deliberately.
+    if (months < 1) return hbStatus('Lease length must be at least 1 month.', true);
     if (fee >= rent) return hbStatus('The fee must be smaller than the rent, or the host receives nothing.', true);
 
     $('hb-create').disabled = true;
@@ -16580,6 +16650,7 @@ renderLeads();
         fee_value: fee,
         move_in_date: movein,
         lease_months: months,
+        meal_plan: meals,
       });
       $('hb-link').value = d.link || '';
       $('hb-link-panel').hidden = false;
