@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-08a"></script>
+<script src="pms-supabase.js?v=2026-08-10a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2858,11 +2858,22 @@ hello@vanmates.com · vanmates.com</textarea>
 
     <section class="view" data-view="homestay-finance">
 
+      <div class="card-head" style="justify-content:space-between;margin-bottom:14px">
+        <div>
+          <div class="card-title">Homestay <em>finance</em></div>
+          <div class="card-sub" id="hf-month-label">—</div>
+        </div>
+        <div class="legend" style="flex-direction:row;gap:18px">
+          <div class="legend-row"><span class="legend-sw" style="background:#3e6049"></span>Confirmed · Stripe</div>
+          <div class="legend-row"><span class="legend-sw" style="background:#C9B896"></span>Expected · portal plan</div>
+        </div>
+      </div>
+
       <div class="kpi-grid">
         <div class="kpi clickable" data-go="homestay-clients"><div class="kpi-deco"></div><div class="kpi-arrow"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg></div><div class="kpi-label">Active customers</div><div class="kpi-value" id="hf-kpi-active">—</div><div class="kpi-trend up" id="hf-kpi-active-sub">across all hosts</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Revenue · MTD</div><div class="kpi-value" id="hf-kpi-revenue">—</div><div class="kpi-trend up" id="hf-kpi-revenue-sub">collected from clients</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Paid to hosts · MTD</div><div class="kpi-value" id="hf-kpi-payouts" style="color:var(--red-dark)">—</div><div class="kpi-trend up" id="hf-kpi-payouts-sub">100% on-time</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Placement fees · MTD</div><div class="kpi-value" id="hf-kpi-placement" style="color:#3e6049">—</div><div class="kpi-trend up" id="hf-kpi-placement-sub">new bookings this month</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Cash in</div><div class="kpi-value" id="hf-kpi-revenue">—</div><div class="kpi-trend up" id="hf-kpi-revenue-sub">—</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Owed to hosts</div><div class="kpi-value" id="hf-kpi-payouts" style="color:var(--red-dark)">—</div><div class="kpi-trend up" id="hf-kpi-payouts-sub">—</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Placement fees</div><div class="kpi-value" id="hf-kpi-placement" style="color:#3e6049">—</div><div class="kpi-trend up" id="hf-kpi-placement-sub">—</div></div>
       </div>
 
       <div class="row-15" style="margin-bottom:18px">
@@ -2870,9 +2881,11 @@ hello@vanmates.com · vanmates.com</textarea>
           <div class="card-head" style="justify-content:space-between">
             <div>
               <div class="card-title">Placement <em>fees</em></div>
-              <div class="card-sub">One-time fee charged on each new booking · separate from monthly rent</div>
+              <div class="card-sub">One-time fee on each new booking · counted in the month the guest arrives</div>
             </div>
-            <span class="badge badge-green"><span class="dot"></span>$2,400 collected MTD</span>
+            <!-- The text lives in its own span so the renderer's textContent
+                 write cannot delete the sibling .dot. -->
+            <span class="badge badge-green" id="hf-placement-badge"><span class="dot"></span><span id="hf-placement-badge-text">—</span></span>
           </div>
           <table>
             <thead>
@@ -2897,22 +2910,37 @@ hello@vanmates.com · vanmates.com</textarea>
         </div>
 
         <div class="card card-pad">
-          <div class="card-head"><div><div class="card-title">Net profit · <em>MTD</em></div><div class="card-sub">Rent margin + placement fees</div></div></div>
+          <div class="card-head"><div><div class="card-title">Net <em>revenue</em></div><div class="card-sub" id="hf-net-scope">—</div></div></div>
           <div id="hf-kpi-netprofit" style="font-family:var(--serif);font-size:32px;font-weight:700;letter-spacing:-1px;color:#3e6049">—</div>
           <div class="card-sub" style="margin-top:4px" id="hf-kpi-netprofit-breakdown">—</div>
+
           <div class="list-row" style="border-bottom:none;margin-top:14px">
-            <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 17 9 11 13 15 21 7"/></svg></div>
+            <div class="list-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></div>
             <div class="list-main">
-              <div class="list-title">Booking velocity</div>
-              <div class="list-sub" id="hf-velocity">—</div>
+              <div class="list-title">Confirmed · Stripe</div>
+              <div class="list-sub" id="hf-confirmed-sub">—</div>
             </div>
+            <div class="list-meta num" id="hf-confirmed-net">—</div>
           </div>
+
           <div class="list-row" style="border-bottom:none">
             <div class="list-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
             <div class="list-main">
-              <div class="list-title">Avg margin per active client</div>
-              <div class="list-sub" id="hf-avg-margin">—</div>
+              <div class="list-title">Expected · portal plan</div>
+              <div class="list-sub" id="hf-expected-sub">—</div>
             </div>
+            <div class="list-meta num" id="hf-expected-net">—</div>
+          </div>
+
+          <div id="hf-migration" class="card-sub" style="margin-top:10px"></div>
+
+          <div class="list-row" style="border-bottom:none;margin-top:6px">
+            <div class="list-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 17 9 11 13 15 21 7"/></svg></div>
+            <div class="list-main">
+              <div class="list-title">Prorated margin</div>
+              <div class="list-sub" id="hf-margin-detail">—</div>
+            </div>
+            <div class="list-meta num" id="hf-margin-prorated">—</div>
           </div>
         </div>
       </div>
@@ -2922,15 +2950,14 @@ hello@vanmates.com · vanmates.com</textarea>
           <div class="card-head" style="justify-content:space-between">
             <div>
               <div class="card-title">Revenue vs <em>host payouts</em></div>
-              <div class="card-sub">Last 12 months · CAD</div>
+              <div class="card-sub">Last 6 months · net revenue · CAD</div>
             </div>
             <div class="legend" style="flex-direction:row;gap:18px">
-              <div class="legend-row"><span class="legend-sw" style="background:var(--red)"></span>Collected from clients</div>
-              <div class="legend-row"><span class="legend-sw" style="background:var(--green)"></span>Paid to hosts</div>
-              <div class="legend-row"><span class="legend-sw" style="background:#D17262"></span>Net margin</div>
+              <div class="legend-row"><span class="legend-sw" style="background:#C9B896"></span>Expected</div>
+              <div class="legend-row"><span class="legend-sw" style="background:#3e6049"></span>Confirmed</div>
             </div>
           </div>
-          <svg viewBox="0 0 600 220" width="100%" height="220" preserveAspectRatio="none">
+          <svg viewBox="0 0 600 220" width="100%" height="220" preserveAspectRatio="none" id="hf-trend-svg">
             <defs>
               <linearGradient id="gRedHS" x1="0" x2="0" y1="0" y2="1">
                 <stop offset="0%" stop-color="#B94A3F" stop-opacity=".22"/>
@@ -2943,20 +2970,9 @@ hello@vanmates.com · vanmates.com</textarea>
               <line x1="0" y1="140" x2="600" y2="140"/>
               <line x1="0" y1="190" x2="600" y2="190"/>
             </g>
-            <!-- Revenue (collected) -->
-            <path d="M0,170 L55,160 L110,150 L165,135 L220,120 L275,110 L330,98 L385,85 L440,75 L495,62 L550,50 L600,40 L600,220 L0,220 Z" fill="url(#gRedHS)"/>
-            <path d="M0,170 L55,160 L110,150 L165,135 L220,120 L275,110 L330,98 L385,85 L440,75 L495,62 L550,50 L600,40" fill="none" stroke="#B94A3F" stroke-width="2.5"/>
-            <!-- Paid to hosts -->
-            <path d="M0,185 L55,178 L110,170 L165,158 L220,148 L275,140 L330,132 L385,123 L440,115 L495,105 L550,98 L600,90" fill="none" stroke="#5C8A6B" stroke-width="2.5"/>
-            <!-- Net margin -->
-            <path d="M0,200 L55,196 L110,191 L165,182 L220,175 L275,168 L330,162 L385,155 L440,148 L495,140 L550,132 L600,125" fill="none" stroke="#D17262" stroke-width="2" stroke-dasharray="4 3"/>
-            <g fill="#B94A3F"><circle cx="600" cy="40" r="4"/></g>
-            <g fill="#5C8A6B"><circle cx="600" cy="90" r="4"/></g>
-            <g fill="#D17262"><circle cx="600" cy="125" r="3.5"/></g>
+            <g id="hf-trend-body"></g>
           </svg>
-          <div class="line-grid">
-            <span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span><span>Oct</span><span>Nov</span><span>Dec</span><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span>
-          </div>
+          <div class="line-grid" id="hf-trend-labels"></div>
         </div>
 
         <div class="card card-pad">
@@ -2967,9 +2983,15 @@ hello@vanmates.com · vanmates.com</textarea>
 
       <div class="row-2 mt-18">
         <div class="card card-pad">
-          <div class="card-head"><div><div class="card-title">Recent <em>transactions</em></div><div class="card-sub">Homestay collections and payouts</div></div></div>
+          <div class="card-head" style="justify-content:space-between">
+            <div>
+              <div class="card-title">Host <em>payments</em></div>
+              <div class="card-sub">What has gone out, what is owed, and what has no payment record yet</div>
+            </div>
+            <span class="badge badge-grey" id="hf-hp-badge"><span class="dot"></span>—</span>
+          </div>
           <table>
-            <thead><tr><th>Date</th><th>Description</th><th>Counterparty</th><th class="right">Amount</th><th>Type</th></tr></thead>
+            <thead><tr><th>Host family</th><th>Guest</th><th>Date</th><th class="right">Amount</th><th>Status</th></tr></thead>
             <tbody id="hf-tx-body"></tbody>
           </table>
         </div>
@@ -5507,8 +5529,14 @@ function statusBadge(s){
 }
 function avatar(ini, hue){
   const hues = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041"];
-  const c = hue || hues[ini.charCodeAt(0)%hues.length];
-  return `<div class="avatar" style="background:linear-gradient(135deg,${c},${shade(c,-25)})">${esc(ini)}</div>`;
+  // A record with no initials used to take the whole render down with it:
+  // "".charCodeAt(0) is NaN, hues[NaN] is undefined, and shade(undefined,-25)
+  // throws on .slice(1). Inside a .map() that aborts the entire table, leaving
+  // stale rows and a console error. One coercion up front, used for both the
+  // hue index and the body, keeps a bad record to a single "?" tile.
+  const s = String(ini || "?");
+  const c = hue || hues[s.charCodeAt(0)%hues.length];
+  return `<div class="avatar" style="background:linear-gradient(135deg,${c},${shade(c,-25)})">${esc(s)}</div>`;
 }
 function shade(hex, p){
   const n = parseInt(hex.slice(1),16);
@@ -5529,6 +5557,21 @@ function safeHref(u){ const s = String(u==null?"":u).trim(); return /^(https?:|m
 
 /* ============ TENANTS FILTERING ENGINE ============ */
 const TODAY = new Date("2026-04-25");
+/* Homestay pages run on the REAL clock, not the portal's frozen TODAY.
+   TODAY is a demo constant driving 46 call sites across tenants, landlords,
+   vacancies and deposits, and moving all of them is a separate decision.
+   Homestay is different: it is joined to live Stripe data, where a booking
+   dated 2026-08-07 is real money that a page pinned to April cannot see.
+   Local midnight, matching parseLocalDate() — TODAY is UTC midnight and the
+   mismatch costs a day at the edges. */
+function homestayToday(){
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+function homestayYM(d){
+  const t = d || homestayToday();
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}`;
+}
 
 function daysBetween(a,b){return Math.round((b-a)/(1000*60*60*24));}
 function fmtDate(s){
@@ -9136,6 +9179,7 @@ function goToView(v, savedView){
   // Hooked here rather than on the nav button because the page is also reached
   // programmatically (KPI drill-downs, the host panel's back-links).
   if(v === "homestay-hosts" && typeof loadHostPayoutStatus === "function") loadHostPayoutStatus();
+  if(v === "homestay-finance" && typeof loadHomestayFinanceLive === "function") loadHomestayFinanceLive();
 
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
@@ -9179,7 +9223,7 @@ document.querySelectorAll(".tabs").forEach(group=>{
 const HOMESTAY_MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 // Selected month state. "all" or "YYYY-MM"
-let homestayMonth = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`;
+let homestayMonth = homestayYM();
 let homestayMode = "month"; // "month" | "all"
 
 function parseLocalDate(s){
@@ -9295,7 +9339,7 @@ function renderHomestayClients(searchTxt = ""){
     if(homestayMode === "all"){
       monthSub.textContent = `${list.length} client${list.length===1?"":"s"} total`;
     } else {
-      const ymNow = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`;
+      const ymNow = homestayYM();
       const tag = homestayMonth === ymNow ? "Current month" : (homestayMonth < ymNow ? "Past" : "Future");
       monthSub.textContent = `${tag} · ${list.length} client${list.length===1?"":"s"}`;
     }
@@ -9303,7 +9347,7 @@ function renderHomestayClients(searchTxt = ""){
 
   // Disable Today button when already on current month
   const todayBtn = document.getElementById("hc-month-today");
-  const ymNow = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`;
+  const ymNow = homestayYM();
   if(todayBtn) todayBtn.disabled = (homestayMode === "month" && homestayMonth === ymNow);
 
   // Render table rows
@@ -9407,7 +9451,14 @@ function renderHomestayClients(searchTxt = ""){
   }).join("");
 }
 
-function setHomestayMonth(ym){ homestayMonth = ym; homestayMode = "month"; updateHomestayMonthLabel(); renderHomestayClients(document.getElementById("hc-search")?.value || ""); }
+function setHomestayMonth(ym){
+  homestayMonth = ym; homestayMode = "month";
+  updateHomestayMonthLabel();
+  renderHomestayClients(document.getElementById("hc-search")?.value || "");
+  // R3 — Finance is scoped by the same picker, so it must move with it.
+  if(typeof renderHomestayFinance === "function") renderHomestayFinance();
+  if(typeof renderPlacementFees === "function") renderPlacementFees();
+}
 function setHomestayAllTime(){ homestayMode = "all"; updateHomestayMonthLabel(); renderHomestayClients(document.getElementById("hc-search")?.value || ""); }
 
 function updateHomestayMonthLabel(){
@@ -9433,7 +9484,7 @@ document.getElementById("hc-month-next")?.addEventListener("click", () => {
   setHomestayMonth(shiftMonth(homestayMonth, 1));
 });
 document.getElementById("hc-month-today")?.addEventListener("click", () => {
-  setHomestayMonth(`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`);
+  setHomestayMonth(homestayYM());
 });
 document.getElementById("hc-mode-month")?.addEventListener("click", () => {
   setHomestayMonth(homestayMonth);
@@ -9448,113 +9499,604 @@ renderHomestayClients();
 const hcSearch = document.getElementById("hc-search");
 if (hcSearch) hcSearch.addEventListener("input", e => renderHomestayClients(e.target.value));
 
-/* === Homestay Finance — top hosts + transactions + arrivals === */
-function renderHomestayFinance(){
-  // ===== KPI strip — same scope as the Homestay Clients page =====
-  // The Clients page filters by `homestayMonth` (current month by default),
-  // so Finance MTD numbers are computed against the same set so the two pages
-  // never disagree.
-  const ymNow = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`;
-  const monthScoped = (typeof homestayMode !== "undefined" && homestayMode === "all")
-    ? homestayClients.slice()
-    : (typeof clientsActiveInMonth === "function" ? clientsActiveInMonth(ymNow) : homestayClients.filter(c => c.status === "active"));
+/* === Homestay Finance — pure calculation core ==========================
+   No DOM, no fetch, no globals. `today` and `month` are injected so results
+   are deterministic and assertable under node — test/homestay-finance.test.js
+   extracts everything between the sentinels below and evaluates it.
+   KEEP THE SENTINELS INTACT.
 
-  const active = monthScoped;  // "active in selected month" — matches Clients page
-  const upcoming = homestayClients.filter(c => c.status === "upcoming" && !monthScoped.includes(c));
-  const totalRevenue = active.reduce((s,c) => s + (c.weCollect || 0), 0);
-  const totalPayouts = active.reduce((s,c) => s + (c.wePay || 0), 0);
-  const totalRentMargin = totalRevenue - totalPayouts;
-  // Placement fees: clients whose arrival date falls in the same month
-  const placementClients = active.filter(c => c.placementFee && c.arrival && c.arrival.startsWith(ymNow));
-  const totalPlacementFees = placementClients.reduce((s,c) => s + (c.placementFee || 0), 0);
-  const netProfit = totalRentMargin + totalPlacementFees;
-  const cities = new Set(active.map(c => {
-    const h = homestayHosts.find(x => x.id === c.hostId);
-    return h && h.city;
-  }).filter(Boolean));
+   Every monetary value in the returned object is INTEGER CENTS. The portal
+   stores dollars and n8n stores cents (R2); conversion happens here, on input,
+   and formatting happens at the edge in the renderer. Nothing in between
+   should ever see a dollar float. */
+/* HF-CORE-START */
+// The day the Stripe system first existed. Before this there is no Confirmed
+// history to draw, and a zero line would read as "we earned nothing" rather
+// than "we were not measuring yet".
+var HF_LIVE_FROM = "2026-07-30";
 
-  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
-  set("hf-kpi-active", active.length);
-  set("hf-kpi-active-sub", `${cities.size} ${cities.size===1?"city":"cities"} · ${upcoming.length} upcoming`);
-  set("hf-kpi-revenue", "$" + totalRevenue.toLocaleString());
-  set("hf-kpi-revenue-sub", active.length ? `avg $${Math.round(totalRevenue/active.length).toLocaleString()} per client` : "no active clients");
-  set("hf-kpi-payouts", "−$" + totalPayouts.toLocaleString());
-  const payoutPct = totalRevenue > 0 ? Math.round(totalPayouts / totalRevenue * 100) : 0;
-  set("hf-kpi-payouts-sub", payoutPct + "% of revenue to hosts");
-  set("hf-kpi-placement", "$" + totalPlacementFees.toLocaleString());
-  set("hf-kpi-placement-sub", `${placementClients.length} bookings × placement fee`);
-  set("hf-placement-total", "$" + totalPlacementFees.toLocaleString());
-  set("hf-kpi-netprofit", "$" + netProfit.toLocaleString());
-  set("hf-kpi-netprofit-breakdown", `$${totalRentMargin.toLocaleString()} rent margin + $${totalPlacementFees.toLocaleString()} placement`);
-  // Booking velocity = # of clients with arrival in last 30 days
-  const recentBookings = homestayClients.filter(c => c.arrival && (TODAY - parseLocalDate(c.arrival)) <= 30 * 86400000 && (TODAY - parseLocalDate(c.arrival)) >= 0).length;
-  set("hf-velocity", `${recentBookings} new clients in the last 30 days`);
-  set("hf-avg-margin", active.length ? `$${Math.round(totalRentMargin / active.length).toLocaleString()}/month margin per client` : "—");
+// A booking in one of these states is not money in the month: it was never
+// paid, or it was paid and given back.
+var HF_DEAD_STATUS = ["created", "payment_failed", "refunded",
+                      "partially_refunded", "cancelled", "canceled"];
 
-  // ===== Top hosts: aggregate revenue by host =====
-  const totals = {};
-  active.forEach(c => {
-    if(!totals[c.hostId]) totals[c.hostId] = {revenue:0, payout:0, count:0};
-    totals[c.hostId].revenue += c.weCollect;
-    totals[c.hostId].payout += c.wePay;
-    totals[c.hostId].count += 1;
+function hfParseDate(s){
+  if(!s) return null;
+  var p = String(s).slice(0, 10).split("-").map(Number);
+  if(p.length !== 3 || p.some(function(n){ return !isFinite(n); })) return null;
+  return new Date(p[0], p[1] - 1, p[2]);
+}
+// The month a date falls in, as "YYYY-MM". Goes through hfParseDate so it
+// agrees with every other date comparison in the core: a non-zero-padded
+// "2026-8-07" parses fine everywhere else, but its raw .slice(0, 7) is
+// "2026-8-", which matches no month at all.
+function hfYM(s){
+  var d = hfParseDate(s);
+  return d ? d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) : "";
+}
+function hfMonthStart(ym){ var p = String(ym).split("-").map(Number); return new Date(p[0], p[1] - 1, 1); }
+function hfMonthEnd(ym){ var p = String(ym).split("-").map(Number); return new Date(p[0], p[1], 0); }
+function hfShiftMonth(ym, delta){
+  var p = String(ym).split("-").map(Number);
+  var d = new Date(p[0], p[1] - 1 + delta, 1);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+// Portal dollars → cents. Stripe values are already cents and use hfCents.
+function hfToCents(v){ return Math.round((Number(v) || 0) * 100); }
+function hfCents(v){ return Math.round(Number(v) || 0); }
+function hfEmail(v){ return v == null ? "" : String(v).toLowerCase().trim(); }
+
+// R4 — whole days of overlap between [arrival, departure] and the month,
+// inclusive of both endpoints, so 1–31 August is 31 days and not 30.
+function hfOverlapDays(arrival, departure, ym){
+  var a = hfParseDate(arrival), d = hfParseDate(departure);
+  if(!a || !d) return 0;
+  var s = hfMonthStart(ym), e = hfMonthEnd(ym);
+  var from = a > s ? a : s;
+  var to   = d < e ? d : e;
+  if(to < from) return 0;
+  return Math.round((to - from) / 86400000) + 1;
+}
+// R4 — daily rate is monthly ÷ 30, and 30+ days of overlap is a full month.
+function hfProrate(cents, days){
+  if(days >= 30) return cents;
+  if(days <= 0) return 0;
+  return Math.round(cents * days / 30);
+}
+
+function computeHomestayFinance(input){
+  input = input || {};
+  var clients  = Array.isArray(input.clients) ? input.clients : [];
+  var hosts    = Array.isArray(input.hosts)   ? input.hosts   : [];
+  var remoteHosts = Array.isArray(input.remoteHosts) ? input.remoteHosts : [];
+  var month    = input.month;
+  // `bookings: null` means the live read did not happen — a missing token, a
+  // rejection or a network failure. An empty array means it happened and there
+  // is genuinely nothing. The two must not collapse: one hides the Confirmed
+  // column, the other shows it reading zero.
+  var raw       = Array.isArray(input.bookings) ? input.bookings : null;
+  var available = raw !== null;
+  var reason    = available ? null : (input.bookingsError || "error");
+  var bookings  = raw || [];
+
+  var mStart = hfMonthStart(month), mEnd = hfMonthEnd(month);
+
+  // ===== Confirmed (Stripe) ==============================================
+  // A3 — scoped by overlap, not by move_in_date alone: a subscription that
+  // began in August is still real money in September.
+  var monthBookings = bookings.filter(function(b){
+    if(HF_DEAD_STATUS.indexOf(String(b.status || "")) !== -1) return false;
+    var mi = hfParseDate(b.move_in_date);
+    if(!mi || mi > mEnd) return false;
+    var mo = hfParseDate(b.move_out_date);
+    if(mo && mo < mStart) return false;
+    return true;
   });
-  const topRanked = homestayHosts.map(h => ({...h, ...totals[h.id]||{revenue:0,payout:0,count:0}}))
-    .sort((a,b) => b.revenue - a.revenue);
-  const topMax = Math.max(...topRanked.map(h => h.revenue), 1);
 
-  const topEl = document.getElementById("hf-top-hosts");
-  if(topEl){
-    topEl.innerHTML = topRanked.map(h => `
-      <div class="list-row">
-        <div class="avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg, ${h.color}, ${shade(h.color,-25)})">${esc(h.name.split(" ")[0][0])}${h.name.split(" ")[1] ? esc(h.name.split(" ")[1][0]) : ""}</div>
-        <div class="list-main">
-          <div class="list-title">${esc(h.name)}</div>
-          <div class="list-sub">${esc(h.city)} · ${h.count} guest${h.count===1?'':'s'} · margin ${fmt(h.revenue - h.payout)}</div>
-          <div class="occ-bar"><div class="occ-fill" style="width:${(h.revenue/topMax*100).toFixed(0)}%"></div></div>
-        </div>
-        <div class="list-meta num">${fmt(h.revenue)}</div>
-      </div>
-    `).join("");
+  var confCashIn = 0, confOwed = 0;
+  monthBookings.forEach(function(b){
+    confCashIn += hfCents(b.monthly_gross) + hfCents(b.transaction_fee);
+    // Owed means owed, whether or not the transfer has gone out (R6).
+    confOwed   += hfCents(b.host_net);
+  });
+
+  // ===== Expected (portal), minus anything already Confirmed (R1) ========
+  // Excluded on ANY booking for that email, not just one scoped to this month:
+  // a family that has migrated to Stripe has migrated, and counting their
+  // portal plan figure alongside their Stripe charge is the double count this
+  // whole design exists to prevent.
+  var confirmedEmails = {};
+  bookings.forEach(function(b){
+    var e = hfEmail(b.student_email);
+    if(e) confirmedEmails[e] = true;
+  });
+
+  // R3 — this predicate MUST stay identical to clientsActiveInMonth()
+  // (index.html:9193), which is what the Clients page filters by. The core is
+  // pure and cannot call it, so the logic is duplicated deliberately; Task 12
+  // Step 2 greps both to confirm they still agree. If you change one, change
+  // the other, or Finance and Clients will silently disagree again.
+  var activeClients = clients.filter(function(c){
+    var a = hfParseDate(c.arrival), d = hfParseDate(c.departure);
+    return a && d && a <= mEnd && d >= mStart;
+  });
+  var expClients = activeClients.filter(function(c){
+    return !confirmedEmails[hfEmail(c.email)];
+  });
+
+  var expCashIn = 0, expOwed = 0;
+  var fullStays = 0, partialStays = 0, proratedMargin = 0, chargedMargin = 0;
+  expClients.forEach(function(c){
+    var gross = hfToCents(c.weCollect);
+    var pay   = hfToCents(c.wePay);
+    var days  = hfOverlapDays(c.arrival, c.departure, month);
+    // R4 — income and host cost prorate together, preserving the ratio.
+    var pGross = hfProrate(gross, days);
+    var pPay   = hfProrate(pay, days);
+    expCashIn += pGross;
+    expOwed   += pPay;
+    if(days < 30) partialStays++; else fullStays++;
+    proratedMargin += pGross - pPay;
+    chargedMargin  += gross - pay;
+  });
+
+  // ===== Placement fees (R5) — Expected-only, permanently (D6) ===========
+  var pfRows = [], pfTotal = 0;
+  expClients.forEach(function(c){
+    if(!c.arrival || String(c.arrival).slice(0, 7) !== month) return;
+    // No $300 fallback. A client without a fee contributes 0 and renders "—";
+    // a fee of 0 is a real zero. The old fallback is why the placement table
+    // and the KPI disagreed.
+    var has = c.placementFee != null && c.placementFee !== "";
+    var feeCents = has ? hfToCents(c.placementFee) : 0;
+    var host = hosts.filter(function(h){ return h.id === c.hostId; })[0];
+    var a = hfParseDate(c.arrival), d = hfParseDate(c.departure);
+    pfRows.push({
+      clientId: c.id || "", clientName: c.name || "—", ini: c.ini || "",
+      flag: c.flag || "", country: c.country || "", school: c.school || "",
+      hostName: host ? host.name : "—", arrival: c.arrival,
+      stayMonths: (a && d) ? Math.round(((d - a) / 86400000) / 30 * 10) / 10 : 0,
+      fee: feeCents, hasFee: has, status: c.status || ""
+    });
+    pfTotal += feeCents;
+  });
+  pfRows.sort(function(a, b){ return String(a.arrival).localeCompare(String(b.arrival)); });
+  // Placement fees are a breakdown line of expected.cashIn, not an addition to
+  // it — never sum expected.cashIn and placementFees.total.
+  expCashIn += pfTotal;
+
+  // ===== Host payments (R6) ==============================================
+  var hostById = {};
+  hosts.forEach(function(h){ hostById[h.id] = h; });
+  var hostByStripe = {};
+  remoteHosts.forEach(function(r){ if(r.host_id) hostByStripe[r.host_id] = r; });
+
+  var hostPayments = [], paidThisMonth = 0, pendingThisMonth = 0;
+  monthBookings.forEach(function(b){
+    var ts = String(b.transfer_status || "");
+    // `transfer_status` is a per-booking scalar describing ONE transfer — the
+    // move-in transfer the n8n workflow marks once. A3 hands us the same
+    // booking in every overlapping month, so reading the scalar unconditionally
+    // replayed that single transfer onto every later month: a green "Pagado"
+    // row, and a paid total, for a month in which nothing was sent and the
+    // money is in fact still owed. Trust it only in the month it happened;
+    // later months are genuinely owed, which is exactly "pending". The same
+    // reasoning applies to `flagged` — a failure belongs to the transfer that
+    // failed, not to next month's rent, for which nothing was attempted yet.
+    var transferMonth = hfYM(b.move_in_date) === month;
+    var status = (ts === "sent" && transferMonth) ? "paid" : "pending";
+    var amt = hfCents(b.host_net);
+    if(status === "paid") paidThisMonth += amt; else pendingThisMonth += amt;
+    var rh = hostByStripe[b.host_id];
+    hostPayments.push({
+      hostName: (rh && rh.display_name) || b.host_id || "—",
+      hostId: b.host_id || "",
+      studentName: b.student_name || b.student_email || "—",
+      studentEmail: hfEmail(b.student_email),
+      amount: amt, status: status, flagged: ts === "failed" && transferMonth,
+      date: b.move_in_date || "", source: "stripe",
+      bookingRef: b.booking_ref || ""
+    });
+  });
+  expClients.forEach(function(c){
+    var days = hfOverlapDays(c.arrival, c.departure, month);
+    var host = hostById[c.hostId];
+    hostPayments.push({
+      hostName: host ? host.name : "—", hostId: c.hostId || "",
+      studentName: c.name || "—", studentEmail: hfEmail(c.email),
+      amount: hfProrate(hfToCents(c.wePay), days),
+      status: "expected", flagged: false,
+      date: c.arrival || "", source: "portal", bookingRef: ""
+    });
+  });
+  // Stripe rows first — they are the ones with a real obligation attached.
+  hostPayments.sort(function(a, b){
+    if(a.source !== b.source) return a.source === "stripe" ? -1 : 1;
+    return String(b.date).localeCompare(String(a.date));
+  });
+
+  // ===== By host family (D4) =============================================
+  var byHostMap = {}, byHostOrder = [];
+  function bucket(key, name, city){
+    if(!byHostMap[key]){
+      byHostMap[key] = { hostId: key, hostName: name || "—", city: city || "",
+                         confirmed: 0, expected: 0, paid: 0, pending: 0, guests: 0 };
+      byHostOrder.push(key);
+    }
+    return byHostMap[key];
+  }
+  monthBookings.forEach(function(b){
+    var rh = hostByStripe[b.host_id];
+    var k = bucket(b.host_id || "—", (rh && rh.display_name) || b.host_id, "");
+    k.confirmed += (hfCents(b.monthly_gross) + hfCents(b.transaction_fee)) - hfCents(b.host_net);
+    k.guests += 1;
+    // Same per-booking scalar, same replay, same fix as the host payment rows
+    // above: one transfer belongs to one month, and A3 hands us the booking in
+    // all of them. Textually identical to that gate deliberately — if these two
+    // views of the same transfer ever disagree, one of them is lying.
+    var sent = String(b.transfer_status || "") === "sent" && hfYM(b.move_in_date) === month;
+    if(sent) k.paid += hfCents(b.host_net);
+    else k.pending += hfCents(b.host_net);
+  });
+  expClients.forEach(function(c){
+    var h = hostById[c.hostId];
+    var k = bucket(c.hostId || "—", h ? h.name : "—", h ? h.city : "");
+    var days = hfOverlapDays(c.arrival, c.departure, month);
+    k.expected += hfProrate(hfToCents(c.weCollect), days) - hfProrate(hfToCents(c.wePay), days);
+    k.guests += 1;
+  });
+  var byHost = byHostOrder.map(function(k){ return byHostMap[k]; })
+    .sort(function(a, b){ return (b.confirmed + b.expected) - (a.confirmed + a.expected); });
+
+  // ===== Trend (D5) — six months, oldest first ===========================
+  var liveFrom = hfParseDate(HF_LIVE_FROM);
+  var trend = [];
+  for(var i = 5; i >= 0; i--){
+    var ym = hfShiftMonth(month, -i);
+    var s = hfMonthStart(ym), e = hfMonthEnd(ym);
+    var eNet = 0;
+    clients.forEach(function(c){
+      if(confirmedEmails[hfEmail(c.email)]) return;   // R1 holds across the series
+      var a = hfParseDate(c.arrival), d = hfParseDate(c.departure);
+      if(!a || !d || a > e || d < s) return;
+      var days = hfOverlapDays(c.arrival, c.departure, ym);
+      eNet += hfProrate(hfToCents(c.weCollect), days) - hfProrate(hfToCents(c.wePay), days);
+      if(String(c.arrival).slice(0, 7) === ym && c.placementFee != null && c.placementFee !== ""){
+        eNet += hfToCents(c.placementFee);
+      }
+    });
+    // null, not 0, before the system existed — the chart draws no point rather
+    // than a misleading floor. The gate is the month's START, not its end: a
+    // month is "measured" only if the system existed for the whole of it.
+    // Gating on `e` let July 2026 through — its end is on/after 2026-07-30 even
+    // though 29 of its 31 days predate the system — so July reported a
+    // confirmed zero and the chart drew a line rising off that false floor.
+    var cNet = null;
+    if(available && s >= liveFrom){
+      cNet = 0;
+      bookings.forEach(function(b){
+        if(HF_DEAD_STATUS.indexOf(String(b.status || "")) !== -1) return;
+        var mi = hfParseDate(b.move_in_date);
+        if(!mi || mi > e) return;
+        var mo = hfParseDate(b.move_out_date);
+        if(mo && mo < s) return;
+        cNet += (hfCents(b.monthly_gross) + hfCents(b.transaction_fee)) - hfCents(b.host_net);
+      });
+    }
+    trend.push({ month: ym, expectedNet: eNet, confirmedNet: cNet });
   }
 
-  // Transactions — synthesize recent activity
-  const txEl = document.getElementById("hf-tx-body");
-  if(txEl){
-    const tx = [];
-    const recent = [...homestayClients].filter(c => c.status === "active");
-    recent.slice(0, 5).forEach((c, i) => {
-      const host = homestayHosts.find(h => h.id === c.hostId);
-      const day = 24 - i*3;
-      tx.push({date:`Apr ${day}`, desc:`Rent collection · ${c.name}`, party:`${c.name}`, amt:c.weCollect, type:"collect"});
-      tx.push({date:`Apr ${day-1}`, desc:`Host payout · ${host?.name || "—"}`, party:host?.name || "—", amt:-c.wePay, type:"payout"});
-    });
-    txEl.innerHTML = tx.slice(0, 10).map(t => `
-      <tr>
-        <td class="nowrap">${t.date}</td>
-        <td><div class="name-main">${esc(t.desc)}</div></td>
-        <td>${esc(t.party)}</td>
-        <td class="right"><span class="num" style="color:${t.amt < 0 ? 'var(--red-dark)' : '#3e6049'}">${t.amt < 0 ? '−' : '+'}${fmt(Math.abs(t.amt))}</span></td>
-        <td>${t.type === 'collect'
-          ? '<span class="badge badge-green"><span class="dot"></span>Collected</span>'
-          : '<span class="badge badge-blue"><span class="dot"></span>Paid out</span>'}</td>
-      </tr>
-    `).join("");
+  return {
+    month: month,
+    confirmed: {
+      cashIn: confCashIn, owedToHosts: confOwed, net: confCashIn - confOwed,
+      bookingCount: monthBookings.length, available: available, reason: reason
+    },
+    expected: {
+      cashIn: expCashIn, owedToHosts: expOwed, net: expCashIn - expOwed,
+      clientCount: expClients.length
+    },
+    placementFees: { total: pfTotal, count: pfRows.length, rows: pfRows },
+    // A4(b) — rent only. Placement fees are one-time and never prorate, so
+    // including them would blur the divergence this widget exists to show.
+    margin: {
+      fullStays: fullStays, partialStays: partialStays,
+      prorated: proratedMargin, charged: chargedMargin,
+      variance: chargedMargin - proratedMargin
+    },
+    hostPayments: hostPayments,
+    hostPaymentTotals: { paidThisMonth: paidThisMonth, pendingThisMonth: pendingThisMonth },
+    byHost: byHost,
+    trend: trend,
+    migration: { confirmedStays: monthBookings.length,
+                 totalStays: expClients.length + monthBookings.length }
+  };
+}
+/* HF-CORE-END */
+
+/* Cents → screen. The page's existing fmt() cannot express this: it rounds to
+   whole dollars via toLocaleString with no fraction digits, so fmt(10.4) is
+   "$10.4" and fmt(5) is "$5". Stripe amounts here are $10.40 and $5.00 and the
+   whole point of the page is being precise about which money is real, so this
+   page shows two decimals everywhere rather than mixing conventions. */
+function hfMoney(cents){
+  var v = Math.round(Number(cents) || 0);
+  var s = (Math.abs(v) / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2
+  });
+  return (v < 0 ? "−$" : "$") + s;
+}
+
+/* ---- vmN8n — shared read client for the n8n read endpoints -------------
+   Two consumers now read from n8n: the Hosts page payout badges and the
+   Finance page's Confirmed column. Both are deliberately SILENT — no token
+   card, no error banner — so the token-preference and 401 rules belong in one
+   place rather than being reimplemented slightly differently per caller.
+
+   Sits above both consumers rather than inside either section: Finance runs at
+   top level further down this block, so a client declared below it would be in
+   the temporal dead zone by the time Finance reached for it.
+
+   Deliberately NOT used by the Bookings page's hbPost(). That performs writes
+   (booking-create, booking-end), needs the full staff token, and shows a
+   visible token card. Merging the two UX contracts would break one of them. */
+const VM_N8N_BASE = "https://adr23.app.n8n.cloud/webhook";
+const VM_RO_TOKEN_KEY = "vm_staff_token_ro";
+
+const vmN8n = {
+  // Prefer the read-only secret; fall back to the full staff token so this
+  // keeps working for admins who only hold that one — and before the n8n side
+  // grows the second secret at all.
+  token(){
+    const ro = localStorage.getItem(VM_RO_TOKEN_KEY) || "";
+    if(ro) return { value: ro, readOnly: true };
+    const full = localStorage.getItem("vm_staff_token") || "";
+    return full ? { value: full, readOnly: false } : null;
+  },
+
+  // Resolves to parsed JSON, or throws { kind } where kind is one of
+  // 'no-token' | 'rejected' | 'unavailable'. Callers that only need to know
+  // "did this work" can treat rejected and unavailable identically; the
+  // distinction exists for the token-clearing policy below. A caller that
+  // wants to say "no token yet" differently from "the read failed" should
+  // branch on err.kind rather than collapsing every failure into one message.
+  async read(path){
+    // vmN8n rather than this, so a detached `const { read } = vmN8n` still works.
+    const token = vmN8n.token();
+    if(!token) throw { kind: "no-token" };
+    let resp;
+    try {
+      resp = await fetch(`${VM_N8N_BASE}/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-vm-staff-token": token.value },
+        body: "{}"
+      });
+    } catch(e){
+      throw { kind: "unavailable" };
+    }
+    // A rejected read-only token is ours to clear — the Hosts page owns that
+    // key and can offer re-entry. A rejected STAFF token is not: the Bookings
+    // page owns it and explains failures there, and silently clearing it from
+    // a page the user never associated with tokens would log them out of it.
+    if(resp.status === 401){
+      if(token.readOnly) localStorage.removeItem(VM_RO_TOKEN_KEY);
+      throw { kind: "rejected" };
+    }
+    if(!resp.ok) throw { kind: "unavailable" };
+    try {
+      return await resp.json();
+    } catch(e){
+      throw { kind: "unavailable" };
+    }
+  }
+};
+
+/* === Homestay Finance — top hosts + transactions + arrivals === */
+
+/* Finance's own copy of the live read. It is separate from HH_PAYOUT because
+   the two pages fail differently: the Hosts page retries on the next visit,
+   Finance holds the last good figures for the session so switching months does
+   not re-fetch. Silent on every failure, per the Hosts page precedent — no
+   error card, no blank page, just the Confirmed column withheld. */
+const HF_LIVE = { state:"idle", bookings:null, reason:null, hosts:[] };
+
+async function loadHomestayFinanceLive(){
+  if(HF_LIVE.state === "loading" || HF_LIVE.state === "loaded") return;
+  HF_LIVE.state = "loading";
+  try {
+    const d = await vmN8n.read("bookings-list");
+    HF_LIVE.bookings = Array.isArray(d && d.bookings) ? d.bookings : [];
+    HF_LIVE.reason = null;
+    HF_LIVE.state = "loaded";
+  } catch(err){
+    // 'rejected' and 'unavailable' render identically here — the distinction
+    // only matters to the Hosts page's token-clearing policy.
+    HF_LIVE.bookings = null;
+    HF_LIVE.reason = (err && err.kind === "no-token") ? "no-token" : "error";
+    HF_LIVE.state = "error";
+  }
+  // hosts-list gives display_name for a booking's host_id. A failure here is
+  // not fatal: host names fall back to the Stripe account id.
+  try {
+    const h = await vmN8n.read("hosts-list");
+    HF_LIVE.hosts = Array.isArray(h && h.hosts) ? h.hosts : [];
+  } catch(err){
+    HF_LIVE.hosts = [];
+  }
+  renderHomestayFinance();
+  renderPlacementFees();
+}
+
+function renderHomestayFinance(){
+  // R3 / A4 — Finance reads the SAME month the Clients page is showing, rather
+  // than recomputing "now". The old code derived its own month from TODAY, so
+  // moving the picker made the two pages disagree silently.
+  const month = (typeof homestayMonth === "string" && homestayMonth !== "all")
+    ? homestayMonth : homestayYM();
+
+  const m = computeHomestayFinance({
+    clients: typeof homestayClients !== "undefined" ? homestayClients : [],
+    hosts: typeof homestayHosts !== "undefined" ? homestayHosts : [],
+    bookings: HF_LIVE.bookings,
+    bookingsError: HF_LIVE.reason,
+    remoteHosts: HF_LIVE.hosts,
+    month: month,
+    today: homestayToday()
+  });
+
+  // Cents in the model, dollars on the screen (R2). hfMoney is the only place
+  // that division happens.
+  const money = hfMoney;
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  const setHTML = (id, val) => { const el = document.getElementById(id); if(el) el.innerHTML = val; };
+
+  const conf = m.confirmed, exp = m.expected;
+  const liveOn = conf.available;
+  const totalNet = conf.net + exp.net;
+  const totalCashIn = conf.cashIn + exp.cashIn;
+  const totalOwed = conf.owedToHosts + exp.owedToHosts;
+  const clientTotal = exp.clientCount + conf.bookingCount;
+
+  set("hf-month-label", `${monthLabelFromYM(month)} · ${clientTotal} stay${clientTotal===1?"":"s"}`);
+
+  set("hf-kpi-active", clientTotal);
+  const cities = new Set(m.byHost.map(h => h.city).filter(Boolean));
+  set("hf-kpi-active-sub", `${cities.size} ${cities.size===1?"city":"cities"} · ${conf.bookingCount} on Stripe`);
+
+  set("hf-kpi-revenue", money(totalCashIn));
+  set("hf-kpi-revenue-sub", liveOn
+    ? `${money(conf.cashIn)} confirmed · ${money(exp.cashIn)} expected`
+    : "Live Stripe figures unavailable · expected only");
+
+  set("hf-kpi-payouts", "−" + money(totalOwed));
+  const payoutPct = totalCashIn > 0 ? Math.round(totalOwed / totalCashIn * 100) : 0;
+  set("hf-kpi-payouts-sub", `${payoutPct}% of cash in goes to hosts`);
+
+  set("hf-kpi-placement", money(m.placementFees.total));
+  set("hf-kpi-placement-sub", m.placementFees.count
+    ? `${m.placementFees.count} arrival${m.placementFees.count===1?"":"s"} this month`
+    : "no arrivals this month");
+
+  // ===== Net Revenue widget (Epic 1) =====================================
+  set("hf-net-scope", liveOn
+    ? `${monthLabelFromYM(month)} · Stripe + portal plan`
+    : `${monthLabelFromYM(month)} · portal plan only`);
+  set("hf-kpi-netprofit", money(totalNet));
+  set("hf-kpi-netprofit-breakdown",
+    `${money(totalCashIn)} in − ${money(totalOwed)} to hosts`);
+
+  set("hf-confirmed-net", liveOn ? money(conf.net) : "—");
+  set("hf-confirmed-sub", liveOn
+    ? `${conf.bookingCount} booking${conf.bookingCount===1?"":"s"} · ${money(conf.cashIn)} in, ${money(conf.owedToHosts)} owed`
+    : "Live Stripe figures unavailable");
+
+  set("hf-expected-net", money(exp.net));
+  set("hf-expected-sub",
+    `${exp.clientCount} stay${exp.clientCount===1?"":"s"} on plan figures · no payment record`);
+
+  // The gap doubles as a migration progress bar (D1).
+  const mig = m.migration;
+  setHTML("hf-migration", mig.totalStays
+    ? `<span style="color:var(--muted)">${mig.confirmedStays} of ${mig.totalStays} stay${mig.totalStays===1?"":"s"} are on Stripe.</span>`
+    : "");
+
+  // ===== Prorated margin detail (Epic 3) =================================
+  set("hf-margin-prorated", money(m.margin.prorated));
+  set("hf-margin-detail", m.margin.partialStays
+    ? `${m.margin.fullStays} full · ${m.margin.partialStays} partial · Stripe bills ${money(m.margin.charged)} (${money(m.margin.variance)} more)`
+    : `${m.margin.fullStays} full stay${m.margin.fullStays===1?"":"s"} · no proration this month`);
+
+  // ===== Top host families (D4) ==========================================
+  const topEl = document.getElementById("hf-top-hosts");
+  if(topEl){
+    const ranked = m.byHost.slice(0, 12);
+    const topMax = Math.max.apply(null, ranked.map(h => h.confirmed + h.expected).concat([1]));
+    topEl.innerHTML = ranked.length ? ranked.map(h => {
+      const net = h.confirmed + h.expected;
+      const src = h.confirmed && h.expected ? "Stripe + plan"
+                : h.confirmed ? "Stripe" : "plan";
+      return `
+      <div class="list-row">
+        <div class="list-main">
+          <div class="list-title">${esc(h.hostName)}</div>
+          <div class="list-sub">${h.city ? esc(h.city) + " · " : ""}${h.guests} guest${h.guests===1?"":"s"} · ${src}</div>
+          <div class="occ-bar"><div class="occ-fill" style="width:${(net/topMax*100).toFixed(0)}%"></div></div>
+        </div>
+        <div class="list-meta num">${money(net)}</div>
+      </div>`;
+    }).join("") : `<div class="card-sub" style="text-align:center;padding:20px 0">No host families with stays in ${esc(monthLabelFromYM(month))}.</div>`;
+  }
+
+  // ===== Host payments (Epic 4, R6) ======================================
+  // Replaces a fabricated feed that looped the first five active clients and
+  // hardcoded `Apr ${24 - i*3}` dates. It read as a payment ledger and was not
+  // one. Every row below is either a real Stripe transfer or is explicitly
+  // labelled as having no payment record at all.
+  const hpEl = document.getElementById("hf-tx-body");
+  if(hpEl){
+    // The table shows at most 12 rows, but the sort puts Stripe first then
+    // date-descending, so the rows dropped are the long-running stays — the
+    // largest obligations. Silently truncating them left the visible column
+    // contradicting the payouts KPI directly above it, so say what is missing.
+    const HP_CAP = 12;
+    const rows = m.hostPayments.slice(0, HP_CAP);
+    const hiddenRows = m.hostPayments.slice(HP_CAP);
+    const hiddenAmount = hiddenRows.reduce((s, r) => s + r.amount, 0);
+    const t = m.hostPaymentTotals;
+    const badge = document.getElementById("hf-hp-badge");
+    if(badge){
+      // Green used to mean "live Stripe data is available", which is not what a
+      // green badge reads as next to a dollar figure. Since transfer_status is
+      // gated to the month, the common case after a booking's move-in month is
+      // paidThisMonth === 0, so the typical render was a green badge saying
+      // "$0.00 paid". Use the same vocabulary as the rows below: green is paid,
+      // blue is pending, grey is no data at all.
+      badge.className = "badge " + (!liveOn ? "badge-grey" : (t.paidThisMonth > 0 ? "badge-green" : "badge-blue"));
+      badge.innerHTML = liveOn
+        ? `<span class="dot"></span>${money(t.paidThisMonth)} paid · ${money(t.pendingThisMonth)} pending`
+        : `<span class="dot"></span>No live payment data`;
+    }
+    if(!rows.length){
+      hpEl.innerHTML = `<tr><td colspan="5" class="card-sub" style="text-align:center;padding:20px 0">No host payments or expected payouts in ${esc(monthLabelFromYM(month))}.</td></tr>`;
+    } else {
+      hpEl.innerHTML = rows.map(r => {
+        // "Expected" is deliberately distinct from "Pendiente". Pending means we
+        // owe it and it is tracked. Expected means no payment record exists at
+        // all. Collapsing the two would recreate the fiction of the old feed.
+        let badgeCls = "badge-grey", label = "Expected";
+        if(r.status === "paid"){ badgeCls = "badge-green"; label = "Pagado"; }
+        else if(r.status === "pending"){ badgeCls = "badge-blue"; label = r.flagged ? "Pendiente · falló" : "Pendiente"; }
+        return `
+          <tr>
+            <td>
+              <div class="name-main">${esc(r.hostName)}</div>
+              ${r.bookingRef ? `<div class="name-sub">${esc(r.bookingRef)}</div>` : ""}
+            </td>
+            <td>${esc(r.studentName)}</td>
+            <td class="nowrap">${r.date ? fmtDate(r.date) : "—"}</td>
+            <td class="right"><span class="num" style="color:${r.status === "expected" ? "var(--muted)" : "var(--red-dark)"}">${money(r.amount)}</span></td>
+            <td><span class="badge ${badgeCls}"><span class="dot"></span>${label}</span></td>
+          </tr>`;
+      }).join("") + (hiddenRows.length
+        ? `<tr><td colspan="5" class="card-sub" style="text-align:center;padding:20px 0">Showing ${rows.length} of ${m.hostPayments.length} · ${money(hiddenAmount)} not shown</td></tr>`
+        : "");
+    }
   }
 
   // Upcoming arrivals
   const arrEl = document.getElementById("hf-arrivals");
   if(arrEl){
+    const hToday = homestayToday();
     const upcoming = homestayClients
-      .filter(c => c.status === "upcoming" || (c.status === "active" && new Date(c.arrival) > TODAY))
-      .sort((a,b) => new Date(a.arrival) - new Date(b.arrival))
+      .filter(c => c.status === "upcoming" || (c.status === "active" && parseLocalDate(c.arrival) > hToday))
+      .sort((a,b) => parseLocalDate(a.arrival) - parseLocalDate(b.arrival))
       .slice(0, 5);
     if(upcoming.length === 0){
       arrEl.innerHTML = `<div class="card-sub" style="text-align:center;padding:20px 0">No arrivals scheduled in the next 60 days.</div>`;
     } else {
       arrEl.innerHTML = upcoming.map(c => {
         const host = homestayHosts.find(h => h.id === c.hostId);
-        const days = Math.round((new Date(c.arrival) - TODAY) / (1000*60*60*24));
+        const days = daysBetween(hToday, parseLocalDate(c.arrival));
         return `
           <div class="list-row">
             ${avatar(c.ini)}
@@ -9571,42 +10113,117 @@ function renderHomestayFinance(){
       }).join("");
     }
   }
+
+  // ===== Trend (D5) ======================================================
+  // Expected is reconstructable six months back from arrival/departure.
+  // Confirmed only exists from 2026-07-30, so earlier months are null and draw
+  // nothing rather than a zero that reads as "we earned nothing".
+  const trendEl = document.getElementById("hf-trend-body");
+  const labelEl = document.getElementById("hf-trend-labels");
+  if(trendEl && labelEl){
+    const pts = m.trend;
+    const vals = pts.map(p => p.expectedNet)
+      .concat(pts.map(p => p.confirmedNet).filter(v => v != null));
+    const peak = Math.max.apply(null, vals.concat([1]));
+    // Net revenue can genuinely be negative — expected.net is weCollect minus
+    // wePay and nothing enforces weCollect >= wePay (the client edit form does
+    // not even mark them required). Clamping negatives to the zero position
+    // drew a losing month pixel-identical to a $0 one, and an all-negative
+    // series drew a perfectly flat floor while the KPI beside it read a
+    // negative figure. Symmetrise the scale instead, so the axis can represent
+    // what the KPI reports. `floor` is computed over exactly the same `vals`
+    // as `peak` — expectedNet is always a number and confirmedNet nulls are
+    // already filtered out, so no null reaches Math.min.
+    const floor = Math.min(0, Math.min.apply(null, vals));
+    const span = Math.max(1, peak - floor);
+    const x = i => pts.length > 1 ? (i / (pts.length - 1)) * 600 : 0;
+    // All-positive is unchanged: floor is 0 and span is peak, so this reduces
+    // to the previous `200 - (v / peak) * 170` exactly.
+    const y = v => 200 - ((v - floor) / span) * 170;
+
+    const expPath = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.expectedNet).toFixed(1)}`).join(" ");
+    // The area reads as "distance from zero", so it closes on the zero line
+    // once the scale carries negatives — closing at the viewBox floor would
+    // fill a losing month as if it were a positive quantity. With no negative
+    // month there is no zero line above the floor, so keep the existing 220.
+    const zeroY = y(0);
+    const baseY = floor < 0 ? zeroY.toFixed(1) : 220;
+    const area = `${expPath} L600,${baseY} L0,${baseY} Z`;
+
+    // Confirmed is drawn only across the contiguous run of non-null months.
+    const cIdx = pts.map((p, i) => p.confirmedNet == null ? -1 : i).filter(i => i >= 0);
+    const confPath = cIdx.map((i, n) => `${n ? "L" : "M"}${x(i).toFixed(1)},${y(pts[i].confirmedNet).toFixed(1)}`).join(" ");
+
+    trendEl.innerHTML = `
+      ${floor < 0 ? `<line x1="0" y1="${zeroY.toFixed(1)}" x2="600" y2="${zeroY.toFixed(1)}" stroke="#C0B49C" stroke-width="1" stroke-dasharray="4 4"/>` : ""}
+      <path d="${area}" fill="url(#gRedHS)"/>
+      <path d="${expPath}" fill="none" stroke="#C9B896" stroke-width="2.5"/>
+      ${cIdx.length > 1 ? `<path d="${confPath}" fill="none" stroke="#3e6049" stroke-width="2.5"/>` : ""}
+      ${cIdx.length === 1 ? `<circle cx="${x(cIdx[0]).toFixed(1)}" cy="${y(pts[cIdx[0]].confirmedNet).toFixed(1)}" r="4" fill="#3e6049"/>` : ""}
+      <circle cx="${x(pts.length - 1).toFixed(1)}" cy="${y(pts[pts.length - 1].expectedNet).toFixed(1)}" r="4" fill="#C9B896"/>`;
+
+    labelEl.innerHTML = pts.map(p => `<span>${esc(HOMESTAY_MONTH_NAMES[Number(p.month.split("-")[1]) - 1])}</span>`).join("");
+  }
 }
 renderHomestayFinance();
 
 function renderPlacementFees(){
   const body = document.getElementById("hf-placement-body");
   if(!body) return;
-  // Show the 12 most recently-booked clients that have a placement fee on file.
-  // Falls back to $300 only if no placementFee field is set on a record.
-  const recent = [...homestayClients]
-    .filter(c => c.arrival)
-    .sort((a,b) => parseLocalDate(b.arrival) - parseLocalDate(a.arrival))
-    .slice(0, 12);
-  body.innerHTML = recent.map(c => {
-    const host = homestayHosts.find(h => h.id === c.hostId);
-    const stayMonths = Math.round(((parseLocalDate(c.departure) - parseLocalDate(c.arrival)) / (1000*60*60*24)) / 30 * 10) / 10;
-    const status = c.status === "upcoming" ? "Upcoming" : c.status === "active" ? "Confirmed" : "Past";
-    const cls = c.status === "upcoming" ? "badge-blue" : c.status === "active" ? "badge-green" : "badge-grey";
-    const fee = c.placementFee != null ? c.placementFee : 300;
+  const month = (typeof homestayMonth === "string" && homestayMonth !== "all")
+    ? homestayMonth : homestayYM();
+  const m = computeHomestayFinance({
+    clients: typeof homestayClients !== "undefined" ? homestayClients : [],
+    hosts: typeof homestayHosts !== "undefined" ? homestayHosts : [],
+    bookings: HF_LIVE.bookings,
+    bookingsError: HF_LIVE.reason,
+    remoteHosts: HF_LIVE.hosts,
+    month: month,
+    today: homestayToday()
+  });
+  const money = hfMoney;
+  const rows = m.placementFees.rows;
+
+  const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  set("hf-placement-total", money(m.placementFees.total));
+  // Targets the inner text span, not the badge itself: set() writes
+  // textContent, which on the badge would delete its nested .dot outright.
+  set("hf-placement-badge-text", `${money(m.placementFees.total)} · ${monthLabelFromYM(month)}`);
+
+  if(!rows.length){
+    // A real empty state, not a zero row. Placement fees are counted in the
+    // month the guest arrives, so a month with no arrivals genuinely has none.
+    // The copy says "portal-plan arrivals" and not "arrivals" because these
+    // rows come from expClients, which excludes any client whose email appears
+    // on a Stripe booking (R1). A month whose arrivals are all Stripe-covered
+    // lands here with arrivals that did happen — this table just does not
+    // report on them, and must not claim there were none.
+    body.innerHTML = `<tr><td colspan="6" class="card-sub" style="text-align:center;padding:20px 0">No portal-plan arrivals in ${esc(monthLabelFromYM(month))}, so no placement fees were charged here.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map(r => {
+    const cls = r.status === "upcoming" ? "badge-blue" : r.status === "active" ? "badge-green" : "badge-grey";
+    const label = r.status === "upcoming" ? "Upcoming" : r.status === "active" ? "Confirmed" : "Past";
     return `
       <tr>
         <td>
           <div class="name-cell">
-            ${avatar(c.ini)}
+            ${avatar(r.ini)}
             <div>
-              <div class="name-main">${esc(c.name)} <span class="flag">${esc(c.flag||"")}</span></div>
-              <div class="name-sub">${c.country ? esc(c.country) : "—"}${c.school ? " · " + esc(c.school) : ""}</div>
+              <div class="name-main">${esc(r.clientName)} <span class="flag">${esc(r.flag)}</span></div>
+              <div class="name-sub">${r.country ? esc(r.country) : "—"}${r.school ? " · " + esc(r.school) : ""}</div>
             </div>
           </div>
         </td>
-        <td>${host ? esc(host.name) : "—"}</td>
-        <td>${fmtDate(c.arrival)}</td>
-        <td class="right"><span class="num">${stayMonths}</span> mo</td>
-        <td class="right"><span class="num" style="color:#3e6049">${fmt(fee)}</span></td>
-        <td><span class="badge ${cls}"><span class="dot"></span>${status}</span></td>
-      </tr>
-    `;
+        <td>${esc(r.hostName)}</td>
+        <td>${fmtDate(r.arrival)}</td>
+        <td class="right"><span class="num">${r.stayMonths}</span> mo</td>
+        <td class="right">${r.hasFee
+          ? `<span class="num" style="color:#3e6049">${money(r.fee)}</span>`
+          : `<span class="card-sub">—</span>`}</td>
+        <td><span class="badge ${cls}"><span class="dot"></span>${label}</span></td>
+      </tr>`;
   }).join("");
 }
 renderPlacementFees();
@@ -9627,49 +10244,36 @@ const HH_FILTERS = { city:new Set(), capacity:new Set(), nationality:new Set(), 
    all mean the same thing here — no badges, host list otherwise untouched. */
 const HH_PAYOUT = { state:"idle", byEmail:new Map(), byName:new Map(), remote:0, dupEmails:0, usedReadOnly:false };
 
-// The badges only ever read. The staff token the booking console uses also
-// authorises booking-create and booking-end, so handing it to someone who just
-// wants to see who can be paid also hands them the ability to cancel a live
-// Stripe subscription. This page therefore prefers a separate read-only secret
-// and falls back to the full one, so it keeps working for admins who have only
-// that — and before the n8n side grows the second secret at all.
-const HH_RO_TOKEN_KEY = "vm_staff_token_ro";
+// Why a separate read-only key exists at all: the badges only ever read, but
+// the staff token the booking console uses also authorises booking-create and
+// booking-end, so handing it to someone who just wants to see who can be paid
+// also hands them the ability to cancel a live Stripe subscription. The
+// preference rule itself lives in vmN8n.token().
+// Kept as an alias so the Hosts page's own re-entry UI keeps reading well.
+const HH_RO_TOKEN_KEY = VM_RO_TOKEN_KEY;
 
-function hhPayoutToken(){
-  const ro = localStorage.getItem(HH_RO_TOKEN_KEY) || "";
-  if(ro) return { value: ro, readOnly: true };
-  const full = localStorage.getItem("vm_staff_token") || "";
-  return full ? { value: full, readOnly: false } : null;
-}
+// Same preference rule as every other n8n read on this page; hhRequestResumeLink
+// still needs a bare token for the resume-link endpoint, which vmN8n.read does
+// not cover.
+function hhPayoutToken(){ return vmN8n.token(); }
 
 async function loadHostPayoutStatus(){
   // "error" and "rejected" are retried on the next visit; "loaded" and
   // "no-token" are not — saving a token re-triggers this directly.
   if(HH_PAYOUT.state === "loading" || HH_PAYOUT.state === "loaded") return;
-  const token = hhPayoutToken();
+  const token = vmN8n.token();
   if(!token){ HH_PAYOUT.state = "no-token"; renderPayoutSummary(); return; }
   HH_PAYOUT.state = "loading";
   HH_PAYOUT.usedReadOnly = token.readOnly;
+  let d;
   try {
-    const resp = await fetch("https://adr23.app.n8n.cloud/webhook/hosts-list", {
-      method: "POST",
-      // Same header either way, so n8n can accept either secret on its read
-      // endpoints without the portal needing to know which one it holds.
-      headers: { "Content-Type":"application/json", "x-vm-staff-token": token.value },
-      body: "{}"
-    });
-    // A rejected read-only token is this page's to clear — it owns that key and
-    // can offer re-entry. A rejected *staff* token is not: the bookings page
-    // owns it and explains the failure there, and silently clearing it from a
-    // page the user did not associate with tokens would log them out of it.
-    if(resp.status === 401 && token.readOnly){
-      localStorage.removeItem(HH_RO_TOKEN_KEY);
-      HH_PAYOUT.state = "rejected";
-      renderPayoutSummary();
-      return;
-    }
-    if(!resp.ok){ HH_PAYOUT.state = "error"; renderPayoutSummary(); return; }
-    const d = await resp.json();
+    d = await vmN8n.read("hosts-list");
+  } catch(err){
+    HH_PAYOUT.state = (err && err.kind === "rejected") ? "rejected" : "error";
+    renderPayoutSummary();
+    return;
+  }
+  try {
     const rows = Array.isArray(d && d.hosts) ? d.hosts : [];
     HH_PAYOUT.byEmail.clear();
     HH_PAYOUT.byName.clear();
@@ -9691,6 +10295,8 @@ async function loadHostPayoutStatus(){
     HH_PAYOUT.state = "loaded";
     renderHomestayHosts();
   } catch(e){
+    // A malformed row must not strand the page in "loading" — the guard at the
+    // top of this function would then block every retry for the session.
     HH_PAYOUT.state = "error";
     renderPayoutSummary();
   }
@@ -10127,7 +10733,7 @@ function openHost(id){
   const safePdf = h.pdf || null;
   const hasSince = !!h.since;
   const sinceLabel = hasSince ? fmtDate(h.since) : "—";
-  const monthsHosting = hasSince ? monthDiff(parseLocalDate(h.since), TODAY) : 0;
+  const monthsHosting = hasSince ? monthDiff(parseLocalDate(h.since), homestayToday()) : 0;
 
   // Hero
   const hero = document.getElementById("panel-hero");
@@ -12039,6 +12645,11 @@ function openHomestayClient(id){
   const stayMonths = stayDays != null ? Math.round(stayDays / 30 * 10) / 10 : null;
   const margin = (c.weCollect || 0) - (c.wePay || 0);
   const marginPct = c.weCollect ? Math.round(margin / c.weCollect * 100) : 0;
+  // Same test as the finance core (index.html, `var has = ...` in the
+  // placement-fee loop): a fee of 0 is a real, negotiated zero and renders as
+  // $0.00; only a missing or blank fee is "no placement fee". A truthiness
+  // check here made the drawer say "—" for a record the table showed as $0.00.
+  const hasPlacementFee = c.placementFee != null && c.placementFee !== "";
 
   const statusBadge = c.status === "active" ? '<span class="badge badge-green"><span class="dot"></span>Active</span>'
     : c.status === "upcoming" ? `<span class="badge badge-blue"><span class="dot"></span>Arrives ${c.arrival ? fmtDate(c.arrival) : "—"}</span>`
@@ -12073,8 +12684,8 @@ function openHomestayClient(id){
       </div>
       <div class="panel-kpi">
         <div class="l">Placement fee</div>
-        <div class="v">${c.placementFee ? fmt(c.placementFee) : '<span style="color:var(--muted);font-size:24px">—</span>'}</div>
-        <div class="s">${c.placementFee ? "one-time, on arrival" : "no placement fee"}</div>
+        <div class="v">${hasPlacementFee ? fmt(c.placementFee) : '<span style="color:var(--muted);font-size:24px">—</span>'}</div>
+        <div class="s">${hasPlacementFee ? "one-time, on arrival" : "no placement fee"}</div>
       </div>
     </div>
 
@@ -12302,10 +12913,9 @@ function openHomestayClientAdd(){
       .map(h => `<option value="${esc(h.id)}">${esc(h.name)}${h.city ? ' · ' + esc(h.city) : ''}${typeof h.capacity === "number" ? ' (cap ' + h.capacity + ')' : ''}</option>`)
       .join("");
 
-  // Default check-in to the portal's "today" (so the new entry lands in the
-  // currently-selected month view, not a future month that the filter hides).
-  // Fall back to the real today if TODAY isn't defined.
-  const today = (typeof TODAY !== "undefined" && TODAY instanceof Date) ? new Date(TODAY) : new Date();
+  // Default check-in to today so the new entry lands in the currently-selected
+  // month view, not a future month that the filter hides.
+  const today = homestayToday();
   const sixMonths = new Date(today.getTime() + 1000*60*60*24*30*6);
   const isoDate = d => {
     const y = d.getFullYear();
@@ -12476,7 +13086,7 @@ function scoreHostForApplicant(host, applicant){
 
   // Move-in proximity
   const arr = parseLocalDate(applicant.arrival);
-  const days = daysBetween(TODAY, arr);
+  const days = daysBetween(homestayToday(), arr);
   if(days >= 0 && days <= 30){ score += 35; reasons.push("Move-in within 30 days \u2014 host can prepare"); }
   else if(days >= 0 && days <= 60){ score += 25; reasons.push("Move-in within 60 days"); }
   else if(days >= 0 && days <= 90){ score += 12; reasons.push("Move-in within 90 days"); }
@@ -12658,7 +13268,7 @@ function renderMatchCandidates(){
         flag: ap.flag, country: ap.country, school: ap.school,
         hostId: h.id, arrival: ap.arrival, departure: ap.departure,
         weCollect: 1400, wePay: h.payPerGuest,
-        status: parseLocalDate(ap.arrival) > TODAY ? "upcoming" : "active",
+        status: parseLocalDate(ap.arrival) > homestayToday() ? "upcoming" : "active",
         checkIn: ap.arrival, checkOut: ap.departure,
         paymentMethod: "credit-card",
       };
