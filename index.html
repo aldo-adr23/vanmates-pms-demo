@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-10a"></script>
+<script src="pms-supabase.js?v=2026-08-10b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2830,7 +2830,7 @@ hello@vanmates.com · vanmates.com</textarea>
                 <button class="btn btn-ghost" id="hb-copy">Copy</button>
               </div>
             </div>
-            <div class="card-sub" style="margin-top:8px">They also receive this by email automatically.</div>
+            <div class="card-sub" style="margin-top:8px">We email this to them automatically too — but that is best-effort, so send it yourself if they say it never arrived.</div>
           </div>
         </div>
       </div>
@@ -6815,9 +6815,9 @@ function closeProperty(){
 /* ============ TEAM & ROLES ============ */
 const roles = {
   admin:       {label:"Admin",              color:"#B94A3F", desc:"Full access to everything",
-                // homestay-bookings is admin-only and deliberately absent from
-                // ALL_PAGES, so it cannot be granted to anyone else from the
-                // pages checkbox list. See the note there.
+                // homestay-bookings is in no non-admin role preset, so it stays
+                // off by default — but it is in ALL_PAGES as of 2026-08-10, so
+                // an admin can now grant it per-person. See the note there.
                 nav:["dashboard","leads","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
@@ -7028,11 +7028,17 @@ function showToast(msg){
 
 /* === Invite member modal === */
 // Drives the pages checkbox list an admin uses to restrict a member. Anything
-// listed here can be granted to a non-admin, so homestay-bookings is
-// deliberately NOT here: it creates Stripe charges and cancels live
-// subscriptions, and is meant to stay admin-only. Adding it would make it
-// grantable. (Note this gating is cosmetic — it hides nav, it does not secure
-// data. The booking webhooks are what actually gate that, via the staff token.)
+// listed here can be granted to a non-admin.
+//
+// homestay-bookings was deliberately withheld from this list (754151b) because
+// it creates Stripe charges and cancels live subscriptions. That was reversed
+// on 2026-08-10 at Aldo's direction so the page can be granted per-person; the
+// first grantee is Emilio. It is grantable now, not granted by default — no
+// role preset includes it, so it stays off unless an admin ticks the box.
+//
+// This gating is cosmetic either way: it hides nav, it does not secure data.
+// The booking webhooks are what actually gate that, via the staff token. Do not
+// treat an unticked box as a control over who can move money.
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
   ["leads",            "Leads"],
@@ -7043,6 +7049,7 @@ const ALL_PAGES = [
   ["homestay-clients", "Homestay clients"],
   ["homestay-hosts",   "Homestay hosts"],
   ["homestay-matching","Homestay matching"],
+  ["homestay-bookings","Homestay bookings"],
   ["homestay-finance", "Homestay finance"],
   ["vacancies",        "Vacancies"],
   ["maintenance",      "Maintenance"],
@@ -14845,6 +14852,25 @@ function openAddTenantModal(propName, roomLabel){
   };
 }
 
+/* TENANT-CORE-START */
+/* Pure record-selection for the tenant list. Fenced so test/tenants.test.js can
+   extract and assert against it with no DOM, the same way the Homestay Finance
+   core is tested. Nothing in here may touch document, window or a global. */
+
+// Locate a tenant in `list`. Identity first: every call site holds the live
+// array element, so this is exact even for records with no id, no email, or an
+// email shared with somebody else. `id` is only a fallback for a detached copy,
+// and only when it is actually set — comparing two undefined ids would match
+// the first id-less record, which is the bug this replaced.
+function tenantIndexFor(list, t){
+  if(!Array.isArray(list) || !t) return -1;
+  const byIdentity = list.indexOf(t);
+  if(byIdentity !== -1) return byIdentity;
+  if(t.id == null) return -1;
+  return list.findIndex(x => x && x.id != null && x.id === t.id);
+}
+/* TENANT-CORE-END */
+
 /* ===== Remove tenant with undo ===== */
 let _lastRemoved = null;
 function confirmRemoveTenant(t, propName){
@@ -14852,8 +14878,13 @@ function confirmRemoveTenant(t, propName){
   const ok = confirm(`Remove ${t.name} from ${t.property}?\n\nRoom: ${t.room || "—"}\nRent: ${fmt(t.rent || 0)} /mo\n\nThis will mark the lease as ended and free up the room. You can undo within 8 seconds.`);
   if(!ok) return;
 
-  // Soft-delete: move to a "removed" backup, mark as past
-  const idx = tenants.findIndex(x => x.id === t.id);
+  // Matching on `x.id === t.id` was unsafe: tenants carry no id unless they came
+  // from the quick-add flow, so for every seeded record this compared undefined
+  // to undefined and matched index 0 — removing the FIRST tenant in the array
+  // rather than the one that was clicked, while the Postgres delete below
+  // correctly targeted the clicked record. Same hazard the edit path documents
+  // at ~14289. See tenantIndexFor.
+  const idx = tenantIndexFor(tenants, t);
   if(idx === -1) return;
   _lastRemoved = { tenant: {...t}, idx, propName };
   tenants.splice(idx, 1);
@@ -17262,9 +17293,31 @@ renderLeads();
         lease_months: months,
         meal_plan: meals,
       });
-      $('hb-link').value = d.link || '';
-      $('hb-link-panel').hidden = false;
-      hbStatus('Created ' + (d.booking_ref || '') + ' — link emailed to the student.');
+      // A 2xx with no link is a real failure that hbPost cannot see: it does
+      // `resp.json().catch(() => ({}))`, so an empty or non-JSON body becomes
+      // {} and reads as success. That is exactly what booking-create returned
+      // on 2026-08-10 — the Gmail credential had expired, the run halted before
+      // Respond Link, and the console reported "Created — link emailed to the
+      // student" over an empty box, twice. Both bookings were committed. Never
+      // claim success without the link in hand.
+      const link = d.link || '';
+      const ref = d.booking_ref || '';
+      $('hb-link').value = link;
+      $('hb-link-panel').hidden = !link;
+      if (link) {
+        // Deliberately does NOT say the student was emailed. Respond Link now
+        // fires BEFORE Email Student Link so a mail outage cannot withhold the
+        // link, which means this response provably cannot know whether the mail
+        // went out. Claiming it did is the same lie in a new place.
+        hbStatus('Created ' + ref + ' — copy the link below and send it.');
+      } else {
+        // The booking row is already committed at this point, so a retry mints
+        // a SECOND booking rather than recovering the first. Say so: blind
+        // retrying is what produced two orphan rows for the same student.
+        hbStatus(ref
+          ? 'Booking ' + ref + ' was created but no link came back — do not retry, recover the link in n8n.'
+          : 'No link came back. A booking may still have been created — check n8n before retrying.', true);
+      }
       await hbLoadBookings();
     } catch (e) {
       hbStatus(e.message, true);
