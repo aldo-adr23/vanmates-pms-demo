@@ -1119,7 +1119,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-10b"></script>
+<script src="pms-supabase.js?v=2026-08-10c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2752,7 +2752,7 @@ hello@vanmates.com · vanmates.com</textarea>
         <div class="card-head">
           <div>
             <div class="card-title">Staff token</div>
-            <div class="card-sub">Asked once and kept in this browser only — it is sent to the booking webhooks and nowhere else</div>
+            <div class="card-sub">Asked once and kept in this browser only — it is sent to the booking webhooks and nowhere else. Either token works for viewing hosts and bookings; creating or ending a booking needs the full <code>vmstaff_</code> token.</div>
           </div>
         </div>
         <div class="card-pad">
@@ -2822,6 +2822,8 @@ hello@vanmates.com · vanmates.com</textarea>
             <button class="btn btn-ghost" id="hb-token-change">Change staff token</button>
             <span id="hb-status" class="card-sub"></span>
           </div>
+
+          <div id="hb-write-note" class="card-sub" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px" hidden></div>
 
           <div id="hb-link-panel" style="margin-top:18px" hidden>
             <div class="form-field"><label>Student payment link — send this to them</label>
@@ -17057,8 +17059,25 @@ renderLeads();
   // the entire renderer until it is answered, and a dismissed prompt returns
   // '' — which reaches the webhook, comes back 401, and reads to the user as
   // "your token is wrong" when in fact they never entered one.
-  function hbToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
-  function hbForgetToken() { localStorage.removeItem(HB_TOKEN_KEY); }
+  // Two secrets reach these webhooks and they are not interchangeable:
+  //
+  //   vm_staff_token     full   — hosts-list, bookings-list, booking-create,
+  //                               booking-end. Can cancel a live subscription.
+  //   vm_staff_token_ro  read   — hosts-list and bookings-list only. The write
+  //                               endpoints answer it 401 by design.
+  //
+  // Reads take whichever is present, so somebody holding only the read-only
+  // token still gets a populated console. Writes require the full token and are
+  // stopped here rather than being sent and bounced, because a 401 clears the
+  // token and would evict a read-only token that is working perfectly.
+  const HB_RO_TOKEN_KEY = 'vm_staff_token_ro';
+  const HB_WRITE_PATHS = ['booking-create', 'booking-end'];
+
+  function hbFullToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
+  function hbReadToken() { return hbFullToken() || localStorage.getItem(HB_RO_TOKEN_KEY) || ''; }
+  function hbCanWrite() { return !!hbFullToken(); }
+  function hbToken() { return hbReadToken(); }
+  function hbForgetToken(key) { localStorage.removeItem(key || HB_TOKEN_KEY); }
 
   // Reveals the token card. `msg` says why it appeared; empty for a plain
   // "change it" request, so re-entering a token does not look like an error.
@@ -17083,9 +17102,20 @@ renderLeads();
   }
 
   async function hbPost(path, body) {
+    const isWrite = HB_WRITE_PATHS.indexOf(path) !== -1;
+    const full = hbFullToken();
+
+    // A write with only the read-only token would earn a 401 that is
+    // indistinguishable from a rotated secret, and the handler below would then
+    // clear a token that reads fine. Refuse it here and say why instead.
+    if (isWrite && !full) {
+      throw new Error('This token can view bookings but not create or cancel them — ask an admin for the full staff token.');
+    }
+
     // Never send an empty token: the 401 it earns is indistinguishable from a
     // genuinely wrong one, and it would wrongly clear a token that was fine.
-    const token = hbToken();
+    const usedKey = (isWrite || full) ? HB_TOKEN_KEY : HB_RO_TOKEN_KEY;
+    const token = isWrite ? full : hbReadToken();
     if (!token) {
       hbAskForToken('Enter the staff token to use this page.');
       throw new Error('Staff token needed.');
@@ -17096,7 +17126,9 @@ renderLeads();
       body: JSON.stringify(body || {}),
     });
     if (resp.status === 401) {
-      hbForgetToken();
+      // Clear only the key that was actually sent, so a bad full token never
+      // evicts a working read-only one, or vice versa.
+      hbForgetToken(usedKey);
       hbAskForToken('That token was rejected. If it has been rotated, paste the new one.');
       throw new Error('Staff token rejected.');
     }
@@ -17140,7 +17172,11 @@ renderLeads();
     $('hb-table-sub').textContent = d.count ? ('newest first · ' + d.count + ' total') : '';
 
     const tb = $('hb-rows');
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="card-sub">No bookings yet.</td></tr>'; return; }
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="9" class="card-sub">No bookings yet.</td></tr>';
+      hbApplyWriteAffordances();
+      return;
+    }
     tb.innerHTML = rows.map((b) => {
       const flags = (b.needs_attention || []);
       return '<tr>' +
@@ -17157,6 +17193,8 @@ renderLeads();
         hbMoveOutCell(b) +
         '</tr>';
     }).join('');
+    // The end-booking buttons are rebuilt above, so re-apply the write gating.
+    hbApplyWriteAffordances();
   }
 
   // Bookings created before meal_plan existed have no value; show a dash rather
@@ -17233,7 +17271,31 @@ renderLeads();
       await Promise.all([hbLoadHosts(), hbLoadBookings()]);
       hbStatus('');
       const card = $('hb-auth-card'); if (card) card.hidden = true;
+      hbApplyWriteAffordances();
     } catch (e) { hbStatus(e.message, true); }
+  }
+
+  // Someone holding only the read-only token gets a fully populated console but
+  // cannot create or end a booking. Say so up front — discovering it by pressing
+  // the button and reading a refusal is a worse experience, and before this the
+  // refusal also looked like a rejected token.
+  function hbApplyWriteAffordances() {
+    const canWrite = hbCanWrite();
+    const create = $('hb-create');
+    if (create) {
+      create.disabled = !canWrite;
+      create.title = canWrite ? '' : 'Needs the full staff token';
+    }
+    const note = $('hb-write-note');
+    if (note) {
+      note.hidden = canWrite;
+      note.textContent = canWrite ? '' :
+        'You are signed in with a view-only staff token. Hosts and bookings load normally; creating a booking or ending one needs the full token.';
+    }
+    document.querySelectorAll('.hb-end-start').forEach(function (b) {
+      b.disabled = !canWrite;
+      b.title = canWrite ? '' : 'Needs the full staff token';
+    });
   }
 
   /* ---- preview ---- */
@@ -17322,7 +17384,9 @@ renderLeads();
     } catch (e) {
       hbStatus(e.message, true);
     } finally {
-      $('hb-create').disabled = false;
+      // Not an unconditional re-enable: a view-only token must leave the button
+      // disabled rather than have it spring back after a refused attempt.
+      hbApplyWriteAffordances();
     }
   }
 
