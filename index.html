@@ -1037,7 +1037,10 @@
   :root[data-theme="dark"] input::placeholder, :root[data-theme="dark"] textarea::placeholder{
     color: var(--muted);
   }
-  :root[data-theme="dark"] .form-input{ background:var(--surface); color:var(--ink); }
+  /* background-COLOR, not the shorthand: the shorthand resets background-repeat,
+     -position and -size, and the dark chevron rule below only restores the image.
+     That left every select tiling its chevron across the field from the left. */
+  :root[data-theme="dark"] .form-input{ background-color:var(--surface); color:var(--ink); }
   :root[data-theme="dark"] select.form-input{
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23A89685' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>");
   }
@@ -11078,6 +11081,20 @@ function wireAddTenantButtons(){
 }
 wireAddTenantButtons();
 
+/* Mint a synthetic tenant id. Every tenant record must carry one: the Postgres
+   `tenants` table is keyed on `data.id`, because email is not unique (64 of the
+   502 seeded tenants share an address, and email-keying merged 42 of them away).
+   Ids for pre-existing rows are assigned once, authoritatively, by
+   scripts/migrate-tenant-ids.mjs — this only covers records created in the UI.
+   `Date.now().toString(36)` alone is not enough: two tenants added inside the
+   same millisecond would collide, which is the same class of bug. */
+function newTenantId(){
+  const rnd = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  return "t-" + rnd;
+}
+
 document.getElementById("tenant-form").addEventListener("submit", e => {
   e.preventDefault();
   const data = new FormData(e.target);
@@ -11125,6 +11142,7 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
   // Create tenant
   const ini = name.split(/\s+/).map(p => p[0]).slice(0,2).join("").toUpperCase();
   const fresh = {
+    id: newTenantId(),
     ini, name, email,
     flag: countryFlags[country] || "🌐",
     country, school,
@@ -14298,10 +14316,15 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
   const idx = tenants.indexOf(_editingTenant);
   if(idx < 0){ failEdit("Couldn't find the tenant — please reload and try again."); return; }
   const target = tenants[idx];
-  // Capture the persistence key (row id) BEFORE mutation. Tenants are keyed by
-  // email in Postgres, so if the email changes we must delete the old-key row
-  // or it reappears as a duplicate on the next hydrate.
-  const oldRowKey = String(target.email || target.id || target.name || "");
+  // Capture the persistence key (row id) BEFORE mutation. Ask vmDb for it —
+  // never re-derive it here. This used to read `target.email || target.id ||
+  // target.name`, a hand-rolled copy of recordId()'s fallback chain that was
+  // already stale the moment the tenants table stopped being keyed on email:
+  // it would have soft-deleted whatever row happened to sit under the tenant's
+  // email, i.e. potentially a different person sharing that address.
+  const oldRowKey = String((window.vmDb && window.vmDb.keyFor)
+    ? (window.vmDb.keyFor('tenants', target) || "")
+    : "");
 
   // If the user changed the email, make sure the new one isn't already taken
   if(email.toLowerCase() !== origEmail.toLowerCase()){
@@ -14353,9 +14376,12 @@ document.getElementById("edit-tenant-form")?.addEventListener("submit", async e 
 
     if(window.vmDb && window.vmDb.upsert){
       await window.vmDb.upsert('tenants', target);
-      // If the email (row id) changed, soft-delete the stale old-key row so it
-      // doesn't reappear as a duplicate after the next hydrate.
-      const newRowKey = String(target.email || target.id || target.name || "");
+      // If the row key changed, soft-delete the stale old-key row so it doesn't
+      // reappear as a duplicate after the next hydrate. Post-migration every
+      // tenant has a stable synthetic id, so this branch is normally dead — it
+      // only fires for a record that is still email-keyed (i.e. one the
+      // migration has not reached yet) whose email was just edited.
+      const newRowKey = String((window.vmDb.keyFor && window.vmDb.keyFor('tenants', target)) || "");
       if(oldRowKey && oldRowKey !== newRowKey && window.vmDb.delete){
         try { await window.vmDb.delete('tenants', oldRowKey, null); } catch(_){}
       }
@@ -14793,7 +14819,7 @@ function openAddTenantModal(propName, roomLabel){
     if(new Date(leaseEnd) < new Date(moveIn)){ showErr("Lease end must be after move-in."); return; }
 
     // Build tenant record matching the existing schema
-    const id = "t-" + Date.now().toString(36);
+    const id = newTenantId();
     const country = v("at-country");
     const flagMap = {
       "mexico":"🇲🇽","brazil":"🇧🇷","france":"🇫🇷","germany":"🇩🇪","spain":"🇪🇸",
@@ -14890,7 +14916,15 @@ function confirmRemoveTenant(t, propName){
   if(idx === -1) return;
   _lastRemoved = { tenant: {...t}, idx, propName };
   tenants.splice(idx, 1);
-  if (window.vmDb) window.vmDb.delete('tenants', t.email || t.id, t);
+  // `t.email || t.id` was a hand-rolled key that preferred email over id — the
+  // opposite of the table's actual key. For two tenants sharing an address it
+  // soft-deleted whichever of them owned the email-keyed row, not the one that
+  // was clicked. Ask vmDb for the key instead.
+  if (window.vmDb) {
+    const rowKey = window.vmDb.keyFor ? window.vmDb.keyFor('tenants', t) : (t.id || t.email);
+    _lastRemoved.rowKey = rowKey;
+    if (rowKey) window.vmDb.delete('tenants', rowKey, t);
+  }
 
   const propMeta = properties.find(p => p.name === propName);
   if(propMeta){
@@ -14920,7 +14954,18 @@ function showRemoveUndoToast(name){
   document.getElementById("rm-undo-btn").onclick = () => {
     if(!_lastRemoved) return;
     tenants.splice(Math.min(_lastRemoved.idx, tenants.length), 0, _lastRemoved.tenant);
-    if (window.vmDb) window.vmDb.upsert('tenants', _lastRemoved.tenant);
+    if (window.vmDb) {
+      // Undo has to clear the tombstone, not just re-upsert. An upsert payload
+      // never mentions `deleted_at`, and PostgreSQL's ON CONFLICT DO UPDATE
+      // only writes the columns present in the payload — so upserting on top of
+      // a soft-deleted row leaves it soft-deleted, and the localStorage
+      // tombstone written by delete() is still there too. Without restore()
+      // the tenant reappeared in the UI and vanished again on the next reload.
+      const rowKey = _lastRemoved.rowKey
+        || (window.vmDb.keyFor ? window.vmDb.keyFor('tenants', _lastRemoved.tenant) : null);
+      if (rowKey && window.vmDb.restore) window.vmDb.restore('tenants', rowKey);
+      window.vmDb.upsert('tenants', _lastRemoved.tenant);
+    }
     const propMeta = properties.find(p => p.name === _lastRemoved.propName);
     if(propMeta){
       propMeta.occ = Math.min(propMeta.rooms || 99, (propMeta.occ || 0) + 1);
