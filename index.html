@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-11a"></script>
+<script src="pms-supabase.js?v=2026-08-11b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2790,23 +2790,23 @@ hello@vanmates.com · vanmates.com</textarea>
               <input class="form-input" id="hb-weekly" type="number" min="1" step="0.01" placeholder="320.00">
               <div class="card-sub" style="margin-top:6px">What the student pays per week. Billed in 4-week blocks.</div>
             </div>
-            <div class="form-field"><label>Host monthly rate (CAD)</label>
-              <input class="form-input" id="hb-host-monthly" type="number" min="0" step="0.01" placeholder="1100.00">
-              <div class="card-sub" style="margin-top:6px">What the host is paid each month. Set independently — your margin is the difference.</div>
+            <div class="form-field"><label>Host weekly rate (CAD)</label>
+              <input class="form-input" id="hb-host-weekly" type="number" min="0" step="0.01" placeholder="260.00">
+              <div class="card-sub" style="margin-top:6px">What the host is paid per week, transferred on the same 4-week cadence the student is billed on. Set independently — your margin is the difference.</div>
             </div>
           </div>
           <div class="form-row">
             <div class="form-field"><label>Move-in date</label>
               <input class="form-input" id="hb-movein" type="date">
             </div>
-            <div class="form-field"><label>Lease length</label>
-              <div style="display:flex;gap:8px;align-items:center">
-                <input class="form-input" id="hb-weeks" type="number" min="0" step="1" value="4" style="width:80px" aria-label="Weeks">
-                <span class="card-sub">weeks</span>
-                <input class="form-input" id="hb-days" type="number" min="0" max="6" step="1" value="0" style="width:80px" aria-label="Extra days">
-                <span class="card-sub">days</span>
-              </div>
-              <div class="card-sub" style="margin-top:6px">Minimum 28 days. Add days for a stay that is not a whole number of weeks — a 30-day course is 4 weeks and 2 days.</div>
+            <div class="form-field"><label>Move-out date</label>
+              <input class="form-input" id="hb-moveout" type="date">
+              <!-- Dates rather than a week count, because a school hands you an
+                   arrival and a departure and staff were converting by hand — an
+                   arithmetic step with nowhere to go but into the money. The
+                   lease is measured in days, so the two dates ARE the length:
+                   lease_days is their difference, with nothing rounded. -->
+              <div class="card-sub" style="margin-top:6px" id="hb-length-note">The day they leave, not their last night. Minimum stay 28 days.</div>
             </div>
           </div>
           <div class="form-row">
@@ -2859,7 +2859,7 @@ hello@vanmates.com · vanmates.com</textarea>
           <table>
             <thead><tr>
               <th>Reference</th><th>Student</th><th>Stay</th><th>Length</th><th>Meals</th>
-              <th class="right">Per week</th><th class="right">Host / month</th>
+              <th class="right">Per week</th><th class="right">Host / week</th>
               <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Move-out</th>
             </tr></thead>
             <tbody id="hb-rows"><tr><td colspan="11" class="card-sub">Not loaded yet.</td></tr></tbody>
@@ -9637,7 +9637,7 @@ function computeHomestayFinance(input){
     try {
       return computeHomestaySchedule({
         weeklyRateCents: hfCents(b.weekly_rate),
-        hostMonthlyCents: hfCents(b.host_monthly_amount),
+        hostWeeklyCents: hfCents(b.host_weekly_rate),
         // Normalised rather than passed through: the schedule core demands a
         // strict YYYY-MM-DD, while every other date comparison here tolerates
         // "2026-8-07". Handing the raw string over would make a booking that
@@ -15035,19 +15035,6 @@ function hsYmd(d){ return d.toISOString().slice(0, 10); }
 function hsAddDays(d, n){ return new Date(d.getTime() + n * HS_MS_PER_DAY); }
 function hsDaysBetween(a, b){ return Math.round((b.getTime() - a.getTime()) / HS_MS_PER_DAY); }
 
-/* k months after `base`, clamped to the target month's length so a 31st move-in
-   pays on the 28th in February. ALWAYS measured from the original base, never
-   from the previously clamped date — otherwise the day-of-month ratchets
-   downward and never recovers. */
-function hsAddMonths(base, k){
-  const y = base.getUTCFullYear(), m = base.getUTCMonth(), day = base.getUTCDate();
-  const total = m + k;
-  const ty = y + Math.floor(total / 12);
-  const tm = ((total % 12) + 12) % 12;
-  const lastDay = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(ty, tm, Math.min(day, lastDay)));
-}
-
 /* The 4% is computed per charge, on the rent portion only, because that is what
    the student is billed on each invoice. Summed fees therefore need not equal
    the fee on the whole booking. */
@@ -15078,14 +15065,14 @@ function computeHomestaySchedule(input){
   // Required, and explicitly present: Number(null) is 0, so a loose check would
   // let a missing rate through as "the host is paid nothing" — which looks like
   // a very profitable booking rather than a broken one.
-  if (src.hostMonthlyCents === undefined || src.hostMonthlyCents === null || src.hostMonthlyCents === "") {
-    throw new Error("hostMonthlyCents is required");
+  if (src.hostWeeklyCents === undefined || src.hostWeeklyCents === null || src.hostWeeklyCents === "") {
+    throw new Error("hostWeeklyCents is required");
   }
-  const hostMonthlyRaw = Number(src.hostMonthlyCents);
-  if (!Number.isFinite(hostMonthlyRaw) || hostMonthlyRaw < 0) {
-    throw new Error("hostMonthlyCents must be a non-negative number");
+  const hostWeeklyRaw = Number(src.hostWeeklyCents);
+  if (!Number.isFinite(hostWeeklyRaw) || hostWeeklyRaw < 0) {
+    throw new Error("hostWeeklyCents must be a non-negative number");
   }
-  const hostMonthly = Math.round(hostMonthlyRaw);
+  const hostWeekly = Math.round(hostWeeklyRaw);
 
   const moveIn = hsParseDate(src.moveInDate);
   const leaseEnd = hsAddDays(moveIn, days);
@@ -15150,27 +15137,37 @@ function computeHomestaySchedule(input){
     amountCents: blockRent + blockFee
   } : null;
 
-  const hostPayments = [];
-  for (let k = 1; ; k++) {
-    const periodStart = hsAddMonths(moveIn, k - 1);
-    if (periodStart.getTime() >= leaseEnd.getTime()) break;
-    const periodEnd = hsAddMonths(moveIn, k);
-    const daysInPeriod = hsDaysBetween(periodStart, periodEnd);
-    const prorated = periodEnd.getTime() > leaseEnd.getTime();
-    const daysHosted = prorated ? hsDaysBetween(periodStart, leaseEnd) : daysInPeriod;
-    hostPayments.push({
-      period: k,
+  /* The host is paid per week, on the SAME 4-week cadence the student is billed
+     on: one payment per student charge, covering exactly the same days, priced
+     at the host's weekly rate instead of the student's.
+
+     This used to be calendar-monthly, which is why the core carried an
+     hsAddMonths() that clamped a 31st to February's 28th and had to measure
+     every period from the original date so the day-of-month did not ratchet
+     downward. All of that is gone. So is the month-vs-block divergence it
+     created: money in and money out now fall on the same dates, so no period
+     can pay a host while collecting nothing.
+
+     The day rate is a seventh of the weekly rate and rounds once over the run,
+     exactly as the student's does — so a tail of 2 days costs the student 2/7
+     of their week and pays the host 2/7 of theirs. */
+  const hostPayments = studentCharges.map((c, i) => {
+    const start = hsAddDays(moveIn, HS_BLOCK_DAYS * i);
+    return {
+      period: i + 1,
       // Period 1 is paid the day AFTER move-in so a host is never paid for a
-      // student who did not arrive. Later periods pay on their start date.
-      payDate: hsYmd(k === 1 ? hsAddDays(moveIn, 1) : periodStart),
-      periodStart: hsYmd(periodStart),
-      periodEnd: hsYmd(periodEnd),
-      daysHosted: daysHosted,
-      daysInPeriod: daysInPeriod,
-      prorated: prorated,
-      amountCents: prorated ? Math.round(hostMonthly * daysHosted / daysInPeriod) : hostMonthly
-    });
-  }
+      // student who did not arrive. Later periods pay on the day the matching
+      // student charge falls due.
+      payDate: hsYmd(i === 0 ? hsAddDays(moveIn, 1) : start),
+      periodStart: hsYmd(start),
+      periodEnd: hsYmd(hsAddDays(start, c.days)),
+      days: c.days,
+      // The tail is the only short period there can be, and only when the lease
+      // does not divide into whole blocks.
+      prorated: c.days < HS_BLOCK_DAYS,
+      amountCents: hsRentForDays(c.days, hostWeekly)
+    };
+  });
 
   const studentRentCents = studentCharges.reduce((s, c) => s + c.rentCents, 0);
   const studentFeeCents = studentCharges.reduce((s, c) => s + c.feeCents, 0);
@@ -17470,23 +17467,42 @@ renderLeads();
   }
 
   // The schedule core reports its own parameter names. Staff read the form's
-  // labels, so translate rather than leaking "hostMonthlyCents" into the UI.
+  // labels, so translate rather than leaking "hostWeeklyCents" into the UI.
   function hbFieldError(e) {
     const m = String((e && e.message) || '');
     if (m.indexOf('leaseDays') !== -1) return 'Lease length must be between 28 days and five years.';
     if (m.indexOf('weeklyRateCents') !== -1) return 'Weekly rate must be greater than zero.';
-    if (m.indexOf('hostMonthlyCents') !== -1) return 'Host monthly rate is required and cannot be negative.';
+    if (m.indexOf('hostWeeklyCents') !== -1) return 'Host weekly rate is required and cannot be negative.';
     if (m.indexOf('move_in_date') !== -1) return 'Move-in date is not a real calendar date.';
     return m;
   }
 
-  // The form asks for weeks and days because that is how staff quote a stay; the
-  // booking is one number of days everywhere else. Blank days means none, so the
-  // ordinary whole-week booking needs no second field filled in.
-  function hbLeaseDays(rawWeeks, rawDays) {
-    const w = Number(rawWeeks), d = rawDays === '' || rawDays == null ? 0 : Number(rawDays);
-    if (!Number.isFinite(w) || !Number.isFinite(d)) return NaN;
-    return w * 7 + d;
+  // The booking is a number of days, and two dates are exactly that — their
+  // difference, with nothing rounded and no unit to get wrong. Parsed at UTC
+  // midnight so a browser east or west of the line cannot shift the count by
+  // one, which on a homestay is a day's rent.
+  //
+  // move_out is the day they LEAVE, not their last night: lease_end_date is
+  // move_in + lease_days, so a 28-day stay from 1 Sep ends on the 29th. Reading
+  // it as the last night would need a +1 and is the off-by-one this whole
+  // change exists to remove.
+  function hbLeaseDays(moveIn, moveOut) {
+    if (!moveIn || !moveOut) return NaN;
+    const a = Date.parse(moveIn + 'T00:00:00Z'), b = Date.parse(moveOut + 'T00:00:00Z');
+    if (!isFinite(a) || !isFinite(b)) return NaN;
+    return Math.round((b - a) / 86400000);
+  }
+
+  // Echoes the derived length under the date field, so staff can check it
+  // against the quote without doing the subtraction themselves — the whole point
+  // of taking dates in the first place.
+  function hbShowLength(days) {
+    const el = $('hb-length-note'); if (!el) return;
+    const base = 'The day they leave, not their last night. Minimum stay 28 days.';
+    if (!Number.isFinite(days) || days <= 0) { el.textContent = base; el.style.color = ''; return; }
+    el.textContent = days + ' day' + (days === 1 ? '' : 's') + ' · ' + hbStayLength(days) +
+      (days < 28 ? ' — under the 28-day minimum' : '');
+    el.style.color = days < 28 ? '#b4443a' : '';
   }
 
   // Days back into the words staff used. A whole number of weeks reads as weeks,
@@ -17587,7 +17603,7 @@ renderLeads();
         '<td class="nowrap">' + (Number(b.lease_days) > 0 ? esc(hbStayLength(b.lease_days)) : '<span class="card-sub">—</span>') + '</td>' +
         '<td>' + hbMeals(b.meal_plan) + '</td>' +
         '<td style="text-align:right">' + cad(b.weekly_rate) + '</td>' +
-        '<td style="text-align:right">' + cad(b.host_monthly_amount) + '</td>' +
+        '<td style="text-align:right">' + cad(b.host_weekly_rate) + '</td>' +
         hbBillingCell(b) +
         hbPayoutCell(b) +
         '<td>' + (flags.length
@@ -17765,13 +17781,11 @@ renderLeads();
     // before checking would hide an empty field from the core's own required
     // check and silently price the booking as though the host is paid nothing.
     const rawWeekly = $('hb-weekly').value.trim();
-    const rawHost = $('hb-host-monthly').value.trim();
-    const rawWeeks = $('hb-weeks').value.trim();
-    // Blank means zero extra days, not a half-filled form: the common booking is
-    // a whole number of weeks and nobody should have to type a 0 to get it.
-    const rawDays = $('hb-days').value.trim();
+    const rawHost = $('hb-host-weekly').value.trim();
     const movein = $('hb-movein').value;
-    if (!rawWeekly || !rawHost || !rawWeeks || !movein) {
+    const moveout = $('hb-moveout').value;
+    hbShowLength(hbLeaseDays(movein, moveout));
+    if (!rawWeekly || !rawHost || !moveout || !movein) {
       // Half-filled is not an error — this fires on every keystroke. Show
       // nothing rather than a figure that is about to change or a complaint
       // about a field they have not reached yet.
@@ -17783,9 +17797,9 @@ renderLeads();
     try {
       s = computeHomestaySchedule({
         weeklyRateCents: toCents(rawWeekly),
-        hostMonthlyCents: toCents(rawHost),
+        hostWeeklyCents: toCents(rawHost),
         moveInDate: movein,
-        leaseDays: hbLeaseDays(rawWeeks, rawDays)
+        leaseDays: hbLeaseDays(movein, moveout)
       });
     } catch (e) {
       box.hidden = true;
@@ -17820,10 +17834,9 @@ renderLeads();
     const host = $('hb-host').value;
     const email = $('hb-email').value.trim();
     const rawWeekly = $('hb-weekly').value.trim();
-    const rawHost = $('hb-host-monthly').value.trim();
-    const rawWeeks = $('hb-weeks').value.trim();
-    const rawDays = $('hb-days').value.trim();
+    const rawHost = $('hb-host-weekly').value.trim();
     const movein = $('hb-movein').value;
+    const moveout = $('hb-moveout').value;
     const meals = $('hb-meals') ? $('hb-meals').value : '';
 
     if (!host) return hbStatus('Choose a host.', true);
@@ -17833,31 +17846,23 @@ renderLeads();
     // as a real "the host is paid nothing" figure rather than a missing value,
     // so a blank field would otherwise create a booking paying the host $0 for
     // the entire lease with no error anywhere.
-    if (!rawHost) return hbStatus('Host monthly rate is required.', true);
+    if (!rawHost) return hbStatus('Host weekly rate is required.', true);
     if (!movein) return hbStatus('Move-in date is required.', true);
-    if (!rawWeeks) return hbStatus('Lease length is required.', true);
+    if (!moveout) return hbStatus('Move-out date is required.', true);
 
     const weekly = toCents(rawWeekly);
-    const hostMonthly = toCents(rawHost);
-    const weeks = Number(rawWeeks);
-    const extraDays = rawDays === '' ? 0 : Number(rawDays);
-    if (!Number.isInteger(weeks) || weeks < 0) {
-      return hbStatus('Weeks must be a whole number.', true);
+    const hostWeekly = toCents(rawHost);
+    const leaseDays = hbLeaseDays(movein, moveout);
+    if (!Number.isFinite(leaseDays) || leaseDays <= 0) {
+      return hbStatus('Move-out must be after move-in.', true);
     }
-    // 7 or more extra days is a week the staff member meant to type in the other
-    // box. Accepting it silently would price the stay correctly but leave the
-    // form disagreeing with itself about what was booked.
-    if (!Number.isInteger(extraDays) || extraDays < 0 || extraDays > 6) {
-      return hbStatus('Extra days must be a whole number from 0 to 6 — 7 days is a week.', true);
-    }
-    const leaseDays = hbLeaseDays(rawWeeks, rawDays);
     if (leaseDays < 28) {
-      return hbStatus('The minimum stay is 28 days. ' + hbStayLength(leaseDays) + ' is too short.', true);
+      return hbStatus('The minimum stay is 28 days. ' + leaseDays + ' days is too short.', true);
     }
     let preview;
     try {
       preview = computeHomestaySchedule({
-        weeklyRateCents: weekly, hostMonthlyCents: hostMonthly,
+        weeklyRateCents: weekly, hostWeeklyCents: hostWeekly,
         moveInDate: movein, leaseDays: leaseDays
       });
     } catch (e) { return hbStatus(hbFieldError(e), true); }
@@ -17872,7 +17877,7 @@ renderLeads();
         host_id: host,
         student_email: email,
         weekly_rate_cents: weekly,
-        host_monthly_cents: hostMonthly,
+        host_weekly_cents: hostWeekly,
         move_in_date: movein,
         // One number on the wire. The two form fields are a convenience for
         // staff who think in weeks; the booking is measured in days everywhere
@@ -17919,7 +17924,7 @@ renderLeads();
   document.addEventListener('DOMContentLoaded', function () {
     const nav = document.querySelector('.nav-item[data-view="homestay-bookings"]');
     if (nav) nav.addEventListener('click', hbLoadAll);
-    ['hb-weekly', 'hb-host-monthly', 'hb-weeks', 'hb-days', 'hb-movein'].forEach((id) => {
+    ['hb-weekly', 'hb-host-weekly', 'hb-movein', 'hb-moveout'].forEach((id) => {
       const el = $(id); if (el) el.addEventListener('input', hbPreview);
     });
     const c = $('hb-create'); if (c) c.addEventListener('click', hbCreate);
