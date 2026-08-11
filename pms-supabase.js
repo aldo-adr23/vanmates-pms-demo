@@ -25,6 +25,9 @@
       hydrate: async () => ({ ok:false, reason:'no-supabase' }),
       upsert:  () => false,
       delete:  () => false,
+      // Same fallback chain as recordId() below, so call sites can always ask
+      // vmDb for a record's persistence key instead of hand-rolling one.
+      keyFor:  (arrayName, record) => record ? String(record.id || record.email || record.name || '') : null,
       toast:   () => {}
     };
     return;
@@ -49,7 +52,17 @@
   // arrayName (in vanmates-pms.html) → { table: postgres table, key: pk source field }
   const TABLES = {
     properties:        { table: 'properties',         key: 'name' },
-    tenants:           { table: 'tenants',            key: 'email' },   // fallback to a t-N id
+    // Tenants are keyed on a synthetic `t-…` id, NOT on email. Email is not
+    // unique — 64 of the 502 seeded tenants share an address with somebody
+    // else, and email-keying silently merged 42 of them away (~$59,575/mo of
+    // rent) because the later upsert overwrote the earlier under the same
+    // primary key. No natural key works: 3 pairs are identical on email, name,
+    // property AND room and differ only in moveIn/leaseEnd/rent. Ids are
+    // assigned once, authoritatively, by scripts/migrate-tenant-ids.mjs.
+    // recordId()'s fallback chain still yields the email for a record that has
+    // no id yet, which is what keeps this deployable before the migration runs
+    // — see scripts/README-tenant-id-migration.md.
+    tenants:           { table: 'tenants',            key: 'id' },
     landlords:         { table: 'landlords',          key: 'id' },
     homestayHosts:     { table: 'homestay_hosts',     key: 'id' },
     homestayClients:   { table: 'homestay_clients',   key: 'id' },
@@ -75,6 +88,7 @@
   /* ------------------- helpers ------------------- */
   function recordId(arrayName, record, fallbackIdx) {
     const cfg = TABLES[arrayName];
+    if (!cfg || !record) return null;
     const v = record[cfg.key];
     if (v) return String(v);
     if (record.id) return String(record.id);
@@ -125,20 +139,55 @@
           summary.errors.push({ name, error:'local array not found on window' });
           continue;
         }
-        const deletedIds = new Set((deletedRows || []).map(r => String(r.id)));
-        // Merge in localStorage tombstones so deletes from non-admin users
-        // (whose UPDATE/INSERT was blocked by RLS) also persist on refresh.
-        getLocalTombstoneIds(name).forEach(id => deletedIds.add(id));
-        const keyField = cfg.key; // e.g. 'name' for properties, 'id' for landlords, 'email' for tenants
+        // Two tombstone sets, matched by DIFFERENT rules — this distinction is
+        // what makes the tenant re-key survivable.
+        //
+        //   dbDeletedIds    real Postgres primary keys. Matched EXACTLY, never
+        //                   against an alias. The migration soft-deletes the
+        //                   old email-keyed tenant row while the new id-keyed
+        //                   row still carries that same email; under the old
+        //                   loose match ("does any of id/key/email/name appear
+        //                   in the tombstone set?") every migrated tenant would
+        //                   have been hidden and the tenant list would render
+        //                   empty. A tombstone for one row must only ever hide
+        //                   that row.
+        //
+        //   localDeletedIds per-browser tombstones written by the delete
+        //                   handler using whatever key the code derived at the
+        //                   time — which may predate the re-key. These stay
+        //                   loosely matched: they encode an explicit user
+        //                   intent to hide a person, so following the record
+        //                   across a key change is the desired behaviour.
+        const dbDeletedIds = new Set((deletedRows || []).map(r => String(r.id)));
+        const localDeletedIds = getLocalTombstoneIds(name);
+        const keyField = cfg.key; // 'name' for properties, 'id' for tenants/landlords/…
 
-        // Helper to check if a local record matches a tombstone id.
+        // A row read straight from Postgres: we know its true primary key.
+        const isDeletedRow = (row) => {
+          const key = row && row.id != null ? String(row.id) : '';
+          if (key && dbDeletedIds.has(key)) return true;
+          if (key && localDeletedIds.has(key)) return true;
+          const rec = (row && row.data) || row || {};
+          const aliases = [rec.id, rec[keyField], rec.email, rec.name]
+            .filter(v => v != null).map(String);
+          return aliases.some(a => localDeletedIds.has(a));
+        };
+
+        // A record from the hard-coded local seed: there is no Postgres row id,
+        // so a DB tombstone may only be applied when the record actually
+        // carries this table's key field. Matching a DB tombstone against a
+        // *fallback* key is precisely how one row's tombstone ends up hiding a
+        // different row — id-less seed tenants must not be matched against the
+        // email tombstones the migration leaves behind.
         const isDeleted = (record) => {
           if (!record) return false;
-          const candidates = [
-            record.id, record[keyField], record.email, record.name
-          ].filter(v => v != null).map(String);
-          return candidates.some(c => deletedIds.has(c));
+          const own = record[keyField];
+          if (own != null && String(own) !== '' && dbDeletedIds.has(String(own))) return true;
+          const aliases = [record.id, record[keyField], record.email, record.name]
+            .filter(v => v != null).map(String);
+          return aliases.some(a => localDeletedIds.has(a));
         };
+        const deletedIds = new Set([...dbDeletedIds, ...localDeletedIds]); // count only
 
         // Defensive: never blank a populated local array with empty Postgres
         // results. RLS denials and auth/network failures show up as `data=[]`
@@ -170,8 +219,18 @@
         // (deletes performed by non-admin users that RLS blocked).
         arr.length = 0;
         for (const row of data) {
+          if (isDeletedRow(row)) continue;
           const rec = row.data || row;
-          if (isDeleted(rec)) continue;
+          // Preserve the synthetic id Postgres is keyed on. Post-migration the
+          // id already lives inside `data`, but if a row predates that (or was
+          // written by an older client) we adopt the row's primary key so the
+          // record round-trips to the same row on the next upsert. Guarded so
+          // we never copy an *email* key into `data.id` — that would re-create
+          // the collision the migration exists to remove.
+          if (cfg.key === 'id' && rec && (rec.id == null || String(rec.id).trim() === '') && row.id != null) {
+            const rid = String(row.id);
+            if (rid !== String(rec.email || '') && rid !== String(rec.name || '')) rec.id = rid;
+          }
           arr.push(rec);
         }
         summary.counts[name] = arr.length;
@@ -463,7 +522,16 @@
   }
 
   /* ------------------- expose ------------------- */
+  // The persistence key a record would be written under. Call sites MUST use
+  // this rather than re-deriving `record.email || record.id || …` by hand:
+  // every hand-rolled copy is a place that silently deletes or overwrites the
+  // wrong row the moment a table's key changes, which is exactly what the
+  // tenant re-key did to the two tenant delete sites in index.html.
+  function keyFor(arrayName, record) {
+    return recordId(arrayName, record);
+  }
+
   window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted,
-                   uploadFile, fileUrl, deleteFile, subscribeRealtime, toast, sb };
+                   keyFor, uploadFile, fileUrl, deleteFile, subscribeRealtime, toast, sb };
   console.log('[vmDb] persistence layer ready (Phase 2.4f: soft delete + audit + storage + realtime)');
 })();
