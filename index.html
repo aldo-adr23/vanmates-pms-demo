@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-10c"></script>
+<script src="pms-supabase.js?v=2026-08-11a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2786,19 +2786,27 @@ hello@vanmates.com · vanmates.com</textarea>
             </div>
           </div>
           <div class="form-row">
-            <div class="form-field"><label>Monthly rent (CAD)</label>
-              <input class="form-input" id="hb-rent" type="number" step="0.01" min="0" placeholder="1700.00">
+            <div class="form-field"><label>Weekly rate (CAD)</label>
+              <input class="form-input" id="hb-weekly" type="number" min="1" step="0.01" placeholder="320.00">
+              <div class="card-sub" style="margin-top:6px">What the student pays per week. Billed in 4-week blocks.</div>
             </div>
-            <div class="form-field"><label>Vanmates fee (CAD)</label>
-              <input class="form-input" id="hb-fee" type="number" step="0.01" min="0" placeholder="200.00">
+            <div class="form-field"><label>Host monthly rate (CAD)</label>
+              <input class="form-input" id="hb-host-monthly" type="number" min="0" step="0.01" placeholder="1100.00">
+              <div class="card-sub" style="margin-top:6px">What the host is paid each month. Set independently — your margin is the difference.</div>
             </div>
           </div>
           <div class="form-row">
             <div class="form-field"><label>Move-in date</label>
               <input class="form-input" id="hb-movein" type="date">
             </div>
-            <div class="form-field"><label>Lease length (months)</label>
-              <input class="form-input" id="hb-months" type="number" step="1" min="1" value="8">
+            <div class="form-field"><label>Lease length</label>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input class="form-input" id="hb-weeks" type="number" min="0" step="1" value="4" style="width:80px" aria-label="Weeks">
+                <span class="card-sub">weeks</span>
+                <input class="form-input" id="hb-days" type="number" min="0" max="6" step="1" value="0" style="width:80px" aria-label="Extra days">
+                <span class="card-sub">days</span>
+              </div>
+              <div class="card-sub" style="margin-top:6px">Minimum 28 days. Add days for a stay that is not a whole number of weeks — a 30-day course is 4 weeks and 2 days.</div>
             </div>
           </div>
           <div class="form-row">
@@ -2850,11 +2858,11 @@ hello@vanmates.com · vanmates.com</textarea>
         <div style="overflow-x:auto">
           <table>
             <thead><tr>
-              <th>Reference</th><th>Student</th><th>Move-in</th><th>Meals</th>
-              <th class="right">Rent</th><th class="right">Host gets</th>
-              <th>Status</th><th>Needs attention</th><th>Move-out</th>
+              <th>Reference</th><th>Student</th><th>Stay</th><th>Length</th><th>Meals</th>
+              <th class="right">Per week</th><th class="right">Host / month</th>
+              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Move-out</th>
             </tr></thead>
-            <tbody id="hb-rows"><tr><td colspan="9" class="card-sub">Not loaded yet.</td></tr></tbody>
+            <tbody id="hb-rows"><tr><td colspan="11" class="card-sub">Not loaded yet.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -9522,6 +9530,11 @@ if (hcSearch) hcSearch.addEventListener("input", e => renderHomestayClients(e.ta
    and formatting happens at the edge in the renderer. Nothing in between
    should ever see a dollar float. */
 /* HF-CORE-START */
+// DEPENDENCY: this core calls computeHomestaySchedule() from the
+// HS-SCHEDULE-CORE fence further down the same script. Anything that evaluates
+// this fence in isolation — test/homestay-finance.test.js does — must pull that
+// one in alongside it.
+
 // The day the Stripe system first existed. Before this there is no Confirmed
 // history to draw, and a zero line would read as "we earned nothing" rather
 // than "we were not measuring yet".
@@ -9545,6 +9558,18 @@ function hfParseDate(s){
 function hfYM(s){
   var d = hfParseDate(s);
   return d ? d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) : "";
+}
+// A Date back to "YYYY-MM-DD". The schedule core demands that exact shape,
+// while hfParseDate deliberately tolerates a non-padded "2026-8-07"; this is
+// what carries a date from the loose side to the strict one.
+function hfYmd(d){
+  return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+}
+// The earlier of two dates, either of which may be absent.
+function hfEarliest(a, b){
+  if(!a) return b || null;
+  if(!b) return a;
+  return a < b ? a : b;
 }
 function hfMonthStart(ym){ var p = String(ym).split("-").map(Number); return new Date(p[0], p[1] - 1, 1); }
 function hfMonthEnd(ym){ var p = String(ym).split("-").map(Number); return new Date(p[0], p[1], 0); }
@@ -9594,22 +9619,105 @@ function computeHomestayFinance(input){
   var mStart = hfMonthStart(month), mEnd = hfMonthEnd(month);
 
   // ===== Confirmed (Stripe) ==============================================
-  // A3 — scoped by overlap, not by move_in_date alone: a subscription that
-  // began in August is still real money in September.
-  var monthBookings = bookings.filter(function(b){
-    if(HF_DEAD_STATUS.indexOf(String(b.status || "")) !== -1) return false;
+  // Weekly billing gives every student charge and every host payout a date of
+  // its own, so a month's Confirmed figure is the events dated inside it. The
+  // monthly model carried ONE figure per booking and A3 handed that same figure
+  // to every month the stay touched — which is why this core needed a special
+  // gate to stop a single transfer being replayed forever, and why a month that
+  // pays a host while collecting nothing could not be represented at all.
+  // Nothing is replayed now: an event belongs to one month and to no other.
+  //
+  // The schedule is not re-derived here. computeHomestaySchedule() is the
+  // tested source (45 assertions) and is what Booking Create ran when the row
+  // was written; a second implementation of this arithmetic is exactly how the
+  // homestay fee maths drifted before.
+  function hfSchedule(b){
     var mi = hfParseDate(b.move_in_date);
-    if(!mi || mi > mEnd) return false;
-    var mo = hfParseDate(b.move_out_date);
-    if(mo && mo < mStart) return false;
-    return true;
+    if(!mi) return null;
+    try {
+      return computeHomestaySchedule({
+        weeklyRateCents: hfCents(b.weekly_rate),
+        hostMonthlyCents: hfCents(b.host_monthly_amount),
+        // Normalised rather than passed through: the schedule core demands a
+        // strict YYYY-MM-DD, while every other date comparison here tolerates
+        // "2026-8-07". Handing the raw string over would make a booking that
+        // A3 scopes into the month unreadable instead.
+        moveInDate: hfYmd(mi),
+        leaseDays: Number(b.lease_days)
+      });
+    } catch(e){
+      // A booking whose terms will not compute is NOT zero. hfCents(undefined)
+      // is 0 and would sum in silently, leaving the month looking genuinely
+      // empty; it is counted instead so the page can say it is incomplete.
+      return null;
+    }
+  }
+  // Computed once per booking and read by the scoped month and all six trend
+  // months. The schedule walks the whole stay, and running it seven times per
+  // booking for the same answer buys nothing.
+  var scheds = bookings.map(function(b){ return hfSchedule(b); });
+
+  // The stay ends at whichever comes first: an explicit early move-out, or the
+  // scheduled end the booking was created with. The old gate read move_out_date
+  // alone — set only on an early termination — so a booking that simply ran its
+  // course stayed "active", and owed, in every later month forever.
+  function hfBookingEnd(b, sched){
+    var scheduled = hfParseDate(b.lease_end_date) ||
+                    (sched ? hfParseDate(sched.leaseEndDate) : null);
+    return hfEarliest(hfParseDate(b.move_out_date), scheduled);
+  }
+
+  // The events of one booking that fall in one month. One implementation, read
+  // by the scoped figures, the per-host buckets and the trend, so the three
+  // views of the same booking cannot disagree about it.
+  function hfEventsIn(sched, ym){
+    var cashIn = 0, owed = 0;
+    if(sched){
+      sched.studentCharges.forEach(function(c){ if(hfYM(c.dueDate) === ym) cashIn += c.totalCents; });
+      sched.hostPayments.forEach(function(p){ if(hfYM(p.payDate) === ym) owed += p.amountCents; });
+    }
+    return { cashIn: cashIn, owed: owed };
+  }
+
+  // The host periods of one booking that fall in one month, each with whether
+  // it has actually gone out. host_payouts_made counts the periods transferred,
+  // so period k has been paid exactly when k <= it, and host_payout_status
+  // describes the NEXT period the run will attempt — made + 1. Stating both
+  // rules once is the version of the old "keep these two copies in step"
+  // warning that cannot be ignored.
+  function hfPeriodsIn(b, sched, ym){
+    var out = [];
+    if(!sched) return out;
+    var made = Math.max(0, Math.round(Number(b.host_payouts_made) || 0));
+    var failing = String(b.host_payout_status || "") === "failed";
+    sched.hostPayments.forEach(function(p, idx){
+      if(hfYM(p.payDate) !== ym) return;
+      var k = idx + 1;
+      out.push({ period: k, amount: p.amountCents, prorated: !!p.prorated,
+                 payDate: p.payDate, paid: k <= made, flagged: failing && k === made + 1 });
+    });
+    return out;
+  }
+
+  // A3 — scoped by overlap, not by move_in_date alone: a stay that began in
+  // August is still real money in September.
+  var monthRows = [], unreadable = 0;
+  bookings.forEach(function(b, i){
+    if(HF_DEAD_STATUS.indexOf(String(b.status || "")) !== -1) return;
+    var mi = hfParseDate(b.move_in_date);
+    if(!mi || mi > mEnd) return;
+    var end = hfBookingEnd(b, scheds[i]);
+    if(end && end < mStart) return;
+    if(!scheds[i]) unreadable++;
+    monthRows.push({ b: b, s: scheds[i] });
   });
 
   var confCashIn = 0, confOwed = 0;
-  monthBookings.forEach(function(b){
-    confCashIn += hfCents(b.monthly_gross) + hfCents(b.transaction_fee);
+  monthRows.forEach(function(r){
+    var ev = hfEventsIn(r.s, month);
+    confCashIn += ev.cashIn;
     // Owed means owed, whether or not the transfer has gone out (R6).
-    confOwed   += hfCents(b.host_net);
+    confOwed   += ev.owed;
   });
 
   // ===== Expected (portal), minus anything already Confirmed (R1) ========
@@ -9684,30 +9792,26 @@ function computeHomestayFinance(input){
   remoteHosts.forEach(function(r){ if(r.host_id) hostByStripe[r.host_id] = r; });
 
   var hostPayments = [], paidThisMonth = 0, pendingThisMonth = 0;
-  monthBookings.forEach(function(b){
-    var ts = String(b.transfer_status || "");
-    // `transfer_status` is a per-booking scalar describing ONE transfer — the
-    // move-in transfer the n8n workflow marks once. A3 hands us the same
-    // booking in every overlapping month, so reading the scalar unconditionally
-    // replayed that single transfer onto every later month: a green "Pagado"
-    // row, and a paid total, for a month in which nothing was sent and the
-    // money is in fact still owed. Trust it only in the month it happened;
-    // later months are genuinely owed, which is exactly "pending". The same
-    // reasoning applies to `flagged` — a failure belongs to the transfer that
-    // failed, not to next month's rent, for which nothing was attempted yet.
-    var transferMonth = hfYM(b.move_in_date) === month;
-    var status = (ts === "sent" && transferMonth) ? "paid" : "pending";
-    var amt = hfCents(b.host_net);
-    if(status === "paid") paidThisMonth += amt; else pendingThisMonth += amt;
+  // One row per host PERIOD falling in the month, not one per booking. A stay
+  // is several separate obligations on their own dates now, and each is paid,
+  // owed or failed on its own.
+  monthRows.forEach(function(r){
+    var b = r.b;
     var rh = hostByStripe[b.host_id];
-    hostPayments.push({
-      hostName: (rh && rh.display_name) || b.host_id || "—",
-      hostId: b.host_id || "",
-      studentName: b.student_name || b.student_email || "—",
-      studentEmail: hfEmail(b.student_email),
-      amount: amt, status: status, flagged: ts === "failed" && transferMonth,
-      date: b.move_in_date || "", source: "stripe",
-      bookingRef: b.booking_ref || ""
+    hfPeriodsIn(b, r.s, month).forEach(function(p){
+      if(p.paid) paidThisMonth += p.amount; else pendingThisMonth += p.amount;
+      hostPayments.push({
+        hostName: (rh && rh.display_name) || b.host_id || "—",
+        hostId: b.host_id || "",
+        studentName: b.student_name || b.student_email || "—",
+        studentEmail: hfEmail(b.student_email),
+        amount: p.amount, status: p.paid ? "paid" : "pending", flagged: p.flagged,
+        period: p.period, prorated: p.prorated,
+        // Dated by the payout itself. move_in_date was only ever a stand-in for
+        // a date the booking did not carry; now it does.
+        date: p.payDate, source: "stripe",
+        bookingRef: b.booking_ref || ""
+      });
     });
   });
   expClients.forEach(function(c){
@@ -9737,18 +9841,19 @@ function computeHomestayFinance(input){
     }
     return byHostMap[key];
   }
-  monthBookings.forEach(function(b){
+  monthRows.forEach(function(r){
+    var b = r.b;
     var rh = hostByStripe[b.host_id];
     var k = bucket(b.host_id || "—", (rh && rh.display_name) || b.host_id, "");
-    k.confirmed += (hfCents(b.monthly_gross) + hfCents(b.transaction_fee)) - hfCents(b.host_net);
+    var ev = hfEventsIn(r.s, month);
+    k.confirmed += ev.cashIn - ev.owed;
     k.guests += 1;
-    // Same per-booking scalar, same replay, same fix as the host payment rows
-    // above: one transfer belongs to one month, and A3 hands us the booking in
-    // all of them. Textually identical to that gate deliberately — if these two
-    // views of the same transfer ever disagree, one of them is lying.
-    var sent = String(b.transfer_status || "") === "sent" && hfYM(b.move_in_date) === month;
-    if(sent) k.paid += hfCents(b.host_net);
-    else k.pending += hfCents(b.host_net);
+    // The same hfPeriodsIn() the payment rows above are built from, so the two
+    // views of one booking cannot disagree — the old core stated this rule
+    // twice and had to warn that the copies must be kept identical.
+    hfPeriodsIn(b, r.s, month).forEach(function(p){
+      if(p.paid) k.paid += p.amount; else k.pending += p.amount;
+    });
   });
   expClients.forEach(function(c){
     var h = hostById[c.hostId];
@@ -9786,13 +9891,15 @@ function computeHomestayFinance(input){
     var cNet = null;
     if(available && s >= liveFrom){
       cNet = 0;
-      bookings.forEach(function(b){
+      bookings.forEach(function(b, n){
         if(HF_DEAD_STATUS.indexOf(String(b.status || "")) !== -1) return;
-        var mi = hfParseDate(b.move_in_date);
-        if(!mi || mi > e) return;
-        var mo = hfParseDate(b.move_out_date);
-        if(mo && mo < s) return;
-        cNet += (hfCents(b.monthly_gross) + hfCents(b.transaction_fee)) - hfCents(b.host_net);
+        // No overlap gate here any more. It used to decide whether a booking's
+        // one scalar landed in this month; the events carry their own dates, so
+        // a booking that does not reach the month simply has nothing dated in
+        // it. An end-date test on top would be a second answer to a question
+        // already answered.
+        var ev = hfEventsIn(scheds[n], ym);
+        cNet += ev.cashIn - ev.owed;
       });
     }
     trend.push({ month: ym, expectedNet: eNet, confirmedNet: cNet });
@@ -9802,7 +9909,12 @@ function computeHomestayFinance(input){
     month: month,
     confirmed: {
       cashIn: confCashIn, owedToHosts: confOwed, net: confCashIn - confOwed,
-      bookingCount: monthBookings.length, available: available, reason: reason
+      bookingCount: monthRows.length, available: available, reason: reason,
+      // Bookings in the month whose terms the schedule core refused. Surfaced
+      // rather than swallowed: they contribute nothing to the figures above, so
+      // without this the month is indistinguishable from one that really was
+      // that quiet.
+      unreadable: unreadable
     },
     expected: {
       cashIn: expCashIn, owedToHosts: expOwed, net: expCashIn - expOwed,
@@ -9820,8 +9932,8 @@ function computeHomestayFinance(input){
     hostPaymentTotals: { paidThisMonth: paidThisMonth, pendingThisMonth: pendingThisMonth },
     byHost: byHost,
     trend: trend,
-    migration: { confirmedStays: monthBookings.length,
-                 totalStays: expClients.length + monthBookings.length }
+    migration: { confirmedStays: monthRows.length,
+                 totalStays: expClients.length + monthRows.length }
   };
 }
 /* HF-CORE-END */
@@ -9998,8 +10110,13 @@ function renderHomestayFinance(){
     `${money(totalCashIn)} in − ${money(totalOwed)} to hosts`);
 
   set("hf-confirmed-net", liveOn ? money(conf.net) : "—");
+  // A booking whose terms the schedule core refused contributes nothing to the
+  // figures beside it, so without saying so the month is indistinguishable from
+  // one that was genuinely this quiet. Same reasoning as the "not shown" line
+  // under the host payments table.
   set("hf-confirmed-sub", liveOn
     ? `${conf.bookingCount} booking${conf.bookingCount===1?"":"s"} · ${money(conf.cashIn)} in, ${money(conf.owedToHosts)} owed`
+      + (conf.unreadable ? ` · ${conf.unreadable} not counted, terms unreadable` : "")
     : "Live Stripe figures unavailable");
 
   set("hf-expected-net", money(exp.net));
@@ -10058,11 +10175,9 @@ function renderHomestayFinance(){
     const badge = document.getElementById("hf-hp-badge");
     if(badge){
       // Green used to mean "live Stripe data is available", which is not what a
-      // green badge reads as next to a dollar figure. Since transfer_status is
-      // gated to the month, the common case after a booking's move-in month is
-      // paidThisMonth === 0, so the typical render was a green badge saying
-      // "$0.00 paid". Use the same vocabulary as the rows below: green is paid,
-      // blue is pending, grey is no data at all.
+      // green badge reads as next to a dollar figure — the typical render was a
+      // green badge saying "$0.00 paid". Use the same vocabulary as the rows
+      // below: green is paid, blue is pending, grey is no data at all.
       badge.className = "badge " + (!liveOn ? "badge-grey" : (t.paidThisMonth > 0 ? "badge-green" : "badge-blue"));
       badge.innerHTML = liveOn
         ? `<span class="dot"></span>${money(t.paidThisMonth)} paid · ${money(t.pendingThisMonth)} pending`
@@ -10082,7 +10197,7 @@ function renderHomestayFinance(){
           <tr>
             <td>
               <div class="name-main">${esc(r.hostName)}</div>
-              ${r.bookingRef ? `<div class="name-sub">${esc(r.bookingRef)}</div>` : ""}
+              ${r.bookingRef ? `<div class="name-sub">${esc(r.bookingRef)}${r.prorated ? " · partial month" : ""}</div>` : ""}
             </td>
             <td>${esc(r.studentName)}</td>
             <td class="nowrap">${r.date ? fmtDate(r.date) : "—"}</td>
@@ -14880,6 +14995,210 @@ function openAddTenantModal(propName, roomLabel){
   };
 }
 
+/* HS-SCHEDULE-CORE-START */
+/* Pure schedule maths for homestay bookings: what the student is charged and
+   when, and what the host is paid and when. No DOM, no globals, no clock —
+   every date derives from move_in_date, so the node test asserts exact values.
+
+   MIRRORED in the n8n workflow "VM - Homestay Booking Create" (Compute Booking
+   node). n8n cannot load this file, so a copy is unavoidable. Hand-mirrored
+   homestay maths has drifted before; change both in the same commit. */
+
+const HS_SERVICE_FEE_PERCENT = 4;
+const HS_DAYS_PER_WEEK = 7;
+const HS_BLOCK_WEEKS = 4;
+const HS_BLOCK_DAYS = HS_BLOCK_WEEKS * HS_DAYS_PER_WEEK;
+// The lease is measured in DAYS, not weeks. Rent is still priced and quoted per
+// week — a day is a seventh of the weekly rate — but a stay is not obliged to
+// land on a week boundary. A 30-day language course is a real booking, and
+// rounding it to 28 or 35 days put the difference somewhere a human had to
+// remember. The minimum is unchanged at four weeks, said in days.
+const HS_MIN_LEASE_DAYS = 28;
+const HS_MAX_LEASE_DAYS = 1820;   // five years — beyond any real homestay
+const HS_MS_PER_DAY = 86400000;
+
+function hsParseDate(s){
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error("move_in_date must be YYYY-MM-DD");
+  }
+  const d = new Date(s + "T00:00:00Z");
+  // Round-trip, because the format check is not enough: V8 rolls an impossible
+  // day FORWARD rather than failing, so "2026-02-30" parses happily as 2 March
+  // and isNaN never fires. Silently shifting every date in a booking is worse
+  // than rejecting it.
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+    throw new Error("move_in_date is not a real calendar date: " + s);
+  }
+  return d;
+}
+function hsYmd(d){ return d.toISOString().slice(0, 10); }
+function hsAddDays(d, n){ return new Date(d.getTime() + n * HS_MS_PER_DAY); }
+function hsDaysBetween(a, b){ return Math.round((b.getTime() - a.getTime()) / HS_MS_PER_DAY); }
+
+/* k months after `base`, clamped to the target month's length so a 31st move-in
+   pays on the 28th in February. ALWAYS measured from the original base, never
+   from the previously clamped date — otherwise the day-of-month ratchets
+   downward and never recovers. */
+function hsAddMonths(base, k){
+  const y = base.getUTCFullYear(), m = base.getUTCMonth(), day = base.getUTCDate();
+  const total = m + k;
+  const ty = y + Math.floor(total / 12);
+  const tm = ((total % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(ty, tm, Math.min(day, lastDay)));
+}
+
+/* The 4% is computed per charge, on the rent portion only, because that is what
+   the student is billed on each invoice. Summed fees therefore need not equal
+   the fee on the whole booking. */
+function hsFee(rentCents){ return Math.round(rentCents * HS_SERVICE_FEE_PERCENT / 100); }
+
+/* Rent for a run of days, priced off the weekly rate: a day is a seventh of a
+   week. Rounded ONCE, over the whole run, rather than per day — a rounded daily
+   rate multiplied out compounds its error, so six days at $100/wk would come to
+   $85.72 (6 x $14.29) instead of the $85.71 the week actually divides into.
+
+   A whole number of weeks is exact: 7 days is 7 x weekly / 7, with nothing to
+   round. So this changes no existing booking's arithmetic — only bookings that
+   could not previously be expressed at all. */
+function hsRentForDays(days, weeklyCents){
+  return Math.round(days * weeklyCents / HS_DAYS_PER_WEEK);
+}
+
+function computeHomestaySchedule(input){
+  const src = input || {};
+  const weekly = Math.round(Number(src.weeklyRateCents) || 0);
+  const days = Number(src.leaseDays);
+
+  if (!Number.isInteger(days) || days < HS_MIN_LEASE_DAYS || days > HS_MAX_LEASE_DAYS) {
+    throw new Error("leaseDays must be a whole number between " + HS_MIN_LEASE_DAYS + " and " + HS_MAX_LEASE_DAYS);
+  }
+  if (weekly <= 0) throw new Error("weeklyRateCents must be positive");
+
+  // Required, and explicitly present: Number(null) is 0, so a loose check would
+  // let a missing rate through as "the host is paid nothing" — which looks like
+  // a very profitable booking rather than a broken one.
+  if (src.hostMonthlyCents === undefined || src.hostMonthlyCents === null || src.hostMonthlyCents === "") {
+    throw new Error("hostMonthlyCents is required");
+  }
+  const hostMonthlyRaw = Number(src.hostMonthlyCents);
+  if (!Number.isFinite(hostMonthlyRaw) || hostMonthlyRaw < 0) {
+    throw new Error("hostMonthlyCents must be a non-negative number");
+  }
+  const hostMonthly = Math.round(hostMonthlyRaw);
+
+  const moveIn = hsParseDate(src.moveInDate);
+  const leaseEnd = hsAddDays(moveIn, days);
+  const fullBlocks = Math.floor(days / HS_BLOCK_DAYS);
+  // Whatever is left after the last whole block: 0 to 27 days, no longer
+  // rounded up or down to a week.
+  const tailDays = days % HS_BLOCK_DAYS;
+
+  const blockRent = HS_BLOCK_WEEKS * weekly;
+  const blockFee = hsFee(blockRent);
+
+  const studentCharges = [];
+  for (let i = 0; i < fullBlocks; i++) {
+    studentCharges.push({
+      // Block 1 is the held charge taken at checkout; the rest are subscription
+      // invoices. Nothing downstream should infer this from the index.
+      kind: i === 0 ? "checkout" : "subscription",
+      index: i + 1,
+      dueDate: hsYmd(hsAddDays(moveIn, HS_BLOCK_DAYS * i)),
+      days: HS_BLOCK_DAYS,
+      rentCents: blockRent,
+      feeCents: blockFee,
+      totalCents: blockRent + blockFee
+    });
+  }
+  if (tailDays > 0) {
+    const tailRent = hsRentForDays(tailDays, weekly);
+    const tailFee = hsFee(tailRent);
+    studentCharges.push({
+      kind: "tail",
+      index: fullBlocks + 1,
+      dueDate: hsYmd(hsAddDays(moveIn, HS_BLOCK_DAYS * fullBlocks)),
+      days: tailDays,
+      rentCents: tailRent,
+      feeCents: tailFee,
+      totalCents: tailRent + tailFee
+    });
+  }
+
+  /* The subscription raises blocks 2..fullBlocks only — block 1 is the checkout
+     charge and the tail is a one-off — so a booking with a single full block has
+     no subscription at all. That includes every 4-week minimum booking.
+
+     cancelAtOffsetSeconds pulls cancellation a full day inside the boundary.
+     Left exactly on it, `cancel_at` and the next cycle share a timestamp, and
+     whether Stripe invoices or cancels first would decide whether the student is
+     charged a block they do not owe.
+
+     A day rather than the hour this started as, because that race was never
+     rehearsed: there is no Stripe test mode on this account, so whether Stripe
+     honours a cancellation an hour before an invoice is unverified and stays
+     unverified. A day costs nothing to widen it by. The previous legitimate
+     invoice is 28 days earlier, so the margin is still 27 days clear of anything
+     real; the tail is a separate one-off charge, not a subscription cycle; and
+     Tenancy Close cancels on lease_end_date regardless. Nothing is scheduled in
+     the day being given up. */
+  const subscription = fullBlocks >= 2 ? {
+    trialEndDate: hsYmd(hsAddDays(moveIn, HS_BLOCK_DAYS)),
+    cancelAtDate: hsYmd(hsAddDays(moveIn, HS_BLOCK_DAYS * fullBlocks)),
+    cancelAtOffsetSeconds: -86400,
+    invoiceCount: fullBlocks - 1,
+    amountCents: blockRent + blockFee
+  } : null;
+
+  const hostPayments = [];
+  for (let k = 1; ; k++) {
+    const periodStart = hsAddMonths(moveIn, k - 1);
+    if (periodStart.getTime() >= leaseEnd.getTime()) break;
+    const periodEnd = hsAddMonths(moveIn, k);
+    const daysInPeriod = hsDaysBetween(periodStart, periodEnd);
+    const prorated = periodEnd.getTime() > leaseEnd.getTime();
+    const daysHosted = prorated ? hsDaysBetween(periodStart, leaseEnd) : daysInPeriod;
+    hostPayments.push({
+      period: k,
+      // Period 1 is paid the day AFTER move-in so a host is never paid for a
+      // student who did not arrive. Later periods pay on their start date.
+      payDate: hsYmd(k === 1 ? hsAddDays(moveIn, 1) : periodStart),
+      periodStart: hsYmd(periodStart),
+      periodEnd: hsYmd(periodEnd),
+      daysHosted: daysHosted,
+      daysInPeriod: daysInPeriod,
+      prorated: prorated,
+      amountCents: prorated ? Math.round(hostMonthly * daysHosted / daysInPeriod) : hostMonthly
+    });
+  }
+
+  const studentRentCents = studentCharges.reduce((s, c) => s + c.rentCents, 0);
+  const studentFeeCents = studentCharges.reduce((s, c) => s + c.feeCents, 0);
+  const hostTotalCents = hostPayments.reduce((s, p) => s + p.amountCents, 0);
+
+  return {
+    leaseDays: days,
+    // Whole weeks plus leftover days, for display only. Every figure above is
+    // derived from leaseDays; nothing downstream should reconstruct a length
+    // from this pair.
+    leaseWeeks: Math.floor(days / HS_DAYS_PER_WEEK),
+    leaseOddDays: days % HS_DAYS_PER_WEEK,
+    fullBlocks: fullBlocks,
+    tailDays: tailDays,
+    leaseEndDate: hsYmd(leaseEnd),
+    studentCharges: studentCharges,
+    subscription: subscription,
+    hostPayments: hostPayments,
+    totals: {
+      studentRentCents: studentRentCents,
+      studentFeeCents: studentFeeCents,
+      studentTotalCents: studentRentCents + studentFeeCents,
+      hostTotalCents: hostTotalCents,
+      marginCents: studentRentCents + studentFeeCents - hostTotalCents
+    }
+  };
+}
+/* HS-SCHEDULE-CORE-END */
 /* TENANT-CORE-START */
 /* Pure record-selection for the tenant list. Fenced so test/tenants.test.js can
    extract and assert against it with no DOM, the same way the Homestay Finance
@@ -17131,6 +17450,10 @@ renderLeads();
     card.hidden = false;
     const m = $('hb-auth-msg');
     if (m) { m.textContent = msg || ''; m.style.color = msg ? '#b4443a' : ''; }
+    // The card lives at the top of the page and this can be triggered from a
+    // row far below it. Revealing something off-screen reads as nothing
+    // happening — the exact failure this whole change is about.
+    if (card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     const i = $('hb-token'); if (i) { i.value = ''; i.focus(); }
   }
 
@@ -17144,6 +17467,38 @@ renderLeads();
     const el = $('hb-status'); if (!el) return;
     el.textContent = msg || '';
     el.style.color = bad ? '#b4443a' : '';
+  }
+
+  // The schedule core reports its own parameter names. Staff read the form's
+  // labels, so translate rather than leaking "hostMonthlyCents" into the UI.
+  function hbFieldError(e) {
+    const m = String((e && e.message) || '');
+    if (m.indexOf('leaseDays') !== -1) return 'Lease length must be between 28 days and five years.';
+    if (m.indexOf('weeklyRateCents') !== -1) return 'Weekly rate must be greater than zero.';
+    if (m.indexOf('hostMonthlyCents') !== -1) return 'Host monthly rate is required and cannot be negative.';
+    if (m.indexOf('move_in_date') !== -1) return 'Move-in date is not a real calendar date.';
+    return m;
+  }
+
+  // The form asks for weeks and days because that is how staff quote a stay; the
+  // booking is one number of days everywhere else. Blank days means none, so the
+  // ordinary whole-week booking needs no second field filled in.
+  function hbLeaseDays(rawWeeks, rawDays) {
+    const w = Number(rawWeeks), d = rawDays === '' || rawDays == null ? 0 : Number(rawDays);
+    if (!Number.isFinite(w) || !Number.isFinite(d)) return NaN;
+    return w * 7 + d;
+  }
+
+  // Days back into the words staff used. A whole number of weeks reads as weeks,
+  // because that is the common booking and "4 weeks" beats "28 days".
+  function hbStayLength(days) {
+    const n = Number(days);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    const w = Math.floor(n / 7), d = n % 7;
+    const parts = [];
+    if (w) parts.push(w + ' wk' + (w === 1 ? '' : 's'));
+    if (d) parts.push(d + ' day' + (d === 1 ? '' : 's'));
+    return parts.join(' ');
   }
 
   async function hbPost(path, body) {
@@ -17218,7 +17573,7 @@ renderLeads();
 
     const tb = $('hb-rows');
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="9" class="card-sub">No bookings yet.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="11" class="card-sub">No bookings yet.</td></tr>';
       hbApplyWriteAffordances();
       return;
     }
@@ -17227,11 +17582,14 @@ renderLeads();
       return '<tr>' +
         '<td><code>' + esc(b.booking_ref) + '</code></td>' +
         '<td>' + esc(b.student_email) + '</td>' +
-        '<td>' + esc(b.move_in_date || '—') + '</td>' +
+        '<td>' + esc(b.move_in_date || '—') +
+          (b.lease_end_date ? '<div class="card-sub">to ' + esc(b.lease_end_date) + '</div>' : '') + '</td>' +
+        '<td class="nowrap">' + (Number(b.lease_days) > 0 ? esc(hbStayLength(b.lease_days)) : '<span class="card-sub">—</span>') + '</td>' +
         '<td>' + hbMeals(b.meal_plan) + '</td>' +
-        '<td style="text-align:right">' + cad(b.monthly_gross) + '</td>' +
-        '<td style="text-align:right">' + cad(b.host_net) + '</td>' +
-        '<td>' + esc(b.status) + (b.billing_status ? ' <span class="card-sub">/ ' + esc(b.billing_status) + '</span>' : '') + '</td>' +
+        '<td style="text-align:right">' + cad(b.weekly_rate) + '</td>' +
+        '<td style="text-align:right">' + cad(b.host_monthly_amount) + '</td>' +
+        hbBillingCell(b) +
+        hbPayoutCell(b) +
         '<td>' + (flags.length
           ? flags.map((f) => '<span class="badge badge-amber">' + esc(f) + '</span>').join(' ')
           : '<span class="card-sub">—</span>') + '</td>' +
@@ -17240,6 +17598,42 @@ renderLeads();
     }).join('');
     // The end-booking buttons are rebuilt above, so re-apply the write gating.
     hbApplyWriteAffordances();
+  }
+
+  // What the STUDENT owes. The tail is the part-block at the end of a stay,
+  // charged off-session against the saved card on one fixed date. It is shown
+  // while it is still pending, not only once it fails: it is the one charge
+  // nobody is present for, and until it is collected it appears nowhere else in
+  // the console.
+  function hbBillingCell(b) {
+    const tail = String(b.tail_charge_status || '');
+    let sub = b.billing_status ? '/ ' + b.billing_status : '';
+    if (tail === 'pending' && b.tail_charge_date) sub += (sub ? ' · ' : '') + 'tail ' + b.tail_charge_date;
+    else if (tail === 'failed') sub += (sub ? ' · ' : '') + 'tail failed';
+    else if (tail === 'charged') sub += (sub ? ' · ' : '') + 'tail charged';
+    return '<td>' + esc(b.status) +
+      (sub ? ' <span class="card-sub">' + esc(sub) + '</span>' : '') + '</td>';
+  }
+
+  // What the HOST is owed. Hosts are paid monthly out of the Vanmates balance on
+  // their own schedule, so a payout can now fail on its own — an unsettled
+  // balance — while the student is fully paid up. That failure mode could not
+  // happen while Stripe split the charge at source, and without this column its
+  // only trace would be a data-table field nobody opens.
+  //
+  // The status is printed verbatim rather than mapped to friendlier words: an
+  // unrecognised value then reads as itself, instead of falling through a map
+  // and rendering as though everything were fine.
+  function hbPayoutCell(b) {
+    const st = String(b.host_payout_status || '');
+    if (!st) return '<td><span class="card-sub">—</span></td>';
+    const cls = st === 'failed' ? 'badge-red' : (st === 'complete' ? 'badge-green' : 'badge-blue');
+    const made = Number(b.host_payouts_made) || 0;
+    const parts = [];
+    if (made) parts.push(made + (made === 1 ? ' month paid' : ' months paid'));
+    if (st !== 'complete' && b.next_host_payout_date) parts.push('next ' + b.next_host_payout_date);
+    return '<td><span class="badge ' + cls + '">' + esc(st) + '</span>' +
+      (parts.length ? '<div class="card-sub">' + esc(parts.join(' · ')) + '</div>' : '') + '</td>';
   }
 
   // Bookings created before meal_plan existed have no value; show a dash rather
@@ -17262,6 +17656,21 @@ renderLeads();
     const done = b.billing_status === 'ended';
     const dated = b.move_out_date ? '<span class="card-sub">' + esc(b.move_out_date) + '</span>' : '';
     if (done) return '<td>' + (dated || '<span class="card-sub">ended</span>') + '</td>';
+    // A view-only token used to render this button disabled. That is
+    // indistinguishable from a broken page: the click is swallowed, the cell
+    // does not change, and the note explaining why renders beside the create
+    // form — far above whichever row is being clicked. It cost real time on
+    // 2026-08-11, when "End tenancy does nothing" turned out to be a read-only
+    // token saved on the Hosts page months earlier.
+    //
+    // Say it in the cell where the click would have landed, and offer the way
+    // out rather than only the diagnosis.
+    if (!hbCanWrite()) {
+      return '<td>' + (dated ? dated + ' ' : '') +
+        '<button type="button" class="btn btn-ghost hb-need-token" ' +
+        'title="Ending a tenancy cancels a live Stripe subscription, so it needs the full staff token — not the view-only one.">' +
+        'Needs full token</button></td>';
+    }
     return '<td class="hb-act" data-ref="' + esc(b.booking_ref) + '">' +
       (dated ? dated + ' ' : '') +
       '<button type="button" class="btn btn-ghost hb-end-start">' +
@@ -17337,55 +17746,124 @@ renderLeads();
       note.textContent = canWrite ? '' :
         'You are signed in with a view-only staff token. Hosts and bookings load normally; creating a booking or ending one needs the full token.';
     }
-    document.querySelectorAll('.hb-end-start').forEach(function (b) {
-      b.disabled = !canWrite;
-      b.title = canWrite ? '' : 'Needs the full staff token';
-    });
+    // The end-tenancy buttons are NOT disabled here any more. Without the full
+    // token hbMoveOutCell renders no such button at all — it renders one that
+    // says what is missing and reveals the token card. A disabled button was
+    // the bug, so leaving a loop here that could reintroduce one would only
+    // invite it back.
   }
 
   /* ---- preview ---- */
+  // Renders the exact schedule the booking will produce, from the same core the
+  // test asserts against. Staff see every charge and payout date before
+  // committing, which is the only place the 4-week-minimum proration on the host
+  // side is visible before it happens.
   function hbPreview() {
-    const el = $('hb-preview'); const warn = $('hb-warn');
-    const F = window.HomestayFee;
-    // If the shared fee module did not load, show nothing rather than numbers
-    // that might disagree with what booking-create actually charges.
-    if (!F || !F.computeBooking) { el.hidden = true; return; }
-    const grossCents = toCents($('hb-rent').value);
-    const feeValue = toCents($('hb-fee').value);
-    if (!grossCents) { el.hidden = true; warn.hidden = true; return; }
-    const b = F.computeBooking({ grossCents, feeType: 'fixed', feeValue });
-    el.hidden = false;
-    el.textContent =
-      'Student pays now: ' + F.fmtCAD(b.totalDueNowCents) +
-      '  (rent ' + F.fmtCAD(b.grossCents) + ' + ' + F.TRANSACTION_FEE_LABEL.toLowerCase() + ' ' + F.fmtCAD(b.transactionFeeCents) + ')\n' +
-      'Host receives the day after check-in: ' + F.fmtCAD(b.hostNetCents) + '\n' +
-      'Vanmates keeps: ' + F.fmtCAD(b.vanmatesKeepsCents);
-    // The fee is capped at the rent, so an oversized fee silently leaves the
-    // host with nothing and Stripe rejects the zero transfer.
-    if (b.hostNetCents <= 0) {
+    const box = $('hb-preview'), warn = $('hb-warn');
+    if (!box) return;
+    // Read raw strings first. toCents('') is 0, not "missing", so converting
+    // before checking would hide an empty field from the core's own required
+    // check and silently price the booking as though the host is paid nothing.
+    const rawWeekly = $('hb-weekly').value.trim();
+    const rawHost = $('hb-host-monthly').value.trim();
+    const rawWeeks = $('hb-weeks').value.trim();
+    // Blank means zero extra days, not a half-filled form: the common booking is
+    // a whole number of weeks and nobody should have to type a 0 to get it.
+    const rawDays = $('hb-days').value.trim();
+    const movein = $('hb-movein').value;
+    if (!rawWeekly || !rawHost || !rawWeeks || !movein) {
+      // Half-filled is not an error — this fires on every keystroke. Show
+      // nothing rather than a figure that is about to change or a complaint
+      // about a field they have not reached yet.
+      box.hidden = true;
+      if (warn) warn.hidden = true;
+      return;
+    }
+    let s;
+    try {
+      s = computeHomestaySchedule({
+        weeklyRateCents: toCents(rawWeekly),
+        hostMonthlyCents: toCents(rawHost),
+        moveInDate: movein,
+        leaseDays: hbLeaseDays(rawWeeks, rawDays)
+      });
+    } catch (e) {
+      box.hidden = true;
+      if (warn) { warn.hidden = false; warn.textContent = hbFieldError(e); warn.style.color = '#b4443a'; }
+      return;
+    }
+    if (warn) warn.hidden = true;
+    box.hidden = false;
+    const lines = [];
+    lines.push('Student pays ' + cad(s.totals.studentTotalCents) + ' over ' +
+               s.studentCharges.length + ' charge' + (s.studentCharges.length === 1 ? '' : 's') + ':');
+    s.studentCharges.forEach(c => lines.push('   ' + c.dueDate + '   ' + cad(c.totalCents) +
+      '   (' + c.kind + ', ' + c.days + ' day' + (c.days === 1 ? '' : 's') + ')'));
+    lines.push('Host receives ' + cad(s.totals.hostTotalCents) + ' over ' +
+               s.hostPayments.length + ' payment' + (s.hostPayments.length === 1 ? '' : 's') + ':');
+    s.hostPayments.forEach(p => lines.push('   ' + p.payDate + '   ' + cad(p.amountCents) +
+      (p.prorated ? '   (pro-rated, ' + p.daysHosted + '/' + p.daysInPeriod + ' days)' : '')));
+    lines.push('Tenancy ends ' + s.leaseEndDate + '   (' + hbStayLength(s.leaseDays) + ')');
+    lines.push('Vanmates margin ' + cad(s.totals.marginCents) + ' before Stripe fees');
+    if (!s.subscription) lines.push('No subscription — this booking is charged in full upfront.');
+    box.textContent = lines.join('\n');
+    if (warn && s.totals.marginCents < 0) {
       warn.hidden = false;
-      warn.textContent = 'The host would receive $0.00 — the fee cannot be equal to or larger than the rent. Stripe rejects a zero transfer.';
-    } else { warn.hidden = true; }
+      warn.style.color = '#b4443a';
+      warn.textContent = 'The host is paid more than the student pays — this booking loses ' +
+                         cad(-s.totals.marginCents) + '.';
+    }
   }
 
   /* ---- create ---- */
   async function hbCreate() {
     const host = $('hb-host').value;
     const email = $('hb-email').value.trim();
-    const rent = toCents($('hb-rent').value);
-    const fee = toCents($('hb-fee').value);
+    const rawWeekly = $('hb-weekly').value.trim();
+    const rawHost = $('hb-host-monthly').value.trim();
+    const rawWeeks = $('hb-weeks').value.trim();
+    const rawDays = $('hb-days').value.trim();
     const movein = $('hb-movein').value;
-    const months = Number($('hb-months').value) || 0;
     const meals = $('hb-meals') ? $('hb-meals').value : '';
 
     if (!host) return hbStatus('Choose a host.', true);
     if (!email) return hbStatus('Student email is required.', true);
-    if (!rent) return hbStatus('Monthly rent is required.', true);
+    if (!rawWeekly) return hbStatus('Weekly rate is required.', true);
+    // Checked as a STRING, deliberately. toCents('') is 0, which the core reads
+    // as a real "the host is paid nothing" figure rather than a missing value,
+    // so a blank field would otherwise create a booking paying the host $0 for
+    // the entire lease with no error anywhere.
+    if (!rawHost) return hbStatus('Host monthly rate is required.', true);
     if (!movein) return hbStatus('Move-in date is required.', true);
-    // 0 months is an open-ended tenancy: Tenancy Close reads it as "no scheduled
-    // end" and the subscription bills forever. Only ever set that deliberately.
-    if (months < 1) return hbStatus('Lease length must be at least 1 month.', true);
-    if (fee >= rent) return hbStatus('The fee must be smaller than the rent, or the host receives nothing.', true);
+    if (!rawWeeks) return hbStatus('Lease length is required.', true);
+
+    const weekly = toCents(rawWeekly);
+    const hostMonthly = toCents(rawHost);
+    const weeks = Number(rawWeeks);
+    const extraDays = rawDays === '' ? 0 : Number(rawDays);
+    if (!Number.isInteger(weeks) || weeks < 0) {
+      return hbStatus('Weeks must be a whole number.', true);
+    }
+    // 7 or more extra days is a week the staff member meant to type in the other
+    // box. Accepting it silently would price the stay correctly but leave the
+    // form disagreeing with itself about what was booked.
+    if (!Number.isInteger(extraDays) || extraDays < 0 || extraDays > 6) {
+      return hbStatus('Extra days must be a whole number from 0 to 6 — 7 days is a week.', true);
+    }
+    const leaseDays = hbLeaseDays(rawWeeks, rawDays);
+    if (leaseDays < 28) {
+      return hbStatus('The minimum stay is 28 days. ' + hbStayLength(leaseDays) + ' is too short.', true);
+    }
+    let preview;
+    try {
+      preview = computeHomestaySchedule({
+        weeklyRateCents: weekly, hostMonthlyCents: hostMonthly,
+        moveInDate: movein, leaseDays: leaseDays
+      });
+    } catch (e) { return hbStatus(hbFieldError(e), true); }
+    if (preview.totals.marginCents < 0) {
+      return hbStatus('The host would be paid more than the student pays. Fix the rates first.', true);
+    }
 
     $('hb-create').disabled = true;
     hbStatus('Creating…');
@@ -17393,11 +17871,13 @@ renderLeads();
       const d = await hbPost('booking-create', {
         host_id: host,
         student_email: email,
-        gross_cents: rent,
-        fee_type: 'fixed',
-        fee_value: fee,
+        weekly_rate_cents: weekly,
+        host_monthly_cents: hostMonthly,
         move_in_date: movein,
-        lease_months: months,
+        // One number on the wire. The two form fields are a convenience for
+        // staff who think in weeks; the booking is measured in days everywhere
+        // downstream, and sending both would be two sources for one length.
+        lease_days: leaseDays,
         meal_plan: meals,
       });
       // A 2xx with no link is a real failure that hbPost cannot see: it does
@@ -17439,7 +17919,7 @@ renderLeads();
   document.addEventListener('DOMContentLoaded', function () {
     const nav = document.querySelector('.nav-item[data-view="homestay-bookings"]');
     if (nav) nav.addEventListener('click', hbLoadAll);
-    ['hb-rent', 'hb-fee'].forEach((id) => {
+    ['hb-weekly', 'hb-host-monthly', 'hb-weeks', 'hb-days', 'hb-movein'].forEach((id) => {
       const el = $(id); if (el) el.addEventListener('input', hbPreview);
     });
     const c = $('hb-create'); if (c) c.addEventListener('click', hbCreate);
@@ -17448,6 +17928,11 @@ renderLeads();
     // Delegated: the tbody survives every re-render, the rows inside it do not.
     const tbody = $('hb-rows');
     if (tbody) tbody.addEventListener('click', function (e) {
+      // Checked before the .hb-act guard: the read-only cell is deliberately
+      // not an action cell, so it carries no data-ref and would fall out here.
+      if (e.target.closest && e.target.closest('.hb-need-token')) {
+        return hbAskForToken('Ending a tenancy needs the full staff token, not the view-only one.');
+      }
       const cell = e.target.closest ? e.target.closest('.hb-act') : null;
       if (!cell) return;
       if (e.target.closest('.hb-end-start')) return hbOpenEnd(cell);
