@@ -2806,7 +2806,10 @@ hello@vanmates.com · vanmates.com</textarea>
                    arithmetic step with nowhere to go but into the money. The
                    lease is measured in days, so the two dates ARE the length:
                    lease_days is their difference, with nothing rounded. -->
-              <div class="card-sub" style="margin-top:6px" id="hb-length-note">The day they leave, not their last night. Minimum stay 28 days.</div>
+              <!-- Pre-interaction placeholder only; hbShowLength() rewrites this from
+                   HS_MIN_LEASE_DAYS as soon as a date is entered. This is the one copy of
+                   the minimum that cannot derive from the constant. -->
+              <div class="card-sub" style="margin-top:6px" id="hb-length-note">The day they leave, not their last night. Minimum stay 7 days.</div>
             </div>
           </div>
           <div class="form-row">
@@ -15012,8 +15015,9 @@ const HS_BLOCK_DAYS = HS_BLOCK_WEEKS * HS_DAYS_PER_WEEK;
 // week — a day is a seventh of the weekly rate — but a stay is not obliged to
 // land on a week boundary. A 30-day language course is a real booking, and
 // rounding it to 28 or 35 days put the difference somewhere a human had to
-// remember. The minimum is unchanged at four weeks, said in days.
-const HS_MIN_LEASE_DAYS = 28;
+// remember. The floor is one week: shorter than that is a hotel booking, not a
+// homestay, and the meal plans and host arrangements do not apply.
+const HS_MIN_LEASE_DAYS = 7;
 const HS_MAX_LEASE_DAYS = 1820;   // five years — beyond any real homestay
 const HS_MS_PER_DAY = 86400000;
 
@@ -15052,6 +15056,16 @@ function hsRentForDays(days, weeklyCents){
   return Math.round(days * weeklyCents / HS_DAYS_PER_WEEK);
 }
 
+/* One charge, priced off the weekly rate. The rent rounds once over the run and
+   the 4% is taken on the rent alone, so every non-block charge in the schedule
+   is priced by this one function and no two branches can drift apart on it. */
+function hsChargeFor(kind, index, dueDate, days, weeklyCents){
+  const rentCents = hsRentForDays(days, weeklyCents);
+  const feeCents = hsFee(rentCents);
+  return { kind: kind, index: index, dueDate: dueDate, days: days,
+           rentCents: rentCents, feeCents: feeCents, totalCents: rentCents + feeCents };
+}
+
 function computeHomestaySchedule(input){
   const src = input || {};
   const weekly = Math.round(Number(src.weeklyRateCents) || 0);
@@ -15079,12 +15093,31 @@ function computeHomestaySchedule(input){
   const fullBlocks = Math.floor(days / HS_BLOCK_DAYS);
   // Whatever is left after the last whole block: 0 to 27 days, no longer
   // rounded up or down to a week.
-  const tailDays = days % HS_BLOCK_DAYS;
+  const remainderDays = days % HS_BLOCK_DAYS;
+  /* A remainder is a TAIL only when a full block precedes it. With no block at
+     all the remainder IS the booking and is collected at checkout, so there is
+     no tail to schedule.
+
+     This distinction is load-bearing, not tidiness. Booking Create reads
+     studentCharges[0] as the charge to collect at checkout AND separately
+     filters the same list for kind 'tail' to fill tail_charge_*. A lone
+     remainder labelled 'tail' would therefore be taken at checkout and written
+     to the row as a pending tail due that same day, and Tail Charge would take
+     the whole stay again off-session the next morning — under the key
+     {booking_ref}-tail, which is not the checkout PaymentIntent's, so
+     idempotency would not stop it. */
+  const hasTail = fullBlocks > 0 && remainderDays > 0;
+  const tailDays = hasTail ? remainderDays : 0;
 
   const blockRent = HS_BLOCK_WEEKS * weekly;
   const blockFee = hsFee(blockRent);
 
   const studentCharges = [];
+  if (fullBlocks === 0) {
+    // Shorter than one block: a single charge covering the whole stay, taken at
+    // checkout like any first charge.
+    studentCharges.push(hsChargeFor("checkout", 1, hsYmd(moveIn), days, weekly));
+  }
   for (let i = 0; i < fullBlocks; i++) {
     studentCharges.push({
       // Block 1 is the held charge taken at checkout; the rest are subscription
@@ -15098,18 +15131,14 @@ function computeHomestaySchedule(input){
       totalCents: blockRent + blockFee
     });
   }
-  if (tailDays > 0) {
-    const tailRent = hsRentForDays(tailDays, weekly);
-    const tailFee = hsFee(tailRent);
-    studentCharges.push({
-      kind: "tail",
-      index: fullBlocks + 1,
-      dueDate: hsYmd(hsAddDays(moveIn, HS_BLOCK_DAYS * fullBlocks)),
-      days: tailDays,
-      rentCents: tailRent,
-      feeCents: tailFee,
-      totalCents: tailRent + tailFee
-    });
+  if (hasTail) {
+    studentCharges.push(hsChargeFor(
+      "tail",
+      fullBlocks + 1,
+      hsYmd(hsAddDays(moveIn, HS_BLOCK_DAYS * fullBlocks)),
+      tailDays,
+      weekly
+    ));
   }
 
   /* The subscription raises blocks 2..fullBlocks only — block 1 is the checkout
@@ -15162,9 +15191,10 @@ function computeHomestaySchedule(input){
       periodStart: hsYmd(start),
       periodEnd: hsYmd(hsAddDays(start, c.days)),
       days: c.days,
-      // The tail is the only short period there can be, and only when the lease
-      // does not divide into whole blocks.
-      prorated: c.days < HS_BLOCK_DAYS,
+      // Short relative to a block, and only meaningful when a block preceded it.
+      // A stay shorter than one block is a single FULL period, not a part of
+      // one, and must not render as "part period" or "partial month".
+      prorated: fullBlocks > 0 && c.days < HS_BLOCK_DAYS,
       amountCents: hsRentForDays(c.days, hostWeekly)
     };
   });
@@ -17470,7 +17500,7 @@ renderLeads();
   // labels, so translate rather than leaking "hostWeeklyCents" into the UI.
   function hbFieldError(e) {
     const m = String((e && e.message) || '');
-    if (m.indexOf('leaseDays') !== -1) return 'Lease length must be between 28 days and five years.';
+    if (m.indexOf('leaseDays') !== -1) return 'Lease length must be between ' + HS_MIN_LEASE_DAYS + ' days and five years.';
     if (m.indexOf('weeklyRateCents') !== -1) return 'Weekly rate must be greater than zero.';
     if (m.indexOf('hostWeeklyCents') !== -1) return 'Host weekly rate is required and cannot be negative.';
     if (m.indexOf('move_in_date') !== -1) return 'Move-in date is not a real calendar date.';
@@ -17498,11 +17528,11 @@ renderLeads();
   // of taking dates in the first place.
   function hbShowLength(days) {
     const el = $('hb-length-note'); if (!el) return;
-    const base = 'The day they leave, not their last night. Minimum stay 28 days.';
+    const base = 'The day they leave, not their last night. Minimum stay ' + HS_MIN_LEASE_DAYS + ' days.';
     if (!Number.isFinite(days) || days <= 0) { el.textContent = base; el.style.color = ''; return; }
     el.textContent = days + ' day' + (days === 1 ? '' : 's') + ' · ' + hbStayLength(days) +
-      (days < 28 ? ' — under the 28-day minimum' : '');
-    el.style.color = days < 28 ? '#b4443a' : '';
+      (days < HS_MIN_LEASE_DAYS ? ' — under the ' + HS_MIN_LEASE_DAYS + '-day minimum' : '');
+    el.style.color = days < HS_MIN_LEASE_DAYS ? '#b4443a' : '';
   }
 
   // Days back into the words staff used. A whole number of weeks reads as weeks,
@@ -17816,8 +17846,11 @@ renderLeads();
     lines.push('Host receives ' + cad(s.totals.hostTotalCents) + ' over ' +
                s.hostPayments.length + ' payment' + (s.hostPayments.length === 1 ? '' : 's') + ':');
     // p.days, not the daysHosted/daysInPeriod pair the calendar-month model
-    // carried: a host period is a 28-day block now, and the only short one is
-    // the tail, so there is no "x of y days in the month" left to express.
+    // carried: a host period is a 28-day block now, so there is no "x of y days
+    // in the month" left to express. Two periods can be shorter than a block —
+    // the tail, and the single period of a stay shorter than one block — but
+    // only the tail is a PART of a period, which is why the label below keys on
+    // p.prorated rather than on p.days being under 28.
     s.hostPayments.forEach(p => lines.push('   ' + p.payDate + '   ' + cad(p.amountCents) +
       (p.prorated ? '   (part period, ' + p.days + ' day' + (p.days === 1 ? '' : 's') + ')' : '')));
     lines.push('Tenancy ends ' + s.leaseEndDate + '   (' + hbStayLength(s.leaseDays) + ')');
@@ -17859,8 +17892,8 @@ renderLeads();
     if (!Number.isFinite(leaseDays) || leaseDays <= 0) {
       return hbStatus('Move-out must be after move-in.', true);
     }
-    if (leaseDays < 28) {
-      return hbStatus('The minimum stay is 28 days. ' + leaseDays + ' days is too short.', true);
+    if (leaseDays < HS_MIN_LEASE_DAYS) {
+      return hbStatus('The minimum stay is ' + HS_MIN_LEASE_DAYS + ' days. ' + leaseDays + ' days is too short.', true);
     }
     let preview;
     try {
