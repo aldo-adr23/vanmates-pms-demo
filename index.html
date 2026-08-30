@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-11c"></script>
+<script src="pms-supabase.js?v=2026-08-30a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -10372,7 +10372,7 @@ const HH_FILTERS = { city:new Set(), capacity:new Set(), nationality:new Set(), 
    bookings page, and a token card or a page-wide error on the Hosts grid would
    be noise for a decoration. No token, a rejected token, and a network failure
    all mean the same thing here — no badges, host list otherwise untouched. */
-const HH_PAYOUT = { state:"idle", byEmail:new Map(), byName:new Map(), remote:0, dupEmails:0, usedReadOnly:false };
+const HH_PAYOUT = { state:"idle", rows:[], byEmail:new Map(), byName:new Map(), remote:0, dupEmails:0, usedReadOnly:false };
 
 // Why a separate read-only key exists at all: the badges only ever read, but
 // the staff token the booking console uses also authorises booking-create and
@@ -10422,6 +10422,9 @@ async function loadHostPayoutStatus(){
     });
     HH_PAYOUT.dupEmails = [...seenPerEmail.values()].filter(n => n > 1).length;
     HH_PAYOUT.remote = rows.length;
+    // Kept whole for the payout-accounts panel: byEmail collapses each address
+    // to one winner, which is exactly the information the panel exists to show.
+    HH_PAYOUT.rows = rows;
     HH_PAYOUT.state = "loaded";
     renderHomestayHosts();
   } catch(e){
@@ -10435,15 +10438,266 @@ async function loadHostPayoutStatus(){
 // Which record wins when several Stripe accounts share an email — not an edge
 // case: host-onboard mints a NEW Express account on every visit to the
 // onboarding page, so one address already carries three, two of them payable.
-// A payable record always wins. First-wins would show "Stripe setup incomplete"
-// for a host who can actually be paid, sending staff to chase a non-problem
-// while hiding the working account behind an abandoned one.
+// A published record always wins first, then a payable one. First-wins would
+// show "Stripe setup incomplete" for a host who can actually be paid, sending
+// staff to chase a non-problem while hiding the working account behind an
+// abandoned one — and for a published family, first-wins can just as easily
+// hide the account actually taking money behind an idle duplicate, which is
+// worse: rates read 0.00 and the operator cannot see or switch off the link
+// that is live.
 function hhBetterRow(existing, candidate){
   if(!existing) return candidate;
   if(!candidate) return existing;
-  if(!!existing.payable !== !!candidate.payable) return existing.payable ? existing : candidate;
+  // A live public link decides it outright: that is the account taking money, and
+  // showing any other one leaves the operator unable to see or switch off the link
+  // they published. Compared with === true, not leniently like the dedupe core's
+  // "published" set — this check only ever picks between two rows to DISPLAY, it
+  // never decides whether one may be archived, so there is no fail-closed side to
+  // favour here the way there is in the core.
+  const eLive = existing.bookable === true, cLive = candidate.bookable === true;
+  if(eLive !== cLive) return eLive ? existing : candidate;
+  // Read strictly, like the dedupe core's isPayable. Truthiness is dangerous in
+  // exactly one direction: a stringly typed "false" is truthy, so a junk row would
+  // rank as payable and displace the genuinely payable account beside it — the
+  // panel would then show, and publish a link from, an account that cannot be paid.
+  // Nothing in the table returns a non-boolean today; this is the same class of bug
+  // as the in_use one below, and costs nothing to close.
+  const ePay = existing.payable === true, cPay = candidate.payable === true;
+  if(ePay !== cPay) return ePay ? existing : candidate;
+
+  // Between two rows that are otherwise equal, prefer the one a booking depends on.
+  // Without this the pick fell through to "keep the first", so which of a family's
+  // duplicate Stripe accounts got shown — and therefore which one a published link
+  // pays — was decided by list order. New bookings could be sent to a second account
+  // while an existing booking paid the first, splitting one family's money in two.
+  //
+  // This is rank 1 of the dedupe core below ("payable AND in use" beats plain
+  // payable), mirrored here so the panel and the sweep agree on the keeper. The
+  // core's rank 0 is deliberately NOT mirrored: bookable already decided outright
+  // above, for the reason given there.
+  //
+  // in_use is read leniently, exactly as isInUse does — anything not an explicit
+  // false counts as busy. An in_use arriving as "true" or 1 must not read as idle.
+  // Per row rather than per host_id, unlike the core's busy set: that set exists to
+  // stop a duplicated id hiding an in-use row from the SWEEP, and this only ever
+  // picks between two rows to display.
+  const inUse = (r) => r.in_use !== undefined && r.in_use !== null && r.in_use !== false;
+  const eUse = inUse(existing), cUse = inUse(candidate);
+  if(eUse !== cUse) return eUse ? existing : candidate;
+
   return existing;   // equally good — keep the first, order is the API's
 }
+
+/* HH-DEDUPE-CORE-START */
+/* Groups the n8n host rows by email and decides which row of each group the
+   portal should keep. Pure by construction — rows in, plan out, no DOM, no
+   fetch, no clock — so test/homestay-dedupe.test.js can evaluate this fence on
+   its own. Same arrangement as HS-SCHEDULE-CORE below.
+
+   Keeper preference, in order:
+     0. payable AND published — it can be paid, and the public link prices from it
+     1. payable AND in use    — a booking depends on it and it can be paid
+     2. payable               — it can be paid
+     3. published OR in use   — protected from the sweep, but neither actually
+                                 payable: a published record that never finished
+                                 Stripe onboarding cannot take money, so it must
+                                 not outrank a genuinely payable row as keeper
+     4. first in the given order (hosts-list sorts payable-first, then name)
+
+   Archivable is every row whose account is neither a keeper of ANY addressed
+   group nor in use anywhere nor published anywhere, and which is not a verified
+   account inside a contested group. All three of those exclusions are held by
+   host_id rather than by row, because an account is what the payout run resolves
+   and what Stripe holds — the row is just how we reached it. See the design
+   spec's safety rule.
+
+   Rows with no email are never grouped and never swept. Email is the only join
+   key there is, and a row with none — the "Penelope" row, a first name and
+   nothing else — has no evidence tying it to anyone. It can be removed one at a
+   time, deliberately, and that is all. */
+function planHostDedupe(rows){
+  const list = (Array.isArray(rows) ? rows : []).filter(r => r && r.host_id);
+
+  // The two flags are normalised in OPPOSITE directions, deliberately, because
+  // they fail in opposite directions.
+  //
+  // payable is read strictly. Truthiness would be dangerous here: a stringly
+  // typed "false" ranks a junk row BEST and archives the genuinely payable
+  // record beside it. hhBetterRow one screen up now reads it the same way — it
+  // used to compare with !!, so on a stringly-typed row the summary badge and
+  // this panel could disagree about which record is the keeper. Both are strict
+  // now; keep them that way together.
+  const isPayable = r => r.payable === true;
+
+  // in_use is read leniently — anything that is not an explicit false locks the
+  // row. Strictness would be dangerous in the other direction: an in_use that
+  // arrived as "true" or 1 would read as idle and the record would be offered
+  // for removal. Over-locking a row is a nuisance; archiving one a booking
+  // still needs is the incident this whole design exists to prevent.
+  //
+  // Absent — and null, which is what a missed join looks like — is a third case
+  // entirely: the server never told us. That is answered by sawInUse below, at
+  // the panel level, rather than guessed at per row.
+  const isInUse = r => r.in_use !== undefined && r.in_use !== null && r.in_use !== false;
+
+  // Held by host_id, not by row identity. host_id is what the payout run looks
+  // a host up by, so if any row carrying that id says a booking still needs it,
+  // every row carrying it is untouchable — otherwise a duplicated id lets the
+  // sweep archive an in-use account through its other row.
+  const busy = new Set(list.filter(isInUse).map(r => r.host_id));
+
+  // A record with a live public link is untouchable for the same reason an in-use
+  // one is: archiving it kills something real. The public endpoint refuses an
+  // archived host, so the link would 404 rather than mis-charge — but it would die
+  // silently, and the person who published it would not be told. Read leniently,
+  // exactly like in_use: anything not readable as an explicit false locks the row.
+  const published = new Set(
+    list.filter(r => r.bookable !== undefined && r.bookable !== null && r.bookable !== false)
+        .map(r => r.host_id)
+  );
+
+  // One set, because the two reasons are the same reason: something real depends on
+  // this account and removing it breaks that thing.
+  const protectedIds = new Set([...busy, ...published]);
+
+  // Did the server actually tell us? hosts-list only began sending in_use
+  // alongside the archived_at work; read against an older deployment every row
+  // looks idle and the sweep would cheerfully offer to archive records a
+  // booking depends on. A boolean is the only answer that counts as having been
+  // told — a null from a missed join is not. The archive endpoint refuses such
+  // rows regardless, but the panel must not offer what it cannot do.
+  const sawInUse = list.some(r => typeof r.in_use === "boolean");
+
+  // bookable gets no equivalent "sawBookable" gate, deliberately. in_use needed
+  // one because in_use predates this field and could be silently true on a
+  // deployment that just never learned to send it — absence there means "we
+  // don't know," a real booking hiding as a false negative. bookable has no such
+  // history: before this feature shipped no host COULD have a live public link,
+  // so an old deployment omitting it is never hiding a live one, and for a
+  // deployment that does send it, absence on a given row is its documented
+  // default (off) rather than a missed join. There is no false-negative case
+  // for this field to be blind to.
+
+  // Same defensive field list AND the same precedence as loadHostPayoutStatus:
+  // the row shape is n8n's to change, and both counts are rendered on the same
+  // page — the summary line and this panel's badge must not disagree about how
+  // many addresses are doubled.
+  const emailOf = r => String(r.host_email || r.email || r.contact_email || "").trim().toLowerCase();
+
+  function rank(r){
+    const payable = isPayable(r);
+    const live = published.has(r.host_id);
+    const inUse = busy.has(r.host_id);
+    // A published record is only the outright best choice when it is ALSO
+    // payable — a live link on an account that never finished Stripe onboarding
+    // cannot actually be paid, so it must not displace a genuinely payable
+    // keeper (see "published beats payable" vs "the payable row is still the
+    // keeper" in the test file: only the payable+live combination wins there).
+    // It still locks the row further down — protected from the sweep is a
+    // separate question from preferred as keeper.
+    if(payable && live) return 0;
+    if(payable && inUse) return 1;
+    if(payable) return 2;
+    if(live || inUse) return 3;
+    return 4;
+  }
+
+  const byEmail = new Map();
+  const groups = [];
+
+  list.forEach(r => {
+    const em = emailOf(r);
+    if(!em){ groups.push({ email:"", rows:[r] }); return; }
+    if(!byEmail.has(em)){
+      const g = { email: em, rows: [] };
+      byEmail.set(em, g);
+      groups.push(g);
+    }
+    byEmail.get(em).rows.push(r);
+  });
+
+  // Every group picks its keeper BEFORE anything is marked archivable. One
+  // account can be the keeper under one address and a duplicate under another,
+  // and archiving it as the duplicate would strip the first address of the only
+  // payout account it has. Same reasoning as protectedIds, one level up: the
+  // decision is about the account, not about the row it was reached through.
+  groups.forEach(g => {
+    // Only a strictly better row displaces the incumbent, so equal ranks keep
+    // the earlier one — g.rows is already in the caller's order, which is all
+    // "first in the given order" ever meant.
+    let keeper = g.rows[0];
+    g.rows.forEach(r => { if(rank(r) < rank(keeper)) keeper = r; });
+    g.keep = keeper.host_id;
+  });
+  // Addressed groups only. An emailless group's "keeper" is just the single row
+  // standing alone — it protects no address, and per-row Remove is precisely how
+  // such a row is meant to go. Including it here would make the "Penelope" row
+  // permanently unremovable, which is the opposite of what the design asks for.
+  const keptIds = new Set(groups.filter(g => g.email).map(g => g.keep));
+
+  const archivable = [];
+  const lockedIds = new Set();
+  let dupEmails = 0;
+  let contestedCount = 0;
+
+  groups.forEach(g => {
+    // The keeper is included when it is itself in use or published. This is the
+    // number the panel puts on a badge, and every lock the user can see on screen
+    // has to be in it — on the real table the in-use or published row is usually
+    // the payable keeper, so excluding it would show "0 held" above a column of
+    // locks. A published-but-not-in-use record locks here too: it is exactly as
+    // untouchable, just for the other reason.
+    g.locked = g.rows.filter(r => protectedIds.has(r.host_id)).map(r => r.host_id);
+    // A group holding more than one VERIFIED account is contested, and the
+    // sweep must not choose between them. "payable beats pending" was built for
+    // one good record among abandoned ones; when several are verified it falls
+    // through to display-name order, which is arbitrary and decides which
+    // account the family is paid into from here on. Those are left for someone
+    // who can ask the family which account is actually theirs.
+    //
+    // The abandoned rows in such a group are still swept: clearing a record
+    // that never finished Stripe onboarding is not a choice between accounts.
+    g.contested = g.rows.filter(isPayable).length > 1;
+    // An emailless group is a single row that only per-row Remove may touch.
+    g.archive = g.email
+      ? [...new Set(g.rows.filter(r =>
+            !keptIds.has(r.host_id) &&
+            !protectedIds.has(r.host_id) &&
+            !(g.contested && isPayable(r))
+          ).map(r => r.host_id))]
+      : [];
+    g.locked.forEach(id => lockedIds.add(id));
+    if(g.email && g.rows.length > 1) dupEmails++;
+    if(g.contested) contestedCount++;
+    archivable.push(...g.archive);
+  });
+
+  // Counted by account, not by row. One held account appearing under two
+  // addresses is one account the sweep cannot touch, and the badge reads "held
+  // by a booking", which people will read as accounts.
+  const lockedCount = lockedIds.size;
+
+  // kept is handed back because the panel needs it too: a row that is this
+  // group's duplicate can be another address's keeper, and a per-row Remove
+  // that only checked its own group would archive it anyway — the archive write
+  // matches on host_id, so it takes every row carrying that account with it.
+  // The sweep already refuses this; the button must refuse it for the same
+  // reason and from the same list, not from a second opinion.
+  return {
+    groups: groups,
+    archivable: [...new Set(archivable)],   // one spare account is one removal,
+                                            // however many addresses list it —
+                                            // the endpoint collapses repeats, so
+                                            // an undeduped count here would
+                                            // promise more than it reports back
+    kept: [...keptIds],
+    dupEmails: dupEmails,
+    contestedCount: contestedCount,
+    lockedCount: lockedCount,
+    sawInUse: sawInUse
+  };
+}
+/* HH-DEDUPE-CORE-END */
 
 // Email is the only real join key: host-onboarding collects a name and an email
 // and nothing else, so the two stores share no id. Name is a fallback for rows
@@ -10561,6 +10815,405 @@ function hhPayoutBadge(h){
   return `<span class="badge badge-amber"><span class="dot"></span>${esc(r.blocker || "Stripe setup incomplete")}</span>`;
 }
 
+/* ---- The payout accounts panel ------------------------------------------
+   Lists every row in the n8n host table, grouped by email — including the rows
+   that match no portal host, which until now were only ever counted in the
+   summary line as "N not in this list" and could not be seen anywhere.
+
+   Writes go to host-archive, which is full-staff-token only: the read-only key
+   exists so an accountant can see figures, and removing host records is not
+   that. When only the read-only key is stored the panel still lists everything
+   and disables every button — a read should not become a dead end. */
+const HH_ARCHIVE_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/host-archive";
+
+// Deliberately not vmN8n.token(): that prefers the read-only key, which this
+// endpoint answers 401 by design.
+function hhFullToken(){ return localStorage.getItem("vm_staff_token") || ""; }
+
+// Takes the group, not just the row, and reads the plan's own decisions off
+// it. Recomputing "is this in use" from r.in_use here would quietly undo two
+// of the core's guarantees: in_use is held per ACCOUNT, so a row whose id is
+// busy through some other row reads as idle on its own, and a flag that
+// arrived as a string would render "not in use" beside a sweep that refuses
+// to touch it. The core already worked this out — the panel must not answer
+// the same question a second, different way.
+function hhAccountRow(r, g, plan, canWrite){
+  const locked = g.locked.includes(r.host_id);
+  // plan.kept, not g.keep. A row that is a duplicate under THIS address can be
+  // the only record another address has, and the archive write matches on
+  // host_id — so removing it here would take that row with it and leave the
+  // other family with no payout account. The sweep already refuses this; the
+  // button has to refuse it from the same list rather than form a second
+  // opinion. kept holds only addressed groups' keepers, which is why a lone
+  // record with no email is still removable — that is the whole point of
+  // per-row Remove, and the only route by which a junk row with a first name
+  // and nothing else ever goes.
+  const removable = !locked && !plan.kept.includes(r.host_id);
+  const badge = r.payable === true
+    ? `<span class="badge badge-green"><span class="dot"></span>Payouts ready</span>`
+    : `<span class="badge badge-amber"><span class="dot"></span>${esc(r.blocker || "Stripe setup incomplete")}</span>`;
+  const action = locked
+    ? `<span class="badge badge-grey" title="A booking still resolves this host's email through this account — removing it would leave a paid host with no notification"><span class="dot"></span>In use</span>`
+    : !removable
+      ? `<span class="card-sub">Keeping</span>`
+      : `<button class="btn btn-ghost" data-hh-archive="${esc(r.host_id)}" ${canWrite ? "" : "disabled"}
+                 style="padding:4px 10px;font-size:12px">Remove</button>`;
+  return `
+    <div class="list-row" style="padding:10px 14px">
+      <div class="list-main" style="min-width:0">
+        <div class="list-title">${esc(r.display_name || r.host_id)}${r.host_id === g.keep && g.email && !g.contested ? ` <span class="card-sub">· keeper</span>` : ""}</div>
+        <div class="list-sub" style="font-family:var(--slab);font-size:11.5px">${esc(r.host_id)}</div>
+      </div>
+      <div class="list-meta" style="display:flex;gap:8px;align-items:center">${badge}${action}</div>
+    </div>`;
+}
+
+function renderPayoutAccounts(){
+  const body = document.getElementById("panel-body");
+  if(!body) return;
+  const plan = planHostDedupe(HH_PAYOUT.rows);
+  // Two different reasons the buttons can be dead, and they need separate
+  // wording: "you are holding the read-only token" and "this n8n deployment
+  // does not yet tell us which records a booking still needs" are not the same
+  // problem, and the second one is silent — every row would look idle and the
+  // sweep would offer to archive records the payout run depends on. The
+  // endpoint refuses them, but the panel must not offer what it cannot do.
+  const blind = HH_PAYOUT.rows.length > 0 && !plan.sawInUse;
+  const canWrite = !!hhFullToken() && !blind;
+
+  // Two different true numbers, and the panel must not print one while showing
+  // the other. The sweep takes plan.archivable; the per-row buttons also reach
+  // the verified duplicates inside contested groups, which the sweep refuses on
+  // purpose and which a person is expected to decide one at a time. Derived
+  // from the same two lists hhAccountRow decides from, so the header can never
+  // drift from the buttons underneath it.
+  const removable = [...new Set(plan.groups.flatMap(g =>
+    g.rows.filter(r => !g.locked.includes(r.host_id) && !plan.kept.includes(r.host_id))
+          .map(r => r.host_id)))];
+  const toDecide = removable.length - plan.archivable.length;
+
+  const groups = plan.groups.slice().sort((a, b) => {
+    if((b.rows.length > 1) !== (a.rows.length > 1)) return b.rows.length - a.rows.length;
+    return String(a.email || "￿").localeCompare(String(b.email || "￿"));
+  });
+
+  document.getElementById("panel-title").innerHTML = `Payout <em>accounts</em>`;
+  document.getElementById("panel-sub").textContent =
+    `${HH_PAYOUT.rows.length} Stripe record${HH_PAYOUT.rows.length === 1 ? "" : "s"} in n8n`;
+  document.getElementById("panel-meta").innerHTML =
+    `<span class="badge ${plan.dupEmails ? "badge-amber" : "badge-green"}"><span class="dot"></span>${plan.dupEmails} duplicated email${plan.dupEmails === 1 ? "" : "s"}</span>` +
+    (plan.contestedCount ? `<span class="badge badge-amber"><span class="dot"></span>${plan.contestedCount} need a decision</span>` : "") +
+    // Suppressed when blind. With in_use absent the count is 0 anyway; with it
+    // present but unreadable every row locks and the count is the row total
+    // dressed up as a finding. Either way it would sit directly above a banner
+    // saying we are not being told which records a booking needs.
+    (!blind && plan.lockedCount ? `<span class="badge badge-grey"><span class="dot"></span>${plan.lockedCount} held by a booking</span>` : "");
+
+  const hero = document.getElementById("panel-hero");
+  hero.innerHTML = "";
+  hero.style.background = "linear-gradient(135deg, #A88965, #7A6142)";
+  hero.style.color = "#fff";
+  hero.style.fontSize = "20px";
+  hero.textContent = "$";
+
+  body.innerHTML = `
+    <div class="panel-section">
+      <div class="card card-pad" style="font-size:13.5px;line-height:1.55">
+        Every Stripe payout record we hold, grouped by email. A family shows more than
+        one when they reopened the onboarding page — each visit used to create a new
+        account. Removing a record here hides it from the portal and from the booking
+        console. <b>The Stripe account itself is left alone</b>, and nothing is deleted:
+        an archived record can be restored in n8n.
+        <br><br>
+        Where a family finished Stripe onboarding more than once, the sweep clears the
+        abandoned attempts but <b>will not choose between the verified accounts</b> —
+        that decides which account they are paid into from here on, so it is left to
+        you. Ask the family which one is theirs, then remove the others one at a time.
+      </div>
+    </div>
+    ${blind ? `
+    <div class="panel-section">
+      <div class="card card-pad" style="color:var(--red-dark);font-size:13.5px">
+        This n8n deployment isn't reporting which records a booking still depends on,
+        so nothing can be removed from here yet — publish the updated
+        <b>VM - Homestay Hosts List</b> workflow first.
+      </div>
+    </div>` : !hhFullToken() ? `
+    <div class="panel-section">
+      <div class="card card-pad" style="color:var(--red-dark);font-size:13.5px">
+        You are signed in with the read-only payout token, so nothing can be removed.
+        Enter the full staff token on the Bookings page to make changes.
+      </div>
+    </div>` : ""}
+    <div class="panel-section">
+      <div class="panel-section-title">
+        <span>Host <em>records</em></span>
+        <span class="ct">${blind ? "" : `${plan.archivable.length} the sweep clears${toDecide ? ` · ${toDecide} for you to decide` : ""}`}</span>
+      </div>
+      ${groups.map(g => `
+        <div class="card" style="padding:0;margin-bottom:10px">
+          <div class="list-row" style="padding:9px 14px;background:var(--cream)">
+            <div class="list-main">
+              <div class="list-title" style="font-size:13px">${esc(g.email || "No email on this record")}</div>
+              ${g.rows.length > 1 ? `<div class="list-sub">${g.rows.length} records${g.archive.length ? ` · ${g.archive.length} can be removed` : ""}${g.contested ? ` · <b>more than one is verified — pick one yourself</b>` : ""}</div>` : ""}
+            </div>
+          </div>
+          ${g.rows.map(r => hhAccountRow(r, g, plan, canWrite)).join("")}
+        </div>`).join("")}
+    </div>
+    <div id="hh-archive-note" class="panel-section" hidden></div>
+    ${plan.archivable.length && !blind ? `
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" id="hh-merge-dupes" ${canWrite ? "" : "disabled"}
+              style="flex:1;justify-content:center">Merge duplicates — remove ${plan.archivable.length}</button>
+    </div>` : ""}
+  `;
+
+  body.querySelectorAll("[data-hh-archive]").forEach(btn => {
+    btn.addEventListener("click", () => hhArchive([btn.getAttribute("data-hh-archive")]));
+  });
+  document.getElementById("hh-merge-dupes")?.addEventListener("click", () => {
+    // Named count, not "are you sure": the number is the thing worth checking.
+    if(!confirm(`Remove ${plan.archivable.length} duplicate payout records? The Stripe accounts behind them are left untouched.`)) return;
+    hhArchive(plan.archivable);
+  });
+}
+
+function openPayoutAccounts(){
+  if(HH_PAYOUT.state !== "loaded") return;
+  renderPayoutAccounts();
+  document.getElementById("detail-panel").classList.add("open");
+  document.getElementById("detail-panel").setAttribute("aria-hidden","false");
+  document.getElementById("panel-backdrop").classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function hhArchiveNote(msg, bad){
+  const el = document.getElementById("hh-archive-note");
+  if(!el) return;
+  el.hidden = false;
+  el.innerHTML = `<div class="card card-pad" style="font-size:13.5px${bad ? ";color:var(--red-dark)" : ""}">${esc(msg)}</div>`;
+}
+
+// One write at a time. Nothing disables the buttons during a write, and the
+// refetch below deliberately resets state to "idle" to get past the guard in
+// loadHostPayoutStatus — so two quick clicks would put two reads in flight and
+// whichever landed last would win, which can be the one issued BEFORE the
+// archive. That would silently restore the pre-archive rows.
+let hhArchiveBusy = false;
+
+async function hhArchive(ids){
+  if(hhArchiveBusy) return;
+  const token = hhFullToken();
+  if(!token){ hhArchiveNote("The full staff token is needed to remove a record.", true); return; }
+  hhArchiveBusy = true;
+  try {
+    hhArchiveNote(`Removing ${ids.length} record${ids.length === 1 ? "" : "s"}…`);
+    let d;
+    try {
+      const resp = await fetch(HH_ARCHIVE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-vm-staff-token": token },
+        body: JSON.stringify({ host_ids: ids })
+      });
+      if(resp.status === 404 || resp.status === 405){
+        hhArchiveNote("The host-archive workflow isn't published in n8n yet.", true); return;
+      }
+      if(resp.status === 401){ hhArchiveNote("That staff token was rejected.", true); return; }
+      if(!resp.ok){ hhArchiveNote("Couldn't remove (HTTP " + resp.status + ").", true); return; }
+      d = await resp.json();
+    } catch(e){
+      hhArchiveNote("Couldn't reach n8n.", true); return;
+    }
+
+    // Every field re-checked rather than trusted. A malformed body used to throw
+    // out here, past the catch above, leaving the note stuck on "Removing…"
+    // forever with no way to tell whether the write had landed.
+    const archived = Array.isArray(d && d.archive) ? d.archive : [];
+    const alreadyGone = Array.isArray(d && d.already) ? d.already : [];
+    const refused = Array.isArray(d && d.refused) ? d.refused : [];
+    const done = archived.length + alreadyGone.length;
+
+    // Named per record, not summarised per reason: a sweep that removed nine of
+    // ten and refused the tenth must say WHICH, or the refused row silently
+    // survives every future sweep with nobody aware of it. Three identical
+    // "in use" strings name nothing.
+    const nameOf = id => {
+      const row = HH_PAYOUT.rows.find(r => r.host_id === id);
+      return (row && row.display_name) || id;
+    };
+    const summary = `${done} removed` +
+      (refused.length
+        ? ` · ${refused.length} kept — ` + refused.map(r => `${nameOf(r.host_id)}: ${r.reason}`).join("; ")
+        : "");
+
+    // Refetch rather than patching the local copy — the refusals prove the
+    // browser's picture was not the table's.
+    HH_PAYOUT.state = "idle";
+    renderPayoutSummary();          // the "review" link would otherwise sit there dead
+    await loadHostPayoutStatus();
+
+    // The write landed — the endpoint said so — but the list could not be read
+    // back. Re-rendering here would redraw the PRE-archive rows, Remove buttons
+    // and all, underneath a note saying they were removed. Say what is actually
+    // true instead of claiming a success the screen contradicts.
+    if(HH_PAYOUT.state !== "loaded"){
+      hhArchiveNote(summary + " — but the list could not be reloaded, so what you see below is out of date. Use the \"retry\" link on the Hosts page behind this panel.", true);
+      return;
+    }
+    renderPayoutAccounts();
+    hhArchiveNote(summary, refused.length > 0);
+  } finally {
+    hhArchiveBusy = false;
+  }
+}
+
+/* ---- Published rates and the public booking link ------------------------
+   The two rates staff currently type into every booking, lifted to the family
+   they belong to, plus the switch that exposes them. Held here rather than on
+   the booking because a public link has to quote a price before any booking
+   exists.
+
+   bookable is deliberately the last thing you can turn on: the endpoint refuses
+   it while either rate is zero, so a family can never be published with nothing
+   to charge. */
+const HH_RATES_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/host-rates-update";
+const HH_BOOK_URL = "https://vanmates.com/book.html?h=";
+
+// The n8n row backing a portal host, or null. This IS hhPayoutFor — named again so
+// the rates code reads for what it is doing rather than for payout badges. Note the
+// join is email first, falling back to display name, so a family holding several
+// Stripe records resolves to whichever hhBetterRow prefers.
+function hhRates(h){ return hhPayoutFor(h); }
+
+function hhMoney(cents){
+  if(cents === null || cents === undefined || cents === "") return "";
+  return (Number(cents) / 100).toFixed(2);
+}
+
+function hhBookingBox(h){
+  // Same rule as hhPayoutAction one screen up: with the list unloaded, "no payout
+  // record" is a guess rather than a fact, and acting on it sends staff to
+  // re-onboard a host who is already set up.
+  if(HH_PAYOUT.state !== "loaded"){
+    return `<div class="card card-pad card-sub">Payout status hasn't loaded, so rates can't be shown yet.</div>`;
+  }
+  const r = hhRates(h);
+  if(!r) return `<div class="card card-pad card-sub">This host has no payout record yet, so there is nothing to publish. Send them payout setup first.</div>`;
+  const canWrite = !!hhFullToken();
+  const live = r.bookable === true;
+  return `
+    <div class="card card-pad">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="form-field" style="flex:1;min-width:150px;margin:0">
+          <label>Student pays / week</label>
+          <input class="form-input" id="hh-rate-student" type="number" step="0.01" min="0"
+                 value="${esc(hhMoney(r.weekly_rate))}" ${canWrite ? "" : "disabled"}>
+        </div>
+        <div class="form-field" style="flex:1;min-width:150px;margin:0">
+          <label>Host is paid / week</label>
+          <input class="form-input" id="hh-rate-host" type="number" step="0.01" min="0"
+                 value="${esc(hhMoney(r.host_weekly_rate))}" ${canWrite ? "" : "disabled"}>
+        </div>
+      </div>
+      <div class="card-sub" style="margin-top:8px" id="hh-rate-margin"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap">
+        <button class="btn btn-ghost" id="hh-rate-save" ${canWrite ? "" : "disabled"}>Save rates</button>
+        <button class="btn ${live ? "btn-ghost" : "btn-primary"}" id="hh-rate-toggle" ${canWrite ? "" : "disabled"}>
+          ${live ? "Stop taking bookings" : "Take public bookings"}
+        </button>
+        ${live ? `<span class="badge badge-green"><span class="dot"></span>Link is live</span>` : ""}
+      </div>
+      ${live ? `
+      <div class="form-field" style="margin:14px 0 0">
+        <label>Public link</label>
+        <div style="display:flex;gap:8px">
+          <input class="form-input" id="hh-book-link" type="text" readonly
+                 value="${esc(HH_BOOK_URL + r.host_id)}" style="flex:1">
+          <button class="btn btn-ghost" id="hh-book-copy">Copy</button>
+        </div>
+      </div>` : ""}
+      <div id="hh-rate-note" class="card-sub" style="margin-top:10px" hidden></div>
+    </div>`;
+}
+
+function hhRateNote(msg, bad){
+  const el = document.getElementById("hh-rate-note");
+  if(!el) return;
+  el.hidden = false;
+  el.style.color = bad ? "var(--red-dark)" : "var(--muted)";
+  el.textContent = msg;
+}
+
+// Shown live rather than on save: the margin is the reason both numbers are on
+// screen together, and a host rate above the student rate is a typo that would
+// otherwise be found by the payout run moving real money.
+function hhRenderMargin(){
+  const el = document.getElementById("hh-rate-margin");
+  if(!el) return;
+  const s = Number(document.getElementById("hh-rate-student")?.value || 0);
+  const p = Number(document.getElementById("hh-rate-host")?.value || 0);
+  if(!s && !p){ el.textContent = ""; return; }
+  const m = s - p;
+  el.style.color = m < 0 ? "var(--red-dark)" : "var(--muted)";
+  el.textContent = m < 0
+    ? `The host would be paid $${(-m).toFixed(2)} a week more than the student pays.`
+    : `Margin $${m.toFixed(2)} a week, before the 4% service fee.`;
+}
+
+// One write at a time. Two quick Save clicks otherwise post twice and race two
+// refetches, the same way hhArchive would without hhArchiveBusy.
+let hhRatesBusy = false;
+
+async function hhSaveRates(h, patch, done){
+  if(hhRatesBusy) return false;
+  const token = hhFullToken();
+  if(!token){ hhRateNote("The full staff token is needed to change rates.", true); return false; }
+  const r = hhRates(h);
+  if(!r) return false;
+  hhRatesBusy = true;
+  try {
+    hhRateNote("Saving…");
+    let resp;
+    try {
+      resp = await fetch(HH_RATES_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-vm-staff-token": token },
+        body: JSON.stringify(Object.assign({ host_id: r.host_id }, patch))
+      });
+    } catch(e){ hhRateNote("Couldn't reach n8n.", true); return false; }
+
+    // 405 is the workflow being unpublished. 404 is the endpoint's own answer for a
+    // host it cannot find — a real, different problem, and collapsing the two told
+    // staff to go publish a workflow that was already live.
+    if(resp.status === 405){ hhRateNote("The host-rates-update workflow isn't published in n8n yet.", true); return false; }
+    if(resp.status === 401){ hhRateNote("That staff token was rejected.", true); return false; }
+    // A business-rule refusal is a 400 carrying a sentence written for a person.
+    // Show that sentence rather than replacing it with a status code.
+    if(!resp.ok){
+      const d = await resp.json().catch(() => null);
+      const msg = (d && d.error === "host_not_found")
+        ? "That host is no longer in the payout table — reload the page."
+        : (d && d.error) || ("Couldn't save (HTTP " + resp.status + ").");
+      hhRateNote(msg, true);
+      return false;
+    }
+
+    // Refetch so the panel redraws from the table, not from what we hoped we wrote.
+    HH_PAYOUT.state = "idle";
+    await loadHostPayoutStatus();
+    if(HH_PAYOUT.state !== "loaded"){ hhRateNote("Saved, but the host list could not be reloaded.", true); return false; }
+    // openHost rebuilds the panel, which destroys the note — so the confirmation has
+    // to outlive it. Without this a successful save looks identical to nothing
+    // happening at all.
+    openHost(h.id);
+    if(typeof showToast === "function") showToast(done || "Saved");
+    return true;
+  } finally {
+    hhRatesBusy = false;
+  }
+}
+
 // Counts the whole host list, not the filtered view: the point of the line is
 // "how much of the roster can be paid", which a filter would misreport.
 function hhPayoutSummary(){
@@ -10576,12 +11229,17 @@ function hhPayoutSummary(){
   if(matched - payable > 0) parts.push(`${matched - payable} started but blocked`);
   // Stripe-side records that matched no portal host — the other half of the
   // split, and the reason a count here can look wrong from the bookings page.
+  // Surfaced because duplicate Express accounts are a payout hazard, not a
+  // cosmetic one: staff can send a booking to the abandoned account. Both of
+  // these counts describe rows that are invisible on this page, so both are
+  // the way into the panel that lists them.
   const orphans = HH_PAYOUT.remote - matched;
   if(orphans > 0) parts.push(`${orphans} not in this list`);
-  // Surfaced because duplicate Express accounts are a payout hazard, not a
-  // cosmetic one: staff can send a booking to the abandoned account.
   if(HH_PAYOUT.dupEmails > 0) parts.push(`${HH_PAYOUT.dupEmails} with duplicate Stripe accounts`);
-  return parts.join(" · ");
+  const line = parts.join(" · ");
+  return (orphans > 0 || HH_PAYOUT.dupEmails > 0)
+    ? `${esc(line)} · <a href="#" data-hh-accounts="1">review</a>`
+    : esc(line);
 }
 
 /* Renders the right-hand end of the results bar. Deliberately understated: the
@@ -10593,7 +11251,7 @@ function renderPayoutSummary(){
   if(!el) return;
   const s = HH_PAYOUT.state;
   if(s === "loaded"){
-    el.innerHTML = esc(hhPayoutSummary()) +
+    el.innerHTML = hhPayoutSummary() +
       (HH_PAYOUT.usedReadOnly ? "" : ` <span title="Using the full staff token, which can also create and end bookings">·</span>`);
     return;
   }
@@ -10642,6 +11300,11 @@ function savePayoutToken(){
 // Delegated once at parse time: the summary element is stable, its contents are
 // replaced on every render.
 document.getElementById("hh-payout-summary")?.addEventListener("click", e => {
+  if(e.target.closest("[data-hh-accounts]")){
+    e.preventDefault();
+    openPayoutAccounts();
+    return;
+  }
   if(e.target.closest("[data-hh-token-open]")){
     e.preventDefault();
     // Clear the failing token as well as opening the field. Leaving it in place
@@ -11026,6 +11689,15 @@ function openHost(id){
       </div>
     </div>
 
+    <!-- Public booking -->
+    <div class="panel-section">
+      <div class="panel-section-title">
+        <span>Public <em>booking</em></span>
+        <span class="ct">${hhRates(h) ? "" : "no payout record"}</span>
+      </div>
+      ${hhBookingBox(h)}
+    </div>
+
     <!-- Action footer -->
     <div style="display:flex;gap:8px;margin-top:24px">
       <a class="btn btn-primary" style="flex:1;justify-content:center" href="mailto:${esc(h.email)}?subject=${encodeURIComponent("Hello from Vanmates")}">
@@ -11057,6 +11729,72 @@ function openHost(id){
     const kind = ev.currentTarget.getAttribute("data-hh-payout-link");
     if(kind === "new") hhShowPayoutLink(h, HH_ONBOARD_URL, "Payout setup link — send this to the host");
     else hhRequestResumeLink(h);
+  });
+
+  _hostPanelBody?.querySelector("#hh-rate-student")?.addEventListener("input", hhRenderMargin);
+  _hostPanelBody?.querySelector("#hh-rate-host")?.addEventListener("input", hhRenderMargin);
+  hhRenderMargin();
+
+  _hostPanelBody?.querySelector("#hh-rate-save")?.addEventListener("click", () => {
+    // Cents on the wire, dollars on screen. Every amount in this system is cents.
+    //
+    // A blank box is OMITTED, never sent as zero. The endpoint keeps any key it is
+    // not given — that is how "I didn't touch this" is expressed — but
+    // Number("") || 0 is 0, a perfectly good number it will happily write over a
+    // real rate. Clearing a field and pressing Save used to zero a family's payout
+    // rate with no way back, because a data table update keeps no history, and the
+    // margin line rendered a confident "Margin $350.00 a week" right before you
+    // pressed it.
+    const cents = (id) => {
+      const raw = String(document.getElementById(id)?.value || "").trim();
+      if(raw === "") return undefined;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.round(n * 100) : undefined;
+    };
+    const patch = {};
+    const student = cents("hh-rate-student");
+    const paid = cents("hh-rate-host");
+    if(student !== undefined) patch.weekly_rate = student;
+    if(paid !== undefined) patch.host_weekly_rate = paid;
+    if(!Object.keys(patch).length){ hhRateNote("Nothing to save — both boxes are empty.", true); return; }
+    hhSaveRates(h, patch, "Rates saved");
+  });
+
+  _hostPanelBody?.querySelector("#hh-rate-toggle")?.addEventListener("click", () => {
+    const r = hhRates(h);
+    const next = !(r && r.bookable === true);
+
+    // The toggle deliberately sends no rates, so it publishes whatever is STORED.
+    // If the boxes show something else, the operator is reading a price that is not
+    // the one about to go live — and the redraw afterwards silently discards what
+    // they typed. Refuse rather than guess which one they meant.
+    const edited = (id, stored) => {
+      const raw = String(document.getElementById(id)?.value || "").trim();
+      if(raw === "") return false;
+      const n = Number(raw);
+      return Number.isFinite(n) && Math.round(n * 100) !== Math.round(Number(stored) || 0);
+    };
+    if(edited("hh-rate-student", r && r.weekly_rate) || edited("hh-rate-host", r && r.host_weekly_rate)){
+      hhRateNote("Save the rates first — the link publishes the saved price, not what's typed here.", true);
+      return;
+    }
+
+    // The figure is named, because this is the moment money starts being taken and
+    // "anyone can pay immediately" is not much use without knowing how much.
+    if(next && !confirm(
+      `Publish a public booking link for ${h.name} at $${hhMoney(r && r.weekly_rate)} per week?\n\n` +
+      `Anyone with the link can book and pay immediately, before anyone checks the room is free.`
+    )) return;
+    hhSaveRates(h, { bookable: next }, next ? "Public link is live" : "Public link switched off");
+  });
+
+  _hostPanelBody?.querySelector("#hh-book-copy")?.addEventListener("click", () => {
+    const i = document.getElementById("hh-book-link");
+    i.select();
+    navigator.clipboard.writeText(i.value).then(() => {
+      const b = document.getElementById("hh-book-copy");
+      b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500);
+    });
   });
 
   if (_hostPanelBody) {
@@ -15143,7 +15881,9 @@ function computeHomestaySchedule(input){
 
   /* The subscription raises blocks 2..fullBlocks only — block 1 is the checkout
      charge and the tail is a one-off — so a booking with a single full block has
-     no subscription at all. That includes every 4-week minimum booking.
+     no subscription at all, and neither does a stay shorter than one block,
+     whose single charge is also taken at checkout. Between them that is the
+     commonest booking there is.
 
      cancelAtOffsetSeconds pulls cancellation a full day inside the boundary.
      Left exactly on it, `cancel_at` and the next cycle share a timestamp, and
