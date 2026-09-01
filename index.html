@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01c"></script>
+<script src="pms-supabase.js?v=2026-09-01d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11251,8 +11251,15 @@ function hhBookingBox(h){
   // nothing priced, which is a room to create, not an onboarding link to send.
   if(!hhPayoutFor(h)) return `<div class="card card-pad card-sub">This host has no payout record yet, so there is nothing to publish. Send them payout setup first.</div>`;
   const rooms = hhRooms(h);
-  if (!rooms.length) return `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`;
   const canWrite = !!hhFullToken();
+  // The empty case still gets the Add a room form. Returning early here left the
+  // one screen that says "no room on file" as the one screen with no way to make
+  // one — a dead end reached by every newly onboarded family.
+  if (!rooms.length) {
+    return `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`
+         + hhAddRoomCard(h, canWrite)
+         + `<div id="hh-rate-note" class="card-sub" style="margin-top:10px" hidden></div>`;
+  }
   // One shared note area below the list rather than one per card: hhRateNote
   // addresses a single id, and a note that can appear in three places at once is
   // three places to look for the reason a save was refused.
@@ -12038,7 +12045,7 @@ function openHost(id){
     <div class="panel-section">
       <div class="panel-section-title">
         <span>Public <em>booking</em></span>
-        <span class="ct">${hhRooms(h).length ? "" : "no payout record"}</span>
+        <span class="ct">${hhRooms(h).length ? "" : (hhPayoutFor(h) ? "no room yet" : "no payout record")}</span>
       </div>
       ${hhBookingBox(h)}
     </div>
