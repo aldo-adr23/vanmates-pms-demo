@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01b"></script>
+<script src="pms-supabase.js?v=2026-09-01c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11210,7 +11210,14 @@ const HH_RATES_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/room-rates-update
 const HH_BOOK_URL = "https://vanmates.com/book.html?h=";
 // A room-specific link. The host link still works and shows a picker when a
 // family has several rooms.
-const HH_BOOK_URL_ROOM = "https://vanmates.com/book.html?r=";
+// Both parameters, not just the room. book.html resolves the HOST first and
+// refuses a link that names none — a room id alone told it nothing about whose
+// room it was, so every per-room link it produced showed "This link isn't
+// complete". The endpoint verifies the room belongs to the host anyway, so
+// carrying both is also what makes the link self-checking.
+function hhRoomLink(r){
+  return HH_BOOK_URL + r.host_id + "&r=" + r.room_id;
+}
 
 // Every room this family has, cheapest first. hhPayoutFor still resolves WHICH
 // ACCOUNT represents the family — that stays a host-level question and
@@ -11305,7 +11312,7 @@ function hhRoomCard(r, canWrite){
         <label>Public link</label>
         <div style="display:flex;gap:8px">
           <input class="form-input" id="hh-book-link-${esc(r.room_id)}" type="text" readonly
-                 value="${esc(HH_BOOK_URL_ROOM + r.room_id)}" style="flex:1">
+                 value="${esc(hhRoomLink(r))}" style="flex:1">
           <button class="btn btn-ghost" data-hh-book-copy="${esc(r.room_id)}">Copy</button>
         </div>
       </div>` : ""}
