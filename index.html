@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01d"></script>
+<script src="pms-supabase.js?v=2026-09-01e"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -10419,9 +10419,13 @@ async function loadHostRooms(){
     if (!HH_ROOMS.byHost.has(r.host_id)) HH_ROOMS.byHost.set(r.host_id, []);
     HH_ROOMS.byHost.get(r.host_id).push(r);
   });
-  // Cheapest first, so the list reads in the order a student would see it.
+  // By name, NOT by price. Cheapest-first meant the cards re-ordered the moment a
+  // price was saved: type a rate into the top card, press Save, and a different
+  // room slides into that slot showing its own 0.00 — indistinguishable from the
+  // rate you just entered being thrown away. It was reported as exactly that.
+  // Card order must not depend on a value the operator is editing.
   HH_ROOMS.byHost.forEach(list => list.sort((a, b) =>
-    (Number(a.weekly_rate) || 0) - (Number(b.weekly_rate) || 0)));
+    String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base" })));
   HH_ROOMS.state = "loaded";
 }
 
