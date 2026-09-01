@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01a"></script>
+<script src="pms-supabase.js?v=2026-09-01b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -10415,9 +10415,13 @@ async function loadHostRooms(){
   catch(err){ HH_ROOMS.state = (err && err.kind === "rejected") ? "rejected" : "error"; return; }
   HH_ROOMS.byHost.clear();
   (Array.isArray(d && d.rooms) ? d.rooms : []).forEach(r => {
-    // Until Stage 3 a host has exactly one room, so first-match is the only match.
-    if(r && r.host_id && !HH_ROOMS.byHost.has(r.host_id)) HH_ROOMS.byHost.set(r.host_id, r);
+    if (!r || !r.host_id) return;
+    if (!HH_ROOMS.byHost.has(r.host_id)) HH_ROOMS.byHost.set(r.host_id, []);
+    HH_ROOMS.byHost.get(r.host_id).push(r);
   });
+  // Cheapest first, so the list reads in the order a student would see it.
+  HH_ROOMS.byHost.forEach(list => list.sort((a, b) =>
+    (Number(a.weekly_rate) || 0) - (Number(b.weekly_rate) || 0)));
   HH_ROOMS.state = "loaded";
 }
 
@@ -10521,6 +10525,47 @@ function hhBetterRow(existing, candidate){
 
   return existing;   // equally good — keep the first, order is the API's
 }
+
+/* HH-ROOM-PICK-CORE-START */
+/* Decides which room a public request is for. Pure by construction — a list of
+   rooms and an optional requested id in, one decision out — so
+   test/homestay-room-pick.test.js can evaluate this fence on its own.
+
+   The caller passes ONLY the addressed host's rooms, which is what makes
+   "belongs to another host" unrepresentable here rather than a check that could
+   be forgotten.
+
+   Three outcomes, deliberately:
+     { room }                          one room to sell
+     { error: "needs_choice", rooms }  several — the caller must ask
+     { error: "unavailable" }          none, or a request that cannot be honoured
+
+   "unavailable" is one answer for every unsellable case on purpose. The public
+   endpoint renders it as the existing uniform sentence, so an anonymous caller
+   still cannot tell a host with no room from one with no price. */
+function hhPickRoom(rooms, requestedRoomId){
+  const list = (Array.isArray(rooms) ? rooms : [])
+    .filter(r => r && r.room_id && !r.archived_at);
+
+  // A room is sellable only with BOTH rates set. A zero host rate would price a
+  // booking that pays the family nothing, which the payout run would then send
+  // as a zero transfer and Stripe would reject.
+  const sellable = r => r.bookable === true
+    && Math.round(Number(r.weekly_rate) || 0) > 0
+    && Math.round(Number(r.host_weekly_rate) || 0) > 0;
+
+  const open = list.filter(sellable);
+  const asked = String(requestedRoomId || "").trim();
+
+  if (asked) {
+    const room = open.find(r => String(r.room_id) === asked);
+    return room ? { room: room } : { error: "unavailable" };
+  }
+  if (open.length === 1) return { room: open[0] };
+  if (open.length === 0) return { error: "unavailable" };
+  return { error: "needs_choice", rooms: open };
+}
+/* HH-ROOM-PICK-CORE-END */
 
 /* HH-RATES-CORE-START */
 /* Resolves a room row and a meal plan into the two numbers the whole money
@@ -11163,17 +11208,16 @@ async function hhArchive(ids){
    to charge. */
 const HH_RATES_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/room-rates-update";
 const HH_BOOK_URL = "https://vanmates.com/book.html?h=";
+// A room-specific link. The host link still works and shows a picker when a
+// family has several rooms.
+const HH_BOOK_URL_ROOM = "https://vanmates.com/book.html?r=";
 
-// The n8n row backing a portal host, or null. This IS hhPayoutFor — named again so
-// the rates code reads for what it is doing rather than for payout badges. Note the
-// join is email first, falling back to display name, so a family holding several
-// Stripe records resolves to whichever hhBetterRow prefers.
-// hhPayoutFor still resolves WHICH ACCOUNT represents this family - that stays a
-// host-level question and hhBetterRow still decides it. The room hangs off the
-// account that wins.
-function hhRates(h){
+// Every room this family has, cheapest first. hhPayoutFor still resolves WHICH
+// ACCOUNT represents the family — that stays a host-level question and
+// hhBetterRow still decides it. Rooms hang off the account that wins.
+function hhRooms(h){
   const row = hhPayoutFor(h);
-  return row ? (HH_ROOMS.byHost.get(row.host_id) || null) : null;
+  return row ? (HH_ROOMS.byHost.get(row.host_id) || []) : [];
 }
 
 function hhMoney(cents){
@@ -11199,55 +11243,141 @@ function hhBookingBox(h){
   // finished Stripe; a payout row with no room means they are payable but have
   // nothing priced, which is a room to create, not an onboarding link to send.
   if(!hhPayoutFor(h)) return `<div class="card card-pad card-sub">This host has no payout record yet, so there is nothing to publish. Send them payout setup first.</div>`;
-  const r = hhRates(h);
-  if(!r) return `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`;
+  const rooms = hhRooms(h);
+  if (!rooms.length) return `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`;
   const canWrite = !!hhFullToken();
+  // One shared note area below the list rather than one per card: hhRateNote
+  // addresses a single id, and a note that can appear in three places at once is
+  // three places to look for the reason a save was refused.
+  return rooms.map(r => hhRoomCard(r, canWrite)).join("")
+       + hhAddRoomCard(h, canWrite)
+       + `<div id="hh-rate-note" class="card-sub" style="margin-top:10px" hidden></div>`;
+}
+
+// One card per room. Field ids are suffixed with the room id — the handlers in
+// hhSaveRoom and hhToggleRoom read them back the same way, and nothing on this
+// panel may address a rate field without saying which room it belongs to.
+function hhRoomCard(r, canWrite){
   const live = r.bookable === true;
   return `
-    <div class="card card-pad">
+    <div class="card card-pad" style="margin-top:12px">
+      <div class="form-field" style="margin:0 0 12px">
+        <label>Room name</label>
+        <input class="form-input" id="hh-room-label-${esc(r.room_id)}" type="text"
+               value="${esc(r.label || "")}" ${canWrite ? "" : "disabled"}>
+      </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <div class="form-field" style="flex:1;min-width:150px;margin:0">
           <label>Student pays / week</label>
-          <input class="form-input" id="hh-rate-student" type="number" step="0.01" min="0"
+          <input class="form-input" id="hh-rate-student-${esc(r.room_id)}" type="number" step="0.01" min="0"
                  value="${esc(hhMoney(r.weekly_rate))}" ${canWrite ? "" : "disabled"}>
         </div>
         <div class="form-field" style="flex:1;min-width:150px;margin:0">
           <label>Host is paid / week</label>
-          <input class="form-input" id="hh-rate-host" type="number" step="0.01" min="0"
+          <input class="form-input" id="hh-rate-host-${esc(r.room_id)}" type="number" step="0.01" min="0"
                  value="${esc(hhMoney(r.host_weekly_rate))}" ${canWrite ? "" : "disabled"}>
         </div>
       </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
         <div class="form-field" style="flex:1;min-width:150px;margin:0">
           <label>3 meals — student pays extra / week</label>
-          <input class="form-input" id="hh-meal3-student" type="number" step="0.01" min="0"
+          <input class="form-input" id="hh-meal3-student-${esc(r.room_id)}" type="number" step="0.01" min="0"
                  value="${esc(hhMoney(r.meal3_student_delta))}" ${canWrite ? "" : "disabled"}>
         </div>
         <div class="form-field" style="flex:1;min-width:150px;margin:0">
           <label>3 meals — host is paid extra / week</label>
-          <input class="form-input" id="hh-meal3-host" type="number" step="0.01" min="0"
+          <input class="form-input" id="hh-meal3-host-${esc(r.room_id)}" type="number" step="0.01" min="0"
                  value="${esc(hhMoney(r.meal3_host_delta))}" ${canWrite ? "" : "disabled"}>
         </div>
       </div>
-      <div class="card-sub" style="margin-top:8px" id="hh-rate-margin"></div>
+      <div class="card-sub" style="margin-top:8px" id="hh-rate-margin-${esc(r.room_id)}"></div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap">
-        <button class="btn btn-ghost" id="hh-rate-save" ${canWrite ? "" : "disabled"}>Save rates</button>
-        <button class="btn ${live ? "btn-ghost" : "btn-primary"}" id="hh-rate-toggle" ${canWrite ? "" : "disabled"}>
+        <button class="btn btn-ghost" id="hh-rate-save-${esc(r.room_id)}" ${canWrite ? "" : "disabled"}>Save rates</button>
+        <button class="btn ${live ? "btn-ghost" : "btn-primary"}" id="hh-rate-toggle-${esc(r.room_id)}" ${canWrite ? "" : "disabled"}>
           ${live ? "Stop taking bookings" : "Take public bookings"}
         </button>
         ${live ? `<span class="badge badge-green"><span class="dot"></span>Link is live</span>` : ""}
+        <button class="btn btn-ghost" data-hh-room-archive="${esc(r.room_id)}" ${canWrite ? "" : "disabled"}
+                style="margin-left:auto;padding:4px 10px;font-size:12px">Archive</button>
       </div>
       ${live ? `
       <div class="form-field" style="margin:14px 0 0">
         <label>Public link</label>
         <div style="display:flex;gap:8px">
-          <input class="form-input" id="hh-book-link" type="text" readonly
-                 value="${esc(HH_BOOK_URL + r.host_id)}" style="flex:1">
-          <button class="btn btn-ghost" id="hh-book-copy">Copy</button>
+          <input class="form-input" id="hh-book-link-${esc(r.room_id)}" type="text" readonly
+                 value="${esc(HH_BOOK_URL_ROOM + r.room_id)}" style="flex:1">
+          <button class="btn btn-ghost" data-hh-book-copy="${esc(r.room_id)}">Copy</button>
         </div>
       </div>` : ""}
-      <div id="hh-rate-note" class="card-sub" style="margin-top:10px" hidden></div>
     </div>`;
+}
+
+const HH_ROOM_CREATE_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/room-create";
+const HH_ROOM_ARCHIVE_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/room-archive";
+
+function hhAddRoomCard(h, canWrite){
+  return `
+    <div class="card card-pad" style="margin-top:12px">
+      <div class="form-field" style="margin:0">
+        <label>Add a room</label>
+        <div style="display:flex;gap:8px">
+          <input class="form-input" id="hh-new-room-label" type="text" placeholder="Basement suite"
+                 ${canWrite ? "" : "disabled"} style="flex:1">
+          <button class="btn btn-ghost" id="hh-new-room-save" ${canWrite ? "" : "disabled"}>Add</button>
+        </div>
+        <div class="card-sub" style="margin-top:6px">A new room starts unpriced and switched off.</div>
+      </div>
+    </div>`;
+}
+
+async function hhCreateRoom(h){
+  const token = hhFullToken();
+  if(!token){ hhRateNote("The full staff token is needed to add a room.", true); return; }
+  const row = hhPayoutFor(h);
+  if(!row) return;
+  const label = String(document.getElementById("hh-new-room-label")?.value || "").trim();
+  if(!label){ hhRateNote("Give the room a name first.", true); return; }
+  const resp = await fetch(HH_ROOM_CREATE_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "x-vm-staff-token": token },
+    body: JSON.stringify({ host_id: row.host_id, label: label })
+  }).catch(() => null);
+  if(!resp){ hhRateNote("Couldn't reach n8n.", true); return; }
+  if(!resp.ok){
+    const d = await resp.json().catch(() => null);
+    hhRateNote((d && d.error) || ("Couldn't add the room (HTTP " + resp.status + ")."), true);
+    return;
+  }
+  hhInvalidateHostCaches();
+  await loadHostPayoutStatus();
+  await loadHostRooms();
+  openHost(h.id);
+  if(typeof showToast === "function") showToast("Room added");
+}
+
+async function hhArchiveRoom(h, roomId){
+  const token = hhFullToken();
+  if(!token){ hhRateNote("The full staff token is needed to archive a room.", true); return; }
+  const rooms = hhRooms(h);
+  const room = rooms.find(x => x.room_id === roomId);
+  const label = (room && room.label) || "this room";
+  if(!confirm(`Archive "${label}"? Its public link stops working immediately. This cannot be undone from the portal.`)) return;
+  const resp = await fetch(HH_ROOM_ARCHIVE_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "x-vm-staff-token": token },
+    body: JSON.stringify({ room_id: roomId })
+  }).catch(() => null);
+  if(!resp){ hhRateNote("Couldn't reach n8n.", true); return; }
+  if(!resp.ok){
+    const d = await resp.json().catch(() => null);
+    hhRateNote((d && d.error) || ("Couldn't archive the room (HTTP " + resp.status + ")."), true);
+    return;
+  }
+  hhInvalidateHostCaches();
+  await loadHostPayoutStatus();
+  await loadHostRooms();
+  openHost(h.id);
+  if(typeof showToast === "function") showToast("Room archived");
 }
 
 function hhRateNote(msg, bad){
@@ -11265,10 +11395,10 @@ function hhRateNote(msg, bad){
 // Two lines now, not one. With a surcharge on both sides the three-meal margin is
 // no longer derivable by eye, and a surcharge that quietly shrinks the margin is
 // exactly what this line exists to catch while it is still being typed.
-function hhRenderMargin(){
-  const el = document.getElementById("hh-rate-margin");
+function hhRenderMargin(roomId){
+  const el = document.getElementById("hh-rate-margin-" + roomId);
   if(!el) return;
-  const val = (id) => Number(document.getElementById(id)?.value || 0);
+  const val = (id) => Number(document.getElementById(id + "-" + roomId)?.value || 0);
   const s = val("hh-rate-student"), p = val("hh-rate-host");
   const ds = val("hh-meal3-student"), dp = val("hh-meal3-host");
   if(!s && !p){ el.textContent = ""; return; }
@@ -11297,12 +11427,16 @@ function hhRenderMargin(){
 // refetches, the same way hhArchive would without hhArchiveBusy.
 let hhRatesBusy = false;
 
-async function hhSaveRates(h, patch, done){
+async function hhSaveRates(h, r, patch, done){
   if(hhRatesBusy) return false;
   const token = hhFullToken();
   if(!token){ hhRateNote("The full staff token is needed to change rates.", true); return false; }
-  const r = hhRates(h);
-  if(!r) return false;
+  // Re-checked against the freshly loaded list rather than trusted from the
+  // caller's closure — a room this stale card still shows could have been
+  // archived from another tab in the meantime, and a write must never target a
+  // room that is no longer this host's to price.
+  const rooms = hhRooms(h);
+  if(!rooms.some(x => x.room_id === r.room_id)) return false;
   hhRatesBusy = true;
   try {
     hhRateNote("Saving…");
@@ -11346,6 +11480,74 @@ async function hhSaveRates(h, patch, done){
   } finally {
     hhRatesBusy = false;
   }
+}
+
+// Reads the boxes belonging to ONE room card — every id suffixed "-" + r.room_id
+// — and saves only that room. Two cards on screen at once is exactly the case
+// this suffixing exists for: reading an unsuffixed id here would silently save
+// whichever room's box happened to match first.
+function hhSaveRoom(h, r){
+  // Cents on the wire, dollars on screen. Every amount in this system is cents.
+  //
+  // A blank box is OMITTED, never sent as zero. The endpoint keeps any key it is
+  // not given — that is how "I didn't touch this" is expressed — but
+  // Number("") || 0 is 0, a perfectly good number it will happily write over a
+  // real rate. Clearing a field and pressing Save used to zero a family's payout
+  // rate with no way back, because a data table update keeps no history, and the
+  // margin line rendered a confident "Margin $350.00 a week" right before you
+  // pressed it.
+  const cents = (id) => {
+    const raw = String(document.getElementById(id + "-" + r.room_id)?.value || "").trim();
+    if(raw === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.round(n * 100) : undefined;
+  };
+  const patch = {};
+  const student = cents("hh-rate-student");
+  const paid = cents("hh-rate-host");
+  const ds = cents("hh-meal3-student");
+  const dp = cents("hh-meal3-host");
+  if(student !== undefined) patch.weekly_rate = student;
+  if(paid !== undefined) patch.host_weekly_rate = paid;
+  if(ds !== undefined) patch.meal3_student_delta = ds;
+  if(dp !== undefined) patch.meal3_host_delta = dp;
+  const label = String(document.getElementById("hh-room-label-" + r.room_id)?.value || "").trim();
+  if(label && label !== String(r.label || "")) patch.label = label;
+  if(!Object.keys(patch).length){ hhRateNote("Nothing to save — every box is empty.", true); return; }
+  hhSaveRates(h, r, patch, "Rates saved");
+}
+
+function hhToggleRoom(h, r){
+  const next = !(r.bookable === true);
+
+  // The toggle deliberately sends no rates, so it publishes whatever is STORED.
+  // If the boxes show something else, the operator is reading a price that is not
+  // the one about to go live — and the redraw afterwards silently discards what
+  // they typed. Refuse rather than guess which one they meant.
+  const edited = (id, stored) => {
+    const raw = String(document.getElementById(id + "-" + r.room_id)?.value || "").trim();
+    if(raw === "") return false;
+    const n = Number(raw);
+    return Number.isFinite(n) && Math.round(n * 100) !== Math.round(Number(stored) || 0);
+  };
+  // The deltas are checked on the same terms as the rates: publishing sends no
+  // figures at all, so an edited surcharge would be discarded by the redraw just
+  // as silently as an edited rate, and the link would go live at a price the
+  // operator can see on screen but did not save.
+  if(edited("hh-rate-student", r.weekly_rate) || edited("hh-rate-host", r.host_weekly_rate)
+     || edited("hh-meal3-student", r.meal3_student_delta) || edited("hh-meal3-host", r.meal3_host_delta)){
+    hhRateNote("Save the rates first — the link publishes the saved price, not what's typed here.", true);
+    return;
+  }
+
+  // The figure and the room are both named, because this is the moment money
+  // starts being taken and "anyone can pay immediately" is not much use without
+  // knowing how much, for which room.
+  if(next && !confirm(
+    `Publish a public booking link for ${h.name} — ${r.label || "this room"} — at $${hhMoney(r.weekly_rate)} per week?\n\n` +
+    `Anyone with the link can book and pay immediately, before anyone checks the room is free.`
+  )) return;
+  hhSaveRates(h, r, { bookable: next }, next ? "Public link is live" : "Public link switched off");
 }
 
 // Counts the whole host list, not the filtered view: the point of the line is
@@ -11829,7 +12031,7 @@ function openHost(id){
     <div class="panel-section">
       <div class="panel-section-title">
         <span>Public <em>booking</em></span>
-        <span class="ct">${hhRates(h) ? "" : "no payout record"}</span>
+        <span class="ct">${hhRooms(h).length ? "" : "no payout record"}</span>
       </div>
       ${hhBookingBox(h)}
     </div>
@@ -11867,82 +12069,34 @@ function openHost(id){
     else hhRequestResumeLink(h);
   });
 
-  _hostPanelBody?.querySelector("#hh-rate-student")?.addEventListener("input", hhRenderMargin);
-  _hostPanelBody?.querySelector("#hh-rate-host")?.addEventListener("input", hhRenderMargin);
-  _hostPanelBody?.querySelector("#hh-meal3-student")?.addEventListener("input", hhRenderMargin);
-  _hostPanelBody?.querySelector("#hh-meal3-host")?.addEventListener("input", hhRenderMargin);
-  hhRenderMargin();
-
-  _hostPanelBody?.querySelector("#hh-rate-save")?.addEventListener("click", () => {
-    // Cents on the wire, dollars on screen. Every amount in this system is cents.
-    //
-    // A blank box is OMITTED, never sent as zero. The endpoint keeps any key it is
-    // not given — that is how "I didn't touch this" is expressed — but
-    // Number("") || 0 is 0, a perfectly good number it will happily write over a
-    // real rate. Clearing a field and pressing Save used to zero a family's payout
-    // rate with no way back, because a data table update keeps no history, and the
-    // margin line rendered a confident "Margin $350.00 a week" right before you
-    // pressed it.
-    const cents = (id) => {
-      const raw = String(document.getElementById(id)?.value || "").trim();
-      if(raw === "") return undefined;
-      const n = Number(raw);
-      return Number.isFinite(n) ? Math.round(n * 100) : undefined;
-    };
-    const patch = {};
-    const student = cents("hh-rate-student");
-    const paid = cents("hh-rate-host");
-    const ds = cents("hh-meal3-student");
-    const dp = cents("hh-meal3-host");
-    if(student !== undefined) patch.weekly_rate = student;
-    if(paid !== undefined) patch.host_weekly_rate = paid;
-    if(ds !== undefined) patch.meal3_student_delta = ds;
-    if(dp !== undefined) patch.meal3_host_delta = dp;
-    if(!Object.keys(patch).length){ hhRateNote("Nothing to save — every box is empty.", true); return; }
-    hhSaveRates(h, patch, "Rates saved");
+  hhRooms(h).forEach(r => {
+    ["hh-rate-student", "hh-rate-host", "hh-meal3-student", "hh-meal3-host"].forEach(id => {
+      _hostPanelBody?.querySelector("#" + id + "-" + r.room_id)
+        ?.addEventListener("input", () => hhRenderMargin(r.room_id));
+    });
+    hhRenderMargin(r.room_id);
+    _hostPanelBody?.querySelector("#hh-rate-save-" + r.room_id)
+      ?.addEventListener("click", () => hhSaveRoom(h, r));
+    _hostPanelBody?.querySelector("#hh-rate-toggle-" + r.room_id)
+      ?.addEventListener("click", () => hhToggleRoom(h, r));
   });
 
-  _hostPanelBody?.querySelector("#hh-rate-toggle")?.addEventListener("click", () => {
-    const r = hhRates(h);
-    const next = !(r && r.bookable === true);
-
-    // The toggle deliberately sends no rates, so it publishes whatever is STORED.
-    // If the boxes show something else, the operator is reading a price that is not
-    // the one about to go live — and the redraw afterwards silently discards what
-    // they typed. Refuse rather than guess which one they meant.
-    const edited = (id, stored) => {
-      const raw = String(document.getElementById(id)?.value || "").trim();
-      if(raw === "") return false;
-      const n = Number(raw);
-      return Number.isFinite(n) && Math.round(n * 100) !== Math.round(Number(stored) || 0);
-    };
-    // The deltas are checked on the same terms as the rates: publishing sends no
-    // figures at all, so an edited surcharge would be discarded by the redraw just
-    // as silently as an edited rate, and the link would go live at a price the
-    // operator can see on screen but did not save.
-    if(edited("hh-rate-student", r && r.weekly_rate) || edited("hh-rate-host", r && r.host_weekly_rate)
-       || edited("hh-meal3-student", r && r.meal3_student_delta) || edited("hh-meal3-host", r && r.meal3_host_delta)){
-      hhRateNote("Save the rates first — the link publishes the saved price, not what's typed here.", true);
-      return;
-    }
-
-    // The figure is named, because this is the moment money starts being taken and
-    // "anyone can pay immediately" is not much use without knowing how much.
-    if(next && !confirm(
-      `Publish a public booking link for ${h.name} at $${hhMoney(r && r.weekly_rate)} per week?\n\n` +
-      `Anyone with the link can book and pay immediately, before anyone checks the room is free.`
-    )) return;
-    hhSaveRates(h, { bookable: next }, next ? "Public link is live" : "Public link switched off");
-  });
-
-  _hostPanelBody?.querySelector("#hh-book-copy")?.addEventListener("click", () => {
-    const i = document.getElementById("hh-book-link");
-    i.select();
-    navigator.clipboard.writeText(i.value).then(() => {
-      const b = document.getElementById("hh-book-copy");
-      b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500);
+  // The copy button moved from one id to a data attribute, because there is one
+  // per live room now. Replace the existing #hh-book-copy listener with this.
+  _hostPanelBody?.querySelectorAll("[data-hh-book-copy]").forEach(b => {
+    b.addEventListener("click", () => {
+      const i = document.getElementById("hh-book-link-" + b.getAttribute("data-hh-book-copy"));
+      if(!i) return;
+      i.select();
+      navigator.clipboard.writeText(i.value).then(() => {
+        b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500);
+      });
     });
   });
+
+  _hostPanelBody?.querySelector("#hh-new-room-save")?.addEventListener("click", () => hhCreateRoom(h));
+  _hostPanelBody?.querySelectorAll("[data-hh-room-archive]").forEach(b =>
+    b.addEventListener("click", () => hhArchiveRoom(h, b.getAttribute("data-hh-room-archive"))));
 
   if (_hostPanelBody) {
     _hostPanelBody.querySelectorAll(".guest-row").forEach(row => {
