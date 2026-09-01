@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-31a"></script>
+<script src="pms-supabase.js?v=2026-09-01a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -10394,6 +10394,17 @@ function hhPayoutToken(){ return vmN8n.token(); }
    it does not have. */
 const HH_ROOMS = { state: "idle", byHost: new Map() };
 
+/* Both caches, always together. They were invalidated separately once: a saved
+   three-meal surcharge landed in the table, HH_PAYOUT was reset and refetched,
+   HH_ROOMS was not - and since loadHostRooms() returns early while its state is
+   "loaded", the panel redrew from the stale room and showed the OLD figure over
+   a write that had succeeded. Rates live on the room now, so any refresh that
+   forgets the room cache is a refresh that reports the wrong price. */
+function hhInvalidateHostCaches(){
+  HH_PAYOUT.state = "idle";
+  HH_ROOMS.state = "idle";
+}
+
 async function loadHostRooms(){
   if(HH_ROOMS.state === "loading" || HH_ROOMS.state === "loaded") return;
   const token = vmN8n.token();
@@ -11121,7 +11132,7 @@ async function hhArchive(ids){
 
     // Refetch rather than patching the local copy — the refusals prove the
     // browser's picture was not the table's.
-    HH_PAYOUT.state = "idle";
+    hhInvalidateHostCaches();
     renderPayoutSummary();          // the "review" link would otherwise sit there dead
     await loadHostPayoutStatus();
     await loadHostRooms();
@@ -11322,7 +11333,7 @@ async function hhSaveRates(h, patch, done){
     }
 
     // Refetch so the panel redraws from the table, not from what we hoped we wrote.
-    HH_PAYOUT.state = "idle";
+    hhInvalidateHostCaches();
     await loadHostPayoutStatus();
     await loadHostRooms();
     if(HH_PAYOUT.state !== "loaded"){ hhRateNote("Saved, but the host list could not be reloaded.", true); return false; }
@@ -11415,7 +11426,7 @@ function savePayoutToken(){
   if(!v) return;
   localStorage.setItem(HH_RO_TOKEN_KEY, v);
   if(i) i.value = "";                 // don't leave it sitting in the DOM
-  HH_PAYOUT.state = "idle";           // allow the guard in the loader to pass
+  hhInvalidateHostCaches();           // allow the guards in both loaders to pass
   renderPayoutSummary();
   loadHostPayoutStatus();
   loadHostRooms();
@@ -11440,7 +11451,7 @@ document.getElementById("hh-payout-summary")?.addEventListener("click", e => {
   }
   else if(e.target.closest("[data-hh-token-retry]")){
     e.preventDefault();
-    HH_PAYOUT.state = "idle";          // release the loader's own guard
+    hhInvalidateHostCaches();          // release both loaders' own guards
     renderPayoutSummary();
     loadHostPayoutStatus();
     loadHostRooms();
