@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01e"></script>
+<script src="pms-supabase.js?v=2026-09-01f"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2863,9 +2863,9 @@ hello@vanmates.com · vanmates.com</textarea>
             <thead><tr>
               <th>Reference</th><th>Student</th><th>Stay</th><th>Length</th><th>Meals</th>
               <th class="right">Per week</th><th class="right">Host / week</th>
-              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Move-out</th>
+              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Move-out</th><th></th>
             </tr></thead>
-            <tbody id="hb-rows"><tr><td colspan="11" class="card-sub">Not loaded yet.</td></tr></tbody>
+            <tbody id="hb-rows"><tr><td colspan="12" class="card-sub">Not loaded yet.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -10529,6 +10529,35 @@ function hhBetterRow(existing, candidate){
 
   return existing;   // equally good — keep the first, order is the API's
 }
+
+/* HH-EXTEND-ROOM-CORE-START */
+/* Which room is an extension for. Pure — a booking and that host's rooms in,
+   one decision out — so test/homestay-extend-room.test.js can evaluate this
+   fence on its own.
+
+   Deliberately does NOT require the room to be bookable. `bookable` controls
+   whether the PUBLIC may book it; extending a student who already lives there
+   is not a public booking, and a family often switches the room off precisely
+   because it is occupied.
+
+   It never guesses. A booking that names no room is resolved only when the host
+   has exactly one live room; with several, staff choose. Guessing would extend
+   someone into a room at a price nobody agreed. */
+function hhExtendRoom(booking, rooms){
+  const b = booking || {};
+  const live = (Array.isArray(rooms) ? rooms : [])
+    .filter(r => r && r.room_id && !r.archived_at && String(r.host_id) === String(b.host_id));
+
+  const named = String(b.room_id || "").trim();
+  if (named) {
+    const room = live.find(r => String(r.room_id) === named);
+    return room ? { room: room } : { error: "unavailable" };
+  }
+  if (live.length === 1) return { room: live[0] };
+  if (live.length === 0) return { error: "unavailable" };
+  return { error: "ambiguous", rooms: live };
+}
+/* HH-EXTEND-ROOM-CORE-END */
 
 /* HH-ROOM-PICK-CORE-START */
 /* Decides which room a public request is for. Pure by construction — a list of
@@ -18644,6 +18673,11 @@ renderLeads();
 
   /* ---- hosts ---- */
   let hbHosts = [];
+
+  // The rows the table was last built from. The Extend handlers need the booking
+  // behind a row, and re-fetching one row to answer a click would be a request per
+  // click for data the page already had.
+  let hbLastRows = [];
   async function hbLoadHosts() {
     const d = await hbPost('hosts-list');
     hbHosts = d.hosts || [];
@@ -18667,6 +18701,8 @@ renderLeads();
   async function hbLoadBookings() {
     const d = await hbPost('bookings-list');
     const rows = d.bookings || [];
+    hbLastRows = rows;
+    if (typeof loadHostRooms === 'function') await loadHostRooms();
     $('hb-kpi-total').textContent = d.count;
     $('hb-kpi-total-sub').textContent = d.count === 1 ? '1 booking' : d.count + ' bookings';
     $('hb-kpi-attention').textContent = d.needs_attention;
@@ -18678,7 +18714,7 @@ renderLeads();
 
     const tb = $('hb-rows');
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="11" class="card-sub">No bookings yet.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="12" class="card-sub">No bookings yet.</td></tr>';
       hbApplyWriteAffordances();
       return;
     }
@@ -18699,6 +18735,7 @@ renderLeads();
           ? flags.map((f) => '<span class="badge badge-amber">' + esc(f) + '</span>').join(' ')
           : '<span class="card-sub">—</span>') + '</td>' +
         hbMoveOutCell(b) +
+        hbExtendCell(b) +
         '</tr>';
     }).join('');
     // The end-booking buttons are rebuilt above, so re-apply the write gating.
@@ -18782,6 +18819,20 @@ renderLeads();
       (b.move_out_date ? 'Change' : 'End tenancy') + '</button></td>';
   }
 
+  // Only a PAID booking can be extended. An unpaid one is a student who reached
+  // checkout and stopped; extending it creates a second unpaid booking and two
+  // payment links chasing one person. Most rows in this table are in that state.
+  function hbExtendCell(b) {
+    if (b.status !== 'paid') return '<td></td>';
+    if (!hbCanWrite()) {
+      return '<td><button type="button" class="btn btn-ghost hb-need-token" ' +
+        'title="Creating a booking needs the full staff token — not the view-only one.">' +
+        'Needs full token</button></td>';
+    }
+    return '<td class="hb-ext" data-ref="' + esc(b.booking_ref) + '">' +
+      '<button type="button" class="btn btn-ghost hb-ext-start">Extend</button></td>';
+  }
+
   // Two-step by design: the button only opens the date field, and nothing is sent
   // until Confirm. Ending a tenancy cancels a live Stripe subscription, so it must
   // not be one stray click away.
@@ -18792,6 +18843,117 @@ renderLeads();
         '<button type="button" class="btn btn-primary hb-end-go">Confirm</button>' +
         '<button type="button" class="btn btn-ghost hb-end-cancel">Cancel</button>' +
       '</div>';
+  }
+
+  // Two-step, like ending a tenancy: the button only opens the form, and nothing
+  // is created until Create. This one emails a student a payment link, so it must
+  // not be one stray click away.
+  function hbOpenExtend(cell, b) {
+    const rooms = (HH_ROOMS.byHost.get(b.host_id) || []);
+    const pick = hhExtendRoom(b, rooms);
+
+    if (pick.error === 'unavailable') {
+      cell.innerHTML = '<div class="card-sub">This host has no room to extend into.</div>';
+      return;
+    }
+    // Ambiguous means the booking predates rooms and the family has several. Ask;
+    // never guess which room someone is being extended into.
+    const chooser = pick.error === 'ambiguous'
+      ? '<select class="form-input hb-ext-room" style="width:170px;padding:6px 8px">' +
+          '<option value="">Which room?</option>' +
+          pick.rooms.map(r => '<option value="' + esc(r.room_id) + '">' + esc(r.label) + '</option>').join('') +
+        '</select>'
+      : '<input type="hidden" class="hb-ext-room" value="' + esc(pick.room.room_id) + '">';
+
+    // Rates come from the ROOM as it is priced today, not from the booking being
+    // extended. Prices move, and a stay booked months later at October's rate
+    // quietly costs the difference — on both sides, since the host's share is
+    // equally stale. Shown, so honouring the old price is a deliberate overtype.
+    const r = pick.room || {};
+    cell.innerHTML =
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;max-width:520px">' +
+        chooser +
+        '<input type="date" class="form-input hb-ext-movein" value="' + esc(b.lease_end_date || '') + '" style="width:150px;padding:6px 8px">' +
+        '<input type="number" class="form-input hb-ext-weeks" value="4" min="1" step="1" style="width:70px;padding:6px 8px" title="Weeks">' +
+        '<input type="number" class="form-input hb-ext-weekly" value="' + esc(hhMoney(r.weekly_rate)) + '" step="0.01" min="0" style="width:100px;padding:6px 8px" title="Student pays / week">' +
+        '<input type="number" class="form-input hb-ext-host" value="' + esc(hhMoney(r.host_weekly_rate)) + '" step="0.01" min="0" style="width:100px;padding:6px 8px" title="Host is paid / week">' +
+        '<button type="button" class="btn btn-primary hb-ext-go">Create</button>' +
+        '<button type="button" class="btn btn-ghost hb-ext-cancel">Cancel</button>' +
+      '</div>' +
+      '<div class="card-sub hb-ext-note" style="margin-top:6px"></div>';
+    hbExtendPreview(cell, b);
+  }
+
+  // The same core the create form previews with. Nothing about extension money is
+  // new, and this must never become a second implementation of it.
+  function hbExtendPreview(cell, b) {
+    const note = cell.querySelector('.hb-ext-note');
+    if (!note) return;
+    const weeks = Number(cell.querySelector('.hb-ext-weeks')?.value || 0);
+    const weekly = Math.round(Number(cell.querySelector('.hb-ext-weekly')?.value || 0) * 100);
+    const host = Math.round(Number(cell.querySelector('.hb-ext-host')?.value || 0) * 100);
+    const movein = cell.querySelector('.hb-ext-movein')?.value || '';
+    if (!weeks || !weekly || !movein) { note.textContent = ''; return; }
+    let s;
+    try {
+      s = computeHomestaySchedule({ weeklyRateCents: weekly, hostWeeklyCents: host,
+                                    moveInDate: movein, leaseDays: weeks * 7 });
+    } catch (e) { note.textContent = hbFieldError(e); return; }
+    const due = s.studentCharges[0];
+    const later = s.studentCharges.length - 1;
+    note.textContent = 'Student pays ' + cad(due.totalCents) + ' to confirm' +
+      (later ? ', then ' + later + ' more charge' + (later === 1 ? '' : 's') : '') +
+      ' · host is paid ' + cad(s.totals.hostTotalCents) + ' over the stay' +
+      ' · ends ' + s.leaseEndDate +
+      (s.totals.marginCents < 0 ? ' · THE HOST WOULD BE PAID MORE THAN THE STUDENT' : '');
+  }
+
+  async function hbExtend(cell, b) {
+    const room_id = cell.querySelector('.hb-ext-room')?.value || '';
+    const movein = cell.querySelector('.hb-ext-movein')?.value || '';
+    const weeks = Number(cell.querySelector('.hb-ext-weeks')?.value || 0);
+    const weekly = Math.round(Number(cell.querySelector('.hb-ext-weekly')?.value || 0) * 100);
+    const host = Math.round(Number(cell.querySelector('.hb-ext-host')?.value || 0) * 100);
+    const note = cell.querySelector('.hb-ext-note');
+    const say = (m) => { if (note) note.textContent = m; };
+
+    if (!room_id) return say('Choose which room first.');
+    if (!movein || !weeks || !weekly) return say('Fill in the dates and rates first.');
+
+    // The same refusal the create form makes. A negative margin is a typo every
+    // time, and the payout run would otherwise find it by moving real money.
+    let s;
+    try {
+      s = computeHomestaySchedule({ weeklyRateCents: weekly, hostWeeklyCents: host,
+                                    moveInDate: movein, leaseDays: weeks * 7 });
+    } catch (e) { return say(hbFieldError(e)); }
+    if (s.totals.marginCents < 0) return say('The host would be paid more than the student pays. Fix the rates first.');
+
+    // Overlapping days are WARNED, not refused: a student moving between rooms
+    // mid-stay is a real thing to want. Saying which days overlap is the point.
+    if (b.lease_end_date && movein < b.lease_end_date &&
+        !confirm('That starts on ' + movein + ', before this stay ends on ' + b.lease_end_date +
+                 '.\n\nThe student would be billed twice for the overlapping days. Create it anyway?')) {
+      return;
+    }
+
+    say('Creating…');
+    let d;
+    try {
+      d = await hbPost('booking-create', {
+        host_id: b.host_id, room_id: room_id, student_email: b.student_email,
+        weekly_rate_cents: weekly, host_weekly_cents: host,
+        move_in_date: movein, lease_days: weeks * 7,
+        meal_plan: b.meal_plan || 'two_meals'
+      });
+    } catch (e) { return say('Could not create it. Nothing was sent to the student.'); }
+
+    // A 2xx with no link is a real failure hbPost cannot see: Compute Booking
+    // throws before Upsert Booking on a bad room or an invalid length, and n8n
+    // answers an empty 200. Saying "created" there would be a lie.
+    if (!d || !d.link) return say('The endpoint returned no link — nothing was created.');
+    say('Created ' + d.booking_ref + ' · the student has been emailed their payment link.');
+    if (typeof hbLoadBookings === 'function') hbLoadBookings();
   }
 
   async function hbEnd(cell) {
@@ -19034,10 +19196,40 @@ renderLeads();
         return hbAskForToken('Ending a tenancy needs the full staff token, not the view-only one.');
       }
       const cell = e.target.closest ? e.target.closest('.hb-act') : null;
-      if (!cell) return;
-      if (e.target.closest('.hb-end-start')) return hbOpenEnd(cell);
-      if (e.target.closest('.hb-end-go')) return hbEnd(cell);
-      if (e.target.closest('.hb-end-cancel')) return hbLoadBookings();
+      if (cell) {
+        if (e.target.closest('.hb-end-start')) return hbOpenEnd(cell);
+        if (e.target.closest('.hb-end-go')) return hbEnd(cell);
+        if (e.target.closest('.hb-end-cancel')) return hbLoadBookings();
+      }
+
+      const extStart = e.target.closest('.hb-ext-start');
+      if (extStart) {
+        const cell = extStart.closest('.hb-ext');
+        const b = hbLastRows.find(x => x.booking_ref === cell.getAttribute('data-ref'));
+        if (b) hbOpenExtend(cell, b);
+        return;
+      }
+      const extGo = e.target.closest('.hb-ext-go');
+      if (extGo) {
+        const cell = extGo.closest('.hb-ext');
+        const b = hbLastRows.find(x => x.booking_ref === cell.getAttribute('data-ref'));
+        if (b) hbExtend(cell, b);
+        return;
+      }
+      const extCancel = e.target.closest('.hb-ext-cancel');
+      if (extCancel) {
+        const cell = extCancel.closest('.hb-ext');
+        cell.innerHTML = '<button type="button" class="btn btn-ghost hb-ext-start">Extend</button>';
+        return;
+      }
+    });
+    if (tbody) tbody.addEventListener('input', function (e) {
+      const extField = e.target.closest('.hb-ext-weeks, .hb-ext-weekly, .hb-ext-host, .hb-ext-movein');
+      if (extField) {
+        const cell = extField.closest('.hb-ext');
+        const b = hbLastRows.find(x => x.booking_ref === cell.getAttribute('data-ref'));
+        if (b) hbExtendPreview(cell, b);
+      }
     });
 
     function hbSaveToken() {
