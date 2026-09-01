@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01f"></script>
+<script src="pms-supabase.js?v=2026-09-01g"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -18848,40 +18848,80 @@ renderLeads();
   // Two-step, like ending a tenancy: the button only opens the form, and nothing
   // is created until Create. This one emails a student a payment link, so it must
   // not be one stray click away.
+  // The form opens as a FULL-WIDTH row beneath the booking, not inside the
+  // Extend cell. Six controls in the narrowest column of a twelve-column table
+  // wrapped into an unreadable stack of bare numbers — "4", "0.00", "0.00" —
+  // with nothing saying which was weeks and which was money.
   function hbOpenExtend(cell, b) {
+    const tr = cell.closest('tr');
+    if (!tr) return;
+    hbCloseExtend();
+
     const rooms = (HH_ROOMS.byHost.get(b.host_id) || []);
     const pick = hhExtendRoom(b, rooms);
 
+    const row = document.createElement('tr');
+    row.className = 'hb-ext-row';
+    row.setAttribute('data-ref', b.booking_ref);
+
     if (pick.error === 'unavailable') {
-      cell.innerHTML = '<div class="card-sub">This host has no room to extend into.</div>';
+      row.innerHTML = '<td colspan="12" class="card-sub" style="padding:14px 16px">' +
+        'This host has no room to extend into.</td>';
+      tr.parentNode.insertBefore(row, tr.nextSibling);
       return;
     }
+
+    // A labelled field. Every control says what it is: the previous version put
+    // six bare boxes in a row and left the operator to guess which held weeks.
+    const field = (label, control) =>
+      '<div class="form-field" style="margin:0">' +
+        '<label style="font-size:11px">' + esc(label) + '</label>' + control +
+      '</div>';
+
     // Ambiguous means the booking predates rooms and the family has several. Ask;
     // never guess which room someone is being extended into.
     const chooser = pick.error === 'ambiguous'
-      ? '<select class="form-input hb-ext-room" style="width:170px;padding:6px 8px">' +
+      ? field('Room', '<select class="form-input hb-ext-room" style="width:180px">' +
           '<option value="">Which room?</option>' +
-          pick.rooms.map(r => '<option value="' + esc(r.room_id) + '">' + esc(r.label) + '</option>').join('') +
-        '</select>'
-      : '<input type="hidden" class="hb-ext-room" value="' + esc(pick.room.room_id) + '">';
+          pick.rooms.map(r => '<option value="' + esc(r.room_id) + '">' + esc(r.label) +
+            ' — ' + cad(r.weekly_rate) + '/wk</option>').join('') +
+        '</select>')
+      : '<input type="hidden" class="hb-ext-room" value="' + esc(pick.room.room_id) + '">' +
+        '<div class="form-field" style="margin:0"><label style="font-size:11px">Room</label>' +
+        '<div style="padding:7px 0;font-weight:600">' + esc(pick.room.label || 'Room') + '</div></div>';
 
     // Rates come from the ROOM as it is priced today, not from the booking being
     // extended. Prices move, and a stay booked months later at October's rate
     // quietly costs the difference — on both sides, since the host's share is
     // equally stale. Shown, so honouring the old price is a deliberate overtype.
     const r = pick.room || {};
-    cell.innerHTML =
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;max-width:520px">' +
-        chooser +
-        '<input type="date" class="form-input hb-ext-movein" value="' + esc(b.lease_end_date || '') + '" style="width:150px;padding:6px 8px">' +
-        '<input type="number" class="form-input hb-ext-weeks" value="4" min="1" step="1" style="width:70px;padding:6px 8px" title="Weeks">' +
-        '<input type="number" class="form-input hb-ext-weekly" value="' + esc(hhMoney(r.weekly_rate)) + '" step="0.01" min="0" style="width:100px;padding:6px 8px" title="Student pays / week">' +
-        '<input type="number" class="form-input hb-ext-host" value="' + esc(hhMoney(r.host_weekly_rate)) + '" step="0.01" min="0" style="width:100px;padding:6px 8px" title="Host is paid / week">' +
-        '<button type="button" class="btn btn-primary hb-ext-go">Create</button>' +
-        '<button type="button" class="btn btn-ghost hb-ext-cancel">Cancel</button>' +
-      '</div>' +
-      '<div class="card-sub hb-ext-note" style="margin-top:6px"></div>';
-    hbExtendPreview(cell, b);
+    row.innerHTML =
+      '<td colspan="12" style="padding:16px;background:var(--wash, #FAF5ED)">' +
+        '<div style="font-weight:600;margin-bottom:10px">Extend ' + esc(b.student_email) +
+          ' · ' + esc(b.booking_ref) + '</div>' +
+        '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">' +
+          chooser +
+          field('Starts', '<input type="date" class="form-input hb-ext-movein" value="' +
+            esc(b.lease_end_date || '') + '" style="width:160px">') +
+          field('Weeks', '<input type="number" class="form-input hb-ext-weeks" value="4" min="1" step="1" style="width:80px">') +
+          field('Student pays / week', '<input type="number" class="form-input hb-ext-weekly" value="' +
+            esc(hhMoney(r.weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
+          field('Host is paid / week', '<input type="number" class="form-input hb-ext-host" value="' +
+            esc(hhMoney(r.host_weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
+          '<button type="button" class="btn btn-primary hb-ext-go">Create booking</button>' +
+          '<button type="button" class="btn btn-ghost hb-ext-cancel">Cancel</button>' +
+        '</div>' +
+        '<div class="card-sub hb-ext-note" style="margin-top:10px"></div>' +
+      '</td>';
+
+    tr.parentNode.insertBefore(row, tr.nextSibling);
+    hbExtendPreview(row, b);
+  }
+
+  // One form at a time. Two open at once is two Create buttons a click apart,
+  // each emailing a different student.
+  function hbCloseExtend() {
+    document.querySelectorAll('.hb-ext-row').forEach(el => el.remove());
   }
 
   // The same core the create form previews with. Nothing about extension money is
@@ -19211,25 +19251,19 @@ renderLeads();
       }
       const extGo = e.target.closest('.hb-ext-go');
       if (extGo) {
-        const cell = extGo.closest('.hb-ext');
-        const b = hbLastRows.find(x => x.booking_ref === cell.getAttribute('data-ref'));
-        if (b) hbExtend(cell, b);
+        const row = extGo.closest('.hb-ext-row');
+        const b = row && hbLastRows.find(x => x.booking_ref === row.getAttribute('data-ref'));
+        if (b) hbExtend(row, b);
         return;
       }
-      const extCancel = e.target.closest('.hb-ext-cancel');
-      if (extCancel) {
-        const cell = extCancel.closest('.hb-ext');
-        cell.innerHTML = '<button type="button" class="btn btn-ghost hb-ext-start">Extend</button>';
-        return;
-      }
+      if (e.target.closest('.hb-ext-cancel')) { hbCloseExtend(); return; }
     });
     if (tbody) tbody.addEventListener('input', function (e) {
-      const extField = e.target.closest('.hb-ext-weeks, .hb-ext-weekly, .hb-ext-host, .hb-ext-movein');
-      if (extField) {
-        const cell = extField.closest('.hb-ext');
-        const b = hbLastRows.find(x => x.booking_ref === cell.getAttribute('data-ref'));
-        if (b) hbExtendPreview(cell, b);
-      }
+      const extField = e.target.closest && e.target.closest('.hb-ext-weeks, .hb-ext-weekly, .hb-ext-host, .hb-ext-movein, .hb-ext-room');
+      if (!extField) return;
+      const row = extField.closest('.hb-ext-row');
+      const b = row && hbLastRows.find(x => x.booking_ref === row.getAttribute('data-ref'));
+      if (b) hbExtendPreview(row, b);
     });
 
     function hbSaveToken() {
