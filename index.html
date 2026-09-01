@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-08-30a"></script>
+<script src="pms-supabase.js?v=2026-08-31a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -9202,6 +9202,7 @@ function goToView(v, savedView){
   // Hooked here rather than on the nav button because the page is also reached
   // programmatically (KPI drill-downs, the host panel's back-links).
   if(v === "homestay-hosts" && typeof loadHostPayoutStatus === "function") loadHostPayoutStatus();
+  if(v === "homestay-hosts" && typeof loadHostRooms === "function") loadHostRooms();
   if(v === "homestay-finance" && typeof loadHomestayFinanceLive === "function") loadHomestayFinanceLive();
 
   // If navigating to Tenants with a saved view, activate it
@@ -10387,6 +10388,28 @@ const HH_RO_TOKEN_KEY = VM_RO_TOKEN_KEY;
 // not cover.
 function hhPayoutToken(){ return vmN8n.token(); }
 
+/* Rooms hold the prices; the host row holds identity and payability. Its own
+   state machine, deliberately mirroring HH_PAYOUT's, so a missing or rejected
+   token behaves the same way in both and neither can report a confident answer
+   it does not have. */
+const HH_ROOMS = { state: "idle", byHost: new Map() };
+
+async function loadHostRooms(){
+  if(HH_ROOMS.state === "loading" || HH_ROOMS.state === "loaded") return;
+  const token = vmN8n.token();
+  if(!token){ HH_ROOMS.state = "no-token"; return; }
+  HH_ROOMS.state = "loading";
+  let d;
+  try { d = await vmN8n.read("rooms-list"); }
+  catch(err){ HH_ROOMS.state = (err && err.kind === "rejected") ? "rejected" : "error"; return; }
+  HH_ROOMS.byHost.clear();
+  (Array.isArray(d && d.rooms) ? d.rooms : []).forEach(r => {
+    // Until Stage 3 a host has exactly one room, so first-match is the only match.
+    if(r && r.host_id && !HH_ROOMS.byHost.has(r.host_id)) HH_ROOMS.byHost.set(r.host_id, r);
+  });
+  HH_ROOMS.state = "loaded";
+}
+
 async function loadHostPayoutStatus(){
   // "error" and "rejected" are retried on the next visit; "loaded" and
   // "no-token" are not — saving a token re-triggers this directly.
@@ -10488,6 +10511,55 @@ function hhBetterRow(existing, candidate){
   return existing;   // equally good — keep the first, order is the API's
 }
 
+/* HH-RATES-CORE-START */
+/* Resolves a room row and a meal plan into the two numbers the whole money
+   pipeline already runs on: what the student pays per week, and what the host is
+   paid per week. Pure — a row and a string in, a pair out, no DOM, no fetch, no
+   clock — so test/homestay-rates.test.js can evaluate this fence on its own. Same
+   arrangement as HH-DEDUPE-CORE below and HS-SCHEDULE-CORE further down.
+
+   Two meals a day is the baseline and costs what the room costs. Only three meals
+   moves either number, and it moves BOTH: the host is paid more for providing the
+   extra meal, and Vanmates earns more for arranging it.
+
+   This is the ONLY place a meal plan affects money. Everything downstream — the
+   schedule core and all four of its copies, Subscription Start, Tail Charge, the
+   payout run — reads the resolved pair off the booking row and never sees a room
+   or a meal plan at all. That is what keeps this change small. */
+function hhResolveRoomRates(room, mealPlan){
+  const r = room || {};
+  // Cents, always, and coerced. These arrive from an n8n data table, where a
+  // number that came back as a string would concatenate rather than add:
+  // "40000" + 5000 is "400005000", a rate of four hundred thousand dollars.
+  const cents = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : 0; };
+
+  const base = cents(r.weekly_rate);
+  const paidBase = cents(r.host_weekly_rate);
+
+  // Strict equality on the one value that costs more. Absent, empty, or an
+  // unrecognised plan all mean the baseline: charging a surcharge nobody chose is
+  // worse than missing one they did.
+  const three = mealPlan === "three_meals";
+  const student = base + (three ? cents(r.meal3_student_delta) : 0);
+  const paid = paidBase + (three ? cents(r.meal3_host_delta) : 0);
+
+  return {
+    weekly_rate: student,
+    host_weekly_rate: paid,
+    // Normalised, so the booking row records which tier was actually applied
+    // rather than whatever string arrived.
+    meal_plan: three ? "three_meals" : "two_meals",
+    // Reported per tier, not enforced. The portal renders one of these per meal
+    // tier so a surcharge that shrinks the margin is visible while it is typed.
+    margin: student - paid,
+    // The same guard the write endpoint applies, computed here so the endpoint
+    // and the panel can never disagree about what is valid. Deliberately on the
+    // RESOLVED pair: a delta that inverts the margin is only visible once both
+    // parts are added.
+    ok: student > 0 && paid > 0 && paid <= student
+  };
+}
+/* HH-RATES-CORE-END */
 /* HH-DEDUPE-CORE-START */
 /* Groups the n8n host rows by email and decides which row of each group the
    portal should keep. Pure by construction — rows in, plan out, no DOM, no
@@ -11052,6 +11124,7 @@ async function hhArchive(ids){
     HH_PAYOUT.state = "idle";
     renderPayoutSummary();          // the "review" link would otherwise sit there dead
     await loadHostPayoutStatus();
+    await loadHostRooms();
 
     // The write landed — the endpoint said so — but the list could not be read
     // back. Re-rendering here would redraw the PRE-archive rows, Remove buttons
@@ -11077,14 +11150,20 @@ async function hhArchive(ids){
    bookable is deliberately the last thing you can turn on: the endpoint refuses
    it while either rate is zero, so a family can never be published with nothing
    to charge. */
-const HH_RATES_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/host-rates-update";
+const HH_RATES_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/room-rates-update";
 const HH_BOOK_URL = "https://vanmates.com/book.html?h=";
 
 // The n8n row backing a portal host, or null. This IS hhPayoutFor — named again so
 // the rates code reads for what it is doing rather than for payout badges. Note the
 // join is email first, falling back to display name, so a family holding several
 // Stripe records resolves to whichever hhBetterRow prefers.
-function hhRates(h){ return hhPayoutFor(h); }
+// hhPayoutFor still resolves WHICH ACCOUNT represents this family - that stays a
+// host-level question and hhBetterRow still decides it. The room hangs off the
+// account that wins.
+function hhRates(h){
+  const row = hhPayoutFor(h);
+  return row ? (HH_ROOMS.byHost.get(row.host_id) || null) : null;
+}
 
 function hhMoney(cents){
   if(cents === null || cents === undefined || cents === "") return "";
@@ -11098,8 +11177,19 @@ function hhBookingBox(h){
   if(HH_PAYOUT.state !== "loaded"){
     return `<div class="card card-pad card-sub">Payout status hasn't loaded, so rates can't be shown yet.</div>`;
   }
+  // The same rule again for rooms, and not merely symmetry: prices moved onto the
+  // room, so with the room list unloaded a host who is perfectly well set up looks
+  // like one with nothing on file - and the message below would send staff off to
+  // re-onboard them.
+  if(HH_ROOMS.state !== "loaded"){
+    return `<div class="card card-pad card-sub">Room rates haven't loaded yet, so they can't be shown.</div>`;
+  }
+  // Two different absences, two different answers. No payout row means they never
+  // finished Stripe; a payout row with no room means they are payable but have
+  // nothing priced, which is a room to create, not an onboarding link to send.
+  if(!hhPayoutFor(h)) return `<div class="card card-pad card-sub">This host has no payout record yet, so there is nothing to publish. Send them payout setup first.</div>`;
   const r = hhRates(h);
-  if(!r) return `<div class="card card-pad card-sub">This host has no payout record yet, so there is nothing to publish. Send them payout setup first.</div>`;
+  if(!r) return `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`;
   const canWrite = !!hhFullToken();
   const live = r.bookable === true;
   return `
@@ -11114,6 +11204,18 @@ function hhBookingBox(h){
           <label>Host is paid / week</label>
           <input class="form-input" id="hh-rate-host" type="number" step="0.01" min="0"
                  value="${esc(hhMoney(r.host_weekly_rate))}" ${canWrite ? "" : "disabled"}>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+        <div class="form-field" style="flex:1;min-width:150px;margin:0">
+          <label>3 meals — student pays extra / week</label>
+          <input class="form-input" id="hh-meal3-student" type="number" step="0.01" min="0"
+                 value="${esc(hhMoney(r.meal3_student_delta))}" ${canWrite ? "" : "disabled"}>
+        </div>
+        <div class="form-field" style="flex:1;min-width:150px;margin:0">
+          <label>3 meals — host is paid extra / week</label>
+          <input class="form-input" id="hh-meal3-host" type="number" step="0.01" min="0"
+                 value="${esc(hhMoney(r.meal3_host_delta))}" ${canWrite ? "" : "disabled"}>
         </div>
       </div>
       <div class="card-sub" style="margin-top:8px" id="hh-rate-margin"></div>
@@ -11145,20 +11247,39 @@ function hhRateNote(msg, bad){
   el.textContent = msg;
 }
 
-// Shown live rather than on save: the margin is the reason both numbers are on
+// Shown live rather than on save: the margin is the reason these numbers are on
 // screen together, and a host rate above the student rate is a typo that would
 // otherwise be found by the payout run moving real money.
+//
+// Two lines now, not one. With a surcharge on both sides the three-meal margin is
+// no longer derivable by eye, and a surcharge that quietly shrinks the margin is
+// exactly what this line exists to catch while it is still being typed.
 function hhRenderMargin(){
   const el = document.getElementById("hh-rate-margin");
   if(!el) return;
-  const s = Number(document.getElementById("hh-rate-student")?.value || 0);
-  const p = Number(document.getElementById("hh-rate-host")?.value || 0);
+  const val = (id) => Number(document.getElementById(id)?.value || 0);
+  const s = val("hh-rate-student"), p = val("hh-rate-host");
+  const ds = val("hh-meal3-student"), dp = val("hh-meal3-host");
   if(!s && !p){ el.textContent = ""; return; }
-  const m = s - p;
-  el.style.color = m < 0 ? "var(--red-dark)" : "var(--muted)";
-  el.textContent = m < 0
-    ? `The host would be paid $${(-m).toFixed(2)} a week more than the student pays.`
-    : `Margin $${m.toFixed(2)} a week, before the 4% service fee.`;
+
+  // Colour is set per line now, so the container must not carry last render's.
+  el.style.color = "";
+  const line = (label, student, host) => {
+    const m = student - host;
+    const cls = m < 0 ? "var(--red-dark)" : "var(--muted)";
+    const text = m < 0
+      ? `${label}: the host would be paid $${(-m).toFixed(2)} a week MORE than the student pays.`
+      : `${label}: margin $${m.toFixed(2)} a week, before the 4% service fee.`;
+    return `<div style="color:${cls}">${esc(text)}</div>`;
+  };
+
+  let html = line("2 meals", s, p) + line("3 meals", s + ds, p + dp);
+  // Both tiers can be individually valid while the surcharge still moves money the
+  // wrong way. Say so rather than leaving it to arithmetic.
+  if((ds || dp) && (s + ds) - (p + dp) < s - p){
+    html += `<div style="color:var(--red-dark)">The three-meal surcharge shrinks your margin.</div>`;
+  }
+  el.innerHTML = html;
 }
 
 // One write at a time. Two quick Save clicks otherwise post twice and race two
@@ -11179,21 +11300,22 @@ async function hhSaveRates(h, patch, done){
       resp = await fetch(HH_RATES_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type":"application/json", "x-vm-staff-token": token },
-        body: JSON.stringify(Object.assign({ host_id: r.host_id }, patch))
+        // A room is the thing being priced now, so a room is what is addressed.
+        body: JSON.stringify(Object.assign({ room_id: r.room_id }, patch))
       });
     } catch(e){ hhRateNote("Couldn't reach n8n.", true); return false; }
 
     // 405 is the workflow being unpublished. 404 is the endpoint's own answer for a
     // host it cannot find — a real, different problem, and collapsing the two told
     // staff to go publish a workflow that was already live.
-    if(resp.status === 405){ hhRateNote("The host-rates-update workflow isn't published in n8n yet.", true); return false; }
+    if(resp.status === 405){ hhRateNote("The room-rates-update workflow isn't published in n8n yet.", true); return false; }
     if(resp.status === 401){ hhRateNote("That staff token was rejected.", true); return false; }
     // A business-rule refusal is a 400 carrying a sentence written for a person.
     // Show that sentence rather than replacing it with a status code.
     if(!resp.ok){
       const d = await resp.json().catch(() => null);
-      const msg = (d && d.error === "host_not_found")
-        ? "That host is no longer in the payout table — reload the page."
+      const msg = (d && d.error === "room_not_found")
+        ? "That room is no longer in the rooms table — reload the page."
         : (d && d.error) || ("Couldn't save (HTTP " + resp.status + ").");
       hhRateNote(msg, true);
       return false;
@@ -11202,6 +11324,7 @@ async function hhSaveRates(h, patch, done){
     // Refetch so the panel redraws from the table, not from what we hoped we wrote.
     HH_PAYOUT.state = "idle";
     await loadHostPayoutStatus();
+    await loadHostRooms();
     if(HH_PAYOUT.state !== "loaded"){ hhRateNote("Saved, but the host list could not be reloaded.", true); return false; }
     // openHost rebuilds the panel, which destroys the note — so the confirmation has
     // to outlive it. Without this a successful save looks identical to nothing
@@ -11295,6 +11418,7 @@ function savePayoutToken(){
   HH_PAYOUT.state = "idle";           // allow the guard in the loader to pass
   renderPayoutSummary();
   loadHostPayoutStatus();
+  loadHostRooms();
 }
 
 // Delegated once at parse time: the summary element is stable, its contents are
@@ -11319,6 +11443,7 @@ document.getElementById("hh-payout-summary")?.addEventListener("click", e => {
     HH_PAYOUT.state = "idle";          // release the loader's own guard
     renderPayoutSummary();
     loadHostPayoutStatus();
+    loadHostRooms();
   }
   else if(e.target.closest("[data-hh-token-save]")) savePayoutToken();
 });
@@ -11733,6 +11858,8 @@ function openHost(id){
 
   _hostPanelBody?.querySelector("#hh-rate-student")?.addEventListener("input", hhRenderMargin);
   _hostPanelBody?.querySelector("#hh-rate-host")?.addEventListener("input", hhRenderMargin);
+  _hostPanelBody?.querySelector("#hh-meal3-student")?.addEventListener("input", hhRenderMargin);
+  _hostPanelBody?.querySelector("#hh-meal3-host")?.addEventListener("input", hhRenderMargin);
   hhRenderMargin();
 
   _hostPanelBody?.querySelector("#hh-rate-save")?.addEventListener("click", () => {
@@ -11754,9 +11881,13 @@ function openHost(id){
     const patch = {};
     const student = cents("hh-rate-student");
     const paid = cents("hh-rate-host");
+    const ds = cents("hh-meal3-student");
+    const dp = cents("hh-meal3-host");
     if(student !== undefined) patch.weekly_rate = student;
     if(paid !== undefined) patch.host_weekly_rate = paid;
-    if(!Object.keys(patch).length){ hhRateNote("Nothing to save — both boxes are empty.", true); return; }
+    if(ds !== undefined) patch.meal3_student_delta = ds;
+    if(dp !== undefined) patch.meal3_host_delta = dp;
+    if(!Object.keys(patch).length){ hhRateNote("Nothing to save — every box is empty.", true); return; }
     hhSaveRates(h, patch, "Rates saved");
   });
 
@@ -11774,7 +11905,12 @@ function openHost(id){
       const n = Number(raw);
       return Number.isFinite(n) && Math.round(n * 100) !== Math.round(Number(stored) || 0);
     };
-    if(edited("hh-rate-student", r && r.weekly_rate) || edited("hh-rate-host", r && r.host_weekly_rate)){
+    // The deltas are checked on the same terms as the rates: publishing sends no
+    // figures at all, so an edited surcharge would be discarded by the redraw just
+    // as silently as an edited rate, and the link would go live at a price the
+    // operator can see on screen but did not save.
+    if(edited("hh-rate-student", r && r.weekly_rate) || edited("hh-rate-host", r && r.host_weekly_rate)
+       || edited("hh-meal3-student", r && r.meal3_student_delta) || edited("hh-meal3-host", r && r.meal3_host_delta)){
       hhRateNote("Save the rates first — the link publishes the saved price, not what's typed here.", true);
       return;
     }
