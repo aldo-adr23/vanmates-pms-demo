@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01g"></script>
+<script src="pms-supabase.js?v=2026-09-01h"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -18792,6 +18792,24 @@ renderLeads();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
+  // Whole days forward from a YYYY-MM-DD date, in UTC to match hsParseDate.
+  // Local-time arithmetic loses or gains a day across a DST boundary, and a stay
+  // that is a day short is a stay the host is paid a day less for.
+  function hbPlusDays(ymd, n) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || ''))) return '';
+    const d = new Date(ymd + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return '';
+    return new Date(d.getTime() + n * 86400000).toISOString().slice(0, 10);
+  }
+
+  // Nights between two YYYY-MM-DD dates. 0 when either is missing or the second
+  // is not after the first, which the callers treat as "not ready to quote".
+  function hbNights(from, to) {
+    if (!hbPlusDays(from, 0) || !hbPlusDays(to, 0)) return 0;
+    const n = Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 86400000);
+    return n > 0 ? n : 0;
+  }
+
   // Billing already finished, so there is nothing left to end. A refunded booking
   // is deliberately still endable: a refund does not stop the subscription.
   function hbMoveOutCell(b) {
@@ -18901,9 +18919,15 @@ renderLeads();
           ' · ' + esc(b.booking_ref) + '</div>' +
         '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">' +
           chooser +
-          field('Starts', '<input type="date" class="form-input hb-ext-movein" value="' +
+          field('Check-in', '<input type="date" class="form-input hb-ext-movein" value="' +
             esc(b.lease_end_date || '') + '" style="width:160px">') +
-          field('Weeks', '<input type="number" class="form-input hb-ext-weeks" value="4" min="1" step="1" style="width:80px">') +
+          // Two dates rather than a date and a week count, matching the create
+          // form above and book.html. The night count is DERIVED from them, which
+          // is the schedule core's own definition - lease_end is move_in plus
+          // lease_days - so check-out IS the end of the stay and there is no
+          // off-by-one to argue about.
+          field('Check-out', '<input type="date" class="form-input hb-ext-moveout" value="' +
+            esc(hbPlusDays(b.lease_end_date || '', 28)) + '" style="width:160px">') +
           field('Student pays / week', '<input type="number" class="form-input hb-ext-weekly" value="' +
             esc(hhMoney(r.weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
           field('Host is paid / week', '<input type="number" class="form-input hb-ext-host" value="' +
@@ -18929,19 +18953,22 @@ renderLeads();
   function hbExtendPreview(cell, b) {
     const note = cell.querySelector('.hb-ext-note');
     if (!note) return;
-    const weeks = Number(cell.querySelector('.hb-ext-weeks')?.value || 0);
     const weekly = Math.round(Number(cell.querySelector('.hb-ext-weekly')?.value || 0) * 100);
     const host = Math.round(Number(cell.querySelector('.hb-ext-host')?.value || 0) * 100);
     const movein = cell.querySelector('.hb-ext-movein')?.value || '';
-    if (!weeks || !weekly || !movein) { note.textContent = ''; return; }
+    const moveout = cell.querySelector('.hb-ext-moveout')?.value || '';
+    const nights = hbNights(movein, moveout);
+    if (!nights) { note.textContent = moveout && movein ? 'Check-out must be after check-in.' : ''; return; }
+    if (!weekly) { note.textContent = 'Enter what the student pays per week.'; return; }
     let s;
     try {
       s = computeHomestaySchedule({ weeklyRateCents: weekly, hostWeeklyCents: host,
-                                    moveInDate: movein, leaseDays: weeks * 7 });
+                                    moveInDate: movein, leaseDays: nights });
     } catch (e) { note.textContent = hbFieldError(e); return; }
     const due = s.studentCharges[0];
     const later = s.studentCharges.length - 1;
-    note.textContent = 'Student pays ' + cad(due.totalCents) + ' to confirm' +
+    note.textContent = nights + (nights === 1 ? ' night' : ' nights') + ' · ' +
+      'student pays ' + cad(due.totalCents) + ' to confirm' +
       (later ? ', then ' + later + ' more charge' + (later === 1 ? '' : 's') : '') +
       ' · host is paid ' + cad(s.totals.hostTotalCents) + ' over the stay' +
       ' · ends ' + s.leaseEndDate +
@@ -18951,21 +18978,23 @@ renderLeads();
   async function hbExtend(cell, b) {
     const room_id = cell.querySelector('.hb-ext-room')?.value || '';
     const movein = cell.querySelector('.hb-ext-movein')?.value || '';
-    const weeks = Number(cell.querySelector('.hb-ext-weeks')?.value || 0);
+    const moveout = cell.querySelector('.hb-ext-moveout')?.value || '';
+    const nights = hbNights(movein, moveout);
     const weekly = Math.round(Number(cell.querySelector('.hb-ext-weekly')?.value || 0) * 100);
     const host = Math.round(Number(cell.querySelector('.hb-ext-host')?.value || 0) * 100);
     const note = cell.querySelector('.hb-ext-note');
     const say = (m) => { if (note) note.textContent = m; };
 
     if (!room_id) return say('Choose which room first.');
-    if (!movein || !weeks || !weekly) return say('Fill in the dates and rates first.');
+    if (!nights) return say('Check-out must be after check-in.');
+    if (!weekly) return say('Enter what the student pays per week.');
 
     // The same refusal the create form makes. A negative margin is a typo every
     // time, and the payout run would otherwise find it by moving real money.
     let s;
     try {
       s = computeHomestaySchedule({ weeklyRateCents: weekly, hostWeeklyCents: host,
-                                    moveInDate: movein, leaseDays: weeks * 7 });
+                                    moveInDate: movein, leaseDays: nights });
     } catch (e) { return say(hbFieldError(e)); }
     if (s.totals.marginCents < 0) return say('The host would be paid more than the student pays. Fix the rates first.');
 
@@ -18983,7 +19012,7 @@ renderLeads();
       d = await hbPost('booking-create', {
         host_id: b.host_id, room_id: room_id, student_email: b.student_email,
         weekly_rate_cents: weekly, host_weekly_cents: host,
-        move_in_date: movein, lease_days: weeks * 7,
+        move_in_date: movein, lease_days: nights,
         meal_plan: b.meal_plan || 'two_meals'
       });
     } catch (e) { return say('Could not create it. Nothing was sent to the student.'); }
@@ -19259,7 +19288,7 @@ renderLeads();
       if (e.target.closest('.hb-ext-cancel')) { hbCloseExtend(); return; }
     });
     if (tbody) tbody.addEventListener('input', function (e) {
-      const extField = e.target.closest && e.target.closest('.hb-ext-weeks, .hb-ext-weekly, .hb-ext-host, .hb-ext-movein, .hb-ext-room');
+      const extField = e.target.closest && e.target.closest('.hb-ext-moveout, .hb-ext-weekly, .hb-ext-host, .hb-ext-movein, .hb-ext-room');
       if (!extField) return;
       const row = extField.closest('.hb-ext-row');
       const b = row && hbLastRows.find(x => x.booking_ref === row.getAttribute('data-ref'));
