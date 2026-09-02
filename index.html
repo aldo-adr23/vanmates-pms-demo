@@ -1122,7 +1122,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01h"></script>
+<script src="pms-supabase.js?v=2026-09-01i"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -18908,10 +18908,15 @@ renderLeads();
         '<div class="form-field" style="margin:0"><label style="font-size:11px">Room</label>' +
         '<div style="padding:7px 0;font-weight:600">' + esc(pick.room.label || 'Room') + '</div></div>';
 
-    // Rates come from the ROOM as it is priced today, not from the booking being
-    // extended. Prices move, and a stay booked months later at October's rate
-    // quietly costs the difference — on both sides, since the host's share is
-    // equally stale. Shown, so honouring the old price is a deliberate overtype.
+    // Rates come from the BOOKING being extended, not the room's price today.
+    // An extension is the same student continuing the same arrangement, so the
+    // price they already agreed is the one that should need no thought; changing
+    // it should. The first version defaulted to the room's current price, which
+    // read as an unexplained new number - and on a host whose room is unpriced it
+    // read as 0.00, which is worse than stale.
+    //
+    // The room's price is still shown when it differs, so a deliberate re-price
+    // is one glance away rather than something to look up.
     const r = pick.room || {};
     row.innerHTML =
       '<td colspan="12" style="padding:16px;background:var(--wash, #FAF5ED)">' +
@@ -18929,14 +18934,25 @@ renderLeads();
           field('Check-out', '<input type="date" class="form-input hb-ext-moveout" value="' +
             esc(hbPlusDays(b.lease_end_date || '', 28)) + '" style="width:160px">') +
           field('Student pays / week', '<input type="number" class="form-input hb-ext-weekly" value="' +
-            esc(hhMoney(r.weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
+            esc(hhMoney(b.weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
           field('Host is paid / week', '<input type="number" class="form-input hb-ext-host" value="' +
-            esc(hhMoney(r.host_weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
+            esc(hhMoney(b.host_weekly_rate)) + '" step="0.01" min="0" style="width:130px">') +
           '<button type="button" class="btn btn-primary hb-ext-go">Create booking</button>' +
           '<button type="button" class="btn btn-ghost hb-ext-cancel">Cancel</button>' +
         '</div>' +
-        '<div class="card-sub hb-ext-note" style="margin-top:10px"></div>' +
+        '<div class="card-sub hb-ext-hint" style="margin-top:10px"></div>' +
+        '<div class="card-sub hb-ext-note" style="margin-top:4px"></div>' +
       '</td>';
+
+    // Priced differently since they booked? Say it once, here, rather than
+    // leaving someone to wonder whether the prefilled figure is current.
+    const roomNow = Math.round(Number(r.weekly_rate) || 0);
+    const booked = Math.round(Number(b.weekly_rate) || 0);
+    if (roomNow > 0 && roomNow !== booked) {
+      const hint = row.querySelector('.hb-ext-hint');
+      if (hint) hint.textContent = 'This room is priced ' + cad(roomNow) +
+        '/week today; the booking is ' + cad(booked) + '/week.';
+    }
 
     tr.parentNode.insertBefore(row, tr.nextSibling);
     hbExtendPreview(row, b);
