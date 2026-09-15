@@ -1091,6 +1091,7 @@
   /* Modal backdrop slightly more opaque on dark */
   :root[data-theme="dark"] .modal-backdrop{ background:rgba(0,0,0,.65); }
   :root[data-theme="dark"] .panel-backdrop{ background:rgba(0,0,0,.6); }
+.vac-thumb-empty{width:48px;height:36px;border-radius:6px;background:var(--wash);border:1px dashed var(--line);display:block}
 </style>
 <!-- ============ Auth gate — runs before body renders ============
      Redirects unauthenticated visitors to signin.html. -->
@@ -1114,6 +1115,7 @@
     // Supabase auth token only. (Server-side RLS remains the true data gate.)
   } catch(e) { hasSession = false; }
   if (!hasSession) {
+    try { if (location.hash) sessionStorage.setItem('vm_next_hash', location.hash); } catch (e) {}
     var next = encodeURIComponent(location.pathname + location.search);
     location.replace('signin.html' + (next && next !== '%2F' ? '?next=' + next : ''));
   }
@@ -1122,7 +1124,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-01i"></script>
+<script src="pms-supabase.js?v=2026-09-15a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1729,6 +1731,9 @@
         <select id="leads-filter-source" class="form-input" style="max-width:210px">
           <option value="">All sources</option>
           <option value="manual">Manual entry</option>
+          <option value="web-lead">Get matched</option>
+          <option value="booking">Reserve a room</option>
+          <option value="relocation">Relocation</option>
           <option value="contact">Contact form</option>
           <option value="room-search">Room search</option>
           <option value="homestay">Homestay</option>
@@ -1739,6 +1744,7 @@
         </select>
         <select id="leads-filter-status" class="form-input" style="max-width:170px">
           <option value="">All statuses</option>
+          <option value="unassigned">Unassigned</option>
           <option value="new">New</option>
           <option value="contacted">Contacted</option>
           <option value="qualified">Qualified</option>
@@ -2101,6 +2107,7 @@
         <table>
           <thead>
             <tr>
+              <th style="width:56px"></th>
               <th>Room</th>
               <th>Property</th>
               <th>City</th>
@@ -3155,6 +3162,7 @@ hello@vanmates.com · vanmates.com</textarea>
       </button>
     </div>
     <div class="modal-body">
+      <div id="lead-claim-block" style="margin-bottom:14px"></div>
       <div class="form-row">
         <div class="form-field"><label>Status</label><select class="form-input" id="lead-status"></select></div>
         <div class="form-field"><label>Assignee</label><select class="form-input" id="lead-assignee"></select></div>
@@ -8645,6 +8653,14 @@ function renderVacancies(){
     const dateColor = days <= 14 ? "color:var(--red-dark)" : days <= 60 ? "color:#8a611f" : "color:var(--muted)";
     return `
       <tr data-open-vac="${v.id}" style="cursor:pointer">
+        <td>${(() => {
+          const ph = vacPhotoSet(v);
+          return ph.cover
+            ? `<img src="${ph.cover}" alt="" loading="lazy" referrerpolicy="no-referrer" crossorigin="anonymous"
+                    style="width:48px;height:36px;object-fit:cover;border-radius:6px;display:block;background:var(--wash)"
+                    onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'vac-thumb-empty'}))">`
+            : `<div class="vac-thumb-empty"></div>`;
+        })()}</td>
         <td><div class="name-main">${esc(v.room)}</div></td>
         <td>${esc(v.prop)}</td>
         <td>${esc(v.city)}</td>
@@ -16314,6 +16330,43 @@ function computeHomestaySchedule(input){
   };
 }
 /* HS-SCHEDULE-CORE-END */
+/* VAC-PHOTO-CORE-START */
+/* Drive file ids -> displayable urls.
+   Room photos live in Drive and are shared `anyone`, so the thumbnail
+   endpoint renders with no auth and no proxy. Ids are interpolated into an
+   img src, so anything that is not a plain Drive id is refused outright
+   rather than escaped. */
+const VAC_ID_RE = /^[A-Za-z0-9_-]{10,}$/;
+
+function vacPhotoUrl(fileId, size) {
+  if (typeof fileId !== "string" || !VAC_ID_RE.test(fileId)) return null;
+  const px = Number.isFinite(size) && size > 0 ? Math.round(size) : 400;
+  // lh3, NOT drive.google.com/thumbnail: that endpoint is a redirect that no
+  // browser will load as an <img> (verified 2026-09-09 — it fails with and
+  // without credentials, while lh3 serves the bytes with
+  // access-control-allow-origin: *). Pair every <img> with
+  // crossorigin="anonymous" so the fetch carries no Google cookies; the
+  // credentialed request is refused.
+  return `https://lh3.googleusercontent.com/d/${fileId}=w${px}`;
+}
+
+function vacPhotoSet(v) {
+  const row = v || {};
+  const photos = (Array.isArray(row.photoIds) ? row.photoIds : [])
+    .map((id) => vacPhotoUrl(id, 400))
+    .filter(Boolean);
+  const video = typeof row.videoId === "string" && VAC_ID_RE.test(row.videoId)
+    ? `https://drive.google.com/file/d/${row.videoId}/view`
+    : null;
+  return {
+    cover: vacPhotoUrl(row.coverPhotoId, 400),
+    photos,
+    video,
+    count: Number.isFinite(row.photoCount) ? row.photoCount : photos.length,
+  };
+}
+/* VAC-PHOTO-CORE-END */
+
 /* TENANT-CORE-START */
 /* Pure record-selection for the tenant list. Fenced so test/tenants.test.js can
    extract and assert against it with no DOM, the same way the Homestay Finance
@@ -17991,6 +18044,11 @@ function openVacancy(id){
   document.getElementById("panel-sub").textContent = `${v.prop} · ${v.city}`;
 
   document.getElementById("panel-meta").innerHTML = `
+    ${(() => {
+      const c = vacPhotoSet(v).cover;
+      return c ? `<img src="${c}" alt="" loading="lazy" referrerpolicy="no-referrer" crossorigin="anonymous"
+        style="width:100%;max-height:180px;object-fit:cover;border-radius:10px;margin-bottom:12px;background:var(--wash)">` : "";
+    })()}
     <span class="badge ${v.listed?'badge-green':'badge-amber'}"><span class="dot"></span>${v.listed?'Live listing':'Draft'}</span>
     <span class="badge badge-grey"><span class="dot"></span>${esc(v.type)}</span>
     ${days >= 0
@@ -18055,17 +18113,30 @@ function openVacancy(id){
     <div class="panel-section">
       <div class="panel-section-title"><span><em>Listing</em> assets</span><span class="ct">photos · web</span></div>
       <div class="card" style="padding:0">
-        ${v.pictures ? `
-        <a href="${safeHref(v.pictures)}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer">
-          <div class="list-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
-          </div>
-          <div class="list-main">
-            <div class="list-title">Photos folder</div>
-            <div class="list-sub" style="font-family:var(--slab);font-size:11.5px;word-break:break-all;max-width:340px">${esc(v.pictures)}</div>
-          </div>
-          <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Open →</div>
-        </a>` : ""}
+        ${(() => {
+          const ph = vacPhotoSet(v);
+          if (!ph.cover && !v.pictures) return "";
+          const grid = ph.photos.length ? `
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;padding:12px 16px 0">
+              ${ph.photos.map((u) => `
+                <img src="${u}" alt="" loading="lazy" referrerpolicy="no-referrer" crossorigin="anonymous"
+                     style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;background:var(--wash)">`).join("")}
+            </div>` : "";
+          const tour = ph.video ? `
+            <a href="${safeHref(ph.video)}" target="_blank" class="list-row"
+               style="padding:12px 16px;text-decoration:none;color:inherit;cursor:pointer;border-top:none">
+              <div class="list-main"><div class="list-title">Video tour</div></div>
+              <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Watch →</div>
+            </a>` : "";
+          return `${grid}
+            <a href="${safeHref(v.pictures)}" target="_blank" class="list-row"
+               style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer">
+              <div class="list-main">
+                <div class="list-title">${ph.count ? `${ph.count} photo${ph.count === 1 ? "" : "s"} in Drive` : "Photos folder"}</div>
+              </div>
+              <div class="list-meta" style="color:var(--red);font-weight:600;font-size:12px">Open →</div>
+            </a>${tour}`;
+        })()}
         ${v.website ? `
         <a href="${safeHref(v.website)}" target="_blank" class="list-row" style="padding:14px 16px;text-decoration:none;color:inherit;cursor:pointer;${v.pictures?'border-top:none':''}">
           <div class="list-icon">
@@ -18269,7 +18340,10 @@ applyRolePermissions();
 /* ============ LEADS ============ */
 const LEAD_SOURCES = {
   'manual': 'Manual entry',
+  'web-lead': 'Get matched',
   'contact': 'Contact form',
+  'booking': 'Reserve a room',
+  'relocation': 'Relocation',
   'room-search': 'Room search',
   'homestay': 'Homestay',
   'host-application': 'Host application',
@@ -18280,6 +18354,26 @@ const LEAD_SOURCES = {
 const LEAD_STATUSES = ['new','contacted','qualified','won','lost'];
 const LEAD_FILTERS = { search:'', source:'', status:'' };
 let _editingLeadId = null;
+/* LEAD-CLAIM-CORE-START */
+// Pure: a lead + the viewer + the team → what the claim block should show.
+// 'unclaimed' → show the Claim button; 'mine' / 'other' → show the banner.
+function leadClaimState(lead, viewer, team){
+  const by = String((lead && lead.claimed_by) || '');
+  const at = (lead && lead.claimed_at) || '';
+  if(!by || !at) return { state:'unclaimed', by:'', byName:'', at:'' };
+  const member = (team || []).find(m => String(m.email || '').toLowerCase() === by.toLowerCase());
+  const byName = member ? (member.name || member.email) : by;
+  const mine = !!(viewer && viewer.email && viewer.email.toLowerCase() === by.toLowerCase());
+  return { state: mine ? 'mine' : 'other', by, byName, at };
+}
+// The status filter has one pseudo-value, 'unassigned', which is not a status
+// but "nobody has claimed this yet".
+function leadStatusFilterMatches(lead, filter){
+  if(!filter) return true;
+  if(filter === 'unassigned') return !(lead && lead.claimed_at);
+  return ((lead && lead.status) || 'new') === filter;
+}
+/* LEAD-CLAIM-CORE-END */
 
 function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s || 'Lead'); }
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
@@ -18295,14 +18389,69 @@ function leadContactCell(l){
   if(l.phone) parts.push(`<span class="name-sub">${esc(l.phone)}</span>`);
   return parts.join(' · ') || '—';
 }
+function leadAssigneeCell(l){
+  const c = leadClaimState(l, activeRole(), typeof teamMembers !== 'undefined' ? teamMembers : []);
+  if(c.state === 'unclaimed') return `<span class="badge" style="background:#B94A3F1a;color:#B94A3F;border-color:#B94A3F33">Unassigned</span>`;
+  return `<div class="name-main">${esc(c.byName)}</div><div class="name-sub">${fmtDate(c.at)}</div>`;
+}
+function renderLeadClaimBlock(l){
+  const box = document.getElementById('lead-claim-block');
+  if(!box || !l) return;
+  const c = leadClaimState(l, activeRole(), typeof teamMembers !== 'undefined' ? teamMembers : []);
+  if(c.state === 'unclaimed'){
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #B94A3F33;background:#B94A3F0d;border-radius:10px">
+        <div><div class="name-main">New · Unassigned</div><div class="name-sub">First agent to claim this lead owns it.</div></div>
+        <button class="btn btn-primary" id="lead-claim-btn" type="button">Claim this lead</button>
+      </div>`;
+    document.getElementById('lead-claim-btn').addEventListener('click', () => claimLead(l.id));
+    return;
+  }
+  const who = c.state === 'mine' ? 'You claimed this lead' : `Claimed by ${esc(c.byName)}`;
+  box.innerHTML = `
+    <div style="padding:12px 14px;border:1px solid var(--line, #E4DBC9);background:var(--cream-2);border-radius:10px">
+      <div class="name-main">${who}</div>
+      <div class="name-sub">${fmtDate(c.at)} · ${esc(c.by)}</div>
+    </div>`;
+}
+
+async function claimLead(id){
+  const btn = document.getElementById('lead-claim-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Claiming…'; }
+  const res = await vmDb.claimLead(id);
+  const idx = leads.findIndex(x => String(x.id) === String(id));
+  if(res.ok && res.row){
+    if(idx >= 0) leads[idx] = res.row;
+    if(typeof showToast === 'function') showToast('Lead is yours');
+  } else if(!res.error){
+    // Zero rows: somebody else won, or the lead was deleted meanwhile. Read
+    // the row back so the banner names them. Recompute the index after the
+    // await — realtime may have spliced the array while we waited.
+    const fresh = await vmDb.fetchLead(id);
+    const j = leads.findIndex(x => String(x.id) === String(id));
+    if(fresh && j >= 0) leads[j] = fresh;
+    const c = leadClaimState(fresh || (j >= 0 ? leads[j] : null), activeRole(), teamMembers);
+    if(typeof showToast === 'function'){
+      showToast(fresh ? (c.byName ? 'Already claimed by ' + c.byName : 'Already claimed') : 'This lead is no longer available');
+    }
+  }
+  const l = leads.find(x => String(x.id) === String(id));
+  if(l && String(_editingLeadId) === String(id)){
+    renderLeadClaimBlock(l);
+    const asSel = document.getElementById('lead-assignee');
+    if(asSel && l.assignee){ asSel.value = l.assignee; asSel.dataset.synced = l.assignee; }   // claim sets assignee; keep notes untouched
+  }
+  renderLeads();
+  if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
+}
 
 function applyLeadFilters(){
   const q = LEAD_FILTERS.search.trim().toLowerCase();
   return leads.filter(l => {
     if(LEAD_FILTERS.source && l.source !== LEAD_FILTERS.source) return false;
-    if(LEAD_FILTERS.status && (l.status || 'new') !== LEAD_FILTERS.status) return false;
+    if(!leadStatusFilterMatches(l, LEAD_FILTERS.status)) return false;
     if(q){
-      const hay = [l.name, l.email, l.phone, l.city, l.source, l.payload && l.payload.message]
+      const hay = [l.name, l.email, l.phone, l.city, l.source, l.message, l.preference, l.claimed_by]
         .map(x => String(x == null ? '' : x).toLowerCase()).join(' ');
       if(!hay.includes(q)) return false;
     }
@@ -18325,47 +18474,93 @@ function renderLeads(){
       <td>${leadContactCell(l)}</td>
       <td>${esc(l.city || '—')}</td>
       <td>${leadStatusBadge(l.status || 'new')}</td>
-      <td>${esc(l.assignee || '—')}</td>
+      <td>${leadAssigneeCell(l)}</td>
       <td>${fmtDate(l.created_at)}</td>
     </tr>`).join('');
   body.querySelectorAll('tr[data-lead]').forEach(row => {
     row.addEventListener('click', e => { if(e.target.closest('a')) return; openLead(row.dataset.lead); });
   });
+  // A claim by the other agent arrives via realtime; keep an open modal honest
+  // (claim block and the assignee it set), without touching unsaved notes.
+  const bk = document.getElementById('lead-modal-backdrop');
+  if(_editingLeadId && bk && bk.classList.contains('open')){
+    const cur = leads.find(x => String(x.id) === String(_editingLeadId));
+    if(cur){
+      renderLeadClaimBlock(cur);
+      const asSel = document.getElementById('lead-assignee');
+      if(asSel && cur.assignee && asSel.dataset.synced !== cur.assignee){
+        asSel.value = cur.assignee; asSel.dataset.synced = cur.assignee;
+      }
+    }
+  }
+}
+
+function fillLeadFields(l){
+  document.getElementById('lead-modal-title').textContent = l.name || 'Lead';
+  document.getElementById('lead-modal-sub').textContent = `${leadSourceLabelText(l.source)} · ${fmtDate(l.created_at)}`;
+  document.getElementById('lead-status').innerHTML =
+    LEAD_STATUSES.map(s => `<option value="${s}" ${(l.status||'new')===s?'selected':''}>${leadCap(s)}</option>`).join('');
+  const cur = l.assignee || '';
+  const asSel = document.getElementById('lead-assignee');
+  asSel.innerHTML =
+    `<option value="">Unassigned</option>` +
+    (typeof teamMembers !== 'undefined' ? teamMembers : []).map(m => {
+      const v = m.email || m.name || '';
+      return `<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(m.name || m.email || v)}</option>`;
+    }).join('');
+  // Reassignment is a hand-off, which only an admin may do. The claim button
+  // is how an agent takes a lead.
+  asSel.disabled = !(activeRole() && activeRole().role === 'admin');
+  asSel.dataset.synced = cur;   // last server value shown; realtime only re-syncs when it changes
+  document.getElementById('lead-notes').value = l.notes || '';
+  document.getElementById('lead-contact').innerHTML = leadContactCell(l);
+  document.getElementById('lead-payload').textContent = JSON.stringify(l.raw || l.payload || l.data || {}, null, 2);
+  renderLeadClaimBlock(l);
 }
 
 function openLead(id){
   const l = leads.find(x => String(x.id) === String(id));
   if(!l) return;
   _editingLeadId = l.id;
-  document.getElementById('lead-modal-title').textContent = l.name || 'Lead';
-  document.getElementById('lead-modal-sub').textContent = `${leadSourceLabelText(l.source)} · ${fmtDate(l.created_at)}`;
-  document.getElementById('lead-status').innerHTML =
-    LEAD_STATUSES.map(s => `<option value="${s}" ${(l.status||'new')===s?'selected':''}>${leadCap(s)}</option>`).join('');
-  const cur = l.assignee || '';
-  document.getElementById('lead-assignee').innerHTML =
-    `<option value="">Unassigned</option>` +
-    (typeof teamMembers !== 'undefined' ? teamMembers : []).map(m => {
-      const v = m.email || m.name || '';
-      return `<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(m.name || m.email || v)}</option>`;
-    }).join('');
-  document.getElementById('lead-notes').value = l.notes || '';
-  document.getElementById('lead-contact').innerHTML = leadContactCell(l);
-  document.getElementById('lead-payload').textContent = JSON.stringify(l.payload || l.data || {}, null, 2);
+  fillLeadFields(l);
   document.getElementById('lead-modal-backdrop').classList.add('open');
 }
 
 function closeLeadModal(){
   document.getElementById('lead-modal-backdrop').classList.remove('open');
   _editingLeadId = null;
+  if(/^#lead=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
 }
 
-function saveLead(){
+async function saveLead(){
   const l = leads.find(x => String(x.id) === String(_editingLeadId));
   if(!l) return;
-  l.status   = document.getElementById('lead-status').value;
-  l.assignee = document.getElementById('lead-assignee').value;
-  l.notes    = document.getElementById('lead-notes').value;
-  if(window.vmDb && typeof vmDb.upsert === 'function') vmDb.upsert('leads', l);
+  // Apply the edit to the in-memory lead only once the server accepted it,
+  // so a refused save never shows unsaved values as if they persisted.
+  const patch = {
+    status:   document.getElementById('lead-status').value,
+    assignee: document.getElementById('lead-assignee').value,
+    notes:    document.getElementById('lead-notes').value
+  };
+  // Existing rows go through UPDATE (claimant RLS policy); the server trigger
+  // keeps ownership columns intact for non-admins. Manual "Add lead" still
+  // inserts via upsert in submitAddLead.
+  if(window.vmDb && typeof vmDb.updateLead === 'function'){
+    if(!vmDb.sb){
+      if(typeof showToast === 'function') showToast('Not saved — no database connection');
+      closeLeadModal();
+      return;
+    }
+    const ok = await vmDb.updateLead(Object.assign({}, l, patch));   // toasts the reason on failure
+    if(!ok){
+      const fresh = await vmDb.fetchLead(l.id);
+      const j = leads.findIndex(x => String(x.id) === String(l.id));
+      if(fresh && j >= 0) leads[j] = fresh;
+      renderLeads();
+      return;
+    }
+  }
+  Object.assign(l, patch);
   closeLeadModal();
   renderLeads();
   if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
@@ -18387,6 +18582,28 @@ document.addEventListener('keydown', e => {
   const bk = document.getElementById('lead-modal-backdrop');
   if(e.key === 'Escape' && bk && bk.classList.contains('open')) closeLeadModal();
 });
+
+/* Deep link from the notification email: portal.vanmates.com/#lead=<id>.
+   The auth gate stashes the hash before bouncing to signin.html (that page is
+   not in this repo and does not forward the hash); restore it here. */
+function openLeadFromHash(){
+  let hash = location.hash || '';
+  if(!hash){ try { hash = sessionStorage.getItem('vm_next_hash') || ''; } catch(e){} }
+  try { sessionStorage.removeItem('vm_next_hash'); } catch(e){}
+  const m = hash.match(/^#lead=([A-Za-z0-9._:-]+)$/);
+  if(!m) return false;
+  if(!leads.find(x => String(x.id) === m[1])){
+    if(leads.length && typeof showToast === 'function') showToast('Lead not found — it may have been deleted');
+    if(leads.length) history.replaceState(null, '', location.pathname + location.search);
+    return false;
+  }
+  if(typeof goToView === 'function') goToView('leads');
+  openLead(m[1]);
+  if(location.hash !== hash) history.replaceState(null, '', hash);
+  return true;
+}
+window.openLeadFromHash = openLeadFromHash;
+window.addEventListener('hashchange', openLeadFromHash);
 
 /* Manual add-lead */
 function openAddLead(){
@@ -18480,6 +18697,8 @@ renderLeads();
       try { if (typeof window[fn] === 'function') window[fn](); }
       catch (e) { console.warn(`[vmDb] re-render ${fn} failed:`, e.message); }
     }
+    try { if (typeof window.openLeadFromHash === 'function') window.openLeadFromHash(); }
+    catch (e) { console.warn('[vmDb] openLeadFromHash failed:', e.message); }
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
