@@ -6,6 +6,9 @@
  *                                            arrays in place, return summary
  *   vmDb.upsert(arrayName, record)        → persist a record (background)
  *   vmDb.delete(arrayName, idOrKey)       → delete by primary key (background)
+ *   vmDb.claimLead(id)                    → atomic claim of an unclaimed lead
+ *   vmDb.fetchLead(id)                    → re-read one lead's data jsonb
+ *   vmDb.updateLead(record)               → UPDATE an existing lead (claimant RLS)
  *   vmDb.toast(msg, kind)                 → tiny inline toast for sync events
  *
  * The PMS calls hydrate() once at boot and then re-runs all render fns. After
@@ -13,8 +16,9 @@
  * vmDb.upsert/delete call so changes propagate to Postgres in the background.
  *
  * RLS: any signed-in teammate can SELECT; only admins (role='admin' in
- * team_members) can INSERT/UPDATE/DELETE. The supabase JS client picks up the
- * auth token automatically via the same localStorage key set by signin.html.
+ * team_members) can INSERT/UPDATE/DELETE — except leads, where the agent who
+ * claimed a lead may UPDATE it. The supabase JS client picks up the auth
+ * token automatically via the same localStorage key set by signin.html.
  * ========================================================================== */
 (function(){
   'use strict';
@@ -28,7 +32,10 @@
       // Same fallback chain as recordId() below, so call sites can always ask
       // vmDb for a record's persistence key instead of hand-rolling one.
       keyFor:  (arrayName, record) => record ? String(record.id || record.email || record.name || '') : null,
-      toast:   () => {}
+      toast:   () => {},
+      claimLead: async () => ({ ok:false, row:null, error:'no-supabase' }),
+      fetchLead: async () => null,
+      updateLead: () => false
     };
     return;
   }
@@ -82,7 +89,7 @@
     vacancies:         [['room','room'],['prop','prop'],['city','city'],['rent','rent'],['availDate','avail_date'],['listed','listed']],
     damageDeposits:    [['status','status']],
     homestayApplicants:[['name','name'],['city','city']],
-    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['status','status'],['assignee','assignee'],['created_at','created_at']]
+    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']]
   };
 
   /* ------------------- helpers ------------------- */
@@ -361,6 +368,58 @@
     return true;
   }
 
+  /* ------------------- leads: claim / read-back / save ------------------- */
+  // claim_lead is ONE UPDATE … WHERE claimed_at IS NULL on the server, so two
+  // agents clicking in the same second cannot both win. Zero rows back means
+  // somebody else got there first — not an error.
+  async function claimLead(id) {
+    const { data, error } = await sb.rpc('claim_lead', { lead_id: String(id) });
+    if (error) {
+      console.error('[vmDb] claim_lead failed:', error.message);
+      toast('Claim failed — ' + error.message, 'error');
+      return { ok: false, row: null, error: error.message };
+    }
+    const row = Array.isArray(data) && data[0] ? data[0] : null;
+    return { ok: !!row, row: row ? adoptRowId(row) : null, error: null };
+  }
+
+  // The record the portal renders is the data jsonb; make sure it carries the
+  // row's primary key so a later updateLead() targets the right row.
+  function adoptRowId(row) {
+    const rec = row.data || row;
+    if (rec && !rec.id && row.id != null) rec.id = row.id;
+    return rec;
+  }
+
+  // The record as the portal wants it (the data jsonb), or null.
+  async function fetchLead(id) {
+    const { data, error } = await sb.from('leads').select('data,id').eq('id', String(id)).is('deleted_at', null).maybeSingle();
+    if (error) { console.error('[vmDb] fetchLead ' + id + ' failed:', error.message); return null; }
+    if (!data) return null;
+    return adoptRowId(data);
+  }
+
+  // A plain UPDATE, not an upsert: the claimant's RLS policy is an UPDATE
+  // policy, and the row always exists by the time anyone can edit it. The
+  // server-side trigger keeps ownership columns as they were for non-admins.
+  async function updateLead(record) {
+    const row = buildRow('leads', record);
+    // .select() so an UPDATE that RLS filtered to zero rows is visible: a 2xx
+    // with no rows is how PostgREST says "not yours" — never report it as saved.
+    const { data, error } = await sb.from('leads').update(row).eq('id', row.id).select('id');
+    if (error) {
+      console.error('[vmDb] update leads/' + row.id + ' failed:', error.message);
+      toast('Save failed — ' + error.message, 'error');
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.warn('[vmDb] update leads/' + row.id + ' matched no row (not the owner, or row gone)');
+      toast('Save refused — this lead is not yours', 'error');
+      return false;
+    }
+    return true;
+  }
+
   // Admin-only: list all soft-deleted rows for a table. Used by the Restore
   // panel in Settings → Trash.
   async function listDeleted(arrayName) {
@@ -532,6 +591,7 @@
   }
 
   window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted,
+                   claimLead, fetchLead, updateLead,
                    keyFor, uploadFile, fileUrl, deleteFile, subscribeRealtime, toast, sb };
   console.log('[vmDb] persistence layer ready (Phase 2.4f: soft delete + audit + storage + realtime)');
 })();
