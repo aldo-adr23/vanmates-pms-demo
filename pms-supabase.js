@@ -89,7 +89,11 @@
     vacancies:         [['room','room'],['prop','prop'],['city','city'],['rent','rent'],['availDate','avail_date'],['listed','listed']],
     damageDeposits:    [['status','status']],
     homestayApplicants:[['name','name'],['city','city']],
-    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']]
+    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at'],
+                        // Follow-up (leads-followup-2026-09-16.sql). buildRow() sends a key
+                        // whenever the record has it, null included — that is how a
+                        // re-schedule resets follow_up_notified_at so the 07:00 notice fires again.
+                        ['follow_up_at','follow_up_at'],['follow_up_subject','follow_up_subject'],['follow_up_body','follow_up_body'],['follow_up_status','follow_up_status'],['follow_up_sent_at','follow_up_sent_at'],['follow_up_notified_at','follow_up_notified_at']]
   };
 
   /* ------------------- helpers ------------------- */
