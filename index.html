@@ -1123,6 +1123,39 @@
   .lead-raw summary::before{content:"\25B8  "}
   .lead-raw[open] summary::before{content:"\25BE  "}
   .lead-raw pre{background:var(--cream-2);padding:10px;border-radius:8px;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;margin:8px 0 0}
+
+  /* ---- Assistants ---- */
+  .as-layout{display:grid;grid-template-columns:280px 1fr;gap:16px;height:calc(100vh - 150px);min-height:480px}
+  .as-rail{display:flex;flex-direction:column;min-height:0}
+  .as-picker{display:grid;gap:8px}
+  .as-agent{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;cursor:pointer;color:var(--ink);font:inherit}
+  .as-agent.active{border-color:var(--red);box-shadow:0 0 0 2px rgba(185,74,63,.15)}
+  .as-agent-name{font-family:var(--serif);font-size:16px;font-weight:700;margin-bottom:2px}
+  .as-list{overflow:auto;min-height:0;display:grid;gap:4px;align-content:start}
+  .as-conv{text-align:left;background:transparent;border:1px solid transparent;border-radius:10px;padding:8px 10px;cursor:pointer;color:var(--ink);font:inherit;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .as-conv:hover{background:var(--surface-2)}
+  .as-conv.active{background:var(--surface);border-color:var(--line)}
+  .as-main{display:flex;flex-direction:column;min-height:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+  .as-transcript{flex:1;overflow:auto;padding:18px;display:grid;gap:12px;align-content:start}
+  .as-msg{max-width:78%;padding:10px 14px;border-radius:14px;line-height:1.5;font-size:14px;word-wrap:break-word}
+  .as-msg.user{justify-self:end;background:var(--red);color:#fff;border-bottom-right-radius:4px}
+  .as-msg.agent{justify-self:start;background:var(--surface-2);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .as-msg.agent p{margin:0 0 8px}.as-msg.agent p:last-child{margin:0}
+  .as-msg.agent ul,.as-msg.agent ol{margin:0 0 8px 18px;padding:0}
+  .as-msg.agent code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--surface);padding:1px 5px;border-radius:5px}
+  .as-msg.agent a{color:var(--red)}
+  .as-msg.error{border-color:#c98a80}
+  .as-msg.error > div{color:#8a3a30}
+  .as-working{color:var(--muted);font-style:italic}
+  .as-composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+  .as-composer textarea{flex:1;resize:none}
+  .as-hint{padding:0 14px 10px;min-height:18px}
+  .as-empty{color:var(--muted);text-align:center;padding:40px 16px}
+  @media (max-width: 860px){
+    .as-layout{grid-template-columns:1fr;height:auto}
+    .as-rail{max-height:220px}
+    .as-main{height:70vh}
+  }
 </style>
 <!-- ============ Auth gate — runs before body renders ============
      Redirects unauthenticated visitors to signin.html. -->
@@ -1155,7 +1188,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-16c"></script>
+<script src="pms-supabase.js?v=2026-09-16d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1189,6 +1222,10 @@
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
       Leads
       <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="assistants">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>
+      Assistants
     </button>
     <button class="nav-item" data-view="tenants">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M21.5 19a4.5 4.5 0 0 0-7-3.7"/></svg>
@@ -1576,6 +1613,37 @@
             </div>
             <div class="list-meta num">22 / 28</div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="assistants">
+      <div id="as-denied" class="card" style="padding:28px;max-width:560px" hidden>
+        <div style="font-family:var(--serif);font-size:18px;font-weight:700;margin-bottom:6px">Assistants is not enabled for your account</div>
+        <div class="card-sub">Ask an admin to grant the Assistants page from Team.</div>
+      </div>
+      <div id="as-app" class="as-layout" hidden>
+        <aside class="as-rail">
+          <div class="as-picker" id="as-picker">
+            <button type="button" class="as-agent active" data-agent="hugo">
+              <div class="as-agent-name">Hugo</div>
+              <div class="card-sub">Ops agent — tenants, checkouts, deposits, Asana. Can take actions.</div>
+            </button>
+            <button type="button" class="as-agent" data-agent="ruf">
+              <div class="as-agent-name">Ruf</div>
+              <div class="card-sub">Room finder — budget, city, neighbourhood, dates, room type.<br>e.g. <em>$1200 Vancouver October private room</em></div>
+            </button>
+          </div>
+          <button type="button" class="btn btn-ghost" id="as-new" style="width:100%;margin:12px 0 8px">New conversation</button>
+          <div class="as-list" id="as-list"></div>
+        </aside>
+        <div class="as-main">
+          <div class="as-transcript" id="as-transcript"></div>
+          <form class="as-composer" id="as-form">
+            <textarea id="as-input" class="form-input" rows="2" maxlength="4000" placeholder="Message Hugo…"></textarea>
+            <button type="submit" class="btn btn-primary" id="as-send">Send</button>
+          </form>
+          <div class="card-sub as-hint" id="as-hint"></div>
         </div>
       </div>
     </section>
@@ -6916,7 +6984,7 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
+                nav:["dashboard","leads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -7140,6 +7208,7 @@ function showToast(msg){
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
   ["leads",            "Leads"],
+  ["assistants",       "Assistants"],
   ["tenants",          "Tenants"],
   ["properties",       "Properties & rooms"],
   ["portfolio",        "Portfolio"],
@@ -9255,6 +9324,7 @@ const titles = {
   dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
+  assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
   portfolio: ["<em>Portfolio</em> performance", "Revenue, profit, and margin per property · April 2026"],
   landlords: ["<em>Landlords</em>", "Owners we lease from · contracts, rent paid, and renewals"],
@@ -9294,6 +9364,7 @@ function goToView(v, savedView){
   if(v === "homestay-hosts" && typeof loadHostPayoutStatus === "function") loadHostPayoutStatus();
   if(v === "homestay-hosts" && typeof loadHostRooms === "function") loadHostRooms();
   if(v === "homestay-finance" && typeof loadHomestayFinanceLive === "function") loadHomestayFinanceLive();
+  if(v === "assistants" && typeof asOpen === "function") asOpen();
 
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
@@ -16646,6 +16717,149 @@ function computeLetterDecision(input){
   return { action: "ready", payload: payload, email: email };
 }
 /* HL-LETTER-CORE-END */
+
+/* AS-CHAT-CORE-START */
+/* The Assistants page's logic with no DOM, no fetch, no clock: the
+   conversation store kept in localStorage, the fold of SSE events into a
+   streaming bubble, the SSE frame parser, and the Markdown-subset renderer.
+   Tested by test/assistants-chat.test.js. `var`/`function` only. */
+var AS_MAX_CONVERSATIONS = 30;
+var AS_TITLE_MAX = 48;
+
+function asStorageKey(email){
+  var e = String(email || "").trim().toLowerCase();
+  return "vm_assistants:" + (e || "anon");
+}
+function asId(){
+  var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  var out = "";
+  for (var i = 0; i < 12; i += 1) out += chars.charAt(Math.floor(Math.random() * chars.length));
+  return out;
+}
+function asTitle(text){
+  var first = String(text || "").split("\n")[0].trim();
+  if (!first) return "New conversation";
+  return first.length > AS_TITLE_MAX ? first.slice(0, AS_TITLE_MAX - 1) + "…" : first;
+}
+function asNewConversation(store, agent, now){
+  if (!store[agent]) store[agent] = [];
+  var c = { id: asId(), title: "New conversation", created: now, updated: now, messages: [] };
+  store[agent].unshift(c);
+  return c;
+}
+function asFind(store, agent, id){
+  var list = store[agent] || [];
+  for (var i = 0; i < list.length; i += 1) if (list[i].id === id) return list[i];
+  return null;
+}
+function asAppend(store, agent, id, role, text, now){
+  var c = asFind(store, agent, id);
+  if (!c) return false;
+  c.messages.push({ role: role, text: String(text || ""), at: now });
+  if (role === "user" && c.title === "New conversation") c.title = asTitle(text);
+  c.updated = now;
+  return true;
+}
+function asPrune(store, agent, max){
+  var list = store[agent] || [];
+  list.sort(function(a, b){ return b.created - a.created; });
+  if (list.length > max) list.length = max;
+  store[agent] = list;
+  return store;
+}
+// Fold one SSE event into the bubble being streamed. Each text event is a
+// complete assistant block (Hugo narrates, calls a tool, then answers), so
+// blocks are joined as paragraphs, not glued.
+function asReduce(state, ev){
+  var s = { streaming: state.streaming, working: state.working, text: state.text, error: state.error };
+  if (!ev || typeof ev.type !== "string") return s;
+  if (ev.type === "text") {
+    var c = typeof ev.content === "string" ? ev.content : "";
+    if (!c) return s;
+    s.text = s.text ? s.text + "\n\n" + c : c;
+    s.working = false;
+    return s;
+  }
+  if (ev.type === "working") { s.working = true; return s; }
+  if (ev.type === "done") { s.streaming = false; s.working = false; return s; }
+  if (ev.type === "error") {
+    s.streaming = false;
+    s.working = false;
+    s.error = typeof ev.message === "string" && ev.message ? ev.message : "Something went wrong.";
+    return s;
+  }
+  return s;
+}
+// Split a buffer of SSE text into parsed `data:` events; the unfinished tail
+// is returned so the caller can prepend it to the next chunk. CRLF is
+// normalised first — otherwise a server that writes \r\n\r\n never lines up
+// with the \n\n frame separator and every frame piles up in `rest` forever.
+function asParseSse(buffer){
+  var events = [];
+  var frames = String(buffer || "").replace(/\r\n/g, "\n").split("\n\n");
+  var rest = frames.pop();
+  for (var i = 0; i < frames.length; i += 1) {
+    var lines = frames[i].split("\n");
+    for (var k = 0; k < lines.length; k += 1) {
+      var line = lines[k];
+      var m = /^data: ?/.exec(line);
+      if (!m) continue;
+      try { events.push(JSON.parse(line.slice(m[0].length))); } catch (_) { /* skip a bad frame */ }
+    }
+  }
+  return { events: events, rest: rest };
+}
+// Markdown subset → HTML. Escape first, then format, so agent text can never
+// carry markup through. Supported: paragraphs, line breaks, **bold**, *italic*,
+// `code`, [label](http…), bare http(s) urls, "- " bullets, "1. " numbers.
+function asEsc(s){ return String(s).replace(/[&<>"']/g, function(c){ return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+function asInline(s){
+  var t = asEsc(s);
+  t = t.replace(/`([^`\n]+)`/g, function(_, c){ return "<code>" + c + "</code>"; });
+  t = t.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url){ return '<a href="' + url + '" target="_blank" rel="noopener">' + label + "</a>"; });
+  t = t.replace(/(^|[^"'>=(\]])((?:https?:\/\/)[^\s<*]+?)([.,;:!?)*]*)(?=\s|$)/g, function(_, pre, url, tail){ return pre + '<a href="' + url + '" target="_blank" rel="noopener">' + url + "</a>" + tail; });
+  t = t.replace(/\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[^*\w])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![*\w])/g, "$1<em>$2</em>");
+  return t;
+}
+function asIsBulletLine(l){ return /^\s*[-*]\s+/.test(l); }
+function asIsNumberLine(l){ return /^\s*\d+[.)]\s+/.test(l); }
+// Render a block of lines as a list, or return null when the lines are not a
+// single, homogeneous bullet/number list.
+function asListHtml(lines){
+  if (lines.every(asIsBulletLine)) return "<ul>" + lines.map(function(l){ return "<li>" + asInline(l.replace(/^\s*[-*]\s+/, "")) + "</li>"; }).join("") + "</ul>";
+  if (lines.every(asIsNumberLine)) return "<ol>" + lines.map(function(l){ return "<li>" + asInline(l.replace(/^\s*\d+[.)]\s+/, "")) + "</li>"; }).join("") + "</ol>";
+  return null;
+}
+function asRender(text){
+  var blocks = String(text || "").replace(/\r\n/g, "\n").trim().split(/\n{2,}/);
+  var html = "";
+  for (var b = 0; b < blocks.length; b += 1) {
+    var lines = blocks[b].split("\n");
+    var whole = asListHtml(lines);
+    if (whole !== null) { html += whole; continue; }
+    // The most common LLM shape: a lead-in line, then a list. The earliest
+    // valid split can only be at the first list-marker line — every line
+    // before it is lead-in by construction — so find that line once and test
+    // the tail once. (Do not re-scan candidate tails in a loop: each
+    // asListHtml() call is itself O(n), and trying every split point made
+    // this O(n^2) over a long list.)
+    var first = -1;
+    for (var s2 = 0; s2 < lines.length; s2 += 1) {
+      if (asIsBulletLine(lines[s2]) || asIsNumberLine(lines[s2])) { first = s2; break; }
+    }
+    var tailHtml = first > 0 ? asListHtml(lines.slice(first)) : null;
+    if (tailHtml !== null) {
+      var lead = lines.slice(0, first);
+      html += "<p>" + lead.map(asInline).join("<br>") + "</p>" + tailHtml;
+    } else {
+      html += "<p>" + lines.map(asInline).join("<br>") + "</p>";
+    }
+  }
+  return html;
+}
+/* AS-CHAT-CORE-END */
+
 /* TENANT-CORE-START */
 /* Pure record-selection for the tenant list. Fenced so test/tenants.test.js can
    extract and assert against it with no DOM, the same way the Homestay Finance
@@ -20374,6 +20588,220 @@ renderLeads();
       navigator.clipboard.writeText(i.value).then(function () {
         cp.textContent = 'Copied'; setTimeout(function () { cp.textContent = 'Copy'; }, 1500);
       });
+    });
+  });
+})();
+</script>
+<script>
+/* ---- Assistants page: thin over AS-CHAT-CORE ---- */
+(function(){
+  const ASSISTANTS_BASE = 'https://vanmates-hugo.fly.dev';
+  // Hugo's turn budget on the server is 300 s with no keepalives, and a turn
+  // with a few tool calls can run 90-300 s: one absolute abort produced a
+  // false "took too long" and a Retry that queued behind the still-running
+  // turn. So: connect (first byte), idle (between chunks), and a hard cap.
+  const AS_CONNECT_MS = 90e3, AS_IDLE_MS = 150e3, AS_MAX_MS = 320e3;
+  const $ = (id) => document.getElementById(id);
+
+  let agent = 'hugo';
+  let store = { hugo: [], ruf: [] };
+  let currentId = null;
+  let inFlight = null;   // AbortController while a reply streams
+
+  function userEmail(){ const u = (typeof activeRole === 'function' && activeRole()) || {}; return String(u.email || ''); }
+  function granted(){
+    const u = (typeof activeRole === 'function' && activeRole()) || {};
+    if (u.role === 'admin') return true;
+    return Array.isArray(u.allowed_pages) && u.allowed_pages.includes('assistants');
+  }
+  function load(){
+    try { const raw = localStorage.getItem(asStorageKey(userEmail())); store = raw ? JSON.parse(raw) : { hugo: [], ruf: [] }; }
+    catch (_) { store = { hugo: [], ruf: [] }; }
+    if (!Array.isArray(store.hugo)) store.hugo = []; if (!Array.isArray(store.ruf)) store.ruf = [];
+    // A message saved mid-stream (the tab was closed or reloaded before the
+    // reply finished) must not keep its spinner forever: clear the flag and,
+    // when nothing arrived, turn it into an error so Retry is offered.
+    ['hugo', 'ruf'].forEach((a) => store[a].forEach((c) => {
+      if (!Array.isArray(c.messages)) c.messages = [];
+      c.messages.forEach((m) => {
+        if (!m.streaming) return;
+        delete m.streaming; m.working = false;
+        if (!m.text && !m.error) m.error = 'The reply was interrupted.';
+      });
+    }));
+  }
+  function save(){
+    asPrune(store, 'hugo', AS_MAX_CONVERSATIONS); asPrune(store, 'ruf', AS_MAX_CONVERSATIONS);
+    try { localStorage.setItem(asStorageKey(userEmail()), JSON.stringify(store)); } catch (_) { /* quota or private mode: the page still works for this visit */ }
+  }
+  function current(){ return asFind(store, agent, currentId); }
+
+  /* ---- render ---- */
+  function renderList(){
+    const list = store[agent] || [];
+    $('as-list').innerHTML = list.map((c) =>
+      '<button type="button" class="as-conv' + (c.id === currentId ? ' active' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.title) + '">' + esc(c.title) + '</button>').join('');
+  }
+  function bubble(m, i, n){
+    if (m.role === 'user') return '<div class="as-msg user">' + esc(m.text).replace(/\n/g, '<br>') + '</div>';
+    if (m.error) {
+      // Keep whatever arrived before the error visible; Retry only makes
+      // sense on the last bubble (it resends the user message before it).
+      const retry = i === n - 1 ? ' <button type="button" class="btn btn-ghost btn-mini as-retry">Retry</button>' : '';
+      return '<div class="as-msg agent error">' + (m.text ? asRender(m.text) : '') + '<div>' + esc(m.error) + retry + '</div></div>';
+    }
+    // Before the first event the label says "connecting" (a cold Fly machine
+    // can take ~10 s); once text has arrived, a tool call reads "working".
+    let label = '';
+    if (m.working) label = agent === 'ruf' ? 'Ruf is looking…' : (m.text ? 'Hugo is working…' : 'Connecting to Hugo…');
+    // asRender('') is an empty <p> — a blank line above the label — so skip it.
+    return '<div class="as-msg agent">' + (m.text ? asRender(m.text) : '') + (label ? '<div class="as-working">' + label + '</div>' : '') + '</div>';
+  }
+  function renderTranscript(force){
+    const c = current();
+    const t = $('as-transcript');
+    // Follow the stream only if the reader was already near the bottom; a
+    // conversation switch always opens at its latest message.
+    const stick = !!force || !t.children.length || !!t.querySelector('.as-empty') || (t.scrollHeight - t.scrollTop - t.clientHeight < 40);
+    if (!c || !c.messages.length) {
+      t.innerHTML = '<div class="as-empty">' + (agent === 'hugo'
+        ? 'Ask Hugo anything you would ask in Slack — it remembers this conversation.'
+        : 'Give Ruf the whole request in one line: budget, city, dates, room type.') + '</div>';
+      return;
+    }
+    const n = c.messages.length;
+    t.innerHTML = c.messages.map((m, i) => bubble(m, i, n)).join('');
+    if (stick) t.scrollTop = t.scrollHeight;
+  }
+  function renderAll(){
+    document.querySelectorAll('.as-agent').forEach((b) => b.classList.toggle('active', b.dataset.agent === agent));
+    $('as-input').placeholder = agent === 'hugo' ? 'Message Hugo…' : 'e.g. 2 rooms in Vancouver under $1400 moving in October';
+    $('as-hint').textContent = agent === 'ruf' ? 'Ruf reads each message on its own — put the whole request in one line.' : '';
+    renderList(); renderTranscript(true);
+  }
+
+  /* ---- session token ---- */
+  async function token(forceRefresh){
+    const sb = window.vmDb && window.vmDb.sb;
+    if (!sb) return '';
+    if (forceRefresh) { try { await sb.auth.refreshSession(); } catch (_) {} }
+    try { const { data } = await sb.auth.getSession(); return (data && data.session && data.session.access_token) || ''; }
+    catch (_) { return ''; }
+  }
+
+  /* ---- send ---- */
+  async function send(text){
+    const c = current(); if (!c || inFlight) return;
+    const now = Date.now();
+    asAppend(store, agent, c.id, 'user', text, now);
+    const pending = { role: 'agent', text: '', working: false, error: '', at: now, streaming: true };
+    c.messages.push(pending);
+    save(); renderAll();
+    $('as-send').disabled = true; $('as-input').disabled = true;
+
+    let state = { streaming: true, working: true, text: '', error: '' };
+    const paint = () => { pending.text = state.text; pending.working = state.working; pending.error = state.error; renderTranscript(); };
+    paint();
+
+    inFlight = new AbortController();
+    const ctl = inFlight;
+    let timer;
+    const arm = (ms) => { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), ms); };
+    const hard = setTimeout(() => ctl.abort(), AS_MAX_MS);
+    arm(AS_CONNECT_MS);
+    try {
+      let resp = await post(c.id, text, await token(false));
+      if (resp.status === 401) resp = await post(c.id, text, await token(true));
+      if (resp.status === 401) throw new Error('Sign in again to use Assistants.');
+      if (resp.status === 403) throw new Error('Assistants is not enabled for your account — ask an admin.');
+      if (resp.status === 422) throw new Error('Message is too long (4,000 characters max) — shorten it and send again.');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        arm(AS_IDLE_MS);
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parsed = asParseSse(buf); buf = parsed.rest;
+        for (const ev of parsed.events) { state = asReduce(state, ev); paint(); if (!state.streaming) break; }
+        if (!state.streaming) break;
+      }
+      if (state.streaming) { state = asReduce(state, { type: 'error', message: 'The reply ended early.' }); paint(); }
+      else reader.cancel().catch(() => {});   // done/error seen: release the socket
+    } catch (e) {
+      // A TypeError from fetch is the network layer (offline, CORS, Hugo down);
+      // the browser's own wording ("Failed to fetch") is not worth showing.
+      const msg = (e && e.name === 'AbortError')
+        ? (agent === 'hugo' ? 'Hugo took too long to answer. It may still be finishing in the background — try again in a minute.' : 'Ruf took too long to answer.')
+        : (e instanceof TypeError) ? "Can't reach Hugo right now — check your connection and try again."
+        : (e.message || 'Request failed');
+      state = asReduce(state, { type: 'error', message: msg }); paint();
+    } finally {
+      clearTimeout(timer); clearTimeout(hard); inFlight = null;
+      delete pending.streaming;
+      c.updated = Date.now(); save(); renderList();
+      $('as-send').disabled = false; $('as-input').disabled = false; $('as-input').focus();
+    }
+  }
+  function post(conversationId, message, tok){
+    return fetch(ASSISTANTS_BASE + '/api/portal/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify({ agent: agent, conversation_id: conversationId, message: message }),
+      signal: inFlight.signal,
+    });
+  }
+
+  /* ---- open / wire ---- */
+  window.asOpen = function(){
+    const ok = granted();
+    $('as-denied').hidden = ok; $('as-app').hidden = !ok;
+    if (!ok) return;
+    // Re-opening the view while a reply streams must not reload the store
+    // from disk: send() holds the live conversation object, and a fresh copy
+    // would show the half-saved message as interrupted while it still runs.
+    if (!inFlight) load();
+    if (!store[agent].length) asNewConversation(store, agent, Date.now());
+    if (!current()) currentId = store[agent][0].id;
+    renderAll();
+  };
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const app = $('as-app'); if (!app) return;
+    $('as-picker').addEventListener('click', (e) => {
+      const b = e.target.closest('.as-agent'); if (!b || inFlight) return;
+      agent = b.dataset.agent;
+      if (!store[agent].length) asNewConversation(store, agent, Date.now());
+      currentId = store[agent][0].id; save(); renderAll();
+    });
+    $('as-new').addEventListener('click', () => {
+      if (inFlight) return;
+      const c = current();
+      if (c && !c.messages.length) return;   // already on an empty one
+      currentId = asNewConversation(store, agent, Date.now()).id; save(); renderAll(); $('as-input').focus();
+    });
+    $('as-list').addEventListener('click', (e) => {
+      const b = e.target.closest('.as-conv'); if (!b || inFlight) return;
+      currentId = b.dataset.id; renderAll();
+    });
+    $('as-transcript').addEventListener('click', (e) => {
+      if (!e.target.closest('.as-retry') || inFlight) return;
+      const c = current(); if (!c) return;
+      // Drop the failed agent bubble and resend the user message before it.
+      const last = c.messages[c.messages.length - 1];
+      if (last && last.role === 'agent' && last.error) c.messages.pop();
+      const prev = c.messages[c.messages.length - 1];
+      if (prev && prev.role === 'user') { c.messages.pop(); send(prev.text); }
+    });
+    $('as-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = $('as-input').value.trim(); if (!text) return;
+      $('as-input').value = ''; send(text);
+    });
+    $('as-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('as-form').requestSubmit(); }
     });
   });
 })();
