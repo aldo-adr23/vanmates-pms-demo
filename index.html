@@ -1123,6 +1123,17 @@
   .lead-raw summary::before{content:"\25B8  "}
   .lead-raw[open] summary::before{content:"\25BE  "}
   .lead-raw pre{background:var(--cream-2);padding:10px;border-radius:8px;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;margin:8px 0 0}
+  /* Lead drawer · Follow-up section (LEAD-FOLLOWUP-CORE). */
+  #lead-fu{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .lead-fu-status{font-size:12.5px;color:var(--muted);margin-bottom:8px;overflow-wrap:anywhere}
+  .lead-fu-status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
+  .lead-fu-status.is-scheduled .dot{background:var(--blue)}
+  .lead-fu-status.is-due .dot{background:var(--amber)}
+  .lead-fu-status.is-sent .dot{background:var(--green)}
+  .lead-fu-status.is-blocked{color:var(--muted)}
+  .lead-fu-error{color:var(--red);font-size:12.5px;margin-top:6px}
+  #lead-fu[data-blocked="1"] .form-input{opacity:.55;pointer-events:none}
+  .lead-fu-chip{display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font-size:11px;font-weight:600;vertical-align:middle;white-space:nowrap}
 </style>
 <!-- ============ Auth gate — runs before body renders ============
      Redirects unauthenticated visitors to signin.html. -->
@@ -1155,7 +1166,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-16b"></script>
+<script src="pms-supabase.js?v=2026-09-16c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3239,6 +3250,20 @@ hello@vanmates.com · vanmates.com</textarea>
           <summary>Raw JSON</summary>
           <pre id="lead-payload-raw"></pre>
         </details>
+      </div>
+      <div class="form-field" id="lead-fu">
+        <label>Follow-up</label>
+        <div class="lead-fu-status" id="lead-fu-status"></div>
+        <div class="form-row" id="lead-fu-form">
+          <div class="form-field"><label>Remind me on</label><input class="form-input" type="date" id="lead-fu-date"></div>
+          <div class="form-field"><label>Subject</label><input class="form-input" type="text" id="lead-fu-subject" maxlength="160"></div>
+        </div>
+        <div class="form-field" id="lead-fu-body-wrap"><label>Message</label><textarea class="form-input" id="lead-fu-body" rows="7"></textarea></div>
+        <div class="lead-fu-error" id="lead-fu-error" hidden></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+          <button class="btn btn-ghost" id="lead-fu-cancel" type="button">Cancel follow-up</button>
+          <button class="btn btn-primary" id="lead-fu-schedule" type="button">Schedule follow-up</button>
+        </div>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
         <button class="btn btn-ghost" id="lead-email-btn" type="button">Email lead</button>
@@ -18824,6 +18849,162 @@ function leadSubmission(payload){
 }
 /* LEAD-CORE-END */
 
+/* LEAD-FOLLOWUP-CORE-START */
+/* Pure logic behind the drawer's Follow-up section: when a follow-up goes,
+   what the agent is shown as a starting point, and whether it may be armed.
+   Fenced so test/leads-followup.test.js can extract and assert against it with
+   no DOM. Nothing in here may touch document, window or a global. */
+
+// Everything sends at 14:00 in the office timezone, whatever the agent's
+// browser is set to. The 07:00 notice and the 14:00 sweep in n8n run in the
+// same zone, so "the 12th" means the same day everywhere.
+const FOLLOWUP_ZONE = 'America/Vancouver';
+const FOLLOWUP_HOUR = 14;
+
+// Minutes east of UTC that `zone` is at the given instant. Intl is the only
+// zone database a browser has; this reads the zone's wall clock for the
+// instant and diffs it against UTC.
+function followUpZoneOffsetMinutes(zone, epochMs){
+  const f = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  const p = {};
+  for(const part of f.formatToParts(new Date(epochMs))) p[part.type] = part.value;
+  const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return Math.round((wall - epochMs) / 60000);
+}
+
+// 'YYYY-MM-DD' → ISO instant of 14:00 that day in FOLLOWUP_ZONE, or null.
+// Two passes because the offset can differ between the naive guess and the
+// corrected instant on a DST-change day.
+function followUpSendAt(dateStr){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  if(!m) return null;
+  const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], FOLLOWUP_HOUR, 0, 0);
+  if(isNaN(guess)) return null;
+  const off1 = followUpZoneOffsetMinutes(FOLLOWUP_ZONE, guess);
+  let ts = guess - off1 * 60000;
+  const off2 = followUpZoneOffsetMinutes(FOLLOWUP_ZONE, ts);
+  if(off2 !== off1) ts = guess - off2 * 60000;
+  return new Date(ts).toISOString();
+}
+
+// Calendar date of an instant in FOLLOWUP_ZONE, 'YYYY-MM-DD'. The counterpart
+// of followUpSendAt: the drawer's date field is read and written through the
+// pair, so "today" and a stored follow_up_at agree even in a browser far from
+// Vancouver.
+function followUpDateInZone(epochMs){
+  if(typeof epochMs !== 'number' || isNaN(epochMs)) return null;
+  const off = followUpZoneOffsetMinutes(FOLLOWUP_ZONE, epochMs);
+  return new Date(epochMs + off * 60000).toISOString().slice(0, 10);
+}
+
+// 'YYYY-MM-DD' ± n days → 'YYYY-MM-DD'. UTC arithmetic so a browser in any
+// zone gets the same calendar answer.
+function followUpAddDays(dateStr, n){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  if(!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+  if(isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+// The date the drawer proposes. A month before the move-in is when a lead who
+// enquired early actually needs a nudge. If that's already in the past but
+// the move-in itself is still ahead, the follow-up goes out tomorrow so it —
+// and the 07:00 notice ahead of it — still land before they move in. With no
+// move-in, an unparseable one, or one already past, the default is a month
+// from now.
+function followUpDefaultDate(moveIn, today){
+  const early = followUpAddDays(moveIn, -30);
+  if(early && early > today) return early;
+  if(moveIn > today && followUpAddDays(moveIn, 0) === moveIn) return followUpAddDays(today, 1);
+  return followUpAddDays(today, 30);
+}
+
+function followUpMonthLabel(dateStr){
+  const m = /^(\d{4})-(\d{2})/.exec(String(dateStr || ''));
+  if(!m) return '';
+  const names = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return `${names[+m[2] - 1] || ''} ${m[1]}`.trim();
+}
+
+function followUpCap(s){
+  const t = String(s || '').trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
+}
+
+// A starting point, not a finished email. The agent reads it in the drawer and
+// edits before scheduling; a blank textarea is what makes people skip this.
+function followUpSeed(lead, agentName){
+  const first = String((lead && lead.name) || '').trim().split(/\s+/)[0] || 'there';
+  const room  = String((lead && lead.roomName) || '').trim();
+  const city  = followUpCap(lead && lead.city);
+  const month = followUpMonthLabel(lead && lead.moveIn);
+  const agent = String(agentName || '').trim();
+
+  const subject = room  ? `Your enquiry about ${room}`
+                : city  ? `Still looking for a room in ${city}?`
+                :         'Following up from Vanmates';
+
+  const about = room ? room : city ? `a room in ${city}` : 'a room';
+  const when  = month ? ` for a ${month} move-in` : '';
+  const closer = month ? ' before that gets closer' : '';
+  const body =
+`Hi ${first},
+
+You got in touch with Vanmates about ${about}${when}. I wanted to check in${closer} — are you still looking?
+
+If so, reply here and I'll send over what we have available for your dates.
+
+Best,
+${agent || 'The Vanmates team'}${agent ? '\nVanmates' : ''}`;
+
+  return { subject, body };
+}
+
+// null when the form may be scheduled, else the sentence to show.
+function followUpValidate(fields, today){
+  const f = fields || {};
+  const date = String(f.date || '').trim();
+  if(!date) return 'Pick a date.';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return 'Pick a date.';
+  if(followUpAddDays(date, 0) !== date) return 'Pick a date.';
+  if(date < today) return 'Pick today or a later date.';
+  if(!String(f.subject || '').trim()) return 'Add a subject line.';
+  if(!String(f.body || '').trim()) return 'Write the message.';
+  return null;
+}
+
+// What the drawer may offer this viewer for this lead. `viewer` is
+// { email, role }; `nowMs` is injected so the tests own the clock.
+// Ownership is the claim, not the assignee select: the email goes out as
+// claimed_by, so with no claim there is nobody to send as — admins included.
+function followUpState(lead, viewer, nowMs){
+  const l = lead || {};
+  const v = viewer || {};
+  const status = l.follow_up_status || 'none';
+  const at = l.follow_up_at ? Date.parse(l.follow_up_at) : NaN;
+  const due = status === 'scheduled' && !isNaN(at) && at <= nowMs;
+  const deny = (reason, canCancel) => ({ status, canSchedule: false, canCancel: !!canCancel, due, reason });
+
+  if(!l.claimed_by) return deny('Claim the lead first — the follow-up sends from whoever owns it.', false);
+  const mine = v.role === 'admin' || (String(v.email || '').toLowerCase() === String(l.claimed_by || '').toLowerCase() && !!l.claimed_by);
+  if(!mine) return deny(`Claimed by ${l.claimed_by}.`, false);
+  if(!String(l.email || '').trim()) return deny('No email on this lead.', status === 'scheduled');
+
+  return {
+    status,
+    canSchedule: true,
+    canCancel: status === 'scheduled',
+    due,
+    reason: null
+  };
+}
+/* LEAD-FOLLOWUP-CORE-END */
+
 const LEAD_SOURCES = {
   'manual': 'Manual entry',
   'web-lead': 'Get matched',
@@ -18926,6 +19107,7 @@ async function claimLead(id){
     renderLeadClaimBlock(l);
     const asSel = document.getElementById('lead-assignee');
     if(asSel && l.assignee){ asSel.value = l.assignee; asSel.dataset.synced = l.assignee; }   // claim sets assignee; keep notes untouched
+    renderLeadFollowUp(l);   // the claim is what unlocks the section; the realtime echo lands later
   }
   renderLeads();
   if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
@@ -18955,7 +19137,7 @@ function renderLeads(){
   if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
   body.innerHTML = list.map(l => `
     <tr data-lead="${esc(l.id)}" style="cursor:pointer">
-      <td><div class="name-main">${esc(l.name || '—')}</div></td>
+      <td><div class="name-main">${esc(l.name || '—')}${l.follow_up_status === 'scheduled' ? `<span class="lead-fu-chip" title="Follow-up scheduled">↻ ${esc(fmtDate(l.follow_up_at))}</span>` : ''}</div></td>
       <td>${leadSourceLabel(l.source)}</td>
       <td>${leadContactCell(l)}</td>
       <td>${esc(l.city || '—')}</td>
@@ -18977,6 +19159,16 @@ function renderLeads(){
       if(asSel && cur.assignee && asSel.dataset.synced !== cur.assignee){
         asSel.value = cur.assignee; asSel.dataset.synced = cur.assignee;
       }
+      // The 14:00 send moves new -> contacted server-side; same pattern as assignee.
+      const stSel = document.getElementById('lead-status');
+      if(stSel && cur.status && stSel.dataset.synced !== cur.status){
+        stSel.value = cur.status; stSel.dataset.synced = cur.status;
+      }
+      // The 14:00 send flips scheduled -> sent server-side. Re-render only when
+      // something the section depends on changed (see leadFollowUpSyncKey), so
+      // an agent mid-edit is not overwritten by every tick.
+      const fu = document.getElementById('lead-fu');
+      if(fu && fu.dataset.synced !== leadFollowUpSyncKey(cur)) renderLeadFollowUp(cur);
     }
   }
 }
@@ -19090,11 +19282,186 @@ function leadContactBlock(l){
   return html;
 }
 
+/* ---- Follow-up section (DOM side of LEAD-FOLLOWUP-CORE) ------------------ */
+
+function leadFollowUpViewer(){
+  const r = (typeof activeRole === 'function' && activeRole()) || {};
+  return { email: r.email || '', role: r.role || '' };
+}
+
+// Today's calendar date IN THE OFFICE ZONE, 'YYYY-MM-DD'. Not the browser's
+// local date: the send time is 14:00 Pacific, so "today" must be Pacific too,
+// or a browser east of Vancouver refuses the Pacific today as already past.
+// The zone arithmetic lives in the core (followUpDateInZone) where it is tested.
+function leadFollowUpToday(){
+  return followUpDateInZone(Date.now());
+}
+
+function leadFollowUpAgentName(email){
+  const want = String(email || '').toLowerCase();
+  const m = (typeof teamMembers !== 'undefined' ? teamMembers : []).find(t => String(t.email || '').toLowerCase() === want);
+  return m ? String(m.name || '').split(/\s+/)[0] : '';
+}
+
+// Facts the seed needs, flattened from the lead + its webhook body.
+function leadFollowUpFacts(l){
+  const p = leadPayloadOf(l);
+  return {
+    name: l.name || p.name || '',
+    roomName: p.roomName || '',
+    city: l.city || p.city || '',
+    moveIn: p.moveIn || p.moveInDate || ''
+  };
+}
+
+function leadFollowUpWhen(iso){
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return String(iso || '');
+  return d.toLocaleString('en-CA', { timeZone: FOLLOWUP_ZONE, dateStyle: 'medium', timeStyle: 'short' }) + ' Pacific';
+}
+
+// What the section's rendering depends on, other than the agent's own typing.
+// The realtime block repaints only when this changes, so a teammate editing
+// notes, or the 07:00 notified_at stamp, never wipes a draft mid-edit.
+function leadFollowUpSyncKey(l){
+  return [l.follow_up_status || 'none', l.follow_up_at || '', l.claimed_by || '', l.email || ''].join('|');
+}
+
+function renderLeadFollowUp(l){
+  const host = document.getElementById('lead-fu');
+  if(!host) return;
+  const st = followUpState(l, leadFollowUpViewer(), Date.now());
+  const status = document.getElementById('lead-fu-status');
+  const dateEl = document.getElementById('lead-fu-date');
+  const subjEl = document.getElementById('lead-fu-subject');
+  const bodyEl = document.getElementById('lead-fu-body');
+  const errEl  = document.getElementById('lead-fu-error');
+  const btnSch = document.getElementById('lead-fu-schedule');
+  const btnCan = document.getElementById('lead-fu-cancel');
+
+  errEl.hidden = true; errEl.textContent = '';
+  host.dataset.synced = leadFollowUpSyncKey(l);
+
+  // Status line
+  let cls = 'lead-fu-status', text = '';
+  if(st.reason && st.status !== 'scheduled'){
+    cls += ' is-blocked'; text = esc(st.reason);
+  } else if(st.status === 'scheduled'){
+    cls += st.due ? ' is-due' : ' is-scheduled';
+    text = st.due
+      ? `<span class="dot"></span>Due — sends at the next 2pm pass (was ${esc(leadFollowUpWhen(l.follow_up_at))})`
+      : `<span class="dot"></span>Scheduled · sends ${esc(leadFollowUpWhen(l.follow_up_at))}`;
+    if(st.reason) text += ` · ${esc(st.reason)}`;
+  } else if(st.status === 'sent'){
+    cls += ' is-sent';
+    text = `<span class="dot"></span>Sent ${esc(leadFollowUpWhen(l.follow_up_sent_at))} · “${esc(l.follow_up_subject || '')}”`;
+  } else if(st.status === 'cancelled'){
+    text = `<span class="dot"></span>Cancelled. Set a new date to schedule another.`;
+  } else {
+    text = `<span class="dot"></span>Nothing scheduled.`;
+  }
+  status.className = cls;
+  status.innerHTML = text;
+
+  // Form contents: the stored follow-up if there is one, else a seeded draft.
+  const facts = leadFollowUpFacts(l);
+  if(st.status === 'scheduled'){
+    dateEl.value = l.follow_up_at ? (followUpDateInZone(Date.parse(l.follow_up_at)) || '') : '';
+    subjEl.value = l.follow_up_subject || '';
+    bodyEl.value = l.follow_up_body || '';
+  } else {
+    const seed = followUpSeed(facts, leadFollowUpAgentName(l.claimed_by));
+    dateEl.value = followUpDefaultDate(facts.moveIn, leadFollowUpToday());
+    subjEl.value = seed.subject;
+    bodyEl.value = seed.body;
+  }
+  dateEl.min = leadFollowUpToday();
+
+  host.dataset.blocked = st.canSchedule ? '0' : '1';
+  [dateEl, subjEl, bodyEl].forEach(el => { el.disabled = !st.canSchedule; });
+  btnSch.disabled = !st.canSchedule;
+  btnSch.textContent = st.status === 'scheduled' ? 'Save changes' : 'Schedule follow-up';
+  btnSch.title = st.reason || '';
+  btnCan.hidden = !st.canCancel;
+
+  // onclick, not addEventListener: the drawer is re-filled for every lead and
+  // on realtime, and stacked listeners would write to the wrong lead.
+  // Resolve the live array element at click time: realtime replaces the
+  // element on every update, so a closure over `l` can go stale between
+  // render and click and would write a whole stale row back.
+  const live = () => leads.find(x => String(x.id) === String(_editingLeadId));
+  btnSch.onclick = () => { const cur = live(); if(cur) leadFollowUpSchedule(cur); };
+  btnCan.onclick = () => { const cur = live(); if(cur) leadFollowUpCancel(cur); };
+}
+
+async function leadFollowUpWrite(l, patch, doneMsg){
+  if(!(window.vmDb && typeof vmDb.updateLead === 'function' && vmDb.sb)){
+    if(typeof showToast === 'function') showToast('Not saved — no database connection');
+    return false;
+  }
+  // Freeze the drawer's other writers for the round trip: the main Save reads
+  // the same row and, landing second, would revert this write.
+  const busy = ['lead-fu-schedule', 'lead-fu-cancel', 'lead-save-btn']
+    .map(id => document.getElementById(id)).filter(Boolean);
+  busy.forEach(b => { b.disabled = true; });
+  let ok = false;
+  try {
+    ok = await vmDb.updateLead(Object.assign({}, l, patch));
+  } finally {
+    busy.forEach(b => { b.disabled = false; });
+  }
+  // If the agent switched leads during the round trip, the finally above
+  // re-enabled buttons for a drawer that now shows someone else: repaint it.
+  if(String(_editingLeadId) !== String(l.id)){
+    const open = leads.find(x => String(x.id) === String(_editingLeadId));
+    if(open) renderLeadFollowUp(open);
+  }
+  if(!ok) return false;               // updateLead already toasted why
+  // Realtime may have replaced the array element while we waited; apply the
+  // patch to whatever is live now, and only repaint if this lead is still open.
+  const live = leads.find(x => String(x.id) === String(l.id)) || l;
+  Object.assign(live, patch);
+  if(String(_editingLeadId) === String(l.id)) renderLeadFollowUp(live);
+  renderLeads();
+  if(typeof showToast === 'function') showToast(doneMsg);
+  return true;
+}
+
+function leadFollowUpSchedule(l){
+  if(!followUpState(l, leadFollowUpViewer(), Date.now()).canSchedule) return;
+  const fields = {
+    date: document.getElementById('lead-fu-date').value,
+    subject: document.getElementById('lead-fu-subject').value,
+    body: document.getElementById('lead-fu-body').value
+  };
+  const err = followUpValidate(fields, leadFollowUpToday());
+  const errEl = document.getElementById('lead-fu-error');
+  if(err){ errEl.textContent = err; errEl.hidden = false; return; }
+  const at = followUpSendAt(fields.date);
+  if(!at){ errEl.textContent = 'Pick a date.'; errEl.hidden = false; return; }
+  return leadFollowUpWrite(l, {
+    follow_up_at: at,
+    follow_up_subject: fields.subject.trim(),
+    follow_up_body: fields.body,
+    follow_up_status: 'scheduled',
+    // Reset so the 07:00 notice fires for the new date. Null is sent as a
+    // column value because SCALARS.leads lists it — see pms-supabase.js.
+    follow_up_notified_at: null
+  }, `Follow-up scheduled for ${leadFollowUpWhen(at)}`);
+}
+
+function leadFollowUpCancel(l){
+  if(!followUpState(l, leadFollowUpViewer(), Date.now()).canCancel) return;
+  if(!confirm('Cancel this follow-up? The email will not be sent.')) return;
+  return leadFollowUpWrite(l, { follow_up_status: 'cancelled' }, 'Follow-up cancelled');
+}
+
 function fillLeadFields(l){
   document.getElementById('lead-modal-title').textContent = l.name || 'Lead';
   document.getElementById('lead-modal-sub').textContent = `${leadSourceLabelText(l.source)} · ${fmtDate(l.created_at)}`;
   document.getElementById('lead-status').innerHTML =
     LEAD_STATUSES.map(s => `<option value="${s}" ${(l.status||'new')===s?'selected':''}>${leadCap(s)}</option>`).join('');
+  document.getElementById('lead-status').dataset.synced = l.status || 'new';
   const cur = l.assignee || '';
   const asSel = document.getElementById('lead-assignee');
   // Only the signed-in user is offered as an assignee. The whole team used to
@@ -19129,6 +19496,7 @@ function fillLeadFields(l){
   document.getElementById('lead-contact').innerHTML = leadContactBlock(l);
   renderLeadSubmission(l);
   wireLeadWhatsApp(l);
+  renderLeadFollowUp(l);
   renderLeadClaimBlock(l);
 }
 
