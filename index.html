@@ -1092,6 +1092,28 @@
   :root[data-theme="dark"] .modal-backdrop{ background:rgba(0,0,0,.65); }
   :root[data-theme="dark"] .panel-backdrop{ background:rgba(0,0,0,.6); }
 .vac-thumb-empty{width:48px;height:36px;border-radius:6px;background:var(--wash);border:1px dashed var(--line);display:block}
+
+  /* Lead drawer · Submission summary. The raw webhook body used to be dumped
+     into a <pre>; a form's `source` URL is one unbreakable string, so it forced
+     a horizontal scrollbar and pushed the message out of view. Rows are built
+     by leadSubmission() in the LEAD-CORE fence. */
+  .lead-sub{display:flex;flex-direction:column;gap:9px}
+  .lead-sub-row{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px;align-items:start;font-size:13px}
+  .lead-sub-row .k{color:var(--muted);font-size:10px;letter-spacing:.07em;text-transform:uppercase;font-family:var(--sans);padding-top:3px}
+  .lead-sub-row .v{color:var(--ink);min-width:0;overflow-wrap:anywhere}
+  .lead-sub-row .v .sub{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+  .lead-sub-row .v a{color:var(--blue);text-decoration:none}
+  .lead-sub-row .v a:hover{text-decoration:underline}
+  .lead-sub-msg{background:var(--cream-2);border-left:3px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink)}
+  .lead-sub-warn{color:var(--red)}
+  .lead-sub-meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:2px;font-family:var(--slab);font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+  .lead-sub-empty{color:var(--muted);font-size:13px}
+  .lead-raw{margin-top:10px}
+  .lead-raw summary{cursor:pointer;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);list-style:none}
+  .lead-raw summary::-webkit-details-marker{display:none}
+  .lead-raw summary::before{content:"\25B8  "}
+  .lead-raw[open] summary::before{content:"\25BE  "}
+  .lead-raw pre{background:var(--cream-2);padding:10px;border-radius:8px;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;margin:8px 0 0}
 </style>
 <!-- ============ Auth gate — runs before body renders ============
      Redirects unauthenticated visitors to signin.html. -->
@@ -1124,7 +1146,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-15a"></script>
+<script src="pms-supabase.js?v=2026-09-15b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3169,9 +3191,20 @@ hello@vanmates.com · vanmates.com</textarea>
       </div>
       <div class="form-field"><label>Contact</label><div id="lead-contact" style="font-size:13px"></div></div>
       <div class="form-field"><label>Notes</label><textarea class="form-input" id="lead-notes" rows="3" placeholder="Internal notes…"></textarea></div>
-      <div class="form-field"><label>Submission</label><pre id="lead-payload" style="background:var(--cream-2);padding:10px;border-radius:8px;font-size:12px;white-space:pre-wrap;overflow:auto;max-height:220px;margin:0"></pre></div>
+      <div class="form-field">
+        <label>Submission</label>
+        <div id="lead-payload" class="lead-sub"></div>
+        <details class="lead-raw" id="lead-payload-raw-wrap">
+          <summary>Raw JSON</summary>
+          <pre id="lead-payload-raw"></pre>
+        </details>
+      </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
         <button class="btn btn-ghost" id="lead-email-btn" type="button">Email lead</button>
+        <button class="btn btn-ghost" id="lead-wa-btn" type="button">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg>
+          WhatsApp
+        </button>
         <button class="btn btn-primary" id="lead-save-btn" type="button">Save</button>
       </div>
     </div>
@@ -18338,6 +18371,213 @@ document.getElementById('trash-refresh')?.addEventListener('click', renderTrashP
 applyRolePermissions();
 
 /* ============ LEADS ============ */
+/* LEAD-CORE-START */
+/* Pure helpers behind the lead drawer: the WhatsApp number a free-text phone
+   resolves to, and the readable Submission summary. Fenced so test/leads.test.js
+   can extract and assert against them with no DOM, the same way the tenant core
+   is tested. Nothing in here may touch document, window or a global. */
+
+// A lead types their phone into a text box on vanmates.com, so a large share
+// arrive as ten digits with no country code — and "3312345678" (Guadalajara)
+// and "4169996839" (Toronto) are indistinguishable from the digits alone.
+// The city they picked, the room address, or the landing page they came from
+// is the only signal available, so we use it and then show the number we
+// resolved on the button instead of dialling silently. Accent-folded because
+// the forms send "Cancún" and "Queretaro" both ways.
+const LEAD_MX_HINTS = ['mexico','cdmx','guadalajara','zapopan','tlaquepaque',
+  'tonala','tlajomulco','jalisco','monterrey','puebla','queretaro','cancun',
+  'merida','vanmates.com.mx','.mx/'];
+
+function leadFold(s){
+  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+}
+
+// '52' for a lead whose city/address/landing page is Mexican, '1' otherwise.
+// Canada is the default because it is where all but one market sits.
+function leadCountryHint(hint){
+  const h = leadFold(hint);
+  return LEAD_MX_HINTS.some(t => h.indexOf(t) !== -1) ? '52' : '1';
+}
+
+function leadPhoneDisplay(digits){
+  const d = String(digits || '');
+  if(d.length === 11 && d[0] === '1'){
+    return `+1 ${d.slice(1,4)} ${d.slice(4,7)} ${d.slice(7)}`;
+  }
+  if(d.length === 12 && d.slice(0,2) === '52'){
+    const rest = d.slice(2);
+    // 33 / 55 / 81 are two-digit metro codes; everywhere else is three.
+    return ['33','55','81'].indexOf(rest.slice(0,2)) !== -1
+      ? `+52 ${rest.slice(0,2)} ${rest.slice(2,6)} ${rest.slice(6)}`
+      : `+52 ${rest.slice(0,3)} ${rest.slice(3,6)} ${rest.slice(6)}`;
+  }
+  return '+' + d;
+}
+
+// Resolve a free-text phone to the digits wa.me needs.
+//   { ok:true,  digits, display, assumed }  assumed = country code we added, or null
+//   { ok:false, reason }                    reason ∈ none | short | ambiguous | long
+// A number that already carries a country code (leading + or 00) is trusted as
+// typed. Ten digits get the hint's country code. Eight or nine digits are
+// refused rather than guessed: no market here has a dialable 8-digit number, so
+// it is a typo or a partial number, and wa.me would silently open a chat with
+// whoever those digits do reach.
+function leadWhatsApp(phone, hint){
+  const raw = String(phone == null ? '' : phone).trim();
+  if(!raw) return { ok:false, reason:'none' };
+  const explicit = /^\+/.test(raw) || /^00\d/.test(raw);
+  let digits = raw.replace(/^\s*00/, '').replace(/\D/g, '').replace(/^0+/, '');
+  if(digits.length < 8)  return { ok:false, reason:'short', digits };
+  if(digits.length > 15) return { ok:false, reason:'long', digits };
+  let assumed = null;
+  if(!explicit){
+    if(digits.length < 10) return { ok:false, reason:'ambiguous', digits };
+    if(digits.length === 10){ assumed = leadCountryHint(hint); digits = assumed + digits; }
+  }
+  return { ok:true, digits, display:leadPhoneDisplay(digits), assumed };
+}
+
+// Why a number can't be dialed, in the words staff need to act on it. `short`
+// and `ambiguous` are different problems: a seven-digit number is a typo, a
+// nine-digit one is a real number missing its country code.
+function leadWhatsAppProblem(wa, name, phone){
+  if(!wa || wa.ok) return '';
+  const who = String(name || '').trim().split(/\s+/)[0] || 'This lead';
+  if(wa.reason === 'none')      return `No phone on this lead — ${who} left an email only.`;
+  if(wa.reason === 'short')     return `Can't dial "${phone}" — too few digits to be a phone number.`;
+  if(wa.reason === 'long')      return `Can't dial "${phone}" — too many digits to be a phone number.`;
+  return `Can't dial "${phone}" — no country code. Add it before messaging.`;
+}
+
+// Opener for the WhatsApp draft. Staff finish the sentence in WhatsApp itself,
+// so this stops at the dash the way the tenant and homestay drawers do.
+function leadWhatsAppText(name, roomName){
+  const first = String(name || '').trim().split(/\s+/)[0] || 'there';
+  const room  = String(roomName || '').trim();
+  return room
+    ? `Hi ${first}, this is Vanmates — about ${room}, `
+    : `Hi ${first}, this is Vanmates — `;
+}
+
+/* ---- Submission summary ---------------------------------------------- */
+
+// Name, email and phone already have their own row in the drawer; repeating
+// them under Submission is noise. `website` is the honeypot lead-submit.js
+// stamps on every payload: n8n drops any submission where it is non-empty, so
+// an empty one is expected and carries no information.
+const LEAD_PAYLOAD_SKIP = ['name','email','phone','website'];
+const LEAD_PAYLOAD_META = ['roomId','submissionId','leadId','ip','userAgent'];
+const LEAD_PAYLOAD_LABELS = {
+  message:'Message', topic:'Topic', leadType:'Lead type', city:'City',
+  moveIn:'Move-in', moveInDate:'Move-in', months:'Months', stayMonths:'Months',
+  guests:'Guests', budget:'Budget', price:'Price', dueToday:'Due today',
+  accommodationType:'Accommodation', schoolOrEmployer:'School / employer',
+  roomName:'Room', source:'Page', submittedAt:'Submitted',
+  roomId:'Room id', submissionId:'Submission id'
+};
+const LEAD_PAYLOAD_ORDER = ['message','topic','leadType','accommodationType','city',
+  'moveIn','moveInDate','months','stayMonths','guests','budget','price','dueToday',
+  'schoolOrEmployer','roomName','source','submittedAt'];
+const LEAD_PAYLOAD_KINDS = {
+  message:'long', source:'link', submittedAt:'datetime',
+  moveIn:'date', moveInDate:'date',
+  budget:'money', price:'money', dueToday:'money',
+  topic:'term', leadType:'term', accommodationType:'term', preferredContact:'term'
+};
+
+// Form <option> values, written for a query string rather than for reading:
+// "booking", "private-room", "host_application".
+function leadTermText(v){
+  return String(v == null ? '' : v).replace(/[-_]+/g,' ').trim().replace(/^./, c => c.toUpperCase());
+}
+
+function leadPrettyLabel(key){
+  return String(key)
+    .replace(/[_\-]+/g,' ')
+    .replace(/([a-z0-9])([A-Z])/g,'$1 $2')
+    .replace(/^./, c => c.toUpperCase());
+}
+
+function leadValueEmpty(v){
+  if(v == null || v === '') return true;
+  if(Array.isArray(v)) return v.length === 0;
+  if(typeof v === 'object') return Object.keys(v).length === 0;
+  return false;
+}
+
+// A form's `source` is either a path ("/contact?topic=booking&…"), a bare host
+// path ("vanmates.com/student-housing-canada/"), or already absolute. Returns
+// the href to open plus a short, decoded label — the raw query string is what
+// made the old <pre> scroll sideways.
+function leadSourceUrl(source){
+  const s = String(source == null ? '' : source).trim();
+  if(!s) return null;
+  let href = null;
+  if(/^https?:\/\//i.test(s)) href = s;
+  else if(s[0] === '/') href = 'https://vanmates.com' + s;
+  else if(/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) href = 'https://' + s;
+  if(!href) return null;
+  let label = href.replace(/^https?:\/\//i,'').replace(/^www\./i,'');
+  try { label = decodeURIComponent(label.replace(/\+/g,' ')); } catch(_){}
+  if(label.length > 72) label = label.slice(0,71) + '…';
+  return { href, label };
+}
+
+// Turn a webhook payload into ordered display rows. Known fields first, in a
+// reading order that puts the message and the room they asked about on top;
+// anything a new form starts sending falls through to `extras` with a
+// prettified label rather than disappearing.
+function leadSubmission(payload){
+  const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+  const rows = [], meta = [];
+  const seen = {};
+  const add = (key) => {
+    if(seen[key]) return;
+    seen[key] = true;
+    const v = p[key];
+    if(leadValueEmpty(v)) return;
+    const row = {
+      key,
+      label: LEAD_PAYLOAD_LABELS[key] || leadPrettyLabel(key),
+      value: v,
+      kind: LEAD_PAYLOAD_KINDS[key] || 'text'
+    };
+    // The room's address belongs under the room's name, not on its own row.
+    if(key === 'roomName' && !leadValueEmpty(p.roomAddress)){
+      row.sub = p.roomAddress;
+      seen.roomAddress = true;
+    }
+    rows.push(row);
+  };
+
+  for(const k of LEAD_PAYLOAD_ORDER) if(k in p) add(k);
+
+  for(const k of Object.keys(p)){
+    if(seen[k] || LEAD_PAYLOAD_SKIP.indexOf(k) !== -1) continue;
+    seen[k] = true;
+    if(leadValueEmpty(p[k])) continue;
+    if(LEAD_PAYLOAD_META.indexOf(k) !== -1){
+      meta.push({ key:k, label:LEAD_PAYLOAD_LABELS[k] || leadPrettyLabel(k), value:p[k] });
+      continue;
+    }
+    rows.push({
+      key: k,
+      label: leadPrettyLabel(k),
+      value: typeof p[k] === 'object' ? JSON.stringify(p[k]) : p[k],
+      kind: 'text'
+    });
+  }
+
+  // A non-empty honeypot means a bot's submission reached the table anyway —
+  // worth seeing, since n8n is supposed to have dropped it.
+  if(!leadValueEmpty(p.website)){
+    rows.push({ key:'website', label:'Honeypot', value:p.website, kind:'warn' });
+  }
+
+  return { rows, meta };
+}
+/* LEAD-CORE-END */
+
 const LEAD_SOURCES = {
   'manual': 'Manual entry',
   'web-lead': 'Get matched',
@@ -18495,6 +18735,115 @@ function renderLeads(){
   }
 }
 
+/* ---- Lead drawer rendering (DOM side of LEAD-CORE) -------------------- */
+
+// The submission body as stored. `payload` is what the website webhook sent;
+// `data` is the whole jsonb row for leads logged before that split. A row that
+// arrived as a JSON string is parsed once so the summary still works.
+function leadPayloadOf(l){
+  let p = l && (l.raw || l.payload || l.data);
+  if(typeof p === 'string'){
+    try { p = JSON.parse(p); } catch(_){ return { message: p }; }
+  }
+  return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
+}
+
+function leadWhen(iso){
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString(undefined, { dateStyle:'medium', timeStyle:'short' });
+}
+
+// A lead's stated budget is a number they typed, not a portal amount — it must
+// not go through fmt(), which would convert it into the currently selected
+// display currency and quietly restate what they asked for.
+function leadMoney(v){
+  const s = String(v).trim();
+  return /^\d+(\.\d+)?$/.test(s) ? '$' + Number(s).toLocaleString('en-US') : s;
+}
+
+function leadRowHtml(r){
+  let v;
+  if(r.kind === 'long'){
+    v = `<div class="lead-sub-msg">${esc(r.value)}</div>`;
+  } else if(r.kind === 'link'){
+    const u = leadSourceUrl(r.value);
+    v = u ? `<a href="${esc(safeHref(u.href))}" target="_blank" rel="noopener">${esc(u.label)} ↗</a>`
+          : esc(r.value);
+  } else if(r.kind === 'datetime'){
+    v = esc(leadWhen(r.value));
+  } else if(r.kind === 'date'){
+    v = esc(fmtDate(r.value));
+  } else if(r.kind === 'money'){
+    v = esc(leadMoney(r.value));
+  } else if(r.kind === 'term'){
+    v = esc(leadTermText(r.value));
+  } else if(r.kind === 'warn'){
+    v = `<span class="lead-sub-warn">${esc(r.value)} — this should have been dropped as a bot submission</span>`;
+  } else {
+    v = esc(r.value);
+  }
+  if(r.sub) v += `<span class="sub">${esc(r.sub)}</span>`;
+  return `<div class="lead-sub-row"><div class="k">${esc(r.label)}</div><div class="v">${v}</div></div>`;
+}
+
+function renderLeadSubmission(l){
+  const host = document.getElementById('lead-payload');
+  const raw  = document.getElementById('lead-payload-raw');
+  const wrap = document.getElementById('lead-payload-raw-wrap');
+  if(!host) return;
+  const p = leadPayloadOf(l);
+  const { rows, meta } = leadSubmission(p);
+  host.innerHTML = rows.length
+    ? rows.map(leadRowHtml).join('') +
+      (meta.length ? `<div class="lead-sub-meta">${meta.map(m => `<span>${esc(m.label)}: ${esc(m.value)}</span>`).join('')}</div>` : '')
+    : '<div class="lead-sub-empty">No submission body on this lead — it was logged by hand.</div>';
+  if(raw)  raw.textContent = Object.keys(p).length ? JSON.stringify(p, null, 2) : '{}';
+  if(wrap){ wrap.open = false; wrap.style.display = Object.keys(p).length ? '' : 'none'; }
+}
+
+// The number the WhatsApp button would dial, with the hint that resolved it.
+function leadWhatsAppFor(l){
+  const p = leadPayloadOf(l);
+  const hint = [l.city, p.city, p.roomAddress, p.source, l.source].filter(Boolean).join(' ');
+  return leadWhatsApp(l.phone || p.phone, hint);
+}
+
+function wireLeadWhatsApp(l){
+  const btn = document.getElementById('lead-wa-btn');
+  if(!btn) return;
+  const p  = leadPayloadOf(l);
+  const wa = leadWhatsAppFor(l);
+  const phone = l.phone || p.phone;
+  // onclick, not addEventListener: the drawer is re-opened for every lead and
+  // listeners would stack, messaging one lead per past open.
+  btn.onclick = () => {
+    if(wa.ok){
+      const text = encodeURIComponent(leadWhatsAppText(l.name, p.roomName));
+      window.open(`https://wa.me/${wa.digits}?text=${text}`, '_blank', 'noopener');
+      return;
+    }
+    showToast(leadWhatsAppProblem(wa, l.name, phone));
+  };
+  btn.style.opacity = wa.ok ? '' : '0.55';
+  btn.title = wa.ok
+    ? `WhatsApp ${wa.display}` + (wa.assumed ? ` · +${wa.assumed} assumed from the lead's city` : '')
+    : (wa.reason === 'none' ? 'No phone on this lead' : `Unusable number: ${phone}`);
+}
+
+// Contact line for the drawer: the table's cell plus the number WhatsApp would
+// actually dial, so a wrong country-code guess is visible before it is sent.
+function leadContactBlock(l){
+  const wa = leadWhatsAppFor(l);
+  let html = leadContactCell(l);
+  if(wa.ok && wa.assumed){
+    html += `<div class="name-sub" style="margin-top:3px">WhatsApp ${esc(wa.display)} · country code assumed from ${esc(l.city || 'Canada')}</div>`;
+  } else if(!wa.ok && wa.reason !== 'none'){
+    html += `<div class="name-sub lead-sub-warn" style="margin-top:3px">${esc(leadWhatsAppProblem(wa, l.name, l.phone))}</div>`;
+  }
+  return html;
+}
+
 function fillLeadFields(l){
   document.getElementById('lead-modal-title').textContent = l.name || 'Lead';
   document.getElementById('lead-modal-sub').textContent = `${leadSourceLabelText(l.source)} · ${fmtDate(l.created_at)}`;
@@ -18513,8 +18862,9 @@ function fillLeadFields(l){
   asSel.disabled = !(activeRole() && activeRole().role === 'admin');
   asSel.dataset.synced = cur;   // last server value shown; realtime only re-syncs when it changes
   document.getElementById('lead-notes').value = l.notes || '';
-  document.getElementById('lead-contact').innerHTML = leadContactCell(l);
-  document.getElementById('lead-payload').textContent = JSON.stringify(l.raw || l.payload || l.data || {}, null, 2);
+  document.getElementById('lead-contact').innerHTML = leadContactBlock(l);
+  renderLeadSubmission(l);
+  wireLeadWhatsApp(l);
   renderLeadClaimBlock(l);
 }
 
