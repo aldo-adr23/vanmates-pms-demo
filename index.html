@@ -1151,7 +1151,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-15d"></script>
+<script src="pms-supabase.js?v=2026-09-16a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2818,6 +2818,10 @@ hello@vanmates.com · vanmates.com</textarea>
             <div class="form-field"><label>Student email</label>
               <input class="form-input" id="hb-email" type="email" autocomplete="off" placeholder="student@example.com">
             </div>
+            <div class="form-field"><label>Student name</label>
+              <input class="form-input" id="hb-name" type="text" autocomplete="off" maxlength="120" placeholder="Yume Aihara">
+              <div class="card-sub" style="margin-top:6px">Printed on the confirmation letter exactly as typed.</div>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-field"><label>Weekly rate (CAD)</label>
@@ -2860,6 +2864,34 @@ hello@vanmates.com · vanmates.com</textarea>
             </div>
             <div class="form-field"></div>
           </div>
+          <!-- Everything below is for the confirmation letter only. None of it
+               touches the money, and all of it can be edited later from the
+               bookings table (Edit details) — flight numbers usually arrive
+               after the booking is paid. -->
+          <div class="form-row">
+            <div class="form-field"><label>Date of birth</label>
+              <input class="form-input" id="hb-dob" type="date">
+            </div>
+            <div class="form-field"><label>Country</label>
+              <input class="form-input" id="hb-country" type="text" maxlength="80" placeholder="Japan">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label>Room type</label>
+              <input class="form-input" id="hb-room-type" type="text" maxlength="120" placeholder="Single room, shared washroom">
+            </div>
+            <div class="form-field"><label>Flight</label>
+              <input class="form-input" id="hb-flight" type="text" maxlength="160" placeholder="AC 4 · 9:35 AM (add later if unknown)">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-field"><label>Arrival notes</label>
+              <input class="form-input" id="hb-arrival" type="text" maxlength="600" placeholder="Host meets you at the door; text on landing">
+            </div>
+            <div class="form-field"><label>Notes for the letter</label>
+              <input class="form-input" id="hb-notes" type="text" maxlength="600" placeholder="Dietary needs, allergies…">
+            </div>
+          </div>
 
           <div id="hb-preview" class="card-sub" style="margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;white-space:pre-line;line-height:1.7" hidden></div>
           <div id="hb-warn" style="margin-top:12px;font-size:13px" hidden></div>
@@ -2897,9 +2929,9 @@ hello@vanmates.com · vanmates.com</textarea>
             <thead><tr>
               <th>Reference</th><th>Student</th><th>Stay</th><th>Length</th><th>Meals</th>
               <th class="right">Per week</th><th class="right">Host / week</th>
-              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Move-out</th><th></th>
+              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Letter</th><th>Move-out</th><th></th>
             </tr></thead>
-            <tbody id="hb-rows"><tr><td colspan="12" class="card-sub">Not loaded yet.</td></tr></tbody>
+            <tbody id="hb-rows"><tr><td colspan="13" class="card-sub">Not loaded yet.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -11294,6 +11326,7 @@ async function hhArchive(ids){
    it while either rate is zero, so a family can never be published with nothing
    to charge. */
 const HH_RATES_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/room-rates-update";
+const HH_CONTACT_ENDPOINT = "https://adr23.app.n8n.cloud/webhook/host-contact";
 const HH_BOOK_URL = "https://vanmates.com/book.html?h=";
 // A room-specific link. The host link still works and shows a picker when a
 // family has several rooms.
@@ -11319,6 +11352,67 @@ function hhMoney(cents){
   return (Number(cents) / 100).toFixed(2);
 }
 
+// Phone and address are required on the student's confirmation letter, and
+// they live on the n8n host row (the one the letter reads), not on the portal
+// profile. Shown first in the panel so the gap is visible before anyone pays.
+function hhContactCard(row, canWrite){
+  const missing = !(row.phone && row.address);
+  const badge = missing
+    ? `<span class="badge badge-amber">missing contact — letters will block</span>`
+    : `<span class="badge badge-green">contact complete</span>`;
+  return `<div class="card card-pad" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="card-title">Contact on the confirmation letter</div>${badge}
+    </div>
+    <div class="form-row" style="margin-top:10px">
+      <div class="form-field"><label>Phone</label>
+        <input class="form-input" id="hh-contact-phone" type="tel" maxlength="40" value="${esc(row.phone || "")}" ${canWrite ? "" : "disabled"}></div>
+      <div class="form-field"><label>Address (one line, as printed)</label>
+        <input class="form-input" id="hh-contact-address" type="text" maxlength="200" value="${esc(row.address || "")}" ${canWrite ? "" : "disabled"}></div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+      <button type="button" class="btn btn-primary" id="hh-contact-save" ${canWrite ? "" : "disabled"}>Save contact</button>
+      ${canWrite ? "" : `<span class="card-sub">Needs the full staff token.</span>`}
+    </div>
+  </div>`;
+}
+
+let hhContactBusy = false;
+async function hhSaveContact(h, row){
+  if(hhContactBusy) return;
+  const token = hhFullToken();
+  if(!token){ hhRateNote("The full staff token is needed to change contact details.", true); return; }
+  const phone = (document.getElementById("hh-contact-phone")?.value || "").trim();
+  const address = (document.getElementById("hh-contact-address")?.value || "").trim();
+  hhContactBusy = true;
+  try {
+    hhRateNote("Saving…");
+    let resp;
+    try {
+      resp = await fetch(HH_CONTACT_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-vm-staff-token": token },
+        body: JSON.stringify({ host_id: row.host_id, phone, address })
+      });
+    } catch(e){ hhRateNote("Couldn't reach n8n.", true); return; }
+    if(resp.status === 405){ hhRateNote("The host-contact workflow isn't published in n8n yet.", true); return; }
+    if(resp.status === 401){ hhRateNote("That staff token was rejected.", true); return; }
+    if(!resp.ok){
+      const d = await resp.json().catch(() => null);
+      hhRateNote((d && d.error) || ("Couldn't save (HTTP " + resp.status + ")."), true);
+      return;
+    }
+    hhInvalidateHostCaches();
+    await loadHostPayoutStatus();
+    await loadHostRooms();
+    if(HH_PAYOUT.state !== "loaded"){ hhRateNote("Saved, but the host list could not be reloaded.", true); return; }
+    openHost(h.id);
+    if(typeof showToast === "function") showToast("Contact saved");
+  } finally {
+    hhContactBusy = false;
+  }
+}
+
 function hhBookingBox(h){
   // Same rule as hhPayoutAction one screen up: with the list unloaded, "no payout
   // record" is a guess rather than a fact, and acting on it sends staff to
@@ -11337,20 +11431,23 @@ function hhBookingBox(h){
   // finished Stripe; a payout row with no room means they are payable but have
   // nothing priced, which is a room to create, not an onboarding link to send.
   if(!hhPayoutFor(h)) return `<div class="card card-pad card-sub">This host has no payout record yet, so there is nothing to publish. Send them payout setup first.</div>`;
+  const payoutRow = hhPayoutFor(h);
   const rooms = hhRooms(h);
   const canWrite = !!hhFullToken();
   // The empty case still gets the Add a room form. Returning early here left the
   // one screen that says "no room on file" as the one screen with no way to make
   // one — a dead end reached by every newly onboarded family.
   if (!rooms.length) {
-    return `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`
+    return hhContactCard(payoutRow, canWrite)
+         + `<div class="card card-pad card-sub">This host has a payout account but no room on file, so there is no price to publish.</div>`
          + hhAddRoomCard(h, canWrite)
          + `<div id="hh-rate-note" class="card-sub" style="margin-top:10px" hidden></div>`;
   }
   // One shared note area below the list rather than one per card: hhRateNote
   // addresses a single id, and a note that can appear in three places at once is
   // three places to look for the reason a save was refused.
-  return rooms.map(r => hhRoomCard(r, canWrite)).join("")
+  return hhContactCard(payoutRow, canWrite)
+       + rooms.map(r => hhRoomCard(r, canWrite)).join("")
        + hhAddRoomCard(h, canWrite)
        + `<div id="hh-rate-note" class="card-sub" style="margin-top:10px" hidden></div>`;
 }
@@ -12198,6 +12295,9 @@ function openHost(id){
   _hostPanelBody?.querySelector("#hh-new-room-save")?.addEventListener("click", () => hhCreateRoom(h));
   _hostPanelBody?.querySelectorAll("[data-hh-room-archive]").forEach(b =>
     b.addEventListener("click", () => hhArchiveRoom(h, b.getAttribute("data-hh-room-archive"))));
+
+  const cs = document.getElementById("hh-contact-save");
+  if(cs) cs.addEventListener("click", () => { const row = hhPayoutFor(h); if(row) hhSaveContact(h, row); });
 
   if (_hostPanelBody) {
     _hostPanelBody.querySelectorAll(".guest-row").forEach(row => {
@@ -16405,6 +16505,143 @@ function vacPhotoSet(v) {
 }
 /* VAC-PHOTO-CORE-END */
 
+/* HL-LETTER-CORE-START */
+/* Decides whether a homestay confirmation letter goes out, and builds exactly
+   what the PDF Worker and the three emails need. Pure: no DOM, no fetch, no
+   clock — `now` is an argument. Tested by test/homestay-letter.test.js.
+
+   MIRRORED in the n8n workflow "VM - Homestay Confirmation Letter" (Build Letter
+   Payload node). n8n cannot load this file, so a copy is unavoidable. Change
+   both in the same commit; the node's comment names this fence.
+   Written with `var`/`function` only so the block pastes into an n8n Code
+   node unchanged. */
+var HL_MEAL_LABELS = { two_meals: "2 meals/day", three_meals: "3 meals/day" };
+// A 'pending' this old is a run that died between marking the row and
+// finishing. Younger than this and another run is (probably) still going.
+var HL_PENDING_STALE_MS = 10 * 60 * 1000;
+
+function hlStr(v){ return v === null || v === undefined ? "" : String(v).trim(); }
+function hlParseDate(s){
+  var t = hlStr(s);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  var d = new Date(t + "T00:00:00Z");
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== t) return null;
+  return d;
+}
+// Whole years, birthday-inclusive: born 2001-07-04, checking in 2026-07-04, is
+// 25. Null when the birthday has not happened by check-in at all.
+function hlAgeAt(dob, on){
+  var years = on.getUTCFullYear() - dob.getUTCFullYear();
+  var m = on.getUTCMonth() - dob.getUTCMonth();
+  if (m < 0 || (m === 0 && on.getUTCDate() < dob.getUTCDate())) years -= 1;
+  return years < 0 ? null : years;
+}
+function hlMoney(c){ return ((Number(c) || 0) / 100).toFixed(2); }
+function hlFirstName(name){ return hlStr(name).split(/\s+/)[0] || ""; }
+function hlLeaseLabel(days){
+  var n = Number(days) || 0, w = Math.floor(n / 7), d = n % 7, parts = [];
+  if (w) parts.push(w + (w === 1 ? " week" : " weeks"));
+  if (d) parts.push(d + (d === 1 ? " day" : " days"));
+  return parts.join(" and ") || (n + " days");
+}
+// Lifted from the retired VM - Homestay Rent Paid. Three shapes of stay, three
+// different truths: a 4-week booking has no subscription and no tail, and
+// telling that student "your next payment is in 4 weeks" would be a lie.
+function hlNextPaymentText(b){
+  var hasSub = Number(b.subscription_needed) === 1;
+  var tail = Number(b.tail_charge_total) || 0;
+  var tailDays = Number(b.tail_days) || 0;
+  if (hasSub) {
+    var t = "Your next payment of CAD $" + hlMoney(b.subscription_amount) + " is due in 4 weeks, and every 4 weeks after that, charged automatically to the same card.";
+    if (tail > 0) t += " A final part-payment of CAD $" + hlMoney(tail) + " follows on " + hlStr(b.tail_charge_date) + ", covering the last " + tailDays + " days of your stay.";
+    return t;
+  }
+  if (tail > 0) return "One payment left: CAD $" + hlMoney(tail) + " on " + hlStr(b.tail_charge_date) + ", covering the last " + tailDays + " days of your stay. It is charged automatically to the same card.";
+  return "That covers your whole stay - there is nothing further to pay.";
+}
+// Same rule as the Worker's fileName(): change both.
+function hlFileName(studentName){
+  var safe = hlStr(studentName).replace(/[^A-Za-z0-9 .'\-]/g, "").replace(/\s+/g, " ").trim() || "Student";
+  return "Vanmates Confirmation - " + safe + ".pdf";
+}
+// 0 is a valid amount (a $0 test booking); null/""/NaN is not — the row is
+// the ledger, and Number(null) is 0, which would silently render as $0.00.
+function hlIsCents(v){ return v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)); }
+
+function computeLetterDecision(input){
+  var src = input || {};
+  var b = src.booking || {}, h = src.host || {}, r = src.room || null;
+  // n8n Execute-Workflow inputs and webhook bodies often deliver booleans as
+  // the string "true" — a silently ignored Resend has no error anywhere.
+  var force = src.force === true || hlStr(src.force) === "true";
+  var now = typeof src.now === "number" ? src.now : Date.parse(hlStr(src.now));
+  if (!isFinite(now)) throw new Error("now must be an ISO timestamp");
+
+  if (hlStr(b.status) !== "paid") return { action: "skip", reason: "not_paid" };
+  var st = hlStr(b.letter_status);
+  if (st === "sent" && !force) return { action: "skip", reason: "already_sent" };
+  if (st === "pending") {
+    var updated = Date.parse(hlStr(b.updated_at));
+    // An unparseable timestamp cannot prove a run is live, so it counts as stale.
+    var stale = !isFinite(updated) || (now - updated) > HL_PENDING_STALE_MS;
+    if (!stale) return { action: "skip", reason: "in_progress" };
+    if (!force) return { action: "skip", reason: "stuck_needs_force" };
+  }
+
+  // Check-out is the day they leave: an explicit move-out wins over the lease end.
+  var checkOut = hlStr(b.move_out_date) || hlStr(b.lease_end_date);
+  var moveIn = hlParseDate(b.move_in_date);
+  var missing = [];
+  if (!hlStr(b.student_name)) missing.push("student name");
+  if (!hlStr(b.student_email)) missing.push("student email");
+  if (!moveIn) missing.push("check-in date");
+  if (!hlParseDate(checkOut)) missing.push("check-out date");
+  if (!hlStr(h.display_name)) missing.push("host name");
+  if (!hlStr(h.email)) missing.push("host email");
+  if (!hlStr(h.phone)) missing.push("host phone");
+  if (!hlStr(h.address)) missing.push("host address");
+  if (!hlIsCents(b.first_charge_total)) missing.push("amount paid");
+  if (Number(b.subscription_needed) === 1 && !hlIsCents(b.subscription_amount)) missing.push("subscription amount");
+  if (Number(b.tail_charge_total) > 0 && !(Number(b.tail_days) > 0)) missing.push("tail days");
+  if (!(Number.isInteger(Number(b.lease_days)) && Number(b.lease_days) > 0)) missing.push("length of stay");
+  if (!hlIsCents(b.host_weekly_rate)) missing.push("host weekly rate");
+  if (missing.length) return { action: "blocked", missing: missing };
+
+  var dob = hlParseDate(b.student_dob);
+  var age = dob ? hlAgeAt(dob, moveIn) : null;
+  var student = { name: hlStr(b.student_name), country: hlStr(b.student_country) };
+  if (age !== null) student.age = age;
+  var room = hlStr(b.room_type) || (r ? hlStr(r.label) : "");
+  var mealKey = hlStr(b.meal_plan);
+  var meals = Object.prototype.hasOwnProperty.call(HL_MEAL_LABELS, mealKey) ? HL_MEAL_LABELS[mealKey] : "";
+
+  var payload = {
+    booking_ref: hlStr(b.booking_ref),
+    student: student,
+    accommodation: { meals: meals, room: room },
+    travel: { flight: hlStr(b.flight_info), check_in: hlStr(b.move_in_date), check_out: checkOut, arrival_notes: hlStr(b.arrival_notes) },
+    host: { name: hlStr(h.display_name), email: hlStr(h.email), phone: hlStr(h.phone), address: hlStr(h.address) },
+    notes: hlStr(b.letter_notes)
+  };
+  var email = {
+    booking_ref: payload.booking_ref,
+    student_email: hlStr(b.student_email),
+    student_name: student.name,
+    student_first: hlFirstName(student.name),
+    host_email: payload.host.email,
+    host_name: payload.host.name,
+    host_first: hlFirstName(payload.host.name),
+    move_in_date: payload.travel.check_in,
+    check_out: checkOut,
+    lease_label: hlLeaseLabel(b.lease_days),
+    paid_today: hlMoney(b.first_charge_total),
+    host_weekly: hlMoney(b.host_weekly_rate),
+    next_payment_text: hlNextPaymentText(b),
+    file_name: hlFileName(student.name)
+  };
+  return { action: "ready", payload: payload, email: email };
+}
+/* HL-LETTER-CORE-END */
 /* TENANT-CORE-START */
 /* Pure record-selection for the tenant list. Fenced so test/tenants.test.js can
    extract and assert against it with no DOM, the same way the Homestay Finance
@@ -19133,7 +19370,9 @@ renderLeads();
   // Two secrets reach these webhooks and they are not interchangeable:
   //
   //   vm_staff_token     full   — hosts-list, bookings-list, booking-create,
-  //                               booking-end. Can cancel a live subscription.
+  //                               booking-end, booking-details,
+  //                               homestay-letter-resend. Can cancel a live
+  //                               subscription.
   //   vm_staff_token_ro  read   — hosts-list and bookings-list only. The write
   //                               endpoints answer it 401 by design.
   //
@@ -19142,7 +19381,7 @@ renderLeads();
   // stopped here rather than being sent and bounced, because a 401 clears the
   // token and would evict a read-only token that is working perfectly.
   const HB_RO_TOKEN_KEY = 'vm_staff_token_ro';
-  const HB_WRITE_PATHS = ['booking-create', 'booking-end'];
+  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-details', 'homestay-letter-resend'];
 
   function hbFullToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
   function hbReadToken() { return hbFullToken() || localStorage.getItem(HB_RO_TOKEN_KEY) || ''; }
@@ -19235,7 +19474,7 @@ renderLeads();
     // indistinguishable from a rotated secret, and the handler below would then
     // clear a token that reads fine. Refuse it here and say why instead.
     if (isWrite && !full) {
-      throw new Error('This token can view bookings but not create or cancel them — ask an admin for the full staff token.');
+      throw new Error('This token can view bookings but not create, edit, cancel them or send letters — ask an admin for the full staff token.');
     }
 
     // Never send an empty token: the 401 it earns is indistinguishable from a
@@ -19312,7 +19551,7 @@ renderLeads();
 
     const tb = $('hb-rows');
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="12" class="card-sub">No bookings yet.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="13" class="card-sub">No bookings yet.</td></tr>';
       hbApplyWriteAffordances();
       return;
     }
@@ -19332,6 +19571,7 @@ renderLeads();
         '<td>' + (flags.length
           ? flags.map((f) => '<span class="badge badge-amber">' + esc(f) + '</span>').join(' ')
           : '<span class="card-sub">—</span>') + '</td>' +
+        hbLetterCell(b) +
         hbMoveOutCell(b) +
         hbExtendCell(b) +
         '</tr>';
@@ -19374,6 +19614,41 @@ renderLeads();
     if (st !== 'complete' && b.next_host_payout_date) parts.push('next ' + b.next_host_payout_date);
     return '<td><span class="badge ' + cls + '">' + esc(st) + '</span>' +
       (parts.length ? '<div class="card-sub">' + esc(parts.join(' · ')) + '</div>' : '') + '</td>';
+  }
+
+  // Confirmation letter state, straight off the row. The pre-check for a
+  // never-sent letter runs the same HL-LETTER-CORE the n8n workflow mirrors, so
+  // staff see "would block on: host phone" before they click, not after.
+  function hbLetterCell(b) {
+    const st = String(b.letter_status || '');
+    const ref = esc(b.booking_ref);
+    let chip, sub = '';
+    if (st === 'sent') { chip = '<span class="badge badge-green">sent</span>'; sub = (b.letter_sent_at || '').slice(0, 10); }
+    else if (st === 'blocked') { chip = '<span class="badge badge-amber">blocked</span>'; sub = String(b.letter_error || '').replace(/^missing: /, ''); }
+    else if (st === 'failed') { chip = '<span class="badge badge-red">failed</span>'; sub = String(b.letter_error || ''); }
+    else if (st === 'pending') { chip = '<span class="badge badge-blue">sending…</span>'; }
+    else if (b.status === 'paid') {
+      chip = '<span class="card-sub">not sent</span>';
+      const host = hbHosts.find((h) => h.host_id === b.host_id);
+      if (host) {
+        try {
+          const d = computeLetterDecision({ booking: b, host: { display_name: host.display_name, email: host.email, phone: host.phone, address: host.address }, room: null, force: false, now: new Date().toISOString() });
+          if (d.action === 'blocked') sub = 'would block on: ' + d.missing.join(', ');
+        } catch (_) { /* a stale row shape must not break the table */ }
+      }
+    }
+    else { chip = '<span class="card-sub">—</span>'; }
+
+    let btn = '';
+    if (b.status === 'paid' && st !== 'pending') {
+      btn = hbCanWrite()
+        ? '<button type="button" class="btn btn-ghost hb-letter-send">' + (st === 'sent' ? 'Resend letter' : 'Send letter') + '</button>'
+        : '<button type="button" class="btn btn-ghost hb-need-token" title="Sending the letter emails the student and host, so it needs the full staff token.">Needs full token</button>';
+    }
+    const edit = hbCanWrite() ? ' <button type="button" class="btn btn-ghost hb-details-edit">Edit details</button>' : '';
+    return '<td class="hb-letter" data-ref="' + ref + '" data-status="' + esc(st) + '">' + chip +
+      (sub ? '<div class="card-sub">' + esc(sub) + '</div>' : '') +
+      (btn || edit ? '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">' + btn + edit + '</div>' : '') + '</td>';
   }
 
   // Bookings created before meal_plan existed have no value; show a dash rather
@@ -19481,7 +19756,7 @@ renderLeads();
     row.setAttribute('data-ref', b.booking_ref);
 
     if (pick.error === 'unavailable') {
-      row.innerHTML = '<td colspan="12" class="card-sub" style="padding:14px 16px">' +
+      row.innerHTML = '<td colspan="13" class="card-sub" style="padding:14px 16px">' +
         'This host has no room to extend into.</td>';
       tr.parentNode.insertBefore(row, tr.nextSibling);
       return;
@@ -19517,7 +19792,7 @@ renderLeads();
     // is one glance away rather than something to look up.
     const r = pick.room || {};
     row.innerHTML =
-      '<td colspan="12" style="padding:16px;background:var(--wash, #FAF5ED)">' +
+      '<td colspan="13" style="padding:16px;background:var(--wash, #FAF5ED)">' +
         '<div style="font-weight:600;margin-bottom:10px">Extend ' + esc(b.student_email) +
           ' · ' + esc(b.booking_ref) + '</div>' +
         '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">' +
@@ -19662,6 +19937,73 @@ renderLeads();
     await hbLoadBookings();
   }
 
+  // Two-step, like ending a tenancy: the first click only asks. A resend emails
+  // the student and the host again, so it must not be one stray click away.
+  function hbOpenLetterConfirm(cell) {
+    const resend = cell.getAttribute('data-status') === 'sent';
+    cell.innerHTML =
+      '<div class="card-sub" style="margin-bottom:6px">' + (resend
+        ? 'This emails the student and host again, with a freshly generated letter.'
+        : 'This generates the letter and emails the student, the host and hello@.') + '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+        '<button type="button" class="btn btn-primary hb-letter-go">' + (resend ? 'Resend now' : 'Send now') + '</button>' +
+        '<button type="button" class="btn btn-ghost hb-letter-cancel">Cancel</button>' +
+      '</div>';
+  }
+
+  async function hbSendLetter(cell) {
+    const ref = cell.getAttribute('data-ref');
+    const go = cell.querySelector('.hb-letter-go');
+    if (go) go.disabled = true;
+    hbStatus('Sending the confirmation letter for ' + ref + '…');
+    try {
+      const d = await hbPost('homestay-letter-resend', { booking_ref: ref });
+      if (d.letter_status === 'sent') hbStatus(ref + ': letter sent to the student, the host and hello@.');
+      else if (d.letter_status === 'blocked') hbStatus(ref + ': not sent — ' + (d.letter_error || 'missing fields') + '. Fill them in and try again.', true);
+      else if (d.letter_status === 'pending') hbStatus(ref + ': a letter is already being sent for this booking — wait a minute and reload.', true);
+      else hbStatus(ref + ': ' + (d.letter_status || 'unknown') + (d.letter_error ? ' — ' + d.letter_error : ''), true);
+    } catch (e) {
+      hbStatus(e.message, true);
+    }
+    await hbLoadBookings();
+  }
+
+  // Only the seven letter-detail fields. Money and dates are not editable
+  // here on purpose: four crons read them and nothing recomputes the schedule.
+  const HB_DETAIL_FIELDS = [
+    ['student_name', 'Student name', 'text', 120], ['student_dob', 'Date of birth', 'date', 10],
+    ['student_country', 'Country', 'text', 80], ['room_type', 'Room type', 'text', 120],
+    ['flight_info', 'Flight', 'text', 160], ['arrival_notes', 'Arrival notes', 'text', 600], ['letter_notes', 'Notes for the letter', 'text', 600],
+  ];
+
+  function hbOpenDetails(cell) {
+    const ref = cell.getAttribute('data-ref');
+    const b = hbLastRows.find((r) => r.booking_ref === ref) || {};
+    cell.innerHTML =
+      '<div style="display:grid;gap:6px;min-width:260px">' +
+      HB_DETAIL_FIELDS.map(([k, label, type, maxlength]) =>
+        '<label class="card-sub" style="display:grid;gap:2px">' + esc(label) +
+        '<input class="form-input hb-detail" data-key="' + k + '" type="' + type + '" maxlength="' + maxlength + '" value="' + esc(b[k] || '') + '" style="padding:6px 8px"></label>').join('') +
+      '<div style="display:flex;gap:6px"><button type="button" class="btn btn-primary hb-details-save">Save</button>' +
+      '<button type="button" class="btn btn-ghost hb-details-cancel">Cancel</button></div></div>';
+    const first = cell.querySelector('.hb-detail'); if (first) first.focus();
+  }
+
+  async function hbSaveDetails(cell) {
+    const ref = cell.getAttribute('data-ref');
+    const body = { booking_ref: ref };
+    cell.querySelectorAll('.hb-detail').forEach((i) => { body[i.getAttribute('data-key')] = i.value.trim(); });
+    const save = cell.querySelector('.hb-details-save'); if (save) save.disabled = true;
+    hbStatus('Saving details for ' + ref + '…');
+    try {
+      await hbPost('booking-details', body);
+      hbStatus(ref + ': details saved. Click "Send letter" or "Resend letter" to issue the updated letter.');
+    } catch (e) {
+      hbStatus(e.message, true);
+    }
+    await hbLoadBookings();
+  }
+
   async function hbLoadAll() {
     // Checked here as well as in hbPost so opening the view with no token shows
     // the card and nothing else, rather than two parallel failures.
@@ -19781,6 +20123,8 @@ renderLeads();
 
     if (!host) return hbStatus('Choose a host.', true);
     if (!email) return hbStatus('Student email is required.', true);
+    const name = $('hb-name').value.trim();
+    if (!name) return hbStatus('Student name is required — it is printed on the confirmation letter.', true);
     if (!rawWeekly) return hbStatus('Weekly rate is required.', true);
     // Checked as a STRING, deliberately. toCents('') is 0, which the core reads
     // as a real "the host is paid nothing" figure rather than a missing value,
@@ -19824,6 +20168,13 @@ renderLeads();
         // downstream, and sending both would be two sources for one length.
         lease_days: leaseDays,
         meal_plan: meals,
+        student_name: name,
+        student_dob: $('hb-dob').value || '',
+        student_country: $('hb-country').value.trim(),
+        room_type: $('hb-room-type').value.trim(),
+        flight_info: $('hb-flight').value.trim(),
+        arrival_notes: $('hb-arrival').value.trim(),
+        letter_notes: $('hb-notes').value.trim(),
       });
       // A 2xx with no link is a real failure that hbPost cannot see: it does
       // `resp.json().catch(() => ({}))`, so an empty or non-JSON body becomes
@@ -19876,7 +20227,17 @@ renderLeads();
       // Checked before the .hb-act guard: the read-only cell is deliberately
       // not an action cell, so it carries no data-ref and would fall out here.
       if (e.target.closest && e.target.closest('.hb-need-token')) {
-        return hbAskForToken('Ending a tenancy needs the full staff token, not the view-only one.');
+        return hbAskForToken('This action needs the full staff token, not the view-only one.');
+      }
+      const lc = e.target.closest ? e.target.closest('.hb-letter') : null;
+      if (lc) {
+        if (e.target.closest('.hb-letter-send')) return hbOpenLetterConfirm(lc);
+        if (e.target.closest('.hb-letter-go')) return hbSendLetter(lc);
+        if (e.target.closest('.hb-letter-cancel')) return hbLoadBookings();
+        if (e.target.closest('.hb-details-edit')) return hbOpenDetails(lc);
+        if (e.target.closest('.hb-details-save')) return hbSaveDetails(lc);
+        if (e.target.closest('.hb-details-cancel')) return hbLoadBookings();
+        return;
       }
       const cell = e.target.closest ? e.target.closest('.hb-act') : null;
       if (cell) {
