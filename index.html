@@ -1151,7 +1151,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-15c"></script>
+<script src="pms-supabase.js?v=2026-09-15d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1285,7 +1285,7 @@
       <div class="topbar-spacer"></div>
       <div class="search">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input id="global-search" placeholder="Search tenants, rooms, invoices…" autocomplete="off" />
+        <input id="global-search" placeholder="Search anything…" autocomplete="off" />
         <span style="font-size:11px;border:1px solid var(--line);padding:1px 6px;border-radius:5px">⌘K</span>
       </div>
       <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open menu">
@@ -18856,12 +18856,30 @@ function fillLeadFields(l){
     LEAD_STATUSES.map(s => `<option value="${s}" ${(l.status||'new')===s?'selected':''}>${leadCap(s)}</option>`).join('');
   const cur = l.assignee || '';
   const asSel = document.getElementById('lead-assignee');
+  // Only the signed-in user is offered as an assignee. The whole team used to
+  // be listed, but a lead is owned by whoever claims it, and handing one to a
+  // teammate who has no part in sales is not a move anybody makes on purpose.
+  // A lead already assigned to somebody else keeps that person in the list —
+  // dropping them would leave the select on a value the lead does not have and
+  // blank the assignment on the next save.
+  const me = activeRole() || {};
+  const meValue = me.email || me.name || '';
+  const assignable = (typeof teamMembers !== 'undefined' ? teamMembers : [])
+    .filter(m => {
+      const v = m.email || m.name || '';
+      return v && (v === meValue || v === cur);
+    });
   asSel.innerHTML =
     `<option value="">Unassigned</option>` +
-    (typeof teamMembers !== 'undefined' ? teamMembers : []).map(m => {
+    assignable.map(m => {
       const v = m.email || m.name || '';
       return `<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(m.name || m.email || v)}</option>`;
-    }).join('');
+    }).join('') +
+    // The claimant may not be in team_members at all (the sales agents who get
+    // the lead emails are not portal users today) — keep the raw value rather
+    // than losing it.
+    (cur && !assignable.some(m => (m.email || m.name || '') === cur)
+      ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
   // Reassignment is a hand-off, which only an admin may do. The claim button
   // is how an agent takes a lead.
   asSel.disabled = !(activeRole() && activeRole().role === 'admin');
@@ -19279,6 +19297,12 @@ renderLeads();
     if (typeof loadHostRooms === 'function') await loadHostRooms();
     $('hb-kpi-total').textContent = d.count;
     $('hb-kpi-total-sub').textContent = d.count === 1 ? '1 booking' : d.count + ' bookings';
+    // The sidebar count ships as "—" because bookings are not part of the
+    // Supabase hydrate that updateSidebarCounts() reads: they come from the
+    // homestay API behind a staff token, so there is nothing to count until
+    // this call returns. Fill it in now that there is.
+    const navCount = document.querySelector('.nav-item[data-view="homestay-bookings"] .nav-count');
+    if (navCount) navCount.textContent = d.count;
     $('hb-kpi-attention').textContent = d.needs_attention;
     $('hb-kpi-attention-sub').textContent = d.needs_attention ? 'chase these' : 'nothing to chase';
     const unpaid = rows.filter((b) => b.status === 'created' || b.status === 'payment_failed').length;
