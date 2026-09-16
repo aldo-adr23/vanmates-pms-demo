@@ -147,6 +147,10 @@
   .btn-primary{background:var(--red);color:#fff}
   .btn-primary:hover{background:var(--red-dark)}
   .btn-ghost{background:var(--surface);border:1px solid var(--line);color:var(--ink)}
+  /* Row-level actions in a 13-column table: a full pill per action wrapped
+     every cell into a stack. Keep them to one line. */
+  .btn-mini{padding:3px 9px;font-size:12px;border-radius:999px;white-space:nowrap}
+  .hb-letter-row td{background:var(--wash, #FAF5ED)}
   .btn-ghost:hover{background:var(--cream-2)}
   /* WhatsApp's own "Open app" button: green fill, dark label, dark hairline.
      The outline is --ink rather than black so it matches the warm palette, and
@@ -1151,7 +1155,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-16a"></script>
+<script src="pms-supabase.js?v=2026-09-16b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -19558,9 +19562,9 @@ renderLeads();
     tb.innerHTML = rows.map((b) => {
       const flags = (b.needs_attention || []);
       return '<tr>' +
-        '<td><code>' + esc(b.booking_ref) + '</code></td>' +
+        '<td class="nowrap"><code>' + esc(b.booking_ref) + '</code></td>' +
         '<td>' + esc(b.student_email) + '</td>' +
-        '<td>' + esc(b.move_in_date || '—') +
+        '<td class="nowrap">' + esc(b.move_in_date || '—') +
           (b.lease_end_date ? '<div class="card-sub">to ' + esc(b.lease_end_date) + '</div>' : '') + '</td>' +
         '<td class="nowrap">' + (Number(b.lease_days) > 0 ? esc(hbStayLength(b.lease_days)) : '<span class="card-sub">—</span>') + '</td>' +
         '<td>' + hbMeals(b.meal_plan) + '</td>' +
@@ -19622,7 +19626,7 @@ renderLeads();
   function hbLetterCell(b) {
     const st = String(b.letter_status || '');
     const ref = esc(b.booking_ref);
-    let chip, sub = '';
+    let chip = '', sub = '', subTitle = '';
     if (st === 'sent') { chip = '<span class="badge badge-green">sent</span>'; sub = (b.letter_sent_at || '').slice(0, 10); }
     else if (st === 'blocked') { chip = '<span class="badge badge-amber">blocked</span>'; sub = String(b.letter_error || '').replace(/^missing: /, ''); }
     else if (st === 'failed') { chip = '<span class="badge badge-red">failed</span>'; sub = String(b.letter_error || ''); }
@@ -19633,22 +19637,27 @@ renderLeads();
       if (host) {
         try {
           const d = computeLetterDecision({ booking: b, host: { display_name: host.display_name, email: host.email, phone: host.phone, address: host.address }, room: null, force: false, now: new Date().toISOString() });
-          if (d.action === 'blocked') sub = 'would block on: ' + d.missing.join(', ');
+          // Names two gaps; past that the cell was three lines of prose.
+          if (d.action === 'blocked') {
+            sub = d.missing.length > 2 ? 'missing ' + d.missing.length + ' fields' : 'missing ' + d.missing.join(', ');
+            subTitle = 'Missing: ' + d.missing.join(', ');
+          }
         } catch (_) { /* a stale row shape must not break the table */ }
       }
     }
-    else { chip = '<span class="card-sub">—</span>'; }
+    // An unpaid booking has no letter yet, so the cell carries only the way to
+    // fill its details in ahead of the payment that will issue one.
 
-    let btn = '';
+    const acts = [];
     if (b.status === 'paid' && st !== 'pending') {
-      btn = hbCanWrite()
-        ? '<button type="button" class="btn btn-ghost hb-letter-send">' + (st === 'sent' ? 'Resend letter' : 'Send letter') + '</button>'
-        : '<button type="button" class="btn btn-ghost hb-need-token" title="Sending the letter emails the student and host, so it needs the full staff token.">Needs full token</button>';
+      acts.push(hbCanWrite()
+        ? '<button type="button" class="btn btn-ghost btn-mini hb-letter-send">' + (st === 'sent' ? 'Resend' : 'Send') + '</button>'
+        : '<button type="button" class="btn btn-ghost btn-mini hb-need-token" title="Sending the letter emails the student and host, so it needs the full staff token.">Needs full token</button>');
     }
-    const edit = hbCanWrite() ? ' <button type="button" class="btn btn-ghost hb-details-edit">Edit details</button>' : '';
-    return '<td class="hb-letter" data-ref="' + ref + '" data-status="' + esc(st) + '">' + chip +
-      (sub ? '<div class="card-sub">' + esc(sub) + '</div>' : '') +
-      (btn || edit ? '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">' + btn + edit + '</div>' : '') + '</td>';
+    if (hbCanWrite()) acts.push('<button type="button" class="btn btn-ghost btn-mini hb-details-edit">Details</button>');
+    return '<td class="hb-letter nowrap" data-ref="' + ref + '" data-status="' + esc(st) + '">' + chip +
+      (sub ? '<div class="card-sub" style="white-space:normal;max-width:180px"' + (subTitle ? ' title="' + esc(subTitle) + '"' : '') + '>' + esc(sub) + '</div>' : '') +
+      (acts.length ? '<div style="margin-top:' + (chip ? 6 : 0) + 'px;display:flex;gap:4px">' + acts.join('') + '</div>' : '') + '</td>';
   }
 
   // Bookings created before meal_plan existed have no value; show a dash rather
@@ -19704,9 +19713,9 @@ renderLeads();
         'title="Ending a tenancy cancels a live Stripe subscription, so it needs the full staff token — not the view-only one.">' +
         'Needs full token</button></td>';
     }
-    return '<td class="hb-act" data-ref="' + esc(b.booking_ref) + '">' +
+    return '<td class="hb-act nowrap" data-ref="' + esc(b.booking_ref) + '">' +
       (dated ? dated + ' ' : '') +
-      '<button type="button" class="btn btn-ghost hb-end-start">' +
+      '<button type="button" class="btn btn-ghost btn-mini hb-end-start">' +
       (b.move_out_date ? 'Change' : 'End tenancy') + '</button></td>';
   }
 
@@ -19721,7 +19730,7 @@ renderLeads();
         'Needs full token</button></td>';
     }
     return '<td class="hb-ext" data-ref="' + esc(b.booking_ref) + '">' +
-      '<button type="button" class="btn btn-ghost hb-ext-start">Extend</button></td>';
+      '<button type="button" class="btn btn-ghost btn-mini hb-ext-start">Extend</button></td>';
   }
 
   // Two-step by design: the button only opens the date field, and nothing is sent
@@ -19747,6 +19756,7 @@ renderLeads();
     const tr = cell.closest('tr');
     if (!tr) return;
     hbCloseExtend();
+    hbCloseLetterRow();
 
     const rooms = (HH_ROOMS.byHost.get(b.host_id) || []);
     const pick = hhExtendRoom(b, rooms);
@@ -19939,16 +19949,39 @@ renderLeads();
 
   // Two-step, like ending a tenancy: the first click only asks. A resend emails
   // the student and the host again, so it must not be one stray click away.
+  // Both forms open as a FULL-WIDTH row beneath the booking, like Extend does.
+  // Seven inputs inside the Letter cell wrapped the whole table into a stack.
+  function hbCloseLetterRow() {
+    document.querySelectorAll('.hb-letter-row').forEach((el) => el.remove());
+  }
+  function hbOpenLetterRow(cell, inner) {
+    const tr = cell.closest('tr');
+    if (!tr) return null;
+    hbCloseLetterRow();
+    hbCloseExtend();
+    const row = document.createElement('tr');
+    row.className = 'hb-letter-row';
+    row.setAttribute('data-ref', cell.getAttribute('data-ref'));
+    row.setAttribute('data-status', cell.getAttribute('data-status'));
+    row.innerHTML = '<td colspan="13" style="padding:14px 16px">' + inner + '</td>';
+    tr.after(row);
+    return row;
+  }
+
   function hbOpenLetterConfirm(cell) {
     const resend = cell.getAttribute('data-status') === 'sent';
-    cell.innerHTML =
-      '<div class="card-sub" style="margin-bottom:6px">' + (resend
-        ? 'This emails the student and host again, with a freshly generated letter.'
-        : 'This generates the letter and emails the student, the host and hello@.') + '</div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-        '<button type="button" class="btn btn-primary hb-letter-go">' + (resend ? 'Resend now' : 'Send now') + '</button>' +
-        '<button type="button" class="btn btn-ghost hb-letter-cancel">Cancel</button>' +
-      '</div>';
+    const ref = cell.getAttribute('data-ref');
+    hbOpenLetterRow(cell,
+      '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">' +
+        '<div><strong>' + (resend ? 'Resend' : 'Send') + ' the confirmation letter for ' + esc(ref) + '?</strong>' +
+        '<div class="card-sub">' + (resend
+          ? 'A freshly generated letter is emailed to the student and the host again, with a copy to the team.'
+          : 'The letter is generated and emailed to the student, the host and the team.') + '</div></div>' +
+        '<div style="display:flex;gap:6px;margin-left:auto">' +
+          '<button type="button" class="btn btn-primary hb-letter-go">' + (resend ? 'Resend now' : 'Send now') + '</button>' +
+          '<button type="button" class="btn btn-ghost hb-letter-cancel">Cancel</button>' +
+        '</div>' +
+      '</div>');
   }
 
   async function hbSendLetter(cell) {
@@ -19958,7 +19991,7 @@ renderLeads();
     hbStatus('Sending the confirmation letter for ' + ref + '…');
     try {
       const d = await hbPost('homestay-letter-resend', { booking_ref: ref });
-      if (d.letter_status === 'sent') hbStatus(ref + ': letter sent to the student, the host and hello@.');
+      if (d.letter_status === 'sent') hbStatus(ref + ': letter sent to the student, the host and the team.');
       else if (d.letter_status === 'blocked') hbStatus(ref + ': not sent — ' + (d.letter_error || 'missing fields') + '. Fill them in and try again.', true);
       else if (d.letter_status === 'pending') hbStatus(ref + ': a letter is already being sent for this booking — wait a minute and reload.', true);
       else hbStatus(ref + ': ' + (d.letter_status || 'unknown') + (d.letter_error ? ' — ' + d.letter_error : ''), true);
@@ -19979,14 +20012,18 @@ renderLeads();
   function hbOpenDetails(cell) {
     const ref = cell.getAttribute('data-ref');
     const b = hbLastRows.find((r) => r.booking_ref === ref) || {};
-    cell.innerHTML =
-      '<div style="display:grid;gap:6px;min-width:260px">' +
+    const wide = { arrival_notes: 1, letter_notes: 1 };
+    const row = hbOpenLetterRow(cell,
+      '<div style="font-weight:600;margin-bottom:10px">Letter details for ' + esc(ref) +
+        ' <span class="card-sub" style="font-weight:400">— printed on the confirmation letter exactly as typed</span></div>' +
+      '<div style="display:grid;gap:10px 14px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">' +
       HB_DETAIL_FIELDS.map(([k, label, type, maxlength]) =>
-        '<label class="card-sub" style="display:grid;gap:2px">' + esc(label) +
+        '<label class="card-sub" style="display:grid;gap:3px' + (wide[k] ? ';grid-column:span 2' : '') + '">' + esc(label) +
         '<input class="form-input hb-detail" data-key="' + k + '" type="' + type + '" maxlength="' + maxlength + '" value="' + esc(b[k] || '') + '" style="padding:6px 8px"></label>').join('') +
-      '<div style="display:flex;gap:6px"><button type="button" class="btn btn-primary hb-details-save">Save</button>' +
-      '<button type="button" class="btn btn-ghost hb-details-cancel">Cancel</button></div></div>';
-    const first = cell.querySelector('.hb-detail'); if (first) first.focus();
+      '</div>' +
+      '<div style="display:flex;gap:6px;margin-top:12px"><button type="button" class="btn btn-primary hb-details-save">Save</button>' +
+      '<button type="button" class="btn btn-ghost hb-details-cancel">Cancel</button></div>');
+    const first = row && row.querySelector('.hb-detail'); if (first) first.focus();
   }
 
   async function hbSaveDetails(cell) {
@@ -19997,7 +20034,7 @@ renderLeads();
     hbStatus('Saving details for ' + ref + '…');
     try {
       await hbPost('booking-details', body);
-      hbStatus(ref + ': details saved. Click "Send letter" or "Resend letter" to issue the updated letter.');
+      hbStatus(ref + ': details saved. Click "Send" or "Resend" in the Letter column to issue the updated letter.');
     } catch (e) {
       hbStatus(e.message, true);
     }
@@ -20232,11 +20269,14 @@ renderLeads();
       const lc = e.target.closest ? e.target.closest('.hb-letter') : null;
       if (lc) {
         if (e.target.closest('.hb-letter-send')) return hbOpenLetterConfirm(lc);
-        if (e.target.closest('.hb-letter-go')) return hbSendLetter(lc);
-        if (e.target.closest('.hb-letter-cancel')) return hbLoadBookings();
         if (e.target.closest('.hb-details-edit')) return hbOpenDetails(lc);
-        if (e.target.closest('.hb-details-save')) return hbSaveDetails(lc);
-        if (e.target.closest('.hb-details-cancel')) return hbLoadBookings();
+        return;
+      }
+      const lr = e.target.closest ? e.target.closest('.hb-letter-row') : null;
+      if (lr) {
+        if (e.target.closest('.hb-letter-go')) return hbSendLetter(lr);
+        if (e.target.closest('.hb-details-save')) return hbSaveDetails(lr);
+        if (e.target.closest('.hb-letter-cancel') || e.target.closest('.hb-details-cancel')) return hbCloseLetterRow();
         return;
       }
       const cell = e.target.closest ? e.target.closest('.hb-act') : null;
