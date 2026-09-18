@@ -1188,7 +1188,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-16d"></script>
+<script src="pms-supabase.js?v=2026-09-18a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -7048,14 +7048,14 @@ function renderTeam(searchTxt = ""){
           <div class="nm">${esc(m.name)}${m.id===CURRENT_USER.id?' <span style="font-size:11px;color:var(--muted);font-weight:500">(you)</span>':''}</div>
           <div class="em">${esc(m.email)}</div>
           <div class="meta">
-            <span class="role-badge"><span class="dot" style="background:${r.color}"></span>${esc(r.label)}</span>
+            <span class="role-badge"><span class="dot" style="background:${r.color}"></span>${esc(teamCardTitle(m, roles))}</span>
             ${secondaryBadge}
           </div>
           <div class="em" style="margin-top:6px">Last seen ${esc(m.lastLogin || "today")}</div>
           <div class="actions">
             <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-view-as="${m.id}">View as ${esc(m.name.split(" ")[0])}</button>
-            <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px">Message</button>
             ${isAdminViewing ? `<button class="btn btn-ghost" style="padding:5px 12px;font-size:12px" data-edit-member="${m.id}">Edit</button>` : ''}
+            ${(isAdminViewing && m.id !== CURRENT_USER.id) ? `<button class="btn btn-ghost" style="padding:5px 12px;font-size:12px;color:var(--red-dark)" data-remove-member="${m.id}">Remove</button>` : ''}
           </div>
         </div>
       </div>
@@ -7071,6 +7071,12 @@ function renderTeam(searchTxt = ""){
     b.addEventListener("click", () => {
       const m = teamMembers.find(x => x.id === b.dataset.editMember);
       if(m && typeof openEditMember === "function") openEditMember(m);
+    });
+  });
+  grid.querySelectorAll("[data-remove-member]").forEach(b => {
+    b.addEventListener("click", () => {
+      const m = teamMembers.find(x => x.id === b.dataset.removeMember);
+      if(m) removeMember(m);
     });
   });
 }
@@ -7328,6 +7334,76 @@ document.addEventListener("keydown", e => {
     closeInviteMember();
   }
 });
+
+/* TEAM-CORE-START */
+/* Who may remove whom, and what a Team card calls a person.
+   Pure: no DOM, no globals. Asserted by test/team.test.js. */
+function teamRemoveGuard(member, currentUser, team) {
+  if (!currentUser || currentUser.role !== "admin" || !member) {
+    return { ok: false, reason: "Only admins can remove team members." };
+  }
+  if (member.id === currentUser.id) {
+    return { ok: false, reason: "You can't remove yourself." };
+  }
+  if (member.role === "admin") {
+    const otherAdmins = (Array.isArray(team) ? team : [])
+      .filter((m) => m && m.role === "admin" && m.id !== member.id);
+    if (otherAdmins.length === 0) {
+      return { ok: false, reason: "Can't remove the last admin." };
+    }
+  }
+  if (!member.id_db) {
+    // Seed rows and anything hydrate never touched have no auth uuid, so
+    // there is nothing to delete server-side.
+    return { ok: false, reason: "This member was never saved — reload and try again." };
+  }
+  return { ok: true };
+}
+
+function teamCardTitle(member, roleMap) {
+  const m = member || {};
+  const preset = roleMap && m.role ? roleMap[m.role] : null;
+  const label = (preset && preset.label) || m.role || "Member";
+  const title = typeof m.title === "string" ? m.title.trim() : "";
+  if (!title || title.toLowerCase() === label.toLowerCase()) return label;
+  return title + " · " + label;
+}
+/* TEAM-CORE-END */
+
+/* Remove a team member for real: guard, confirm, delete the
+   public.team_members row, then drop it from memory and redraw every
+   surface that lists the team. Used by the Team page and Settings — the
+   Settings button used to splice in memory only, so the person came back
+   on reload. */
+async function removeMember(m) {
+  const verdict = teamRemoveGuard(m, (typeof CURRENT_USER !== "undefined") ? CURRENT_USER : null, teamMembers);
+  if (!verdict.ok) {
+    if (typeof showToast === "function") showToast(verdict.reason);
+    return false;
+  }
+  if (!confirm(`Remove ${m.name} from the workspace? They'll lose access immediately.`)) return false;
+
+  if (window.vmDb && window.vmDb.sb) {
+    const { error } = await window.vmDb.sb
+      .from('team_members')
+      .delete()
+      .eq('id', m.id_db);
+    if (error) {
+      console.error("[remove-member] delete failed:", error);
+      if (typeof showToast === "function") showToast("Remove failed: " + error.message);
+      return false;
+    }
+  }
+
+  const idx = teamMembers.findIndex((x) => x.id === m.id);
+  if (idx >= 0) teamMembers.splice(idx, 1);
+  if (typeof renderTeam === "function") renderTeam();
+  if (typeof renderSettingsTeam === "function") renderSettingsTeam();
+  if (typeof updateSidebarCounts === "function") updateSidebarCounts();
+  if (typeof renderRoleMenu === "function") renderRoleMenu();
+  if (typeof showToast === "function") showToast(`${m.name} removed from workspace`);
+  return true;
+}
 
 /* ============ EDIT MEMBER MODAL ============
    Lets an admin change a team member's role/title/pages/assigned property.
@@ -18068,14 +18144,7 @@ document.getElementById("hh-add-host-btn")?.addEventListener("click", openAddHos
     list.querySelectorAll('[data-team-action="remove"]').forEach(btn => {
       btn.onclick = () => {
         const m = teamMembers.find(x => x.id === btn.dataset.id);
-        if(!m) return;
-        if(confirm(`Remove ${m.name} from the workspace? They'll lose access immediately.`)){
-          const idx = teamMembers.findIndex(x => x.id === m.id);
-          teamMembers.splice(idx, 1);
-          renderSettingsTeam();
-          if(typeof updateSidebarCounts === "function") updateSidebarCounts();
-          showToast(`${m.name} removed from workspace`);
-        }
+        if(m && typeof removeMember === "function") removeMember(m);
       };
     });
 
