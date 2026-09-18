@@ -1239,7 +1239,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-18b"></script>
+<script src="pms-supabase.js?v=2026-09-18c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -19280,10 +19280,13 @@ function computeSalesView(leads, reps, rep, ym, today){
   const sum = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
 
   const mClosed = sum(wonMonth, x => x.m.fee), mDeals = wonMonth.length;
+  // Leads marked won before deals carried money have no fee. They are still
+  // deals, but averaging them in would report a number nobody charged.
+  const withFee = wonMonth.filter(x => x.m.fee > 0).length;
   const mTarget = salesTargetFor(repRows, ym);
   const pace = mTarget != null ? Math.round(mTarget * period.month.dayOf / period.month.days) : null;
   const month = {
-    closed: mClosed, deals: mDeals, avg: mDeals ? Math.round(mClosed / mDeals) : 0,
+    closed: mClosed, deals: mDeals, avg: withFee ? Math.round(mClosed / withFee) : 0, noFee: mDeals - withFee,
     revenue: sum(wonMonth, x => x.m.revenue),
     target: mTarget, pct: mTarget ? Math.round(mClosed / mTarget * 100) : null,
     toGo: mTarget != null ? Math.max(0, mTarget - mClosed) : null,
@@ -21229,7 +21232,7 @@ renderLeads();
   function renderKpis(v){
     const kpi = (label, value, sub, go) => `<div class="kpi ${go ? 'clickable' : ''}" ${go ? `data-sales-go="leads" data-sales-status="${go}"` : ''}><div class="kpi-deco"></div><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="sl-kpi-sub">${sub}</div></div>`;
     $('sales-kpis').innerHTML =
-      kpi('Sales closed', fmt(v.month.closed), `<b>${v.month.deals}</b> deal${v.month.deals === 1 ? '' : 's'} · avg <b>${fmt(v.month.avg)}</b> · revenue <b>${fmt(v.month.revenue)}</b>`, 'won') +
+      kpi('Sales closed', fmt(v.month.closed), `<b>${v.month.deals}</b> deal${v.month.deals === 1 ? '' : 's'} · avg <b>${fmt(v.month.avg)}</b> · revenue <b>${fmt(v.month.revenue)}</b>${v.month.noFee ? ` · <b>${v.month.noFee}</b> without a fee` : ''}`, 'won') +
       kpi('Open deals', String(v.pipeline.count), `pipeline <b>${fmt(v.pipeline.value)}</b>`, 'qualified') +
       kpi('Leads', String(v.leads.assigned), `<b>${v.leads.uncontacted}</b> never contacted · conversion <b>${v.funnel.conversionPct}%</b>`, 'new') +
       kpi('Follow-ups', String(v.followUps.overdue + v.followUps.today), `<b>${v.followUps.overdue}</b> overdue · <b>${v.followUps.today}</b> due today`, '');
