@@ -76,7 +76,10 @@
     vacancies:         { table: 'vacancies',          key: 'id' },
     damageDeposits:    { table: 'damage_deposits',    key: 'id' },
     homestayApplicants:{ table: 'homestay_applicants',key: 'id' },
-    leads:             { table: 'leads',              key: 'id' }
+    leads:             { table: 'leads',              key: 'id' },
+    // One row per sales rep (id = lowercased email). Targets per month live in
+    // data.targets; `active` is mirrored so a rep can be retired without a delete.
+    salesReps:         { table: 'sales_reps',         key: 'id' }
   };
 
   // Scalar columns mirrored on each table. Camel-case JS field → snake-case Postgres column.
@@ -89,7 +92,8 @@
     vacancies:         [['room','room'],['prop','prop'],['city','city'],['rent','rent'],['availDate','avail_date'],['listed','listed']],
     damageDeposits:    [['status','status']],
     homestayApplicants:[['name','name'],['city','city']],
-    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']]
+    leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']],
+    salesReps:         [['active','active']]
   };
 
   /* ------------------- helpers ------------------- */
@@ -126,7 +130,8 @@
       vacancies:          window.vacancies,
       damageDeposits:     window.damageDeposits,
       homestayApplicants: window.homestayApplicants,
-      leads:              window.leads
+      leads:              window.leads,
+      salesReps:          window.salesReps
     };
 
     for (const [name, cfg] of Object.entries(TABLES)) {
@@ -517,7 +522,7 @@
       _rerenderTimer = null;
       const fns = ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies',
                    'renderHomestayClients','renderHomestayFinance','renderHomestayHosts',
-                   'renderDeposits','renderLeads','updateSidebarCounts'];
+                   'renderDeposits','renderLeads','renderSales','updateSidebarCounts'];
       for (const fn of fns) {
         try { if (typeof window[fn] === 'function') window[fn](); }
         catch (e) { console.warn('[vmDb] rerender ' + fn + ' failed:', e.message); }
@@ -566,7 +571,7 @@
     }
     ch.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        console.log('[vmDb] realtime channel SUBSCRIBED on 8 tables');
+        console.log('[vmDb] realtime channel SUBSCRIBED on ' + Object.keys(TABLES).length + ' tables');
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         console.warn('[vmDb] realtime status:', status);
       }
