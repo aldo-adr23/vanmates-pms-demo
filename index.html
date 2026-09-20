@@ -1239,7 +1239,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-20a"></script>
+<script src="pms-supabase.js?v=2026-09-20b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1702,8 +1702,8 @@
             <div id="sales-attention"></div>
           </div>
           <div class="card card-pad">
-            <div class="card-head"><div><div class="card-title">Recently <em>closed</em></div><div class="card-sub">Won deals, newest first</div></div></div>
-            <table><thead><tr><th>Closed</th><th>Client · Room</th><th>Rent × months</th><th class="right">Fee</th><th>Fee received</th></tr></thead>
+            <div class="card-head"><div><div class="card-title">Recently <em>closed</em></div><div class="card-sub" id="sales-closed-sub">Won deals, newest first</div></div></div>
+            <table><thead><tr><th>Closed</th><th>Client · Room</th><th>Rent × months</th><th class="right">Fee</th><th>Fee received</th><th></th></tr></thead>
               <tbody id="sales-closed"></tbody></table>
           </div>
         </div>
@@ -3420,6 +3420,8 @@ hello@vanmates.com · vanmates.com</textarea>
             <div class="form-field"><label>Status</label><select class="form-input" id="lead-status"></select></div>
             <div class="form-field"><label>Assignee</label><select class="form-input" id="lead-assignee"></select></div>
             <div class="form-field"><label>Next follow-up</label><input class="form-input" id="lead-follow-up" type="date" /></div>
+          </div>
+          <div id="lead-deal-row" style="display:none;margin:-6px 0 12px"><button class="btn btn-ghost btn-mini" id="lead-deal-btn" type="button">Edit deal</button> <span class="card-sub" id="lead-deal-sum"></span>
           </div>
       <div class="form-field"><label>Contact</label><div id="lead-contact" style="font-size:13px"></div></div>
       <div class="form-field"><label>Notes</label><textarea class="form-input" id="lead-notes" rows="3" placeholder="Internal notes…"></textarea></div>
@@ -19320,10 +19322,15 @@ function computeSalesView(leads, reps, rep, ym, today){
     .sort((a, b) => (order[a.state] - order[b.state]) || (a.due < b.due ? -1 : a.due > b.due ? 1 : 0) || ((b.status === 'new') - (a.status === 'new')));
   const followUps = { overdue: attention.filter(a => a.state === 'overdue').length, today: attention.filter(a => a.state === 'today').length };
 
-  const recentClosed = won.slice().sort((a, b) => (a.m.closedAt < b.m.closedAt ? 1 : a.m.closedAt > b.m.closedAt ? -1 : 0)).slice(0, 8)
+  // Every deal won in the shown month, newest first. A month with none falls
+  // back to the latest eight overall so the table is never blank.
+  const byClosed = (a, b) => (a.m.closedAt < b.m.closedAt ? 1 : a.m.closedAt > b.m.closedAt ? -1 : 0);
+  const recentClosedScope = wonMonth.length ? 'month' : 'latest';
+  const recentClosed = (wonMonth.length ? wonMonth.slice().sort(byClosed) : won.slice().sort(byClosed).slice(0, 8))
     .map(x => ({ id: x.lead.id, name: x.lead.name || '', room: (x.lead.deal && x.lead.deal.room) || x.lead.roomName || '',
                  rent: Number(x.lead.deal && x.lead.deal.rent) || 0, months: Number(x.lead.deal && x.lead.deal.months) || 0,
-                 fee: x.m.fee, closedAt: x.m.closedAt, feeReceivedAt: salesDay(x.lead.deal && x.lead.deal.fee_received_at), owner: salesOwner(x.lead) }));
+                 fee: x.m.fee, feePending: !x.m.fee || !!(x.lead.deal && x.lead.deal.fee_pending),
+                 closedAt: x.m.closedAt, feeReceivedAt: salesDay(x.lead.deal && x.lead.deal.fee_received_at), owner: salesOwner(x.lead) }));
 
   const since90 = salesAddDays(t, -90);
   const reasonLabel = r => { const hit = SALES_LOST_REASONS.find(x => x[0] === r); return hit ? hit[1] : (r || 'Other'); };
@@ -19345,7 +19352,7 @@ function computeSalesView(leads, reps, rep, ym, today){
   const funnel = Object.assign({ conversionPct: Math.round(f.conversion * 100) }, f);
 
   return { rep: key, repName, team, period, month, quarter, openDeals, pipeline, closeNext,
-           leads: leadsK, followUps, attention, recentClosed, lost, monthly, quarterly, funnel };
+           leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel };
 }
 /* SALES-CORE-END */
 
@@ -19865,6 +19872,16 @@ function fillLeadFields(l){
   document.getElementById('lead-notes').value = l.notes || '';
   const fu = document.getElementById('lead-follow-up');
   if(fu){ fu.value = (l.follow_up_at || '').slice(0, 10); }
+  // A lead in a money stage carries a deal; show it and offer to edit it.
+  const dealRow = document.getElementById('lead-deal-row'), dealSum = document.getElementById('lead-deal-sum');
+  if(dealRow && dealSum){
+    const st = l.status || 'new', d = l.deal || {};
+    dealRow.style.display = ['qualified', 'won', 'lost'].includes(st) ? '' : 'none';
+    dealSum.textContent = st === 'won'
+      ? `${d.room ? d.room + ' · ' : ''}${d.rent ? fmt(d.rent) + ' × ' + (d.months || '?') + ' · ' : ''}${d.fee ? 'fee ' + fmt(d.fee) : 'no placement fee yet'}`
+      : st === 'qualified' ? `${d.room ? d.room + ' · ' : ''}expected fee ${d.expected_fee != null ? fmt(d.expected_fee) : '—'}`
+      : `lost · ${(d.lost_reason || 'no reason').replace(/_/g, ' ')}`;
+  }
   document.getElementById('lead-status').dataset.prev = l.status || 'new';
   document.getElementById('lead-contact').innerHTML = leadContactBlock(l);
   renderLeadSubmission(l);
@@ -19930,6 +19947,10 @@ document.getElementById('leads-filter-source')&& document.getElementById('leads-
 document.getElementById('leads-filter-status')&& document.getElementById('leads-filter-status').addEventListener('change', e => { LEAD_FILTERS.status = e.target.value; renderLeads(); });
 document.getElementById('lead-modal-close')   && document.getElementById('lead-modal-close').addEventListener('click', closeLeadModal);
 document.getElementById('lead-save-btn')      && document.getElementById('lead-save-btn').addEventListener('click', saveLead);
+document.getElementById('lead-deal-btn') && document.getElementById('lead-deal-btn').addEventListener('click', () => {
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  if(l && typeof openDealModal === 'function') openDealModal(l.id, l.status || 'new');
+});
 // Moving a lead into a money stage asks for the numbers right away, so a
 // qualified lead always has an expected fee and a won one its rent/months/fee.
 document.getElementById('lead-status') && document.getElementById('lead-status').addEventListener('change', e => {
@@ -21287,12 +21308,21 @@ renderLeads();
   }
 
   function renderClosed(v){
-    const canTick = d => salesIsAdmin() || d.owner === salesViewerEmail();
-    $('sales-closed').innerHTML = v.recentClosed.length ? v.recentClosed.map(d =>
-      `<tr><td>${fmtDate(d.closedAt)}</td><td><b>${esc(d.name)}</b><div class="name-sub">${esc(d.room || '—')}${v.team && d.owner ? ' · ' + esc(d.owner.split('@')[0]) : ''}</div></td><td>${d.rent ? fmt(d.rent) + ' × ' + d.months : '—'}</td><td class="right num">${fmt(d.fee)}</td><td>${d.feeReceivedAt
+    const canEdit = d => salesIsAdmin() || d.owner === salesViewerEmail();
+    const noFee = v.recentClosed.filter(d => !d.fee).length;
+    $('sales-closed-sub').textContent = v.recentClosedScope === 'month'
+      ? `${v.recentClosed.length} deal${v.recentClosed.length === 1 ? '' : 's'} won in ${v.period.month.label}${noFee ? ` · ${noFee} still need a placement fee` : ''}`
+      : (v.recentClosed.length ? `Nothing won in ${v.period.month.label} — showing the latest` : 'Won deals, newest first');
+    $('sales-closed').innerHTML = v.recentClosed.length ? v.recentClosed.map(d => {
+      const feeCell = d.fee
+        ? `<span class="num">${fmt(d.fee)}</span>`
+        : (canEdit(d) ? `<button class="badge badge-red sl-fee-btn" type="button" data-sales-edit="${esc(d.id)}" title="No placement fee on this deal yet"><span class="dot"></span>Add fee</button>` : `<span class="badge badge-red"><span class="dot"></span>No fee</span>`);
+      const recvCell = d.feeReceivedAt
         ? `<span class="badge badge-green"><span class="dot"></span>${fmtDate(d.feeReceivedAt)}</span>`
-        : (canTick(d) ? `<button class="badge badge-amber sl-fee-btn" type="button" data-sales-fee="${esc(d.id)}" title="Mark the placement fee as received today"><span class="dot"></span>Not yet · mark received</button>` : `<span class="badge badge-amber"><span class="dot"></span>Not yet</span>`)}</td></tr>`
-    ).join('') : `<tr><td colspan="5" class="sl-empty">No won deals yet.</td></tr>`;
+        : (!d.fee ? '<span class="card-sub">—</span>'
+           : (canEdit(d) ? `<button class="badge badge-amber sl-fee-btn" type="button" data-sales-fee="${esc(d.id)}" title="Mark the placement fee as received today"><span class="dot"></span>Not yet · mark received</button>` : `<span class="badge badge-amber"><span class="dot"></span>Not yet</span>`));
+      return `<tr><td>${fmtDate(d.closedAt)}</td><td><b>${esc(d.name)}</b><div class="name-sub">${esc(d.room || '—')}${v.team && d.owner ? ' · ' + esc(d.owner.split('@')[0]) : ''}</div></td><td>${d.rent ? fmt(d.rent) + ' × ' + d.months : '—'}</td><td class="right">${feeCell}</td><td>${recvCell}</td><td class="right">${canEdit(d) ? `<button class="btn btn-ghost btn-mini" type="button" data-sales-edit="${esc(d.id)}">Edit</button>` : ''}</td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="sl-empty">No won deals yet.</td></tr>`;
   }
   function renderLost(v){
     const top = {}; v.lost.forEach(l => { top[l.reasonLabel] = (top[l.reasonLabel] || 0) + 1; });
@@ -21332,6 +21362,8 @@ renderLeads();
   $('sales-page').addEventListener('click', e => {
     const row = e.target.closest('[data-lead]');
     if(row && typeof openLead === 'function'){ openLead(row.dataset.lead); return; }
+    const edit = e.target.closest('[data-sales-edit]');
+    if(edit && typeof openDealModal === 'function'){ openDealModal(edit.dataset.salesEdit, 'won'); return; }
     const won = e.target.closest('[data-sales-won]');
     if(won && typeof openDealModal === 'function'){ openDealModal(won.dataset.salesWon, 'won'); return; }
     const fee = e.target.closest('[data-sales-fee]');
@@ -21357,7 +21389,8 @@ renderLeads();
     if(!l) return;
     DEAL.id = l.id; DEAL.status = status; DEAL.onCancel = onCancel || null;
     const d = l.deal || {};
-    $('deal-title').textContent = status === 'won' ? 'Mark as won' : status === 'lost' ? 'Mark as lost' : 'Open deal';
+    const editing = (l.status || 'new') === status;
+    $('deal-title').textContent = editing ? 'Edit deal' : (status === 'won' ? 'Mark as won' : status === 'lost' ? 'Mark as lost' : 'Open deal');
     $('deal-sub').textContent = l.name || '';
     $('deal-product').innerHTML = SALES_PRODUCTS.map(([k, lab]) => `<option value="${k}" ${(d.product || (l.source === 'homestay' ? 'homestay' : 'room')) === k ? 'selected' : ''}>${lab}</option>`).join('');
     $('deal-room').value = d.room || l.roomName || '';
@@ -21393,6 +21426,7 @@ renderLeads();
       if(!(num('deal-fee') > 0)) return 'Enter the placement fee charged.';
       if(!/^\d{4}-\d{2}-\d{2}$/.test($('deal-closed').value)) return 'Pick the closing date.';
       deal.rent = num('deal-rent'); deal.months = num('deal-months'); deal.fee = num('deal-fee'); deal.closed_at = $('deal-closed').value;
+      delete deal.fee_pending;   // Hugo's backfill flag: the fee is recorded now
     }
     if(status === 'lost'){
       deal.lost_reason = $('deal-reason').value; deal.lost_note = $('deal-note').value.trim(); deal.lost_at = salesToday();
