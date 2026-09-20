@@ -1239,7 +1239,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-18d"></script>
+<script src="pms-supabase.js?v=2026-09-20a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1962,7 +1962,8 @@
           <option value="partner">Partner</option>
           <option value="service">Service request</option>
         </select>
-        <select id="leads-filter-status" class="form-input" style="max-width:170px">
+        <select id="leads-filter-status" class="form-input" style="max-width:190px">
+          <option value="open" selected>Open (new · contacted · qualified)</option>
           <option value="">All statuses</option>
           <option value="unassigned">Unassigned</option>
           <option value="new">New</option>
@@ -19569,7 +19570,7 @@ const LEAD_SOURCES = {
   'service': 'Service request'
 };
 const LEAD_STATUSES = ['new','contacted','qualified','won','lost'];
-const LEAD_FILTERS = { search:'', source:'', status:'' };
+const LEAD_FILTERS = { search:'', source:'', status:'open' };
 let _editingLeadId = null;
 /* LEAD-CLAIM-CORE-START */
 // Pure: a lead + the viewer + the team → what the claim block should show.
@@ -19583,12 +19584,17 @@ function leadClaimState(lead, viewer, team){
   const mine = !!(viewer && viewer.email && viewer.email.toLowerCase() === by.toLowerCase());
   return { state: mine ? 'mine' : 'other', by, byName, at };
 }
-// The status filter has one pseudo-value, 'unassigned', which is not a status
-// but "nobody has claimed this yet".
+// The status filter has two pseudo-values. 'unassigned' is not a status but
+// "nobody has claimed this yet". 'open' (the default since 2026-09-20) is the
+// pipeline — new, contacted, qualified: won and lost leads are the Sales
+// page's business, and a closed deal is not something anyone works from here.
+const LEAD_OPEN_STATUSES = ['new','contacted','qualified'];
 function leadStatusFilterMatches(lead, filter){
   if(!filter) return true;
+  const st = (lead && lead.status) || 'new';
+  if(filter === 'open') return LEAD_OPEN_STATUSES.indexOf(st) >= 0;
   if(filter === 'unassigned') return !(lead && lead.claimed_at);
-  return ((lead && lead.status) || 'new') === filter;
+  return st === filter;
 }
 /* LEAD-CLAIM-CORE-END */
 
