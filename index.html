@@ -1239,7 +1239,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-21c"></script>
+<script src="pms-supabase.js?v=2026-09-21d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1694,6 +1694,11 @@
         </div>
 
         <div class="kpi-grid sl-kpis" id="sales-kpis"></div>
+        <div class="card card-pad" id="sales-byrep" style="display:none;margin-bottom:18px">
+          <div class="card-head"><div><div class="card-title">By <em>rep</em></div><div class="card-sub" id="sales-byrep-sub"></div></div></div>
+          <table><thead><tr><th>Rep</th><th></th><th class="right">Sales closed</th><th class="right">Deals</th><th class="right">Pipeline</th><th>Share of team</th></tr></thead>
+            <tbody id="sales-byrep-rows"></tbody></table>
+        </div>
 
         <div class="sl-row">
           <div class="card card-pad">
@@ -19524,17 +19529,56 @@ function salesQuarterly(leads, reps, year){
     return { label: 'Q' + (q + 1), closed: rows.reduce((s, r) => s + r.closed, 0), target, deals: rows.reduce((s, r) => s + r.deals, 0) };
   });
 }
-// Everything the Sales page prints, from one call. `rep` is a lowercased email
-// or '*' for the whole team; `ym` the month shown; `today` 'YYYY-MM-DD'.
+// Teams: a rep row may carry `team` ('japan'); a row with kind 'team' and id
+// 'team:<key>' names the team and holds its target. A team member opens on
+// the team view and can see every member; a solo rep sees only themself.
+function salesIsTeamRow(r){ return !!r && String(r.kind || '') === 'team'; }
+function salesRepKey(r){ return String((r && (r.email || r.id)) || '').toLowerCase(); }
+function salesTeamOf(reps, email){
+  const e = String(email || '').toLowerCase();
+  const row = (reps || []).find(r => r && !salesIsTeamRow(r) && salesRepKey(r) === e);
+  return row && row.team ? String(row.team) : null;
+}
+function salesViewOptions(reps, viewer){
+  const v = viewer || {};
+  const active = (reps || []).filter(r => r && r.active !== false);
+  const people = active.filter(r => !salesIsTeamRow(r));
+  const teams = active.filter(salesIsTeamRow);
+  const opt = r => ({ key: salesIsTeamRow(r) ? String(r.id) : salesRepKey(r), label: String(r.name || r.id || '') });
+  if(v.role === 'admin') return people.map(opt).concat(teams.map(opt)).concat([{ key: '*', label: 'Whole team' }]);
+  const me = String(v.email || '').toLowerCase();
+  const team = salesTeamOf(reps, me);
+  if(team){
+    const row = teams.find(t => String(t.team || '') === team || String(t.id) === 'team:' + team);
+    return (row ? [opt(row)] : []).concat(people.filter(p => String(p.team || '') === team).map(opt));
+  }
+  return [{ key: me, label: (people.find(p => salesRepKey(p) === me) || {}).name || me }];
+}
+function salesDefaultView(reps, viewer){
+  const opts = salesViewOptions(reps, viewer);
+  return opts.length ? opts[0].key : '*';
+}
+
+// Everything the Sales page prints, from one call. `rep` is a lowercased email,
+// 'team:<key>' for a team, or '*' for everyone; `ym` the month shown; `today`
+// 'YYYY-MM-DD'.
 function computeSalesView(leads, reps, rep, ym, today){
   const t = salesDay(today);
   const period = salesPeriod(ym, t);
   const key = String(rep || '').toLowerCase();
-  const team = key === '*';
+  const everyone = key === '*';
+  const teamKey = key.indexOf('team:') === 0 ? key.slice(5) : null;
   const active = (reps || []).filter(r => r && r.active !== false);
-  const repRows = team ? active : active.filter(r => String(r.email || r.id || '').toLowerCase() === key);
-  const repName = team ? 'Whole team' : ((repRows[0] && repRows[0].name) || key);
-  const mine = salesRepLeads(leads, key);
+  const people = active.filter(r => !salesIsTeamRow(r));
+  const teamRow = teamKey ? active.find(r => salesIsTeamRow(r) && (String(r.id) === key || String(r.team || '') === teamKey)) : null;
+  const members = everyone ? people : (teamKey ? people.filter(p => String(p.team || '') === teamKey) : people.filter(p => salesRepKey(p) === key));
+  // Targets: everyone → the reps' own targets (team rows excluded, so a team
+  // target is never double counted); a team → its row; a rep → their row.
+  const repRows = everyone ? people : (teamKey ? (teamRow ? [teamRow] : []) : members);
+  const team = everyone || !!teamKey;
+  const repName = everyone ? 'Whole team' : (teamKey ? ((teamRow && teamRow.name) || 'Team ' + teamKey) : ((members[0] && members[0].name) || key));
+  const memberKeys = new Set(members.map(salesRepKey));
+  const mine = everyone ? salesRepLeads(leads, '*') : (leads || []).filter(l => memberKeys.has(salesOwner(l)));
 
   const inRange = (d, a, b) => d && d >= a && d <= b;
   const won = mine.map(l => ({ lead: l, m: salesDealMoney(l) })).filter(x => x.lead.status === 'won');
@@ -19590,6 +19634,7 @@ function computeSalesView(leads, reps, rep, ym, today){
     .map(x => ({ id: x.lead.id, name: x.lead.name || '', room: (x.lead.deal && x.lead.deal.room) || x.lead.roomName || '',
                  rent: Number(x.lead.deal && x.lead.deal.rent) || 0, months: Number(x.lead.deal && x.lead.deal.months) || 0,
                  fee: x.m.fee, feePending: !x.m.fee || !!(x.lead.deal && x.lead.deal.fee_pending),
+                 segment: String((x.lead.deal && x.lead.deal.segment) || ''),
                  closedAt: x.m.closedAt, feeReceivedAt: salesDay(x.lead.deal && x.lead.deal.fee_received_at), owner: salesOwner(x.lead) }));
 
   const since90 = salesAddDays(t, -90);
@@ -19611,8 +19656,19 @@ function computeSalesView(leads, reps, rep, ym, today){
   const f = salesFunnel(mine, t, 90);
   const funnel = Object.assign({ conversionPct: Math.round(f.conversion * 100) }, f);
 
-  return { rep: key, repName, team, period, month, quarter, openDeals, pipeline, closeNext,
-           leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel };
+  // Per-member breakdown for team views (a team or everyone): what each rep
+  // closed this month, their open pipeline, and their share of the team total.
+  const byRep = team ? members.map(m => {
+    const mk = salesRepKey(m);
+    const own = wonMonth.filter(x => salesOwner(x.lead) === mk);
+    const closed = sum(own, x => x.m.fee);
+    return { email: mk, name: String(m.name || mk), segment: String(m.segment || ''), closed, deals: own.length,
+             pipeline: sum(openDeals.filter(d => d.owner === mk), d => d.expected),
+             sharePct: mClosed ? Math.round(closed / mClosed * 100) : 0 };
+  }) : [];
+
+  return { rep: key, repName, team, teamKey, period, month, quarter, openDeals, pipeline, closeNext,
+           leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel, byRep };
 }
 /* SALES-CORE-END */
 
@@ -21499,28 +21555,23 @@ renderLeads();
   function salesRepRows(){ return (window.salesReps || []).filter(r => r && r.active !== false); }
 
   // A rep only ever sees themself. An admin picks; default is the first active rep.
+  // What the viewer is allowed to look at: an admin picks anyone, a team
+  // member picks within their team, a solo rep sees only themself.
+  function salesOptions(){ return salesViewOptions(window.salesReps || [], activeRole() || {}); }
   function salesCurrentRep(){
-    if(!salesIsAdmin()) return salesViewerEmail();
-    if(SALES_STATE.rep) return SALES_STATE.rep;
-    const first = salesRepRows()[0];
-    return first ? String(first.email || first.id).toLowerCase() : '*';
+    const opts = salesOptions();
+    if(SALES_STATE.rep && opts.some(o => o.key === SALES_STATE.rep)) return SALES_STATE.rep;
+    return salesDefaultView(window.salesReps || [], activeRole() || {});
   }
   function salesCurrentYm(){ return SALES_STATE.ym || salesToday().slice(0, 7); }
 
   function fillSelects(){
     const repSel = $('sales-rep'), perSel = $('sales-period');
     const rep = salesCurrentRep(), ym = salesCurrentYm();
-    if(salesIsAdmin()){
-      const rows = salesRepRows();
-      const opts = rows.map(r => { const e = String(r.email || r.id).toLowerCase(); return `<option value="${esc(e)}" ${e === rep ? 'selected' : ''}>${esc(r.name || e)}</option>`; });
-      if(rep !== '*' && !rows.some(r => String(r.email || r.id).toLowerCase() === rep)) opts.push(`<option value="${esc(rep)}" selected>${esc(rep)}</option>`);
-      repSel.innerHTML = opts.join('') + `<option value="*" ${rep === '*' ? 'selected' : ''}>Whole team</option>`;
-      repSel.style.display = '';
-      $('sales-targets-btn').style.display = '';
-    } else {
-      repSel.style.display = 'none';
-      $('sales-targets-btn').style.display = 'none';
-    }
+    const opts = salesOptions();
+    repSel.innerHTML = opts.map(o => `<option value="${esc(o.key)}" ${o.key === rep ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+    repSel.style.display = opts.length > 1 ? '' : 'none';
+    $('sales-targets-btn').style.display = salesIsAdmin() ? '' : 'none';
     const months = [];
     const [ty, tm] = salesToday().slice(0, 7).split('-').map(Number);
     for(let k = 0; k < 6; k++){ const d = new Date(ty, tm - 1 - k, 1); months.push(d.getFullYear() + '-' + salesPad2(d.getMonth() + 1)); }
@@ -21542,7 +21593,7 @@ renderLeads();
       const cls = m.pct >= 100 ? 'green' : (m.paceState === 'ahead' ? '' : 'amber');
       const paceMark = m.pace != null && m.dayOf > 0 && m.dayOf < m.days ? `<span class="pace" style="left:${Math.min(100, Math.round(m.pace / m.target * 100))}%" title="On pace: ${fmt(m.pace)}"></span>` : '';
       html += pctBar(m.closed, m.target, cls).replace('{PACE}', paceMark);
-      const paceTxt = m.pct >= 100 ? `<span class="sl-ahead">target met</span>` : (m.dayOf === 0 ? 'not started' : m.dayOf >= m.days ? 'month closed' : `<span class="sl-${m.paceState}">${m.paceState} of pace</span>`);
+      const paceTxt = m.pct >= 100 ? `<span class="sl-ahead">target met</span>` : (m.dayOf === 0 ? 'not started' : m.dayOf >= m.days ? 'month closed' : `<span class="sl-${m.paceState}">${m.paceState === 'ahead' ? 'ahead of pace' : 'behind pace'}</span>`);
       html += `<div class="card-sub" style="margin-top:6px"><span class="sl-pct">${m.pct}%</span> · ${fmt(m.toGo)} to go · ${paceTxt}</div>`;
     } else {
       html += `<div class="card-sub" style="margin-top:6px">No target set${salesIsAdmin() ? ' — use <b>Targets</b> above' : ' — ask an admin'}</div>`;
@@ -21582,6 +21633,16 @@ renderLeads();
     $('sales-next-card').innerHTML = `<div class="card-sub" style="text-transform:uppercase;letter-spacing:.4px;font-weight:700">What to close next</div><div class="big">${big}</div>${list ? `<ul>${list}</ul>` : ''}${sub ? `<div class="card-sub">${sub}</div>` : ''}`;
   }
 
+  function renderByRep(v){
+    const box = $('sales-byrep');
+    if(!v.team || !v.byRep.length){ box.style.display = 'none'; return; }
+    box.style.display = '';
+    $('sales-byrep-sub').textContent = `${v.repName} · ${v.period.month.label}`;
+    const seg = s => s === 'b2c' ? '<span class="badge badge-blue">B2C</span>' : s === 'b2b' ? '<span class="badge badge-amber">B2B</span>' : '';
+    $('sales-byrep-rows').innerHTML = v.byRep.map(r =>
+      `<tr><td><b>${esc(r.name)}</b><div class="name-sub">${esc(r.email)}</div></td><td>${seg(r.segment)}</td><td class="right num">${fmt(r.closed)}</td><td class="right num">${r.deals}</td><td class="right num">${fmt(r.pipeline)}</td><td><div class="occ-bar" style="max-width:140px;display:inline-block;width:140px;vertical-align:middle"><div class="occ-fill" style="width:${r.sharePct}%"></div></div> <span class="num">${r.sharePct}%</span></td></tr>`
+    ).join('');
+  }
   function renderKpis(v){
     const kpi = (label, value, sub, go) => `<div class="kpi ${go ? 'clickable' : ''}" ${go ? `data-sales-go="leads" data-sales-status="${go}"` : ''}><div class="kpi-deco"></div><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="sl-kpi-sub">${sub}</div></div>`;
     $('sales-kpis').innerHTML =
@@ -21647,7 +21708,8 @@ renderLeads();
         ? `<span class="badge badge-green"><span class="dot"></span>${fmtDate(d.feeReceivedAt)}</span>`
         : (!d.fee ? '<span class="card-sub">—</span>'
            : (canEdit(d) ? `<button class="badge badge-amber sl-fee-btn" type="button" data-sales-fee="${esc(d.id)}" title="Mark the placement fee as received today"><span class="dot"></span>Not yet · mark received</button>` : `<span class="badge badge-amber"><span class="dot"></span>Not yet</span>`));
-      return `<tr><td>${fmtDate(d.closedAt)}</td><td><b>${esc(d.name)}</b><div class="name-sub">${esc(d.room || '—')}${v.team && d.owner ? ' · ' + esc(d.owner.split('@')[0]) : ''}</div></td><td>${d.rent ? fmt(d.rent) + ' × ' + d.months : '—'}</td><td class="right">${feeCell}</td><td>${recvCell}</td><td class="right">${canEdit(d) ? `<button class="btn btn-ghost btn-mini" type="button" data-sales-edit="${esc(d.id)}">Edit</button>` : ''}</td></tr>`;
+      const segBadge = d.segment === 'b2c' ? ' <span class="badge badge-blue">B2C</span>' : d.segment === 'b2b' ? ' <span class="badge badge-amber">B2B</span>' : '';
+      return `<tr><td>${fmtDate(d.closedAt)}</td><td><b>${esc(d.name)}</b>${segBadge}<div class="name-sub">${esc(d.room || '—')}${v.team && d.owner ? ' · ' + esc(d.owner.split('@')[0]) : ''}</div></td><td>${d.rent ? fmt(d.rent) + ' × ' + d.months : '—'}</td><td class="right">${feeCell}</td><td>${recvCell}</td><td class="right">${canEdit(d) ? `<button class="btn btn-ghost btn-mini" type="button" data-sales-edit="${esc(d.id)}">Edit</button>` : ''}</td></tr>`;
     }).join('') : `<tr><td colspan="6" class="sl-empty">No won deals yet.</td></tr>`;
   }
   function renderLost(v){
@@ -21669,7 +21731,7 @@ renderLeads();
     const pt = $('page-title'), ps = $('page-sub');
     if(pt) pt.innerHTML = `Sales <em>· ${esc(v.repName)}</em>`;
     if(ps) ps.textContent = `${v.period.month.label} · CAD`;
-    renderTarget(v); renderNext(v); renderKpis(v); renderAttention(v); renderOpen(v); renderCharts(v); renderClosed(v); renderLost(v);
+    renderTarget(v); renderNext(v); renderKpis(v); renderByRep(v); renderAttention(v); renderOpen(v); renderCharts(v); renderClosed(v); renderLost(v);
   }
   window.renderSales = renderSales;
 
@@ -21818,6 +21880,12 @@ renderLeads();
     const cur = salesCurrentRep();
     const opts = team.map(m => { const e = String(m.email).toLowerCase(); const isRep = reps.some(r => String(r.email || r.id).toLowerCase() === e && r.active !== false);
       return `<option value="${esc(e)}" ${e === cur ? 'selected' : ''}>${esc(m.name || e)}${isRep ? '' : ' (not a rep yet)'}</option>`; });
+    // Reps without a portal login yet (a sales_reps row is enough to be counted).
+    reps.filter(r => r.active !== false && !salesIsTeamRow(r) && !team.some(m => String(m.email).toLowerCase() === salesRepKey(r)))
+      .forEach(r => opts.push(`<option value="${esc(salesRepKey(r))}" ${salesRepKey(r) === cur ? 'selected' : ''}>${esc(r.name || salesRepKey(r))}</option>`));
+    // Teams: one target for the whole team.
+    reps.filter(r => r.active !== false && salesIsTeamRow(r))
+      .forEach(r => opts.push(`<option value="${esc(String(r.id))}" ${String(r.id) === cur ? 'selected' : ''}>${esc(r.name || r.id)} (team target)</option>`));
     $('targets-rep').innerHTML = opts.join('');
     $('targets-error').textContent = '';
     targetsFill();
@@ -21837,7 +21905,10 @@ renderLeads();
       if(n === 0) delete targets[inp.dataset.ym]; else targets[inp.dataset.ym] = n;
     });
     if(bad){ $('targets-error').textContent = 'Targets must be whole dollar amounts.'; return; }
-    const rec = Object.assign({}, existing || {}, { id: email, email, name: member.name || (existing && existing.name) || email, active: $('targets-active').checked, targets });
+    const isTeam = email.indexOf('team:') === 0;
+    const rec = isTeam
+      ? Object.assign({}, existing || {}, { id: email, kind: 'team', name: (existing && existing.name) || email, active: $('targets-active').checked, targets })
+      : Object.assign({}, existing || {}, { id: email, email, name: member.name || (existing && existing.name) || email, active: $('targets-active').checked, targets });
     if(!(window.vmDb && vmDb.sb)){ showToast('Not saved — no database connection'); return; }
     const ok = await vmDb.upsert('salesReps', rec);
     if(!ok) return;
