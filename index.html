@@ -1239,7 +1239,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-21a"></script>
+<script src="pms-supabase.js?v=2026-09-21b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3059,6 +3059,35 @@ hello@vanmates.com · vanmates.com</textarea>
             </div>
             <div class="form-field"></div>
           </div>
+          <!-- The placement fee and the $200 deposit ride in the student's ONE
+               checkout. Left on "auto", the server decides: a paid vdhomestay
+               session or a homestay lead marked "fee received" means already
+               paid; a prior paid booking under the email means no new deposit.
+               Set them here only to override what the server would find. -->
+          <div class="form-row">
+            <div class="form-field"><label>Placement fee</label>
+              <select class="form-input" id="hb-placement-status">
+                <option value="">Auto — look it up (paid on vdhomestay / lead marked received, else due)</option>
+                <option value="due">Due — charge it at checkout</option>
+                <option value="paid_in_advance">Already paid (QuickBooks, e-transfer…)</option>
+                <option value="waived">Waived</option>
+              </select>
+              <div class="card-sub" style="margin-top:6px">When due and blank, the amount is the lead's expected fee or $295.</div>
+            </div>
+            <div class="form-field"><label>Placement amount (CAD)</label>
+              <input class="form-input" id="hb-placement-amount" type="number" min="0" step="0.01" placeholder="295.00">
+            </div>
+            <div class="form-field"><label>Placement reference</label>
+              <input class="form-input" id="hb-placement-ref" type="text" maxlength="120" placeholder="QBO inv 1042 / e-transfer 12 Sep">
+            </div>
+            <div class="form-field"><label>Deposit ($200, refundable)</label>
+              <select class="form-input" id="hb-deposit">
+                <option value="">Auto — $200 unless they have a paid booking already</option>
+                <option value="due">$200 due at checkout</option>
+                <option value="none">None — returning student</option>
+              </select>
+            </div>
+          </div>
           <!-- Everything below is for the confirmation letter only. None of it
                touches the money, and all of it can be edited later from the
                bookings table (Edit details) — flight numbers usually arrive
@@ -3122,11 +3151,11 @@ hello@vanmates.com · vanmates.com</textarea>
         <div style="overflow-x:auto">
           <table>
             <thead><tr>
-              <th>Reference</th><th>Student</th><th>Stay</th><th>Length</th><th>Meals</th>
+              <th>Reference</th><th>Student</th><th>Stay</th><th>Length</th><th>Meals</th><th>Fees</th>
               <th class="right">Per week</th><th class="right">Host / week</th>
-              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Letter</th><th>Move-out</th><th></th>
+              <th>Status</th><th>Host payout</th><th>Needs attention</th><th>Letter</th><th>Agreement</th><th>Move-out</th><th></th>
             </tr></thead>
-            <tbody id="hb-rows"><tr><td colspan="13" class="card-sub">Not loaded yet.</td></tr></tbody>
+            <tbody id="hb-rows"><tr><td colspan="15" class="card-sub">Not loaded yet.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -7193,6 +7222,7 @@ const teamMembers = [
 const pendingInvites = [];
 const leads = [];   // hydrated from Supabase; website submissions land here
 const salesReps = []; // hydrated from Supabase; one row per sales rep (targets)
+const contracts = []; // hydrated from Supabase; signed agreements (homestay first)
 
 let CURRENT_USER = teamMembers[0]; // Aldo (admin)
 let VIEWING_AS = null;             // when set, override active role
@@ -11099,6 +11129,127 @@ function hhMealTiers(room){
   };
 }
 /* HH-RATES-CORE-END */
+
+/* HP-FEES-CORE-START */
+/* The placement fee and the refundable deposit: how each is decided when a
+   booking is created, how they become Stripe line items, and what the paid
+   webhook writes back. Pure — rows and lookups in, decisions out; no fetch,
+   no DOM, no clock (dates arrive as arguments). Tested by
+   test/homestay-fees.test.js.
+
+   MIRRORED in n8n: VM - Homestay Public Booking and VM - Homestay Booking
+   Create (Compute Booking), VM - Homestay Booking Pay (Build Checkout Body),
+   VM - Stripe Connect Webhook Handler (Paid Split), VM - Homestay Booking View
+   (Shape Public Booking). Change all in the same commit; written with
+   var/function only so the block pastes unchanged. */
+var HP_DEPOSIT_CENTS = 20000;           // $200 CAD, every first-time student
+var HP_PLACEMENT_DEFAULT_CENTS = 29500; // when neither staff nor the lead say
+var HP_PLACEMENT_STATES = ["due", "paid_in_advance", "claimed_paid", "paid", "waived"];
+var HP_DEPOSIT_STATES = ["due", "held", "refunded", "none"];
+
+function hpStr(v){ return v === null || v === undefined ? "" : String(v).trim(); }
+function hpCents(v){ var n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0; }
+function hpEmailEq(a, b){ return hpStr(a) !== "" && hpStr(a).toLowerCase() === hpStr(b).toLowerCase(); }
+
+/* Placement fee at booking creation. First hit wins:
+   1. staff said so (status + amount + ref from the staff form) — except 'paid',
+      which only the webhook may write;
+   2. a paid vdhomestay session for this email (vm_form_submissions, source
+      homestay-payment; message "PAID — <pkg> — <amount> CAD — ref … — session cs_…");
+   3. a homestay lead for this email with deal.fee_received_at (how a QuickBooks
+      or e-transfer placement payment is recorded — on the Sales dashboard);
+   4. the student ticked "already paid" -> claimed_paid, for staff to verify;
+   5. due, at the staff amount, else the lead's expected fee, else the default. */
+function hpResolvePlacement(input){
+  var i = input || {};
+  var email = hpStr(i.email);
+  var staff = i.staff || {};
+  var staffStatus = hpStr(staff.status);
+  if (HP_PLACEMENT_STATES.indexOf(staffStatus) !== -1 && staffStatus !== "paid") {
+    return { status: staffStatus, amount: hpCents(staff.amount), ref: hpStr(staff.ref), paid_at: hpStr(staff.paid_at), source: "staff" };
+  }
+  var logs = Array.isArray(i.payment_log) ? i.payment_log : [];
+  for (var k = 0; k < logs.length; k++) {
+    var row = logs[k] || {};
+    if (hpStr(row.source) !== "homestay-payment" || !hpEmailEq(row.email, email)) continue;
+    var m = /—\s*([0-9]+(?:\.[0-9]+)?)\s*CAD/i.exec(hpStr(row.message));
+    var sess = /session\s+(cs_[A-Za-z0-9_]+)/.exec(hpStr(row.message));
+    return { status: "paid_in_advance", amount: m ? Math.round(Number(m[1]) * 100) : 0,
+             ref: sess ? sess[1] : "vdhomestay", paid_at: hpStr(row.submittedAt).slice(0, 10), source: "vdhomestay" };
+  }
+  var leads = Array.isArray(i.leads) ? i.leads : [];
+  var homestayLead = null;
+  for (var j = 0; j < leads.length; j++) {
+    var L = leads[j] || {}, d = L.data || {};
+    if (L.deleted_at) continue;
+    if (!hpEmailEq(d.email, email)) continue;
+    var deal = d.deal || {};
+    if (hpStr(deal.product) !== "homestay" && hpStr(d.source) !== "homestay") continue;
+    if (!homestayLead) homestayLead = L;
+    if (hpStr(deal.fee_received_at)) {
+      return { status: "paid_in_advance", amount: Math.round((Number(deal.fee) || 0) * 100),
+               ref: "lead:" + hpStr(L.id), paid_at: hpStr(deal.fee_received_at).slice(0, 10), source: "lead" };
+    }
+  }
+  if (i.claimed === true || hpStr(i.claimed) === "true") {
+    return { status: "claimed_paid", amount: 0, ref: "", paid_at: "", source: "student" };
+  }
+  var amount = hpCents(staff.amount);
+  var expected = homestayLead && homestayLead.data && homestayLead.data.deal ? Number(homestayLead.data.deal.expected_fee) : 0;
+  if (!amount && expected > 0) amount = Math.round(expected * 100);
+  if (!amount) amount = HP_PLACEMENT_DEFAULT_CENTS;
+  return { status: "due", amount: amount, ref: "", paid_at: "", source: homestayLead && expected > 0 ? "lead_expected" : "default" };
+}
+
+/* Deposit at creation: $200 unless a PAID booking already exists for the
+   email (any host, not this booking), or staff override it either way. */
+function hpResolveDeposit(input){
+  var i = input || {};
+  var o = hpStr(i.override);
+  if (o === "none") return { status: "none", amount: 0 };
+  if (o === "due") return { status: "due", amount: HP_DEPOSIT_CENTS };
+  var prior = Array.isArray(i.prior_bookings) ? i.prior_bookings : [];
+  for (var k = 0; k < prior.length; k++) {
+    var b = prior[k] || {};
+    if (hpStr(b.booking_ref) === hpStr(i.exclude_ref)) continue;
+    if (hpStr(b.status) === "paid" && hpEmailEq(b.student_email, i.email)) return { status: "none", amount: 0 };
+  }
+  return { status: "due", amount: HP_DEPOSIT_CENTS };
+}
+
+/* Checkout line items off a booking row, in the order the student reads them.
+   Only a DUE placement or deposit is charged; every other state means the
+   money is settled, waived, or someone's to verify — never Stripe's to take. */
+function hpCheckoutLines(b){
+  var row = b || {};
+  var lines = [];
+  var placement = hpStr(row.placement_fee_status) === "due" ? hpCents(row.placement_fee) : 0;
+  var deposit = hpStr(row.deposit_status) === "due" ? hpCents(row.deposit_amount) : 0;
+  if (placement > 0) lines.push({ key: "placement", name: "Placement fee", amount: placement });
+  if (deposit > 0) lines.push({ key: "deposit", name: "Damage deposit (refundable)", amount: deposit });
+  lines.push({ key: "rent", name: "First 4 weeks' rent", amount: hpCents(row.first_charge_rent) });
+  var fee = hpCents(row.first_charge_fee);
+  if (fee > 0) lines.push({ key: "fee", name: "Transaction fee", amount: fee });
+  var total = 0;
+  for (var k = 0; k < lines.length; k++) total += lines[k].amount;
+  return { lines: lines, total: total, placement_cents: placement, deposit_cents: deposit };
+}
+
+/* What the paid webhook writes, from the PaymentIntent metadata the checkout
+   carried. Only a DUE bucket flips: a placement already paid in advance is
+   never rewritten, and a legacy payment with no metadata writes nothing. */
+function hpAfterPayment(b, meta, paidAt, paymentIntentId){
+  var row = b || {}, m = meta || {};
+  var out = {};
+  if (hpCents(m.placement_cents) > 0 && hpStr(row.placement_fee_status) === "due") {
+    out.placement_fee_status = "paid";
+    out.placement_fee_ref = hpStr(paymentIntentId);
+    out.placement_fee_paid_at = hpStr(paidAt);
+  }
+  if (hpCents(m.deposit_cents) > 0 && hpStr(row.deposit_status) === "due") out.deposit_status = "held";
+  return out;
+}
+/* HP-FEES-CORE-END */
 /* HH-DEDUPE-CORE-START */
 /* Groups the n8n host rows by email and decides which row of each group the
    portal should keep. Pure by construction — rows in, plan out, no DOM, no
@@ -14554,6 +14705,21 @@ function openHomestayClient(id){
     </div>
   `;
 
+  // Agreements the client has signed (phase 1: the homestay agreement, matched
+  // by client id, else by email). Download = 60-minute signed URL on click.
+  const agreements = typeof hcAgreementsFor === "function" ? hcAgreementsFor(c, window.contracts || []) : [];
+  body.insertAdjacentHTML("beforeend", `
+    <div class="panel-section" id="hc-agreements">
+      <div class="panel-section-title">Agree<em>ments</em> <span class="ct">${agreements.length}</span></div>
+      ${agreements.length ? agreements.map(a => `
+        <div class="list-row">
+          <div class="list-icon green">✓</div>
+          <div class="list-main"><div class="list-title">${esc(hbAgreementKindLabel(a.kind))}</div>
+            <div class="list-sub">Signed ${a.signed_at ? esc(fmtDate(String(a.signed_at).slice(0,10))) : "—"}${a.booking_ref ? " · " + esc(a.booking_ref) : ""}${a.status && a.status !== "signed" ? " · " + esc(a.status) : ""}</div></div>
+          ${a.pdf_path ? `<button class="btn btn-ghost btn-mini" type="button" data-hb-agreement="${esc(a.pdf_path)}">Download</button>` : ""}
+        </div>`).join("") : `<div class="card-sub">No agreements yet.</div>`}
+    </div>`);
+
   // Wire host link
   body.querySelectorAll("[data-go-host]").forEach(b => b.addEventListener("click", () => {
     if(typeof openHost === "function") openHost(b.dataset.goHost);
@@ -16898,6 +17064,51 @@ function vacPhotoSet(v) {
   };
 }
 /* VAC-PHOTO-CORE-END */
+
+/* HB-AGREEMENT-CORE-START */
+/* Pure helpers behind the Agreement column and the client drawer's Agreements
+   list. A booking, the hydrated `contracts` rows and (optionally) a clock in;
+   a state out. Fenced so test/hb-agreement.test.js can extract and assert
+   against them with no DOM. Nothing in here may touch document, window or a
+   global. */
+function hbAgreementFor(booking, contracts){
+  const ref = String((booking && booking.booking_ref) || '');
+  if(!ref || !Array.isArray(contracts)) return null;
+  const rows = contracts.filter(c => c && String(c.booking_ref || '') === ref && String(c.status || '') === 'signed'
+                                     && String(c.kind || '') === 'homestay-agreement');
+  if(!rows.length) return null;
+  rows.sort((a, b) => String(b.signed_at || '').localeCompare(String(a.signed_at || '')));
+  return rows[0];
+}
+// 'signed' when a contract exists (or the booking row already carries the
+// stamp and the contracts table has not caught up); 'stale' when staff edited
+// the booking after the student signed — the PDF still says what was signed.
+function hbAgreementState(booking, contract){
+  const b = booking || {};
+  if(!contract){
+    const at = String(b.agreement_signed_at || '');
+    if(!at) return { state:'none', signedAt:'', contractId:'', pdfPath:'' };
+    return { state:'signed', signedAt: at, contractId: String(b.agreement_id || ''), pdfPath:'' };
+  }
+  const signedAt = String(contract.signed_at || '');
+  const updated = String(b.updated_at || '');
+  const stale = !!(signedAt && updated && updated > signedAt);
+  return { state: stale ? 'stale' : 'signed', signedAt, contractId: String(contract.id || ''), pdfPath: String(contract.pdf_path || '') };
+}
+function hcAgreementsFor(client, contracts){
+  if(!client || !Array.isArray(contracts)) return [];
+  const id = String(client.id || ''), email = String(client.email || '').toLowerCase();
+  const live = contracts.filter(c => c && String(c.status || '') !== 'void');
+  let rows = id ? live.filter(c => String(c.client_id || '') === id) : [];
+  if(!rows.length && email) rows = live.filter(c => String(c.client_email || '').toLowerCase() === email);
+  return rows.slice().sort((a, b) => String(b.signed_at || '').localeCompare(String(a.signed_at || '')));
+}
+function hbAgreementKindLabel(kind){
+  const k = String(kind || '');
+  if(k === 'homestay-agreement') return 'Homestay agreement';
+  return k || 'Agreement';
+}
+/* HB-AGREEMENT-CORE-END */
 
 /* HL-LETTER-CORE-START */
 /* Decides whether a homestay confirmation letter goes out, and builds exactly
@@ -20115,6 +20326,7 @@ renderLeads();
   window.homestayApplicants = homestayApplicants;
   window.leads              = leads;
   window.salesReps          = salesReps;
+  window.contracts          = contracts;
 
   // 2. After DOM ready, hydrate and re-render
   const start = async () => {
@@ -20414,7 +20626,7 @@ renderLeads();
 
     const tb = $('hb-rows');
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="13" class="card-sub">No bookings yet.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="15" class="card-sub">No bookings yet.</td></tr>';
       hbApplyWriteAffordances();
       return;
     }
@@ -20427,6 +20639,7 @@ renderLeads();
           (b.lease_end_date ? '<div class="card-sub">to ' + esc(b.lease_end_date) + '</div>' : '') + '</td>' +
         '<td class="nowrap">' + (Number(b.lease_days) > 0 ? esc(hbStayLength(b.lease_days)) : '<span class="card-sub">—</span>') + '</td>' +
         '<td>' + hbMeals(b.meal_plan) + '</td>' +
+        hbFeesCell(b) +
         '<td style="text-align:right">' + cad(b.weekly_rate) + '</td>' +
         '<td style="text-align:right">' + cad(b.host_weekly_rate) + '</td>' +
         hbBillingCell(b) +
@@ -20435,6 +20648,7 @@ renderLeads();
           ? flags.map((f) => '<span class="badge badge-amber">' + esc(f) + '</span>').join(' ')
           : '<span class="card-sub">—</span>') + '</td>' +
         hbLetterCell(b) +
+        hbAgreementCell(b) +
         hbMoveOutCell(b) +
         hbExtendCell(b) +
         '</tr>';
@@ -20482,6 +20696,41 @@ renderLeads();
   // Confirmation letter state, straight off the row. The pre-check for a
   // never-sent letter runs the same HL-LETTER-CORE the n8n workflow mirrors, so
   // staff see "would block on: host phone" before they click, not after.
+  // Agreement column: reads the hydrated `contracts` rows (Supabase) against
+  // the booking (homestay API). Download = a 60-minute signed URL, fetched on
+  // click so the table never holds a hundred live links.
+  function hbAgreementCell(b) {
+    const st = hbAgreementState(b, hbAgreementFor(b, window.contracts || []));
+    if (st.state === 'none') return '<td><span class="card-sub">Not signed</span></td>';
+    const when = st.signedAt ? esc(String(st.signedAt).slice(0, 10)) : '';
+    const badge = st.state === 'stale'
+      ? '<span class="badge badge-amber" title="The booking was edited after the student signed">changed after signing</span>'
+      : '<span class="badge badge-green">signed</span>';
+    const dl = st.pdfPath ? ' <button class="btn btn-ghost btn-mini" type="button" data-hb-agreement="' + esc(st.pdfPath) + '">Download</button>' : '';
+    return '<td>' + badge + (when ? '<div class="card-sub">' + when + '</div>' : '') + dl + '</td>';
+  }
+  // Realtime on `contracts` lands after the bookings table is painted; repaint
+  // just the Agreement cells rather than refetching the homestay API.
+  window.hbRerenderAgreements = function () {
+    const tb = $('hb-rows');
+    if (!tb || !Array.isArray(hbLastRows) || !hbLastRows.length) return;
+    const cells = tb.querySelectorAll('tr');
+    hbLastRows.forEach((b, i) => {
+      const tr = cells[i]; if (!tr) return;
+      const idx = 11;  // Agreement is the 12th column
+      const tmp = document.createElement('tr'); tmp.innerHTML = hbAgreementCell(b);
+      if (tr.children[idx] && tmp.firstChild) tr.replaceChild(tmp.firstChild, tr.children[idx]);
+    });
+  };
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-hb-agreement]');
+    if (!btn) return;
+    btn.disabled = true;
+    const url = window.vmDb && typeof vmDb.fileUrl === 'function' ? await vmDb.fileUrl(btn.dataset.hbAgreement, 3600) : null;
+    btn.disabled = false;
+    if (url) window.open(url, '_blank', 'noopener'); else if (typeof showToast === 'function') showToast('Could not open the agreement');
+  });
+
   function hbLetterCell(b) {
     const st = String(b.letter_status || '');
     const ref = esc(b.booking_ref);
@@ -20522,6 +20771,25 @@ renderLeads();
     return '<td class="hb-letter nowrap" data-ref="' + ref + '" data-status="' + esc(st) + '">' + chip +
       (sub ? '<div class="card-sub" style="white-space:normal;max-width:180px"' + (subTitle ? ' title="' + esc(subTitle) + '"' : '') + '>' + esc(sub) + '</div>' : '') +
       (acts.length ? '<div style="margin-top:' + (chip ? 6 : 0) + 'px;display:flex;gap:4px">' + acts.join('') + '</div>' : '') + '</td>';
+  }
+
+  // The placement fee and the deposit, one chip each. A booking from before
+  // these existed has no state and shows a dash — nothing was charged for it
+  // through the checkout, and nothing is owed through it either.
+  function hbFeesCell(b) {
+    const P = { due: ['badge-amber', 'due'], paid: ['badge-green', 'paid'], paid_in_advance: ['badge-green', 'prepaid'],
+                claimed_paid: ['badge-red', 'claimed'], waived: ['', 'waived'] };
+    const D = { due: ['badge-amber', '$200 due'], held: ['badge-green', 'held'], refunded: ['', 'refunded'], none: ['', 'no deposit'] };
+    const p = P[b.placement_fee_status], d = D[b.deposit_status];
+    if (!p && (!d || b.deposit_status === 'none') && !b.placement_fee_status) return '<td><span class="card-sub">—</span></td>';
+    const chip = (pair, text, title) => pair[0]
+      ? '<span class="badge ' + pair[0] + '" title="' + esc(title || '') + '">' + esc(text) + '</span>'
+      : '<span class="card-sub" title="' + esc(title || '') + '">' + esc(text) + '</span>';
+    const amt = Number(b.placement_fee) > 0 ? ' ' + cad(b.placement_fee) : '';
+    const pTitle = [b.placement_fee_source ? 'source: ' + b.placement_fee_source : '', b.placement_fee_ref ? 'ref: ' + b.placement_fee_ref : '', b.placement_fee_paid_at ? 'paid ' + String(b.placement_fee_paid_at).slice(0, 10) : ''].filter(Boolean).join(' · ');
+    return '<td class="nowrap">' +
+      (p ? chip(p, 'placement ' + p[1] + amt, pTitle) : '<span class="card-sub">no placement record</span>') +
+      '<div style="margin-top:4px">' + (d ? chip(d, 'deposit ' + d[1]) : '<span class="card-sub">—</span>') + '</div></td>';
   }
 
   // Bookings created before meal_plan existed have no value; show a dash rather
@@ -20631,7 +20899,7 @@ renderLeads();
     row.setAttribute('data-ref', b.booking_ref);
 
     if (pick.error === 'unavailable') {
-      row.innerHTML = '<td colspan="13" class="card-sub" style="padding:14px 16px">' +
+      row.innerHTML = '<td colspan="15" class="card-sub" style="padding:14px 16px">' +
         'This host has no room to extend into.</td>';
       tr.parentNode.insertBefore(row, tr.nextSibling);
       return;
@@ -20667,7 +20935,7 @@ renderLeads();
     // is one glance away rather than something to look up.
     const r = pick.room || {};
     row.innerHTML =
-      '<td colspan="13" style="padding:16px;background:var(--wash, #FAF5ED)">' +
+      '<td colspan="15" style="padding:16px;background:var(--wash, #FAF5ED)">' +
         '<div style="font-weight:600;margin-bottom:10px">Extend ' + esc(b.student_email) +
           ' · ' + esc(b.booking_ref) + '</div>' +
         '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">' +
@@ -20828,7 +21096,7 @@ renderLeads();
     row.className = 'hb-letter-row';
     row.setAttribute('data-ref', cell.getAttribute('data-ref'));
     row.setAttribute('data-status', cell.getAttribute('data-status'));
-    row.innerHTML = '<td colspan="13" style="padding:14px 16px">' + inner + '</td>';
+    row.innerHTML = '<td colspan="15" style="padding:14px 16px">' + inner + '</td>';
     tr.after(row);
     return row;
   }
@@ -21077,6 +21345,11 @@ renderLeads();
         flight_info: $('hb-flight').value.trim(),
         arrival_notes: $('hb-arrival').value.trim(),
         letter_notes: $('hb-notes').value.trim(),
+        // Blank = let the server look it up (HP-FEES-CORE precedence).
+        placement_fee_status: $('hb-placement-status').value,
+        placement_fee_cents: $('hb-placement-amount').value.trim() ? toCents($('hb-placement-amount').value.trim()) : '',
+        placement_fee_ref: $('hb-placement-ref').value.trim(),
+        deposit: $('hb-deposit').value,
       });
       // A 2xx with no link is a real failure that hbPost cannot see: it does
       // `resp.json().catch(() => ({}))`, so an empty or non-JSON body becomes
