@@ -79,7 +79,10 @@
     leads:             { table: 'leads',              key: 'id' },
     // One row per sales rep (id = lowercased email). Targets per month live in
     // data.targets; `active` is mirrored so a rep can be retired without a delete.
-    salesReps:         { table: 'sales_reps',         key: 'id' }
+    salesReps:         { table: 'sales_reps',         key: 'id' },
+    // Signed agreements (phase 1: homestay). Written only by the letters
+    // Worker with the service key; the portal reads and links to the PDF.
+    contracts:         { table: 'contracts',          key: 'id' }
   };
 
   // Scalar columns mirrored on each table. Camel-case JS field → snake-case Postgres column.
@@ -93,7 +96,8 @@
     damageDeposits:    [['status','status']],
     homestayApplicants:[['name','name'],['city','city']],
     leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']],
-    salesReps:         [['active','active']]
+    salesReps:         [['active','active']],
+    contracts:         [['kind','kind'],['status','status'],['booking_ref','booking_ref'],['client_email','client_email'],['signed_at','signed_at']]
   };
 
   /* ------------------- helpers ------------------- */
@@ -131,7 +135,8 @@
       damageDeposits:     window.damageDeposits,
       homestayApplicants: window.homestayApplicants,
       leads:              window.leads,
-      salesReps:          window.salesReps
+      salesReps:          window.salesReps,
+      contracts:          window.contracts
     };
 
     for (const [name, cfg] of Object.entries(TABLES)) {
@@ -522,7 +527,7 @@
       _rerenderTimer = null;
       const fns = ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies',
                    'renderHomestayClients','renderHomestayFinance','renderHomestayHosts',
-                   'renderDeposits','renderLeads','renderSales','updateSidebarCounts'];
+                   'renderDeposits','renderLeads','renderSales','hbRerenderAgreements','updateSidebarCounts'];
       for (const fn of fns) {
         try { if (typeof window[fn] === 'function') window[fn](); }
         catch (e) { console.warn('[vmDb] rerender ' + fn + ' failed:', e.message); }
