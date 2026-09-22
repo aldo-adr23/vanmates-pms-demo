@@ -364,6 +364,14 @@
   /* Financials line chart */
   .line-wrap{position:relative}
   .line-grid{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:8px}
+  /* A chart and its label row scroll together, so the labels stay under their
+     bars on narrow screens (both children share one min-width). */
+  .chart-scroll{min-width:0}
+  @media (max-width:880px){
+    .chart-scroll{overflow-x:auto;padding-bottom:6px}
+    .chart-scroll > *{min-width:480px}
+  }
+  .match-how-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 
   /* Empty hint */
   .pill-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
@@ -1000,13 +1008,6 @@
     .row-3{grid-template-columns:1fr}
     .prop-grid{grid-template-columns:1fr 1fr}
   }
-  @media (max-width:760px){
-    .app{grid-template-columns:1fr}
-    .sidebar{position:static;height:auto;display:none}
-    .prop-grid{grid-template-columns:1fr}
-    .main{padding:18px}
-  }
-
   /* ============ Mobile responsive ============ */
   @media (max-width:1100px){
     .kpi-grid{grid-template-columns:repeat(2,1fr)}
@@ -1038,8 +1039,10 @@
     .mobile-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:55}
     .mobile-backdrop.open{display:block}
     /* Tables — horizontal scroll */
-    .card table{display:block;overflow-x:auto;white-space:nowrap}
-    .card thead, .card tbody, .card tfoot{display:table;width:100%;table-layout:auto}
+    .card table{display:block;overflow-x:auto;white-space:nowrap;width:100%}
+    /* thead/tbody must stay in one table box, or the header columns size
+       independently of the body columns and nothing lines up. */
+    .card thead, .card tbody, .card tfoot{display:revert;width:auto}
     /* Homestay clients table — also nowrap dates on mobile */
     .hc-table-card .hc-table .nw{white-space:nowrap}
     /* Modals — full-width on small screens */
@@ -1062,6 +1065,20 @@
     .pagination{flex-direction:column;gap:8px;align-items:stretch}
     .pagination .results-count{text-align:center}
     .page-btns{justify-content:center}
+    /* Grid/flex children default to min-width:auto, so a card that cannot
+       shrink to its content pushes the whole page wider than the screen. */
+    .main{min-width:0}
+    .card{min-width:0}
+    .form-row > *{min-width:0}
+    .form-input{min-width:0;max-width:100%}
+    /* Bars scroll with their labels; see .chart-scroll */
+    #rp-chart{gap:8px !important}
+    .match-how-grid{grid-template-columns:1fr}
+    /* Bars that wrapped off-screen */
+    .results-bar{flex-wrap:wrap;gap:8px}
+    .results-actions{flex-wrap:wrap}
+    .tabs{width:auto;max-width:100%;overflow-x:auto}
+    .tab{white-space:nowrap;flex:0 0 auto}
   }
   .mobile-menu-btn{
     display:none;width:36px;height:36px;border-radius:9px;
@@ -1239,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-21d"></script>
+<script src="pms-supabase.js?v=2026-09-22a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1467,8 +1484,10 @@
               <div class="tab">Year</div>
             </div>
           </div>
-          <div class="bar-chart" id="occ-chart"></div>
-          <div class="line-grid" id="occ-labels"></div>
+          <div class="chart-scroll">
+            <div class="bar-chart" id="occ-chart"></div>
+            <div class="line-grid" id="occ-labels"></div>
+          </div>
         </div>
 
         <div class="card card-pad">
@@ -2084,8 +2103,10 @@
               <div class="legend-row"><span class="legend-sw" style="background:var(--green)"></span>Net profit</div>
             </div>
           </div>
-          <div id="rp-chart" style="display:flex;align-items:flex-end;gap:18px;height:240px;padding:10px 4px 0"></div>
-          <div class="line-grid" id="rp-labels"></div>
+          <div class="chart-scroll">
+            <div id="rp-chart" style="display:flex;align-items:flex-end;gap:18px;height:240px;padding:10px 4px 0"></div>
+            <div class="line-grid" id="rp-labels"></div>
+          </div>
         </div>
 
         <div class="card card-pad">
@@ -2405,8 +2426,10 @@
             <div><div class="card-title">Revenue by <em>property</em></div><div class="card-sub">April 2026 · CAD</div></div>
             <div class="tabs"><div class="tab">Quarter</div><div class="tab active">Month</div><div class="tab">Week</div></div>
           </div>
-          <div class="bar-chart" style="height:220px" id="rev-chart"></div>
-          <div class="line-grid" id="rev-labels"></div>
+          <div class="chart-scroll">
+            <div class="bar-chart" style="height:220px" id="rev-chart"></div>
+            <div class="line-grid" id="rev-labels"></div>
+          </div>
         </div>
 
         <div class="card card-pad">
@@ -2950,7 +2973,7 @@ hello@vanmates.com · vanmates.com</textarea>
             <div class="card-sub">Same scoring engine powers the public website and mobile app</div>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+        <div class="match-how-grid">
           <div class="list-row" style="border-bottom:none;padding:8px 0">
             <div class="list-icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7 7-13a7 7 0 1 0-14 0c0 6 7 13 7 13z"/></svg></div>
             <div class="list-main"><div class="list-title">City</div><div class="list-sub">Must match — required</div></div>
