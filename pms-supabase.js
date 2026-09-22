@@ -127,6 +127,33 @@
     return row;
   }
 
+  /* ------------------- paged reads ------------------- */
+  // PostgREST answers with at most `db.max_rows` rows — 1,000 on Supabase —
+  // and a client-side .limit() above that is capped too, silently. Every table
+  // here sat under that ceiling for a year, then closed_deals arrived with
+  // 1,182 rows and the newest 182 stopped reaching the browser: the whole of
+  // August and September. The Sales page reported $3,540 for a month that had
+  // actually closed $9,360, with no error anywhere — a short read looks
+  // exactly like a small table.
+  //
+  // So never issue an unbounded select. Page until a short page comes back.
+  const PAGE_ROWS = 1000;
+  async function selectAll(table, columns, filter) {
+    const rows = [];
+    for (let from = 0; ; from += PAGE_ROWS) {
+      const q = filter(sb.from(table).select(columns)).range(from, from + PAGE_ROWS - 1);
+      const { data, error } = await q;
+      if (error) return { data: null, error };
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < PAGE_ROWS) break;
+      // A table big enough to page is worth saying so out loud; it is the
+      // only signal that this ceiling is in play at all.
+      console.log('[vmDb] ' + table + ': read ' + rows.length + ' rows so far (paging)');
+    }
+    return { data: rows, error: null };
+  }
+
   /* ------------------- hydrate ------------------- */
   async function hydrate() {
     const summary = { ok: true, counts: {}, errors: [] };
@@ -153,8 +180,8 @@
         // stick across refreshes (e.g. damage_deposits where the seed is
         // 133 rows but Supabase only has 10).
         const [{ data, error }, { data: deletedRows, error: delErr }] = await Promise.all([
-          sb.from(cfg.table).select('data, id').is('deleted_at', null),
-          sb.from(cfg.table).select('id').not('deleted_at', 'is', null)
+          selectAll(cfg.table, 'data, id', q => q.is('deleted_at', null)),
+          selectAll(cfg.table, 'id',       q => q.not('deleted_at', 'is', null))
         ]);
         if (error) { summary.errors.push({ name, error: error.message }); continue; }
         const arr = targets[name];
