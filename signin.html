@@ -206,14 +206,57 @@ function decodeJwt(token){
   } catch(e){ return null; }
 }
 
-function finishSignIn(profile){
+// Is this email on the team? Asked of the team table, not of a hardcoded list.
+// Returns true, false, or null when the question could not be answered (no
+// client, RLS refusal, network error). Callers treat null as "do not block":
+// a policy quirk must never lock the team out of their own portal.
+async function isTeamMember(email){
+  if(!sb) return null;
+  try {
+    const { data, error } = await sb
+      .from("team_members")
+      .select("id")
+      .ilike("email", email)
+      .limit(1);
+    if(error){
+      console.warn("[signin] team_members lookup failed:", error.message);
+      return null;
+    }
+    if(Array.isArray(data) && data.length > 0) return true;
+    // No match. Before calling that a "no", check whether this session can see
+    // the table at all — if RLS hides every row, an empty result says nothing
+    // about membership, and blocking on it would lock real staff out.
+    const probe = await sb.from("team_members").select("id").limit(1);
+    if(probe.error || !Array.isArray(probe.data) || probe.data.length === 0){
+      console.warn("[signin] team_members is unreadable for this session — not blocking");
+      return null;
+    }
+    return false;
+  } catch(err){
+    console.warn("[signin] team_members lookup threw:", err.message);
+    return null;
+  }
+}
+
+// opts.verified — a real Supabase session was just created for this identity.
+// Verified identities are checked against the team table, which is what
+// "invite-only" actually means. An unverified one (the demo prompt in
+// signInWithGoogle below) proves nothing about who is typing, so it stays on
+// the legacy allowlist.
+async function finishSignIn(profile, opts){
   // profile = { email, name, picture, sub }
   if(!profile || !profile.email){
     alert("We couldn't read your Google account info. Please try again.");
     return;
   }
   const email = profile.email.toLowerCase();
-  if(!ALLOWED_EMAILS.includes(email)){
+  const onTeam = (opts && opts.verified)
+    ? await isTeamMember(email)
+    : ALLOWED_EMAILS.includes(email);
+  if(onTeam === false){
+    // Google authenticated them, so a Supabase session exists — drop it, or a
+    // rejected visitor keeps a live session and lands in an empty portal shell.
+    if(sb){ try { await sb.auth.signOut(); } catch(err){ /* best effort */ } }
     alert(
       `${profile.email} isn't on the Vanmates team yet.\n\n` +
       `Vanmates Property Management is invite-only. ` +
@@ -243,6 +286,7 @@ async function handleCredentialResponse(resp){
   // to the legacy sessionStorage-only flow (the portal still works for reads
   // via the defensive hydrate; writes will silently fail until Supabase is
   // wired up).
+  let verified = false;
   if(sb){
     try {
       const { error } = await sb.auth.signInWithIdToken({
@@ -252,6 +296,7 @@ async function handleCredentialResponse(resp){
       if(error){
         console.warn("[signin] Supabase Google sign-in not configured yet:", error.message);
       } else {
+        verified = true;
         console.log("[signin] Supabase session created via Google ID token");
       }
     } catch(err){
@@ -259,7 +304,7 @@ async function handleCredentialResponse(resp){
     }
   }
 
-  finishSignIn(profile);
+  await finishSignIn(profile, { verified });
 }
 
 function signInWithGoogle(){
