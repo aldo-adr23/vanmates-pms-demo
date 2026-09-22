@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22h"></script>
+<script src="pms-supabase.js?v=2026-09-22i"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20236,6 +20236,18 @@ function cdDealDetail(deal){
     ['Record', d.sourceSystem === 'zoho' ? 'Zoho ' + d.id : 'Portal ' + d.id]
   ];
 }
+
+/* The lead behind a ledger row, or '' when there is none. A portal row IS a
+   won lead, so its id is the lead's. A Zoho row may have absorbed one in the
+   merge, and that lead — not the imported row — is where the portal's fee and
+   rep live, so it is the record to correct. A Zoho row that never matched a
+   lead has nothing to edit here; it is corrected in Zoho. */
+function cdEditableLead(d){
+  if(!d) return '';
+  if(d.sourceSystem === 'portal') return String(d.id || '');
+  const m = /^lead:(.+)$/.exec(String(d.mergedFrom || ''));
+  return m ? m[1] : '';
+}
 /* CLOSED-DEALS-CORE-END */
 
 
@@ -22671,6 +22683,31 @@ renderLeads();
   }
 
   // The drawer reuses the shared #detail-panel, same as Properties and Tenants.
+  // Corrections belong to the rep who closed the deal, or to an admin.
+  function cdMayEdit(d){
+    return salesIsAdmin() || (!!d.rep && d.rep === salesViewerEmail());
+  }
+
+  /* The drawer's footer. A deal whose record is a portal lead can be corrected
+     right here through the same modal the Sales page uses; anything else says
+     why not, rather than leaving a dead end. */
+  function cdPanelFoot(d){
+    const leadId = cdEditableLead(d);
+    const bits = [];
+    if(leadId && cdMayEdit(d)){
+      bits.push(`<button class="btn btn-ghost btn-mini" type="button" data-cd-edit="${esc(leadId)}">Edit deal</button>`);
+    }
+    if(d.sourceUrl){
+      bits.push(`<a class="btn btn-ghost btn-mini" target="_blank" rel="noopener" href="${esc(d.sourceUrl)}">Open in Zoho →</a>`);
+    }
+    const note = leadId
+      ? (cdMayEdit(d) ? '' : `Only ${esc(d.rep || 'the rep who closed it')} or an admin can edit this deal.`)
+      : 'Imported from Zoho — this one is corrected in Zoho, not here.';
+    if(!bits.length && !note) return '';
+    return `<div style="margin-top:18px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">${bits.join('')}` +
+           (note ? `<span class="card-sub">${note}</span>` : '') + `</div>`;
+  }
+
   window.openClosedDeal = function(id){
     const d = cdLedger().find(x => String(x.id) === String(id));
     if(!d) return;
@@ -22692,7 +22729,10 @@ renderLeads();
          <div class="panel-kpi"><div class="l">Months</div><div class="v">${d.months || '—'}</div></div>
        </div>
        <table>${rows}</table>` +
-      (d.sourceUrl ? `<div style="margin-top:18px"><a class="btn btn-ghost btn-mini" target="_blank" rel="noopener" href="${esc(d.sourceUrl)}">Open in Zoho →</a></div>` : '');
+      cdPanelFoot(d) +
+      // Marker: renderClosedDeals repaints the drawer only while this is the
+      // thing on screen, so a tenant or lead drawer is never hijacked.
+      `<span data-cd-panel="${esc(d.id)}" hidden></span>`;
     document.getElementById('detail-panel').classList.add('open');
     document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
     document.getElementById('panel-backdrop').classList.add('open');
@@ -22726,6 +22766,10 @@ renderLeads();
     cdRenderTable(rows);
     // The rollup is a manager's tool: it only means something across people.
     cdRenderManager(scoped, repKey === '*' || String(repKey).indexOf('team:') === 0);
+    // If this drawer is the one on screen, repaint it — an edit saved from
+    // inside it must not leave stale numbers behind.
+    const shown = document.querySelector('#detail-panel.open #panel-body [data-cd-panel]');
+    if(shown) openClosedDeal(shown.getAttribute('data-cd-panel'));
     const synced = (window.closedDeals || []).length;
     $('cd-sub').textContent = synced
       ? `${scoped.length} closed deal${scoped.length === 1 ? '' : 's'} on record · ${synced} synced from Zoho`
@@ -22776,6 +22820,11 @@ renderLeads();
   });
   if($('cd-export')) $('cd-export').addEventListener('click', () => {
     cdExport(($('sales-cd') && $('sales-cd').__rows) || []);
+  });
+  // The detail panel is not inside #sales-page, so its Edit button is wired here.
+  if($('panel-body')) $('panel-body').addEventListener('click', e => {
+    const edit = e.target.closest('[data-cd-edit]');
+    if(edit && typeof openDealModal === 'function') openDealModal(edit.dataset.cdEdit, 'won');
   });
   $('sales-period').addEventListener('change', e => { SALES_STATE.ym = e.target.value; renderSales(); });
   $('sales-page').addEventListener('click', e => {
