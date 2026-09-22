@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22d"></script>
+<script src="pms-supabase.js?v=2026-09-22e"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -19755,6 +19755,12 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
   const team = everyone || !!teamKey;
   const repName = everyone ? 'Whole team' : (teamKey ? ((teamRow && teamRow.name) || 'Team ' + teamKey) : ((members[0] && members[0].name) || key));
   const memberKeys = new Set(members.map(salesRepKey));
+  // A rep with no `sales_reps` row still owns their deals. Catherine, Akane
+  // and six former staff are exactly that case, and without this the page
+  // scopes to nobody and reports $0 while the closed-deal table below it shows
+  // their real numbers. They get no target (repRows stays empty), which is
+  // right — nobody set them one.
+  if(!everyone && !teamKey && !memberKeys.size && key) memberKeys.add(key);
   const mine = everyone ? salesRepLeads(leads, '*') : (leads || []).filter(l => memberKeys.has(salesOwner(l)));
 
   const inRange = (d, a, b) => d && d >= a && d <= b;
