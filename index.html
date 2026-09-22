@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22b"></script>
+<script src="pms-supabase.js?v=2026-09-22c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1289,6 +1289,11 @@
     <button class="nav-item" data-view="leads">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
       Leads
+      <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="jleads">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.3 9 9 0 0 1-2.5-.3L5 21l1.4-4a8.1 8.1 0 0 1-2.4-5.5C4 6.9 7.8 3.2 12.5 3.2S21 6.9 21 11.5z"/></svg>
+      JLeads
       <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="sales">
@@ -2068,6 +2073,60 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
             <div class="t">No leads yet</div>
             <div>Website submissions will appear here automatically.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ JLEADS (LINE MAYA) ============ -->
+    <section class="view" data-view="jleads">
+      <div class="filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="jleads-search" placeholder="Search by name, email, city, LINE id…" autocomplete="off" />
+        </div>
+        <select id="jleads-filter-tier" class="form-input" style="max-width:200px">
+          <option value="">All tiers</option>
+          <option value="hot">Hot — link or booking intent</option>
+          <option value="qualified">Qualified</option>
+          <option value="new">New</option>
+        </select>
+        <select id="jleads-filter-housing" class="form-input" style="max-width:190px">
+          <option value="">All housing types</option>
+          <option value="coliving">Co-living / share house</option>
+          <option value="homestay">Homestay</option>
+          <option value="relocation">Relocation</option>
+        </select>
+        <select id="jleads-filter-status" class="form-input" style="max-width:190px">
+          <option value="open" selected>Open (new · contacted · qualified)</option>
+          <option value="">All statuses</option>
+          <option value="unassigned">Unassigned</option>
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="qualified">Qualified</option>
+          <option value="won">Won</option>
+          <option value="lost">Lost</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px">
+          <div class="card-title"><b id="jleads-count">0</b> LINE leads</div>
+          <div class="name-sub">Captured by Maya on LINE · updates as she learns more</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Contact</th><th>City</th><th>Housing</th><th>Budget</th><th>Move-in</th><th>Tier</th><th>Status</th><th>Assignee</th><th>Received</th>
+            </tr>
+          </thead>
+          <tbody id="jleads-body"></tbody>
+        </table>
+        <div id="jleads-empty" style="display:none">
+          <div class="empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.3 9 9 0 0 1-2.5-.3L5 21l1.4-4a8.1 8.1 0 0 1-2.4-5.5C4 6.9 7.8 3.2 12.5 3.2S21 6.9 21 11.5z"/></svg>
+            <div class="t">No LINE leads yet</div>
+            <div>Leads Maya captures on LINE appear here automatically.</div>
           </div>
         </div>
       </div>
@@ -7283,9 +7342,9 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
-                nav:["dashboard","leads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
+                nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
@@ -7516,6 +7575,7 @@ function showToast(msg){
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
   ["leads",            "Leads"],
+  ["jleads",           "JLeads"],
   ["sales",            "Sales"],
   ["assistants",       "Assistants"],
   ["tenants",          "Tenants"],
@@ -8092,7 +8152,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
   const roleLabel = (typeof roles === "object" && roles[role]?.label) || role;
 
   const pageLabels = {
-    "dashboard":"Dashboard","leads":"Leads","tenants":"Tenants","properties":"Properties & rooms",
+    "dashboard":"Dashboard","leads":"Leads","jleads":"JLeads","tenants":"Tenants","properties":"Properties & rooms",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
     "homestay-bookings":"Homestay bookings",
@@ -9703,6 +9763,7 @@ const titles = {
   dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
+  jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
   assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
@@ -15649,7 +15710,8 @@ function updateSidebarCounts(){
     set("deposits", open);
   }
   if(typeof teamMembers !== "undefined")       set("team",              teamMembers.length);
-  if(typeof leads !== "undefined")             set("leads",             leads.filter(l => (l.status||'new') === 'new').length);
+  if(typeof leads !== "undefined")             set("leads",             leads.filter(l => !isJLead(l) && (l.status||'new') === 'new').length);
+  if(typeof leads !== "undefined")             set("jleads",            leads.filter(l => isJLead(l) && (l.status||'new') === 'new').length);
 }
 updateSidebarCounts();
 
@@ -20340,7 +20402,8 @@ const LEAD_SOURCES = {
   'host-application': 'Host application',
   'manager-application': 'Manager application',
   'partner': 'Partner',
-  'service': 'Service request'
+  'service': 'Service request',
+  'line-maya': 'LINE (Maya)'
 };
 const LEAD_STATUSES = ['new','contacted','qualified','won','lost'];
 const LEAD_FILTERS = { search:'', source:'', status:'open' };
@@ -20370,6 +20433,84 @@ function leadStatusFilterMatches(lead, filter){
   return st === filter;
 }
 /* LEAD-CLAIM-CORE-END */
+
+/* JLEADS-CORE-START */
+// JLeads is the LINE Maya pipeline. Deliberately the SAME `leads` table as the
+// Leads section — one ledger, so claim/assign, follow-ups and the Sales page
+// keep working on these rows unchanged — separated only by `source`. Pure:
+// nothing in here may touch document, window or a global.
+const JLEAD_SOURCE = 'line-maya';
+
+function isJLead(l){ return !!l && String(l.source || '') === JLEAD_SOURCE; }
+
+// The submission body as stored. Maya's extras (LINE id, tier, housing) live in
+// `raw`; older rows kept the whole payload in `data`.
+function jleadPayload(l){
+  let p = l && (l.raw || l.payload || l.data);
+  if(typeof p === 'string'){ try { p = JSON.parse(p); } catch(_){ return {}; } }
+  return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
+}
+
+// LINE hands out no phone number, so the userId IS the contact handle. It is 33
+// characters of hex nobody reads, so the table shows it elided and the drawer
+// shows it whole.
+function jleadLineId(l){
+  const p = jleadPayload(l);
+  return String((p.line && p.line.user_id) || p.line_user_id || '').trim();
+}
+function jleadLineShort(id){
+  const s = String(id || '');
+  return s.length > 14 ? s.slice(0, 10) + '…' + s.slice(-4) : s;
+}
+
+// Maya's tier is her read of the conversation; the portal `status` is the sales
+// pipeline. They answer different questions, so both are shown. 'hot' means she
+// sent a room or booking link, or heard explicit booking intent.
+const JLEAD_TIERS = ['new','qualified','hot'];
+function jleadTier(l){
+  const t = String(jleadPayload(l).tier || '').toLowerCase();
+  return JLEAD_TIERS.indexOf(t) >= 0 ? t : '';
+}
+
+function jleadHousing(l){
+  const p = jleadPayload(l);
+  return String(p.service_norm || p.service || p.intent || '').trim();
+}
+function jleadBudget(l){
+  const p = jleadPayload(l);
+  return String(p.budget == null ? '' : p.budget).trim();
+}
+function jleadMoveIn(l){
+  const p = jleadPayload(l);
+  return String((l && l.moveIn) || p.moveInDate || p.move_in || '').trim();
+}
+
+function jleadMatches(l, f){
+  const tier = (f && f.tier) || '';
+  const housing = String((f && f.housing) || '').toLowerCase();
+  const q = String((f && f.search) || '').trim().toLowerCase();
+  if(tier && jleadTier(l) !== tier) return false;
+  if(housing && jleadHousing(l).toLowerCase().indexOf(housing) === -1) return false;
+  if(q){
+    const hay = [l.name, l.email, l.city, l.message, l.preference, l.claimed_by,
+                 jleadLineId(l), jleadHousing(l), jleadBudget(l)]
+      .map(x => String(x == null ? '' : x).toLowerCase()).join(' ');
+    if(hay.indexOf(q) === -1) return false;
+  }
+  return true;
+}
+
+// `statusMatch` is injected rather than referenced so this core stays pure and
+// testable on its own; the caller passes leadStatusFilterMatches, which gives
+// JLeads the same 'open' default as the Leads list.
+function selectJLeads(all, filters, statusMatch){
+  return (all || [])
+    .filter(isJLead)
+    .filter(l => statusMatch ? statusMatch(l, filters && filters.status) : true)
+    .filter(l => jleadMatches(l, filters))
+    .sort((a,b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+/* JLEADS-CORE-END */
 
 function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s || 'Lead'); }
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
@@ -20444,6 +20585,9 @@ async function claimLead(id){
 function applyLeadFilters(){
   const q = LEAD_FILTERS.search.trim().toLowerCase();
   return leads.filter(l => {
+    // JLeads (LINE Maya) is the same ledger but a different pipeline and a
+    // different team — it has its own section, so it never shows up here.
+    if(isJLead(l)) return false;
     if(LEAD_FILTERS.source && l.source !== LEAD_FILTERS.source) return false;
     if(!leadStatusFilterMatches(l, LEAD_FILTERS.status)) return false;
     if(q){
@@ -20489,6 +20633,53 @@ function renderLeads(){
       }
     }
   }
+  renderJLeads();
+}
+
+const JLEAD_FILTERS = { search:'', tier:'', housing:'', status:'open' };
+
+function jleadTierBadge(t){
+  if(!t) return '<span class="name-sub">—</span>';
+  const colors = { hot:'#B94A3F', qualified:'#b8860b', new:'#2563eb' };
+  const c = colors[t] || '#9aa0a6';
+  const label = t === 'hot' ? 'Hot' : t === 'qualified' ? 'Qualified' : 'New';
+  return `<span class="badge" style="background:${c}1a;color:${c};border-color:${c}33">${label}</span>`;
+}
+
+// LINE gives no e-mail for many prospects and never a phone, so the contact
+// cell falls back to the LINE id — that is genuinely how sales reaches them.
+function jleadContactCell(l){
+  const parts = [];
+  if(l.email) parts.push(`<a href="${safeHref('mailto:'+l.email)}">${esc(l.email)}</a>`);
+  const lid = jleadLineId(l);
+  if(lid) parts.push(`<span class="name-sub" title="${esc(lid)}">LINE ${esc(jleadLineShort(lid))}</span>`);
+  return parts.join('<br>') || '—';
+}
+
+function renderJLeads(){
+  const body = document.getElementById('jleads-body');
+  if(!body) return;
+  const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches);
+  const countEl = document.getElementById('jleads-count');
+  if(countEl) countEl.textContent = list.length;
+  const emptyEl = document.getElementById('jleads-empty');
+  if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
+  body.innerHTML = list.map(l => `
+    <tr data-lead="${esc(l.id)}" style="cursor:pointer">
+      <td><div class="name-main">${esc(l.name || '—')}</div></td>
+      <td>${jleadContactCell(l)}</td>
+      <td>${esc(l.city || '—')}</td>
+      <td>${esc(jleadHousing(l) || '—')}</td>
+      <td>${esc(jleadBudget(l) || '—')}</td>
+      <td>${esc(jleadMoveIn(l) || '—')}</td>
+      <td>${jleadTierBadge(jleadTier(l))}</td>
+      <td>${leadStatusBadge(l.status || 'new')}</td>
+      <td>${leadAssigneeCell(l)}</td>
+      <td>${fmtDate(l.created_at)}</td>
+    </tr>`).join('');
+  body.querySelectorAll('tr[data-lead]').forEach(row => {
+    row.addEventListener('click', e => { if(e.target.closest('a')) return; openLead(row.dataset.lead); });
+  });
 }
 
 /* ---- Lead drawer rendering (DOM side of LEAD-CORE) -------------------- */
@@ -20711,6 +20902,10 @@ async function saveLead(){
 document.getElementById('leads-search')       && document.getElementById('leads-search').addEventListener('input',  e => { LEAD_FILTERS.search = e.target.value; renderLeads(); });
 document.getElementById('leads-filter-source')&& document.getElementById('leads-filter-source').addEventListener('change', e => { LEAD_FILTERS.source = e.target.value; renderLeads(); });
 document.getElementById('leads-filter-status')&& document.getElementById('leads-filter-status').addEventListener('change', e => { LEAD_FILTERS.status = e.target.value; renderLeads(); });
+document.getElementById('jleads-search')       && document.getElementById('jleads-search').addEventListener('input',  e => { JLEAD_FILTERS.search = e.target.value; renderJLeads(); });
+document.getElementById('jleads-filter-tier')  && document.getElementById('jleads-filter-tier').addEventListener('change', e => { JLEAD_FILTERS.tier = e.target.value; renderJLeads(); });
+document.getElementById('jleads-filter-housing')&& document.getElementById('jleads-filter-housing').addEventListener('change', e => { JLEAD_FILTERS.housing = e.target.value; renderJLeads(); });
+document.getElementById('jleads-filter-status')&& document.getElementById('jleads-filter-status').addEventListener('change', e => { JLEAD_FILTERS.status = e.target.value; renderJLeads(); });
 document.getElementById('lead-modal-close')   && document.getElementById('lead-modal-close').addEventListener('click', closeLeadModal);
 document.getElementById('lead-save-btn')      && document.getElementById('lead-save-btn').addEventListener('click', saveLead);
 document.getElementById('lead-deal-btn') && document.getElementById('lead-deal-btn').addEventListener('click', () => {
