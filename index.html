@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22m"></script>
+<script src="pms-supabase.js?v=2026-09-22n"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2113,6 +2113,10 @@
           <option value="due">Follow up today</option>
           <option value="waiting">Waiting (nudged recently)</option>
           <option value="cold">Cold (3 nudges, no reply)</option>
+        </select>
+        <select id="jleads-sort" class="form-input" style="max-width:170px" title="Waiting-for-staff customers always stay on top">
+          <option value="">Sort: newest first</option>
+          <option value="tier">Sort: tier (hot first)</option>
         </select>
       </div>
 
@@ -20645,11 +20649,16 @@ function selectJLeads(all, filters, statusMatch, now){
     .filter(l => jleadMatches(l, filters))
     .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : jleadFollowUp(l, t).state === fu));
   if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
-  // Customers waiting for a human are pinned on top, longest-waiting first.
+  // Customers waiting for a human are pinned on top, longest-waiting first, in
+  // every sort. 'tier' then orders hot → qualified → new → untiered, newest
+  // first within a tier; the default is simply newest first.
+  const byTier = filters && filters.sort === 'tier';
+  const rank = (l) => { const i = JLEAD_TIERS.indexOf(jleadTier(l)); return i < 0 ? -1 : i; };
   return list.sort((a,b) => {
     const ha = jleadHandoff(a), hb = jleadHandoff(b);
     if(ha.waiting !== hb.waiting) return ha.waiting ? -1 : 1;
     if(ha.waiting) return ha.at - hb.at;
+    if(byTier && rank(a) !== rank(b)) return rank(b) - rank(a);
     return String(b.created_at || '').localeCompare(String(a.created_at || ''));
   });
 }
@@ -20779,7 +20788,7 @@ function renderLeads(){
   renderJLeads();
 }
 
-const JLEAD_FILTERS = { search:'', tier:'', housing:'', status:'open', followup:'' };
+const JLEAD_FILTERS = { search:'', tier:'', housing:'', status:'open', followup:'', sort:'' };
 
 function jleadTierBadge(t){
   if(!t) return '<span class="name-sub">—</span>';
@@ -21290,6 +21299,12 @@ document.getElementById('jleads-filter-tier')  && document.getElementById('jlead
 document.getElementById('jleads-filter-housing')&& document.getElementById('jleads-filter-housing').addEventListener('change', e => { JLEAD_FILTERS.housing = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-status')&& document.getElementById('jleads-filter-status').addEventListener('change', e => { JLEAD_FILTERS.status = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-followup')&& document.getElementById('jleads-filter-followup').addEventListener('change', e => { JLEAD_FILTERS.followup = e.target.value; renderJLeads(); });
+// The sort is a per-viewer preference; storage can be unavailable (private mode).
+(function(){
+  const el = document.getElementById('jleads-sort'); if(!el) return;
+  try { const v = localStorage.getItem('jleads.sort'); if(v === 'tier'){ JLEAD_FILTERS.sort = v; el.value = v; } } catch(_){}
+  el.addEventListener('change', e => { JLEAD_FILTERS.sort = e.target.value; try { localStorage.setItem('jleads.sort', e.target.value); } catch(_){} renderJLeads(); });
+})();
 document.getElementById('lead-modal-close')   && document.getElementById('lead-modal-close').addEventListener('click', closeLeadModal);
 document.getElementById('lead-save-btn')      && document.getElementById('lead-save-btn').addEventListener('click', saveLead);
 document.getElementById('lead-deal-btn') && document.getElementById('lead-deal-btn').addEventListener('click', () => {
