@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22f"></script>
+<script src="pms-supabase.js?v=2026-09-22g"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2107,17 +2107,23 @@
           <option value="won">Won</option>
           <option value="lost">Lost</option>
         </select>
+        <select id="jleads-filter-followup" class="form-input" style="max-width:210px">
+          <option value="">All follow-ups</option>
+          <option value="due">Follow up today</option>
+          <option value="waiting">Waiting (nudged recently)</option>
+          <option value="cold">Cold (3 nudges, no reply)</option>
+        </select>
       </div>
 
       <div class="card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
-          <div class="card-title"><b id="jleads-count">0</b> LINE leads</div>
+          <div class="card-title"><b id="jleads-count">0</b> LINE leads <span id="jleads-due" class="name-sub"></span></div>
           <div class="name-sub">Captured by Maya on LINE · updates as she learns more</div>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Name</th><th>Contact</th><th>City</th><th>Housing</th><th>Budget</th><th>Move-in</th><th>Tier</th><th>Status</th><th>Assignee</th><th>Received</th>
+              <th>Name</th><th>Contact</th><th>City</th><th>Housing</th><th>Budget</th><th>Move-in</th><th>Tier</th><th>Follow-up</th><th>Status</th><th>Assignee</th><th>Received</th>
             </tr>
           </thead>
           <tbody id="jleads-body"></tbody>
@@ -20549,15 +20555,55 @@ function jleadMatches(l, f){
   return true;
 }
 
+// Follow-up cadence for LINE leads that went quiet. Counted from the customer's
+// last LINE message (`lastMessageAt`, stamped hourly by n8n from Maya's inbox),
+// not from when the lead was created: a prospect still chatting is not quiet.
+// Nudges logged since that message decide the step — day 2, day 7, day 21 —
+// and after three unanswered nudges the lead is 'cold'. A new message from the
+// customer restarts the cadence because earlier nudges no longer count.
+const JLEAD_FOLLOWUP_GAPS_DAYS = [2, 5, 14];
+const JLEAD_FOLLOWUP_TIERS = ['hot','qualified'];
+const JLEAD_DAY_MS = 86400000;
+function jleadTs(v){ const t = new Date(v || '').getTime(); return isNaN(t) ? null : t; }
+function jleadLastMessageAt(l){
+  return jleadTs(l && l.lastMessageAt) || jleadTs(l && l.created_at);
+}
+function jleadFollowUps(l){
+  return (Array.isArray(l && l.lineFollowUps) ? l.lineFollowUps : [])
+    .filter(f => f && jleadTs(f.at) != null)
+    .sort((a,b) => jleadTs(a.at) - jleadTs(b.at));
+}
+function jleadFollowUp(l, now){
+  const st = (l && l.status) || 'new';
+  if(!isJLead(l) || LEAD_OPEN_STATUSES.indexOf(st) < 0 || JLEAD_FOLLOWUP_TIERS.indexOf(jleadTier(l)) < 0) return { state:'none' };
+  const lastMsg = jleadLastMessageAt(l);
+  if(lastMsg == null) return { state:'none' };
+  const since = jleadFollowUps(l).filter(f => jleadTs(f.at) > lastMsg);
+  const n = since.length;
+  if(n >= JLEAD_FOLLOWUP_GAPS_DAYS.length) return { state:'cold', count:n, lastMsg };
+  const anchor = n ? jleadTs(since[n - 1].at) : lastMsg;
+  const dueAt = anchor + JLEAD_FOLLOWUP_GAPS_DAYS[n] * JLEAD_DAY_MS;
+  return { state: now >= dueAt ? 'due' : 'waiting', step: n + 1, count: n, dueAt, lastMsg };
+}
+// The rep's "followed up" click, appended — never rewrites earlier entries.
+function jleadAddFollowUp(l, by, iso){
+  return jleadFollowUps(l).concat([{ at: iso, by: String(by || '') }]);
+}
+
 // `statusMatch` is injected rather than referenced so this core stays pure and
 // testable on its own; the caller passes leadStatusFilterMatches, which gives
-// JLeads the same 'open' default as the Leads list.
-function selectJLeads(all, filters, statusMatch){
-  return (all || [])
+// JLeads the same 'open' default as the Leads list. `now` is injected for the
+// same reason. With the follow-up filter on 'due', the longest-overdue comes first.
+function selectJLeads(all, filters, statusMatch, now){
+  const fu = (filters && filters.followup) || '';
+  const t = now == null ? Date.now() : now;
+  const list = (all || [])
     .filter(isJLead)
     .filter(l => statusMatch ? statusMatch(l, filters && filters.status) : true)
     .filter(l => jleadMatches(l, filters))
-    .sort((a,b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    .filter(l => !fu || jleadFollowUp(l, t).state === fu);
+  if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
+  return list.sort((a,b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
 }
 /* JLEADS-CORE-END */
 
@@ -20685,7 +20731,7 @@ function renderLeads(){
   renderJLeads();
 }
 
-const JLEAD_FILTERS = { search:'', tier:'', housing:'', status:'open' };
+const JLEAD_FILTERS = { search:'', tier:'', housing:'', status:'open', followup:'' };
 
 function jleadTierBadge(t){
   if(!t) return '<span class="name-sub">—</span>';
@@ -20708,9 +20754,15 @@ function jleadContactCell(l){
 function renderJLeads(){
   const body = document.getElementById('jleads-body');
   if(!body) return;
-  const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches);
+  const now = Date.now();
+  const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches, now);
   const countEl = document.getElementById('jleads-count');
   if(countEl) countEl.textContent = list.length;
+  const dueEl = document.getElementById('jleads-due');
+  if(dueEl){
+    const due = (typeof leads !== 'undefined' ? leads : []).filter(l => jleadFollowUp(l, now).state === 'due').length;
+    dueEl.textContent = due ? '· ' + due + ' to follow up today' : '';
+  }
   const emptyEl = document.getElementById('jleads-empty');
   if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
   body.innerHTML = list.map(l => `
@@ -20722,13 +20774,58 @@ function renderJLeads(){
       <td>${esc(jleadBudget(l) || '—')}</td>
       <td>${esc(jleadMoveIn(l) || '—')}</td>
       <td>${jleadTierBadge(jleadTier(l))}</td>
+      <td>${jleadFollowUpCell(l, now)}</td>
       <td>${leadStatusBadge(l.status || 'new')}</td>
       <td>${leadAssigneeCell(l)}</td>
       <td>${fmtDate(l.created_at)}</td>
     </tr>`).join('');
   body.querySelectorAll('tr[data-lead]').forEach(row => {
-    row.addEventListener('click', e => { if(e.target.closest('a')) return; openLead(row.dataset.lead); });
+    row.addEventListener('click', e => { if(e.target.closest('a') || e.target.closest('button')) return; openLead(row.dataset.lead); });
   });
+  body.querySelectorAll('button[data-jlead-followed]').forEach(b => {
+    b.addEventListener('click', e => { e.stopPropagation(); markJLeadFollowedUp(b.dataset.jleadFollowed, b); });
+  });
+}
+
+const JLEAD_STEP_LABEL = ['1st nudge', '2nd nudge', 'last nudge'];
+function jleadAgo(ms, now){
+  const d = Math.floor((now - ms) / JLEAD_DAY_MS);
+  return d <= 0 ? 'today' : d === 1 ? '1 day ago' : d + ' days ago';
+}
+function jleadFollowUpCell(l, now){
+  const f = jleadFollowUp(l, now);
+  if(f.state === 'none') return '<span class="name-sub">—</span>';
+  const last = `<div class="name-sub">last msg ${esc(jleadAgo(f.lastMsg, now))}</div>`;
+  if(f.state === 'cold') return `<span class="badge" style="background:#7A6E5E1a;color:#7A6E5E;border-color:#7A6E5E33">Cold</span>${last}`;
+  if(f.state === 'waiting') return `<div class="name-main" style="font-weight:500">Next ${esc(fmtDate(new Date(f.dueAt).toISOString()))}</div>${last}`;
+  const c = leadClaimState(l, activeRole(), typeof teamMembers !== 'undefined' ? teamMembers : []);
+  const admin = activeRole() && activeRole().role === 'admin';
+  const btn = (c.state === 'mine' || admin)
+    ? `<button class="btn" type="button" data-jlead-followed="${esc(l.id)}" style="margin-top:4px;padding:3px 10px;font-size:12px">Done ✓</button>`
+    : `<div class="name-sub">${c.state === 'unclaimed' ? 'claim to follow up' : 'for ' + esc(c.byName)}</div>`;
+  return `<span class="badge" style="background:#B94A3F1a;color:#B94A3F;border-color:#B94A3F33">Due · ${esc(JLEAD_STEP_LABEL[f.step - 1])}</span>${last}${btn}`;
+}
+
+// The rep messaged the customer on LINE (outside the portal) — record it so the
+// cadence moves on. Same ownership rule as a status change: claimant or admin.
+async function markJLeadFollowedUp(id, btn){
+  const l = leads.find(x => String(x.id) === String(id));
+  if(!l) return;
+  const who = activeRole() || {};
+  const c = leadClaimState(l, who, typeof teamMembers !== 'undefined' ? teamMembers : []);
+  if(c.state !== 'mine' && who.role !== 'admin'){ showToast('Claim this lead first'); return; }
+  if(btn) btn.disabled = true;
+  const lineFollowUps = jleadAddFollowUp(l, who.email, new Date().toISOString());
+  if(window.vmDb && typeof vmDb.updateLead === 'function'){
+    if(!vmDb.sb){ showToast('Not saved — no database connection'); if(btn) btn.disabled = false; return; }
+    const ok = await vmDb.updateLead(Object.assign({}, l, { lineFollowUps }));   // toasts the reason on failure
+    if(!ok){ if(btn) btn.disabled = false; return; }
+  }
+  l.lineFollowUps = lineFollowUps;
+  renderJLeads();
+  const f = jleadFollowUp(l, Date.now());
+  showToast(f.state === 'cold' ? 'Follow-up logged — 3 nudges with no reply, lead marked cold'
+    : 'Follow-up logged — next nudge ' + fmtDate(new Date(f.dueAt).toISOString()));
 }
 
 /* ---- Lead drawer rendering (DOM side of LEAD-CORE) -------------------- */
@@ -20955,6 +21052,7 @@ document.getElementById('jleads-search')       && document.getElementById('jlead
 document.getElementById('jleads-filter-tier')  && document.getElementById('jleads-filter-tier').addEventListener('change', e => { JLEAD_FILTERS.tier = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-housing')&& document.getElementById('jleads-filter-housing').addEventListener('change', e => { JLEAD_FILTERS.housing = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-status')&& document.getElementById('jleads-filter-status').addEventListener('change', e => { JLEAD_FILTERS.status = e.target.value; renderJLeads(); });
+document.getElementById('jleads-filter-followup')&& document.getElementById('jleads-filter-followup').addEventListener('change', e => { JLEAD_FILTERS.followup = e.target.value; renderJLeads(); });
 document.getElementById('lead-modal-close')   && document.getElementById('lead-modal-close').addEventListener('click', closeLeadModal);
 document.getElementById('lead-save-btn')      && document.getElementById('lead-save-btn').addEventListener('click', saveLead);
 document.getElementById('lead-deal-btn') && document.getElementById('lead-deal-btn').addEventListener('click', () => {
