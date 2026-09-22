@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22g"></script>
+<script src="pms-supabase.js?v=2026-09-22h"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20764,7 +20764,14 @@ function renderJLeads(){
     dueEl.textContent = due ? '· ' + due + ' to follow up today' : '';
   }
   const emptyEl = document.getElementById('jleads-empty');
-  if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
+  if(emptyEl){
+    emptyEl.style.display = list.length ? 'none' : 'block';
+    // An empty follow-up list is the goal, not "no leads yet".
+    const t = emptyEl.querySelector('.t'), d = emptyEl.querySelector('.t + div');
+    const done = JLEAD_FILTERS.followup === 'due';
+    if(t) t.textContent = done ? 'Nobody to follow up today' : 'No LINE leads yet';
+    if(d) d.textContent = done ? 'Every quiet lead has been nudged. New ones come due as their cadence ticks over.' : 'Leads Maya captures on LINE appear here automatically.';
+  }
   body.innerHTML = list.map(l => `
     <tr data-lead="${esc(l.id)}" style="cursor:pointer">
       <td><div class="name-main">${esc(l.name || '—')}</div></td>
