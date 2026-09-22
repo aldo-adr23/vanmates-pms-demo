@@ -82,7 +82,11 @@
     salesReps:         { table: 'sales_reps',         key: 'id' },
     // Signed agreements (phase 1: homestay). Written only by the letters
     // Worker with the service key; the portal reads and links to the PDF.
-    contracts:         { table: 'contracts',          key: 'id' }
+    contracts:         { table: 'contracts',          key: 'id' },
+    // The closed-deal ledger. Written by the Zoho sync with the service key
+    // (n8n "VM - Zoho closed deals -> portal"); the portal reads it and, as
+    // Zoho is retired, will write its own rows. Read-only from here for now.
+    closedDeals:       { table: 'closed_deals',       key: 'id' }
   };
 
   // Scalar columns mirrored on each table. Camel-case JS field → snake-case Postgres column.
@@ -97,7 +101,8 @@
     homestayApplicants:[['name','name'],['city','city']],
     leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']],
     salesReps:         [['active','active']],
-    contracts:         [['kind','kind'],['status','status'],['booking_ref','booking_ref'],['client_email','client_email'],['signed_at','signed_at']]
+    contracts:         [['kind','kind'],['status','status'],['booking_ref','booking_ref'],['client_email','client_email'],['signed_at','signed_at']],
+    closedDeals:       [['rep','rep'],['closed_at','closed_at'],['city','city'],['status','status'],['fee','fee'],['deal_value','deal_value'],['source_system','source_system'],['source_id','source_id']]
   };
 
   /* ------------------- helpers ------------------- */
@@ -136,7 +141,8 @@
       homestayApplicants: window.homestayApplicants,
       leads:              window.leads,
       salesReps:          window.salesReps,
-      contracts:          window.contracts
+      contracts:          window.contracts,
+      closedDeals:        window.closedDeals
     };
 
     for (const [name, cfg] of Object.entries(TABLES)) {
