@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22a"></script>
+<script src="pms-supabase.js?v=2026-09-22b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1717,6 +1717,58 @@
           <div class="card-head"><div><div class="card-title">By <em>rep</em></div><div class="card-sub" id="sales-byrep-sub"></div></div></div>
           <table><thead><tr><th>Rep</th><th></th><th class="right">Sales closed</th><th class="right">Deals</th><th class="right">Pipeline</th><th>Share of team</th></tr></thead>
             <tbody id="sales-byrep-rows"></tbody></table>
+        </div>
+
+        <!-- ============ CLOSED DEALS ============
+             The ledger that replaces Zoho's reporting. Everything above this
+             point is computed from `leads` (the pipeline); everything below
+             from `closed_deals` (what was actually closed), merged with any
+             won lead Zoho has not caught up with yet. -->
+        <div class="card card-pad" id="sales-cd" style="margin-bottom:18px">
+          <div class="card-head">
+            <div><div class="card-title">Closed <em>deals</em></div>
+                 <div class="card-sub" id="cd-sub"></div></div>
+            <div style="margin-left:auto;display:flex;gap:8px">
+              <button class="btn btn-ghost btn-mini" id="cd-export" type="button">Export CSV</button>
+            </div>
+          </div>
+
+          <div class="kpi-grid sl-kpis" id="cd-tiles" style="margin-bottom:6px"></div>
+
+          <div class="filter-bar" id="cd-filters" style="margin:14px 0 10px;flex-wrap:wrap">
+            <input id="cd-q" type="search" placeholder="Search client, property, room, city…" style="min-width:220px;flex:1">
+            <select id="cd-city" title="Market / city"></select>
+            <select id="cd-source" title="Lead source"></select>
+            <select id="cd-payment" title="Payment status"></select>
+            <select id="cd-status" title="Deal status"></select>
+            <input id="cd-from" type="date" title="Closed on or after">
+            <input id="cd-to" type="date" title="Closed on or before">
+            <button class="btn btn-ghost btn-mini" id="cd-clear" type="button">Clear</button>
+          </div>
+
+          <div class="card-sub" id="cd-count" style="margin-bottom:8px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Closed</th><th>Customer</th><th>Property · Room</th><th>City</th>
+              <th>Move-in</th><th>Rep</th><th>Source</th>
+              <th class="right">Deal value</th><th class="right">Fee</th><th>Payment</th>
+            </tr></thead><tbody id="cd-rows"></tbody></table>
+          </div>
+        </div>
+
+        <div class="card card-pad" id="sales-cd-mgr" style="display:none;margin-bottom:18px">
+          <div class="card-head">
+            <div><div class="card-title">Closed deals <em>by</em></div>
+                 <div class="card-sub" id="cd-mgr-sub">Same filters as the table above</div></div>
+            <div style="margin-left:auto"><select id="cd-groupby" title="Group by"></select></div>
+          </div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th id="cd-mgr-key">Group</th><th class="right">Deals</th><th class="right">Revenue</th>
+              <th class="right">Net revenue</th><th class="right">Deal value</th>
+              <th class="right">Refunded</th><th class="right">Commission</th>
+            </tr></thead><tbody id="cd-mgr-rows"></tbody></table>
+          </div>
         </div>
 
         <div class="sl-row">
@@ -7251,6 +7303,7 @@ const pendingInvites = [];
 const leads = [];   // hydrated from Supabase; website submissions land here
 const salesReps = []; // hydrated from Supabase; one row per sales rep (targets)
 const contracts = []; // hydrated from Supabase; signed agreements (homestay first)
+const closedDeals = []; // hydrated from Supabase; the closed-deal ledger (Zoho sync, then the portal itself)
 
 let CURRENT_USER = teamMembers[0]; // Aldo (admin)
 let VIEWING_AS = null;             // when set, override active role
@@ -19694,6 +19747,380 @@ function computeSalesView(leads, reps, rep, ym, today){
            leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel, byRep };
 }
 /* SALES-CORE-END */
+/* CLOSED-DEALS-CORE-START */
+/* The closed-deal ledger behind the Sales page. Rows from `closed_deals`
+   (Zoho today, the portal as Zoho is retired) and won `leads` go in; one
+   canonical deal shape, per-rep totals, a commission ladder and the manager
+   rollups come out. Pure — no document, window or global. Dates are
+   'YYYY-MM-DD' throughout, same convention as SALES-CORE. */
+
+const CD_STATUS_LABELS = { closed: 'Closed', refunded: 'Refunded', cancelled: 'Cancelled' };
+const CD_PAYMENT_LABELS = { paid: 'Paid', pending: 'Pending', refunded: 'Refunded', cancelled: 'Cancelled' };
+const CD_GROUPS = [
+  ['rep', 'Sales rep'], ['month', 'Month'], ['quarter', 'Quarter'], ['year', 'Year'],
+  ['city', 'Market / city'], ['source', 'Lead source']
+];
+
+function cdNum(v){ const n = Number(v); return isFinite(n) && n > 0 ? n : 0; }
+function cdDay(v){
+  const s = String(v == null ? '' : v);
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
+}
+function cdPad2(n){ return (n < 10 ? '0' : '') + n; }
+function cdQuarterOf(ymd){
+  const m = Number(String(ymd).slice(5, 7));
+  return m ? String(ymd).slice(0, 4) + '-Q' + (Math.floor((m - 1) / 3) + 1) : '';
+}
+function cdLower(v){ return String(v == null ? '' : v).trim().toLowerCase(); }
+
+/* A deal from a `closed_deals` row. The portal hydrates from `data` only, so
+   the scalar columns are ignored here on purpose — they exist for SQL. */
+function cdFromRow(row){
+  const d = (row && row.data) || row || {};
+  const status = String(d.status || 'closed');
+  const fee = cdNum(d.fee);
+  return {
+    id: String(d.id || (row && row.id) || ''),
+    customer: String(d.customer || ''),
+    email: cdLower(d.email),
+    phone: String(d.phone || ''),
+    rep: cdLower(d.rep),
+    repName: String(d.rep_name || ''),
+    team: String(d.team || ''),
+    segment: String(d.segment || ''),
+    city: String(d.city || ''),
+    property: String(d.property || ''),
+    room: String(d.room || ''),
+    closedAt: cdDay(d.closed_at),
+    closedAtFrom: String(d.closed_at_from || ''),
+    moveIn: cdDay(d.move_in),
+    contractStart: cdDay(d.contract_start),
+    contractEnd: cdDay(d.contract_end),
+    checkedOutAt: cdDay(d.checked_out_at),
+    months: cdNum(d.months),
+    rent: cdNum(d.rent),
+    fee,
+    feeNet: cdNum(d.fee_net),
+    feePending: fee <= 0 || !!d.fee_pending,
+    feeSource: String(d.fee_source || ''),
+    deposit: cdNum(d.deposit),
+    dealValue: cdNum(d.deal_value) || cdNum(d.rent) * cdNum(d.months),
+    stage: String(d.stage || ''),
+    status,
+    statusLabel: CD_STATUS_LABELS[status] || status,
+    paymentStatus: String(d.payment_status || 'pending'),
+    leadSource: String(d.lead_source || ''),
+    serviceType: String(d.service_type || ''),
+    sourceSystem: String(d.source_system || 'zoho'),
+    sourceUrl: String(d.source_url || '')
+  };
+}
+
+/* A deal from a won `leads` row, in the same shape. Keeps deals the portal
+   closed itself (Hugo, the Mark-won modal) visible even before Zoho has them,
+   and keeps working unchanged if Zoho is switched off tomorrow. */
+function cdFromLead(lead){
+  const l = lead || {};
+  const d = l.deal || {};
+  const fee = cdNum(d.fee);
+  const closedAt = cdDay(d.closed_at) || cdDay(l.last_touched_at) || cdDay(l.created_at);
+  return {
+    id: String(l.id || ''),
+    customer: String(l.name || ''),
+    email: cdLower(l.email),
+    phone: String(l.phone || ''),
+    rep: cdLower(l.assignee || l.claimed_by),
+    repName: '',
+    team: '',
+    segment: String(d.segment || ''),
+    city: String(l.city || ''),
+    property: '',
+    room: String(d.room || l.roomName || ''),
+    closedAt,
+    closedAtFrom: 'lead',
+    moveIn: cdDay(l.moveIn || l.moveInDate),
+    contractStart: '', contractEnd: '', checkedOutAt: '',
+    months: cdNum(d.months),
+    rent: cdNum(d.rent),
+    fee,
+    feeNet: 0,
+    feePending: fee <= 0 || !!d.fee_pending,
+    feeSource: String(d.fee_source || ''),
+    deposit: 0,
+    dealValue: cdNum(d.rent) * cdNum(d.months),
+    stage: 'Won (portal)',
+    status: 'closed',
+    statusLabel: 'Closed',
+    paymentStatus: d.fee_received_at ? 'paid' : 'pending',
+    leadSource: String(l.source || ''),
+    serviceType: String(d.product || ''),
+    sourceSystem: 'portal',
+    sourceUrl: ''
+  };
+}
+
+function cdDaysBetween(a, b){
+  const t = s => Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  return Math.abs(Math.round((t(a) - t(b)) / 864e5));
+}
+
+/* How far apart two records may sit and still be the same deal. Email alone is
+   NOT enough: a returning tenant is a second deal, not a duplicate — in the
+   2026 import akshatv028@gmail.com has one deal in February and another in
+   July, and matching on the address alone merged the two away. A month of
+   slack still absorbs a close date that Zoho and the portal place either side
+   of a month boundary. */
+const CD_MERGE_DAYS = 31;
+
+/* Whether a won lead and a ledger deal describe the same rental. Email plus
+   proximity when both have an address; otherwise the person's name within the
+   same month, which is as far as name matching can be trusted. */
+function cdSameDeal(a, b){
+  if(a.email && b.email){
+    return a.email === b.email && cdDaysBetween(a.closedAt, b.closedAt) <= CD_MERGE_DAYS;
+  }
+  const an = cdLower(a.customer), bn = cdLower(b.customer);
+  return !!an && an === bn && a.closedAt.slice(0, 7) === b.closedAt.slice(0, 7);
+}
+
+/* One ledger from both sources.
+
+   Every `closed_deals` row is kept. Zoho does contain duplicates — the same
+   person entered twice on one day, often once as an empty shell — but which of
+   those is real is a cleanup decision about the source data, and this function
+   may not make it silently. Dropping them here once cost 199 of 1,175 rows.
+
+   Won leads are then folded in. Zoho wins on the descriptive fields: it has the
+   property, room, contract dates and payment stage a lead has nowhere to put.
+   It does NOT win on the fee — about half of Zoho's closed rows carry
+   Placement_Fee 0, while the portal's figure came from the Stripe and
+   QuickBooks backfill and is the one somebody actually charged. */
+function cdDeals(closedDeals, leads){
+  const out = (closedDeals || []).filter(r => r && !r.deleted_at).map(cdFromRow).filter(d => d.closedAt);
+  const won = (leads || []).filter(l => l && l.status === 'won').map(cdFromLead).filter(d => d.closedAt);
+  for(const d of won){
+    const hit = out.find(x => x.sourceSystem !== 'portal' && cdSameDeal(x, d));
+    if(!hit){ out.push(d); continue; }
+    hit.mergedFrom = 'lead:' + d.id;
+    // The portal's fee beats a missing one, and its rep beats nobody.
+    if(hit.fee <= 0 && d.fee > 0){
+      hit.fee = d.fee; hit.feePending = d.feePending;
+      hit.feeSource = d.feeSource || 'portal';
+      if(hit.paymentStatus === 'pending' && d.paymentStatus === 'paid') hit.paymentStatus = 'paid';
+    }
+    if(!hit.rep && d.rep) hit.rep = d.rep;
+    if(!hit.moveIn && d.moveIn) hit.moveIn = d.moveIn;
+  }
+  return out.sort((a, b) => (a.closedAt < b.closedAt ? 1 : a.closedAt > b.closedAt ? -1 : 0));
+}
+
+/* ---- commission ----------------------------------------------------------
+   A monthly milestone ladder per rep: cross a tier's fee total in a calendar
+   month and the whole bonus for that tier is earned. Tiers live in
+   sales_reps.data.ladder as [{at, bonus}] and are configuration, not code —
+   nothing here assumes an amount. No ladder means no commission is claimed,
+   which is the only honest answer when nobody has written the scheme down. */
+function cdLadder(rep){
+  const raw = (rep && rep.ladder) || [];
+  return raw
+    .map(t => ({ at: cdNum(t && t.at), bonus: cdNum(t && t.bonus) }))
+    .filter(t => t.at > 0)
+    .sort((a, b) => a.at - b.at);
+}
+
+/* The bonus a month total earns, plus the next tier and the gap to it. */
+function cdCommissionFor(ladder, monthFees){
+  const tiers = ladder || [];
+  if(!tiers.length) return { configured: false, bonus: 0, tier: null, next: null, toNext: null };
+  let tier = null, next = null;
+  for(const t of tiers){
+    if(monthFees >= t.at) tier = t;
+    else if(!next) next = t;
+  }
+  return {
+    configured: true,
+    bonus: tier ? tier.bonus : 0,
+    tier,
+    next,
+    toNext: next ? Math.max(0, next.at - monthFees) : null
+  };
+}
+
+/* A month's commission for one rep, and each deal's share of it. The ladder is
+   monthly, so a per-deal figure can only ever be an allocation — it is
+   reported as `share`, pro-rata on fee, and never as something the deal earned
+   on its own. Payable only once every counted fee is in, per the scheme. */
+function cdRepMonth(deals, rep, ym, ladder){
+  const mine = (deals || []).filter(d => d.rep === rep && d.closedAt.slice(0, 7) === ym && d.status === 'closed');
+  const fees = mine.reduce((s, d) => s + d.fee, 0);
+  const c = cdCommissionFor(ladder, fees);
+  const outstanding = mine.filter(d => d.paymentStatus !== 'paid').length;
+  const shares = mine.map(d => ({
+    id: d.id,
+    fee: d.fee,
+    share: fees > 0 ? Math.round(c.bonus * d.fee / fees) : 0
+  }));
+  return { ym, rep, deals: mine.length, fees, commission: c, shares,
+           payable: c.configured && c.bonus > 0 && outstanding === 0, outstanding };
+}
+
+/* ---- rollups -------------------------------------------------------------
+   Every total is reported twice: gross, and net of refunds and cancellations.
+   A refunded deal was still closed, and whether it still counts is the
+   manager's call, not this function's. */
+function cdTotals(deals){
+  const all = deals || [];
+  const live = all.filter(d => d.status === 'closed');
+  const sum = (arr, f) => arr.reduce((s, d) => s + f(d), 0);
+  return {
+    deals: all.length,
+    netDeals: live.length,
+    refunded: all.filter(d => d.status === 'refunded').length,
+    cancelled: all.filter(d => d.status === 'cancelled').length,
+    revenue: sum(all, d => d.fee),
+    netRevenue: sum(live, d => d.fee),
+    dealValue: sum(all, d => d.dealValue),
+    netDealValue: sum(live, d => d.dealValue),
+    feePending: live.filter(d => d.feePending).length,
+    unpaid: live.filter(d => d.paymentStatus !== 'paid').length
+  };
+}
+
+/* Total / this month / this quarter / this year for one rep — the four numbers
+   Aldo asked to see the moment the page opens. */
+function cdRepSummary(deals, rep, today, ladder){
+  const t = cdDay(today);
+  const ym = t.slice(0, 7), yq = cdQuarterOf(t), yr = t.slice(0, 4);
+  const mine = (deals || []).filter(d => d.rep === rep);
+  const inMonth = mine.filter(d => d.closedAt.slice(0, 7) === ym);
+  const month = cdRepMonth(deals, rep, ym, ladder);
+  // Commission to date = every month this rep has closed anything in.
+  const months = {};
+  for(const d of mine) if(d.status === 'closed') months[d.closedAt.slice(0, 7)] = true;
+  const monthKeys = Object.keys(months).sort();
+  const earned = monthKeys.map(k => cdRepMonth(deals, rep, k, ladder));
+  return {
+    rep,
+    total: cdTotals(mine),
+    month: cdTotals(inMonth),
+    quarter: cdTotals(mine.filter(d => cdQuarterOf(d.closedAt) === yq)),
+    year: cdTotals(mine.filter(d => d.closedAt.slice(0, 4) === yr)),
+    commission: {
+      month: month,
+      totalEarned: earned.reduce((s, m) => s + m.commission.bonus, 0),
+      totalPayable: earned.filter(m => m.payable).reduce((s, m) => s + m.commission.bonus, 0),
+      configured: cdCommissionFor(ladder, 0).configured,
+      byMonth: earned.map(m => ({ ym: m.ym, fees: m.fees, deals: m.deals, bonus: m.commission.bonus, payable: m.payable }))
+    }
+  };
+}
+
+/* The manager view: the same ledger grouped whichever way was asked for. */
+function cdGroupKey(deal, by){
+  if(by === 'rep')     return deal.rep || '(unattributed)';
+  if(by === 'month')   return deal.closedAt.slice(0, 7);
+  if(by === 'quarter') return cdQuarterOf(deal.closedAt);
+  if(by === 'year')    return deal.closedAt.slice(0, 4);
+  if(by === 'city')    return deal.city || '(no city)';
+  if(by === 'source')  return deal.leadSource || '(unknown)';
+  return '(all)';
+}
+
+/* Applies the filter bar, then groups. Every filter is optional; an empty
+   value means "don't filter on this". */
+function cdFilter(deals, f){
+  const q = f || {};
+  const from = cdDay(q.from), to = cdDay(q.to);
+  return (deals || []).filter(d => {
+    if(from && d.closedAt < from) return false;
+    if(to && d.closedAt > to) return false;
+    if(q.rep && d.rep !== cdLower(q.rep)) return false;
+    if(q.city && d.city !== q.city) return false;
+    if(q.source && d.leadSource !== q.source) return false;
+    if(q.status && d.status !== q.status) return false;
+    if(q.payment && d.paymentStatus !== q.payment) return false;
+    if(q.segment && d.segment !== q.segment) return false;
+    if(q.text){
+      const t = cdLower(q.text);
+      const hay = cdLower(d.customer + ' ' + d.email + ' ' + d.property + ' ' + d.room + ' ' + d.city);
+      if(hay.indexOf(t) < 0) return false;
+    }
+    return true;
+  });
+}
+
+function cdManagerView(deals, reps, by, filter){
+  const rows = cdFilter(deals, filter);
+  // Label reps by name. `sales_reps` only has rows for current staff, so the
+  // name Zoho carried on the deal is the fallback — otherwise every former rep
+  // and the Japan team login show up as a raw email address.
+  const nameOf = {};
+  for(const d of rows) if(d.rep && d.repName) nameOf[d.rep] = d.repName;
+  for(const r of (reps || [])) if(r && r.email) nameOf[cdLower(r.email)] = String(r.name || r.email);
+  const groups = {};
+  for(const d of rows){
+    const k = cdGroupKey(d, by);
+    if(!groups[k]) groups[k] = [];
+    groups[k].push(d);
+  }
+  const ladderOf = {};
+  for(const r of (reps || [])) if(r && r.email) ladderOf[cdLower(r.email)] = cdLadder(r);
+  const out = Object.keys(groups).map(k => {
+    const g = groups[k];
+    const t = cdTotals(g);
+    // Commission only means something per rep, and only per calendar month.
+    let commission = null;
+    if(by === 'rep' && k !== '(unattributed)'){
+      const months = {};
+      for(const d of g) if(d.status === 'closed') months[d.closedAt.slice(0, 7)] = true;
+      commission = Object.keys(months)
+        .map(ym => cdRepMonth(g, k, ym, ladderOf[k] || []).commission.bonus)
+        .reduce((s, b) => s + b, 0);
+    }
+    return { key: k, label: by === 'rep' ? (nameOf[k] || k) : k, count: g.length, totals: t, commission };
+  });
+  const order = by === 'rep' || by === 'city' || by === 'source'
+    ? (a, b) => b.totals.netRevenue - a.totals.netRevenue
+    : (a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0);
+  return { by, groups: out.sort(order), totals: cdTotals(rows), rows };
+}
+
+/* The drawer: every field Aldo listed, in display order, with the empty ones
+   labelled rather than dropped — "no lead source recorded" is information. */
+function cdDealDetail(deal){
+  const d = deal || {};
+  const money = v => (v > 0 ? '$' + Number(v).toLocaleString() : '—');
+  const or = v => (v ? String(v) : '—');
+  return [
+    ['Customer', or(d.customer)],
+    ['Email', or(d.email)],
+    ['Phone', or(d.phone)],
+    ['Sales rep', d.rep || '(unattributed)'],
+    ['Segment', or(d.segment && d.segment.toUpperCase())],
+    ['Market / city', or(d.city)],
+    ['Property', or(d.property)],
+    ['Room', or(d.room)],
+    ['Deal closed', or(d.closedAt)],
+    ['Move-in', or(d.moveIn)],
+    ['Contract', d.contractStart || d.contractEnd ? or(d.contractStart) + ' → ' + or(d.contractEnd) : '—'],
+    ['Checked out', or(d.checkedOutAt)],
+    ['Rent', money(d.rent)],
+    ['Months', d.months > 0 ? String(d.months) : '—'],
+    ['Deal value', money(d.dealValue)],
+    ['Placement fee', d.feePending ? 'Not recorded' : money(d.fee)],
+    ['Fee (net)', money(d.feeNet)],
+    ['Deposit', money(d.deposit)],
+    ['Payment status', CD_PAYMENT_LABELS[d.paymentStatus] || or(d.paymentStatus)],
+    ['Status', or(d.statusLabel)],
+    ['Lead source', or(d.leadSource)],
+    ['Service type', or(d.serviceType)],
+    ['Stage (source)', or(d.stage)],
+    ['Close date taken from', or(d.closedAtFrom)],
+    ['Record', d.sourceSystem === 'zoho' ? 'Zoho ' + d.id : 'Portal ' + d.id]
+  ];
+}
+/* CLOSED-DEALS-CORE-END */
+
 
 /* LEAD-CORE-START */
 /* Pure helpers behind the lead drawer: the WhatsApp number a free-text phone
@@ -20406,6 +20833,7 @@ renderLeads();
   window.leads              = leads;
   window.salesReps          = salesReps;
   window.contracts          = contracts;
+  window.closedDeals        = closedDeals;
 
   // 2. After DOM ready, hydrate and re-render
   const start = async () => {
@@ -21744,6 +22172,218 @@ renderLeads();
     ).join('') : `<tr><td colspan="4" class="sl-empty">No lost deals.</td></tr>`;
   }
 
+  /* ---- Closed deals (DOM side of CLOSED-DEALS-CORE) ---------------------
+     The pipeline half of this page reads `leads`; this half reads the
+     `closed_deals` ledger. Kept apart on purpose: a lead is work in progress,
+     a closed deal is a fact, and only the second one has to reconcile with
+     Zoho. */
+  const CD_STATE = { q: '', city: '', source: '', payment: '', status: '', from: '', to: '', by: 'rep' };
+
+  function cdLedger(){ return cdDeals(window.closedDeals || [], window.leads || []); }
+
+  // Which deals the current rep/team switcher is looking at. '*' is everyone;
+  // 'team:<key>' is the team's members plus anything booked to the team login.
+  function cdScoped(all, repKey){
+    const key = String(repKey || '').toLowerCase();
+    if(key === '*') return all;
+    if(key.indexOf('team:') === 0){
+      const team = key.slice(5);
+      const members = (window.salesReps || [])
+        .filter(r => r && String(r.team || '') === team && String(r.kind || '') !== 'team')
+        .map(r => String(r.email || r.id).toLowerCase());
+      return all.filter(d => d.team === team || members.indexOf(d.rep) >= 0);
+    }
+    return all.filter(d => d.rep === key);
+  }
+
+  function cdFilterState(){
+    return { text: CD_STATE.q, city: CD_STATE.city, source: CD_STATE.source,
+             payment: CD_STATE.payment, status: CD_STATE.status,
+             from: CD_STATE.from, to: CD_STATE.to };
+  }
+
+  // Options come from the data, not a hardcoded list — Zoho's picklists change
+  // without telling anyone, and a filter that hides rows is worse than none.
+  function cdFillSelect(id, values, label, current){
+    const el = $(id); if(!el) return;
+    const opts = ['<option value="">' + esc(label) + '</option>']
+      .concat(values.map(v => `<option value="${esc(v)}" ${v === current ? 'selected' : ''}>${esc(v)}</option>`));
+    el.innerHTML = opts.join('');
+    el.value = current || '';
+  }
+
+  function cdFillFilters(scoped){
+    const uniq = f => Array.from(new Set(scoped.map(f).filter(Boolean))).sort();
+    cdFillSelect('cd-city',    uniq(d => d.city),       'All cities',  CD_STATE.city);
+    cdFillSelect('cd-source',  uniq(d => d.leadSource), 'All sources', CD_STATE.source);
+    cdFillSelect('cd-payment', ['paid', 'pending', 'refunded', 'cancelled'], 'Any payment', CD_STATE.payment);
+    cdFillSelect('cd-status',  ['closed', 'refunded', 'cancelled'], 'Any status', CD_STATE.status);
+    const g = $('cd-groupby');
+    if(g) g.innerHTML = CD_GROUPS.map(([k, lab]) => `<option value="${k}" ${CD_STATE.by === k ? 'selected' : ''}>${esc(lab)}</option>`).join('');
+    if($('cd-q'))    $('cd-q').value = CD_STATE.q;
+    if($('cd-from')) $('cd-from').value = CD_STATE.from;
+    if($('cd-to'))   $('cd-to').value = CD_STATE.to;
+  }
+
+  // A tile reads "12 deals · $3,540". The sub-line names what is being left
+  // out, because a headline that silently nets off refunds is how two people
+  // end up quoting different numbers from the same page.
+  function cdTile(label, t){
+    const netNote = (t.refunded || t.cancelled)
+      ? `${t.refunded + t.cancelled} refunded/cancelled · net ${fmt(t.netRevenue)}`
+      : (t.feePending ? `${t.feePending} with no fee recorded` : '&nbsp;');
+    return `<div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">${esc(label)}</div>
+      <div class="kpi-value">${t.deals}</div>
+      <div class="sl-kpi-sub"><b>${fmt(t.revenue)}</b> · ${netNote}</div></div>`;
+  }
+
+  function cdRenderTiles(scoped, repKey){
+    const today = salesToday();
+    const solo = repKey !== '*' && String(repKey).indexOf('team:') !== 0;
+    const rep = (window.salesReps || []).find(r => r && String(r.email || r.id).toLowerCase() === repKey);
+    const ladder = cdLadder(rep || {});
+    const sum = solo
+      ? cdRepSummary(scoped, repKey, today, ladder)
+      : { total: cdTotals(scoped),
+          month:   cdTotals(scoped.filter(d => d.closedAt.slice(0, 7) === today.slice(0, 7))),
+          quarter: cdTotals(scoped.filter(d => cdQuarterOf(d.closedAt) === cdQuarterOf(today))),
+          year:    cdTotals(scoped.filter(d => d.closedAt.slice(0, 4) === today.slice(0, 4))),
+          commission: null };
+
+    let tiles = cdTile('Total closed', sum.total) + cdTile('This month', sum.month)
+              + cdTile('This quarter', sum.quarter) + cdTile('This year', sum.year);
+
+    if(sum.commission){
+      const c = sum.commission;
+      tiles += c.configured
+        ? `<div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Commission</div>
+             <div class="kpi-value">${fmt(c.totalEarned)}</div>
+             <div class="sl-kpi-sub">${fmt(c.month.commission.bonus)} this month${
+               c.month.commission.next ? ' · ' + fmt(c.month.commission.toNext) + ' to the next tier' : ''
+             }${c.totalPayable !== c.totalEarned ? ' · ' + fmt(c.totalPayable) + ' payable' : ''}</div></div>`
+        // Saying "$0" here would be a claim nobody made. Say what is missing.
+        : `<div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Commission</div>
+             <div class="kpi-value" style="font-size:18px">Not set up</div>
+             <div class="sl-kpi-sub">No bonus ladder on this rep yet</div></div>`;
+    }
+    $('cd-tiles').innerHTML = tiles;
+  }
+
+  function cdPayBadge(d){
+    const cls = d.paymentStatus === 'paid' ? 'badge-green'
+              : (d.paymentStatus === 'refunded' || d.paymentStatus === 'cancelled') ? 'badge-red' : 'badge-grey';
+    return `<span class="badge ${cls}">${esc(CD_PAYMENT_LABELS[d.paymentStatus] || d.paymentStatus)}</span>`;
+  }
+
+  function cdRenderTable(rows){
+    $('cd-count').textContent = rows.length
+      ? `${rows.length} deal${rows.length === 1 ? '' : 's'} · click any row for the full record`
+      : '';
+    $('cd-rows').innerHTML = rows.length ? rows.slice(0, 500).map(d => `
+      <tr data-cd="${esc(d.id)}" style="cursor:pointer">
+        <td>${esc(d.closedAt)}</td>
+        <td><b>${esc(d.customer || '—')}</b>${d.status !== 'closed' ? ` <span class="badge badge-red">${esc(d.statusLabel)}</span>` : ''}</td>
+        <td>${esc(d.property || '—')}${d.room ? ` <span class="name-sub">${esc(d.room)}</span>` : ''}</td>
+        <td>${esc(d.city || '—')}</td>
+        <td>${esc(d.moveIn || '—')}</td>
+        <td>${esc(d.rep || '(unattributed)')}</td>
+        <td>${esc(d.leadSource || '—')}</td>
+        <td class="right num">${d.dealValue ? fmt(d.dealValue) : '—'}</td>
+        <td class="right num">${d.feePending ? '<span class="name-sub">not recorded</span>' : fmt(d.fee)}</td>
+        <td>${cdPayBadge(d)}</td>
+      </tr>`).join('')
+      : `<tr><td colspan="10" class="sl-empty">No closed deals match these filters.</td></tr>`;
+    if(rows.length > 500){
+      $('cd-count').textContent += ` · showing the first 500`;
+    }
+  }
+
+  function cdRenderManager(scoped, show){
+    const card = $('sales-cd-mgr');
+    if(!card) return;
+    card.style.display = show ? '' : 'none';
+    if(!show) return;
+    const view = cdManagerView(scoped, window.salesReps || [], CD_STATE.by, cdFilterState());
+    const label = (CD_GROUPS.find(g => g[0] === CD_STATE.by) || ['', 'Group'])[1];
+    $('cd-mgr-key').textContent = label;
+    $('cd-mgr-rows').innerHTML = view.groups.length ? view.groups.map(g => `
+      <tr>
+        <td><b>${esc(g.label)}</b></td>
+        <td class="right num">${g.totals.deals}</td>
+        <td class="right num">${fmt(g.totals.revenue)}</td>
+        <td class="right num">${fmt(g.totals.netRevenue)}</td>
+        <td class="right num">${fmt(g.totals.dealValue)}</td>
+        <td class="right num">${g.totals.refunded + g.totals.cancelled || '—'}</td>
+        <td class="right num">${g.commission == null ? '—' : fmt(g.commission)}</td>
+      </tr>`).join('')
+      : `<tr><td colspan="7" class="sl-empty">Nothing to group.</td></tr>`;
+    $('cd-mgr-sub').textContent =
+      `${view.totals.deals} deals · ${fmt(view.totals.revenue)} gross · ${fmt(view.totals.netRevenue)} net of refunds`;
+  }
+
+  // The drawer reuses the shared #detail-panel, same as Properties and Tenants.
+  window.openClosedDeal = function(id){
+    const d = cdLedger().find(x => String(x.id) === String(id));
+    if(!d) return;
+    $('panel-hero').textContent = (d.customer || '?').trim().charAt(0).toUpperCase() || '?';
+    $('panel-title').innerHTML = `${esc(d.customer || 'Deal')}`;
+    $('panel-sub').textContent = `${d.property || 'No property recorded'}${d.room ? ' · ' + d.room : ''} · closed ${d.closedAt}`;
+    $('panel-meta').innerHTML =
+      `<span class="badge ${d.status === 'closed' ? 'badge-green' : 'badge-red'}">${esc(d.statusLabel)}</span>` +
+      cdPayBadge(d) +
+      (d.segment ? `<span class="badge badge-grey">${esc(d.segment.toUpperCase())}</span>` : '') +
+      `<span class="badge badge-grey">${esc(d.sourceSystem === 'zoho' ? 'From Zoho' : 'Portal')}</span>`;
+    const rows = cdDealDetail(d).map(([k, v]) =>
+      `<tr><td style="color:var(--muted);white-space:nowrap">${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('');
+    $('panel-body').innerHTML =
+      `<div class="panel-kpis">
+         <div class="panel-kpi"><div class="l">Fee</div><div class="v">${d.feePending ? '—' : fmt(d.fee)}</div></div>
+         <div class="panel-kpi"><div class="l">Deal value</div><div class="v">${d.dealValue ? fmt(d.dealValue) : '—'}</div></div>
+         <div class="panel-kpi"><div class="l">Rent</div><div class="v">${d.rent ? fmt(d.rent) : '—'}</div></div>
+         <div class="panel-kpi"><div class="l">Months</div><div class="v">${d.months || '—'}</div></div>
+       </div>
+       <table>${rows}</table>` +
+      (d.sourceUrl ? `<div style="margin-top:18px"><a class="btn btn-ghost btn-mini" target="_blank" rel="noopener" href="${esc(d.sourceUrl)}">Open in Zoho →</a></div>` : '');
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+
+  function cdExport(rows){
+    const head = ['Closed','Customer','Email','Rep','Segment','City','Property','Room','Move-in',
+                  'Contract start','Contract end','Rent','Months','Deal value','Fee','Fee net','Deposit',
+                  'Payment','Status','Lead source','Service type','Stage','Record'];
+    const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const body = rows.map(d => [d.closedAt, d.customer, d.email, d.rep || '(unattributed)', d.segment,
+      d.city, d.property, d.room, d.moveIn, d.contractStart, d.contractEnd, d.rent, d.months,
+      d.dealValue, d.feePending ? '' : d.fee, d.feeNet, d.deposit, d.paymentStatus, d.status,
+      d.leadSource, d.serviceType, d.stage, d.id].map(cell).join(','));
+    const csv = head.map(cell).join(',') + '\n' + body.join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'vanmates-closed-deals-' + salesToday() + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  function renderClosedDeals(){
+    if(!$('sales-cd')) return;
+    const repKey = salesCurrentRep();
+    const scoped = cdScoped(cdLedger(), repKey);
+    cdFillFilters(scoped);
+    cdRenderTiles(scoped, repKey);
+    const rows = cdFilter(scoped, cdFilterState());
+    cdRenderTable(rows);
+    // The rollup is a manager's tool: it only means something across people.
+    cdRenderManager(scoped, repKey === '*' || String(repKey).indexOf('team:') === 0);
+    const synced = (window.closedDeals || []).length;
+    $('cd-sub').textContent = synced
+      ? `${scoped.length} closed deal${scoped.length === 1 ? '' : 's'} on record · ${synced} synced from Zoho`
+      : 'No deals synced from Zoho yet — showing deals closed in the portal only';
+    $('sales-cd').__rows = rows;
+  }
+
   function renderSales(){
     const sec = document.querySelector('.view[data-view="sales"]');
     if(!sec || !sec.classList.contains('active')) return;
@@ -21755,6 +22395,7 @@ renderLeads();
     if(pt) pt.innerHTML = `Sales <em>· ${esc(v.repName)}</em>`;
     if(ps) ps.textContent = `${v.period.month.label} · CAD`;
     renderTarget(v); renderNext(v); renderKpis(v); renderByRep(v); renderAttention(v); renderOpen(v); renderCharts(v); renderClosed(v); renderLost(v);
+    renderClosedDeals();
   }
   window.renderSales = renderSales;
 
@@ -21769,8 +22410,26 @@ renderLeads();
 
   /* wiring */
   $('sales-rep').addEventListener('change', e => { SALES_STATE.rep = e.target.value; renderSales(); });
+  /* closed-deal filters. Re-render rather than re-query: the ledger is already
+     in memory and a few hundred rows is nothing. */
+  [['cd-q', 'q'], ['cd-city', 'city'], ['cd-source', 'source'], ['cd-payment', 'payment'],
+   ['cd-status', 'status'], ['cd-from', 'from'], ['cd-to', 'to'], ['cd-groupby', 'by']
+  ].forEach(([id, key]) => {
+    const el = $(id); if(!el) return;
+    el.addEventListener(el.tagName === 'INPUT' && el.type === 'search' ? 'input' : 'change',
+      e => { CD_STATE[key] = e.target.value; renderClosedDeals(); });
+  });
+  if($('cd-clear')) $('cd-clear').addEventListener('click', () => {
+    CD_STATE.q = CD_STATE.city = CD_STATE.source = CD_STATE.payment = CD_STATE.status = CD_STATE.from = CD_STATE.to = '';
+    renderClosedDeals();
+  });
+  if($('cd-export')) $('cd-export').addEventListener('click', () => {
+    cdExport(($('sales-cd') && $('sales-cd').__rows) || []);
+  });
   $('sales-period').addEventListener('change', e => { SALES_STATE.ym = e.target.value; renderSales(); });
   $('sales-page').addEventListener('click', e => {
+    const deal = e.target.closest('[data-cd]');
+    if(deal && typeof openClosedDeal === 'function'){ openClosedDeal(deal.dataset.cd); return; }
     const row = e.target.closest('[data-lead]');
     if(row && typeof openLead === 'function'){ openLead(row.dataset.lead); return; }
     const edit = e.target.closest('[data-sales-edit]');
