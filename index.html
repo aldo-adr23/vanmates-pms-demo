@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22i"></script>
+<script src="pms-supabase.js?v=2026-09-22j"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2109,6 +2109,7 @@
         </select>
         <select id="jleads-filter-followup" class="form-input" style="max-width:210px">
           <option value="">All follow-ups</option>
+          <option value="handoff">Waiting for staff (Maya handed off)</option>
           <option value="due">Follow up today</option>
           <option value="waiting">Waiting (nudged recently)</option>
           <option value="cold">Cold (3 nudges, no reply)</option>
@@ -20597,6 +20598,18 @@ function jleadFollowUp(l, now){
   const dueAt = anchor + JLEAD_FOLLOWUP_GAPS_DAYS[n] * JLEAD_DAY_MS;
   return { state: now >= dueAt ? 'due' : 'waiting', step: n + 1, count: n, dueAt, lastMsg };
 }
+// Maya handed the customer to a human (n8n stamps lastHandoffAt + her briefing on
+// every HANDOFF). It stays 'waiting' until a rep marks it handled; a newer handoff
+// after that reopens it. Independent of the sales status: a won customer asking
+// for a person still needs one.
+function jleadHandoff(l){
+  const at = jleadTs(l && l.lastHandoffAt);
+  if(at == null) return { waiting:false };
+  const handled = jleadTs(l && l.handoffHandledAt);
+  return { waiting: handled == null || handled < at, at,
+           briefing: String((l && l.handoffBriefing) || ''), message: String((l && l.handoffMessage) || '') };
+}
+
 // The rep's "followed up" click, appended — never rewrites earlier entries.
 function jleadAddFollowUp(l, by, iso){
   return jleadFollowUps(l).concat([{ at: iso, by: String(by || '') }]);
@@ -20613,9 +20626,15 @@ function selectJLeads(all, filters, statusMatch, now){
     .filter(isJLead)
     .filter(l => statusMatch ? statusMatch(l, filters && filters.status) : true)
     .filter(l => jleadMatches(l, filters))
-    .filter(l => !fu || jleadFollowUp(l, t).state === fu);
+    .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : jleadFollowUp(l, t).state === fu));
   if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
-  return list.sort((a,b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  // Customers waiting for a human are pinned on top, longest-waiting first.
+  return list.sort((a,b) => {
+    const ha = jleadHandoff(a), hb = jleadHandoff(b);
+    if(ha.waiting !== hb.waiting) return ha.waiting ? -1 : 1;
+    if(ha.waiting) return ha.at - hb.at;
+    return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+  });
 }
 /* JLEADS-CORE-END */
 
@@ -20772,8 +20791,10 @@ function renderJLeads(){
   if(countEl) countEl.textContent = list.length;
   const dueEl = document.getElementById('jleads-due');
   if(dueEl){
-    const due = (typeof leads !== 'undefined' ? leads : []).filter(l => jleadFollowUp(l, now).state === 'due').length;
-    dueEl.textContent = due ? '· ' + due + ' to follow up today' : '';
+    const all = typeof leads !== 'undefined' ? leads : [];
+    const due = all.filter(l => jleadFollowUp(l, now).state === 'due').length;
+    const waiting = all.filter(l => isJLead(l) && jleadHandoff(l).waiting).length;
+    dueEl.innerHTML = (waiting ? '· <b style="color:#B94A3F">' + waiting + ' waiting for staff</b> ' : '') + (due ? '· ' + due + ' to follow up today' : '');
   }
   const emptyEl = document.getElementById('jleads-empty');
   if(emptyEl){
@@ -20804,6 +20825,9 @@ function renderJLeads(){
   body.querySelectorAll('button[data-jlead-followed]').forEach(b => {
     b.addEventListener('click', e => { e.stopPropagation(); markJLeadFollowedUp(b.dataset.jleadFollowed, b); });
   });
+  body.querySelectorAll('button[data-jlead-handled]').forEach(b => {
+    b.addEventListener('click', e => { e.stopPropagation(); markJLeadHandled(b.dataset.jleadHandled, b); });
+  });
 }
 
 const JLEAD_STEP_LABEL = ['1st nudge', '2nd nudge', 'last nudge'];
@@ -20811,7 +20835,28 @@ function jleadAgo(ms, now){
   const d = Math.floor((now - ms) / JLEAD_DAY_MS);
   return d <= 0 ? 'today' : d === 1 ? '1 day ago' : d + ' days ago';
 }
+function jleadAgoShort(ms, now){
+  const m = Math.max(0, Math.round((now - ms) / 60000));
+  return m < 60 ? m + ' min' : m < 1440 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' d';
+}
+function jleadCanAct(l){
+  const who = activeRole() || {};
+  return leadClaimState(l, who, typeof teamMembers !== 'undefined' ? teamMembers : []).state === 'mine' || who.role === 'admin';
+}
+function jleadHandoffBlock(l, now){
+  const h = jleadHandoff(l);
+  if(!h.waiting) return '';
+  const tip = [h.message ? 'Customer: ' + h.message : '', h.briefing ? 'Maya: ' + h.briefing : ''].filter(Boolean).join('\n\n');
+  const btn = jleadCanAct(l)
+    ? `<button class="btn" type="button" data-jlead-handled="${esc(l.id)}" style="margin-top:4px;padding:3px 10px;font-size:12px">Handled ✓</button>` : '';
+  return `<div style="margin-bottom:6px" title="${esc(tip)}"><span class="badge" style="background:#B94A3F;color:#fff;border-color:#B94A3F">Waiting for staff · ${esc(jleadAgoShort(h.at, now))}</span>`
+    + (h.message ? `<div class="name-sub" style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">「${esc(h.message)}」</div>` : '')
+    + btn + `</div>`;
+}
 function jleadFollowUpCell(l, now){
+  return jleadHandoffBlock(l, now) + jleadFollowUpState(l, now);
+}
+function jleadFollowUpState(l, now){
   const f = jleadFollowUp(l, now);
   if(f.state === 'none') return '<span class="name-sub">—</span>';
   const last = `<div class="name-sub">last msg ${esc(jleadAgo(f.lastMsg, now))}</div>`;
@@ -20823,6 +20868,25 @@ function jleadFollowUpCell(l, now){
     ? `<button class="btn" type="button" data-jlead-followed="${esc(l.id)}" style="margin-top:4px;padding:3px 10px;font-size:12px">Done ✓</button>`
     : `<div class="name-sub">${c.state === 'unclaimed' ? 'claim to follow up' : 'for ' + esc(c.byName)}</div>`;
   return `<span class="badge" style="background:#B94A3F1a;color:#B94A3F;border-color:#B94A3F33">Due · ${esc(JLEAD_STEP_LABEL[f.step - 1])}</span>${last}${btn}`;
+}
+
+// A rep has picked up the handed-off customer (in the LINE console). Clears the
+// 'waiting' pin until Maya hands this customer off again.
+async function markJLeadHandled(id, btn){
+  const l = leads.find(x => String(x.id) === String(id));
+  if(!l) return;
+  if(!jleadCanAct(l)){ showToast('Claim this lead first'); return; }
+  const who = activeRole() || {};
+  const patch = { handoffHandledAt: new Date().toISOString(), handoffHandledBy: String(who.email || '') };
+  if(btn) btn.disabled = true;
+  if(window.vmDb && typeof vmDb.updateLead === 'function'){
+    if(!vmDb.sb){ showToast('Not saved — no database connection'); if(btn) btn.disabled = false; return; }
+    const ok = await vmDb.updateLead(Object.assign({}, l, patch));   // toasts the reason on failure
+    if(!ok){ if(btn) btn.disabled = false; return; }
+  }
+  Object.assign(l, patch);
+  renderJLeads();
+  showToast('Marked handled — it comes back if Maya hands this customer off again');
 }
 
 // The rep messaged the customer on LINE (outside the portal) — record it so the
