@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22k"></script>
+<script src="pms-supabase.js?v=2026-09-22l"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20911,15 +20911,19 @@ async function markJLeadHandled(id, btn){
    allows the lead's owner or an admin, reads the thread from Maya's logs, and
    sends staff replies as LINE push messages (quota-guarded). */
 const JLEAD_CHAT_URL = 'https://adr23.app.n8n.cloud/webhook/jleads-line-chat';
-let _jleadChatTimer = null, _jleadChatLead = null, _jleadChatBusy = false;
+// Every refresh is an n8n execution, so polling is deliberately frugal: every 20s,
+// skipped while the tab is hidden, a full refresh (staff mode + LINE quota) only
+// on open, after a send/hand-back and every 5th tick, and none after 15 idle min.
+const JLEAD_CHAT_POLL_MS = 20000, JLEAD_CHAT_IDLE_MS = 15 * 60000, JLEAD_CHAT_FULL_EVERY = 5;
+let _jleadChatTimer = null, _jleadChatLead = null, _jleadChatBusy = false, _jleadChatTick = 0, _jleadChatActiveAt = 0;
 async function jleadChatToken(refresh){
   const sb = window.vmDb && window.vmDb.sb; if(!sb) return '';
   if(refresh){ try { await sb.auth.refreshSession(); } catch(_){} }
   try { const { data } = await sb.auth.getSession(); return (data && data.session && data.session.access_token) || ''; } catch(_){ return ''; }
 }
-async function jleadChatCall(action, leadId, text){
+async function jleadChatCall(action, leadId, text, light){
   const go = async (tok) => fetch(JLEAD_CHAT_URL, { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + tok },
-    body: JSON.stringify({ action, lead_id: leadId, text: text || '' }) });
+    body: JSON.stringify({ action, lead_id: leadId, text: text || '', light: !!light }) });
   let r = await go(await jleadChatToken(false));
   if(r.status === 401) r = await go(await jleadChatToken(true));
   let j = {}; try { j = await r.json(); } catch(_){}
@@ -20955,11 +20959,21 @@ function renderJLeadChat(l){
   _jleadChatLead = l.id;
   document.getElementById('jlead-chat-send').addEventListener('click', () => jleadChatSend(l.id));
   document.getElementById('jlead-chat-release').addEventListener('click', () => jleadChatRelease(l.id));
-  jleadChatLoad(l.id, true);
-  _jleadChatTimer = setInterval(() => { if(_jleadChatLead === l.id) jleadChatLoad(l.id, false); }, 10000);
+  _jleadChatTick = 0; _jleadChatActiveAt = Date.now();
+  jleadChatLoad(l.id, true, false);
+  _jleadChatTimer = setInterval(() => {
+    if(_jleadChatLead !== l.id || document.hidden) return;
+    if(Date.now() - _jleadChatActiveAt > JLEAD_CHAT_IDLE_MS){
+      jleadChatStop();
+      const note = document.getElementById('jlead-chat-note'); if(note) note.textContent = 'Paused — reopen the lead to refresh.';
+      return;
+    }
+    _jleadChatTick++;
+    jleadChatLoad(l.id, false, _jleadChatTick % JLEAD_CHAT_FULL_EVERY !== 0);
+  }, JLEAD_CHAT_POLL_MS);
 }
-async function jleadChatLoad(leadId, scroll){
-  const res = await jleadChatCall('thread', leadId);
+async function jleadChatLoad(leadId, scroll, light){
+  const res = await jleadChatCall('thread', leadId, '', light);
   if(_jleadChatLead !== leadId) return;                 // drawer moved on meanwhile
   const t = document.getElementById('jlead-chat-thread'); if(!t) return;
   if(!res.ok){ t.innerHTML = `<div class="name-sub">${esc(res.error || ('Could not load the conversation (HTTP ' + res.http + ').'))}</div>`; return; }
@@ -20973,6 +20987,7 @@ async function jleadChatLoad(leadId, scroll){
       <div class="name-sub" style="font-size:11px">${esc(jleadChatWho(m))} · ${esc(stamp)}</div><div>${body}</div></div>`;
   }).join('') || '<div class="name-sub">No messages logged yet.</div>';
   if(scroll || near) t.scrollTop = t.scrollHeight;
+  if(res.staffMode === null || res.staffMode === undefined) return;   // light refresh: keep mode + quota as shown
   const mode = document.getElementById('jlead-chat-mode');
   if(mode) mode.textContent = res.staffMode ? '· staff is handling (Maya paused)' : '· Maya is answering';
   const q = jleadQuotaState(res.quota); const qe = document.getElementById('jlead-chat-quota');
@@ -20985,22 +21000,34 @@ async function jleadChatSend(leadId){
   const input = document.getElementById('jlead-chat-input'), note = document.getElementById('jlead-chat-note'), btn = document.getElementById('jlead-chat-send');
   const text = String((input && input.value) || '').trim();
   if(!text){ if(note) note.textContent = 'Type a message first.'; return; }
-  _jleadChatBusy = true; if(btn) btn.disabled = true; if(note) note.textContent = 'Sending…';
+  _jleadChatBusy = true; _jleadChatActiveAt = Date.now(); if(btn) btn.disabled = true; if(note) note.textContent = 'Sending…';
+  // Optimistic: the bubble shows at once; the next refresh replaces it with the logged one.
+  const t = document.getElementById('jlead-chat-thread'), pending = document.createElement('div');
+  pending.style.cssText = 'align-self:flex-end;max-width:82%;background:#F6DFDA;border-radius:10px;padding:6px 9px;opacity:.65';
+  pending.innerHTML = `<div class="name-sub" style="font-size:11px">You · sending…</div><div>${esc(text).replace(/\n/g, '<br>')}</div>`;
+  if(t){ t.appendChild(pending); t.scrollTop = t.scrollHeight; }
+  if(input) input.value = '';
   const res = await jleadChatCall('send', leadId, text);
   _jleadChatBusy = false; if(btn) btn.disabled = false;
-  if(!res.ok){ if(note) note.textContent = res.error || ('Not sent (HTTP ' + res.http + ').'); return; }
-  if(input) input.value = '';
+  if(!res.ok){
+    pending.style.opacity = '1'; pending.style.background = '#FBE3E0';
+    pending.firstElementChild.textContent = 'Not sent';
+    if(input && !input.value) input.value = text;
+    if(note) note.textContent = res.error || ('Not sent (HTTP ' + res.http + ').');
+    return;
+  }
   if(note) note.textContent = 'Sent — Maya is paused for this customer.';
   const l = leads.find(x => String(x.id) === String(leadId));
   if(l){ l.handoffHandledAt = new Date().toISOString(); renderJLeads(); }
-  jleadChatLoad(leadId, true);
+  jleadChatLoad(leadId, true, false);
 }
 async function jleadChatRelease(leadId){
   const note = document.getElementById('jlead-chat-note');
   if(note) note.textContent = 'Handing back…';
   const res = await jleadChatCall('release', leadId);
   if(note) note.textContent = res.ok ? 'Maya will answer this customer\'s next message.' : (res.error || 'Could not hand back.');
-  if(res.ok) jleadChatLoad(leadId, false);
+  _jleadChatActiveAt = Date.now();
+  if(res.ok) jleadChatLoad(leadId, false, false);
 }
 
 // The rep messaged the customer on LINE (outside the portal) — record it so the
