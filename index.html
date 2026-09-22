@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22c"></script>
+<script src="pms-supabase.js?v=2026-09-22d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -19646,26 +19646,59 @@ function salesFunnel(leads, today, days){
   return out;
 }
 
+// One shape for "a deal this rep closed", whichever source it came from. The
+// page has two: won `leads`, and the `closed_deals` ledger. Both must produce
+// the same fields or the cards drift apart — which they did: the targets card
+// read $3,540 for Sergio in September while the closed-deal table read $9,360,
+// because 13 of the 27 leads the card could see carry no fee at all.
+function salesClosedFromLead(l){
+  const d = (l && l.deal) || {};
+  const m = salesDealMoney(l);
+  return { id: l.id, name: l.name || '', room: d.room || l.roomName || '',
+           rent: Number(d.rent) || 0, months: Number(d.months) || 0,
+           fee: m.fee, revenue: m.revenue,
+           feePending: !m.fee || !!d.fee_pending,
+           feeReceivedAt: salesDay(d.fee_received_at),
+           segment: String(d.segment || ''), closedAt: m.closedAt,
+           owner: salesOwner(l), status: 'closed' };
+}
+// A ledger deal (CLOSED-DEALS-CORE's shape). Read as plain fields so this core
+// stays self-contained and testable on its own.
+function salesClosedFromDeal(d){
+  return { id: d.id, name: d.customer || '', room: d.room || '',
+           rent: Number(d.rent) || 0, months: Number(d.months) || 0,
+           fee: Number(d.fee) || 0, revenue: Number(d.dealValue) || 0,
+           feePending: !!d.feePending,
+           feeReceivedAt: d.paymentStatus === 'paid' ? d.closedAt : '',
+           segment: String(d.segment || ''), closedAt: d.closedAt,
+           owner: d.rep, status: d.status || 'closed' };
+}
+
 // Fees closed per month, against the given reps' targets.
-function salesMonthly(leads, reps, months){
+function salesMonthlyItems(items, reps, months){
   return (months || []).map(ym => {
     let closed = 0, deals = 0;
-    for(const l of (leads || [])){
-      const m = salesDealMoney(l);
-      if(m.fee && m.closedAt.slice(0, 7) === ym){ closed += m.fee; deals++; }
+    for(const x of (items || [])){
+      if(x.fee && x.closedAt.slice(0, 7) === ym){ closed += x.fee; deals++; }
     }
     return { ym, label: SALES_MONTHS[Number(ym.slice(5, 7)) - 1].slice(0, 3), closed, target: salesTargetFor(reps, ym), deals };
   });
 }
+function salesMonthly(leads, reps, months){
+  return salesMonthlyItems((leads || []).filter(l => l && l.status === 'won').map(salesClosedFromLead), reps, months);
+}
 
 // Fees closed per quarter of a year, against the reps' summed targets.
-function salesQuarterly(leads, reps, year){
+function salesQuarterlyItems(items, reps, year){
   return [0, 1, 2, 3].map(q => {
     const months = [1, 2, 3].map(k => year + '-' + salesPad2(q * 3 + k));
-    const rows = salesMonthly(leads, reps, months);
+    const rows = salesMonthlyItems(items, reps, months);
     const target = rows.some(r => r.target != null) ? rows.reduce((s, r) => s + (r.target || 0), 0) : null;
     return { label: 'Q' + (q + 1), closed: rows.reduce((s, r) => s + r.closed, 0), target, deals: rows.reduce((s, r) => s + r.deals, 0) };
   });
+}
+function salesQuarterly(leads, reps, year){
+  return salesQuarterlyItems((leads || []).filter(l => l && l.status === 'won').map(salesClosedFromLead), reps, year);
 }
 // Teams: a rep row may carry `team` ('japan'); a row with kind 'team' and id
 // 'team:<key>' names the team and holds its target. A team member opens on
@@ -19700,7 +19733,13 @@ function salesDefaultView(reps, viewer){
 // Everything the Sales page prints, from one call. `rep` is a lowercased email,
 // 'team:<key>' for a team, or '*' for everyone; `ym` the month shown; `today`
 // 'YYYY-MM-DD'.
-function computeSalesView(leads, reps, rep, ym, today){
+//
+// `deals` is the closed-deal ledger (CLOSED-DEALS-CORE's cdDeals output). When
+// it is given, every "closed" number on this page comes from it — target card,
+// KPIs, both charts, Recently closed — and `leads` is left to do the pipeline
+// half it is actually good at: follow-ups, open deals, the funnel, losses.
+// Omit it and the closed half falls back to won leads, exactly as before.
+function computeSalesView(leads, reps, rep, ym, today, deals){
   const t = salesDay(today);
   const period = salesPeriod(ym, t);
   const key = String(rep || '').toLowerCase();
@@ -19719,26 +19758,32 @@ function computeSalesView(leads, reps, rep, ym, today){
   const mine = everyone ? salesRepLeads(leads, '*') : (leads || []).filter(l => memberKeys.has(salesOwner(l)));
 
   const inRange = (d, a, b) => d && d >= a && d <= b;
-  const won = mine.map(l => ({ lead: l, m: salesDealMoney(l) })).filter(x => x.lead.status === 'won');
-  const wonMonth = won.filter(x => inRange(x.m.closedAt, period.month.start, period.month.end));
-  const wonQuarter = won.filter(x => inRange(x.m.closedAt, period.quarter.start, period.quarter.end));
+  // The ledger is already both sources merged and deduped, so it is used whole
+  // rather than added to the won leads — adding would double-count every deal
+  // Zoho and the portal both know about.
+  const closedAll = Array.isArray(deals) && deals.length
+    ? deals.filter(d => everyone || memberKeys.has(String(d.rep || '').toLowerCase())).map(salesClosedFromDeal)
+    : mine.filter(l => l.status === 'won').map(salesClosedFromLead);
+  const won = closedAll.filter(x => x.closedAt);
+  const wonMonth = won.filter(x => inRange(x.closedAt, period.month.start, period.month.end));
+  const wonQuarter = won.filter(x => inRange(x.closedAt, period.quarter.start, period.quarter.end));
   const sum = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
 
-  const mClosed = sum(wonMonth, x => x.m.fee), mDeals = wonMonth.length;
-  // Leads marked won before deals carried money have no fee. They are still
-  // deals, but averaging them in would report a number nobody charged.
-  const withFee = wonMonth.filter(x => x.m.fee > 0).length;
+  const mClosed = sum(wonMonth, x => x.fee), mDeals = wonMonth.length;
+  // Deals with no fee recorded are still deals, but averaging them in would
+  // report a number nobody charged.
+  const withFee = wonMonth.filter(x => x.fee > 0).length;
   const mTarget = salesTargetFor(repRows, ym);
   const pace = mTarget != null ? Math.round(mTarget * period.month.dayOf / period.month.days) : null;
   const month = {
     closed: mClosed, deals: mDeals, avg: withFee ? Math.round(mClosed / withFee) : 0, noFee: mDeals - withFee,
-    revenue: sum(wonMonth, x => x.m.revenue),
+    revenue: sum(wonMonth, x => x.revenue),
     target: mTarget, pct: mTarget ? Math.round(mClosed / mTarget * 100) : null,
     toGo: mTarget != null ? Math.max(0, mTarget - mClosed) : null,
     pace, paceState: pace == null ? 'none' : (mClosed >= pace ? 'ahead' : 'behind'),
     dayOf: period.month.dayOf, days: period.month.days
   };
-  const qClosed = sum(wonQuarter, x => x.m.fee), qTarget = salesQuarterTarget(repRows, period);
+  const qClosed = sum(wonQuarter, x => x.fee), qTarget = salesQuarterTarget(repRows, period);
   const quarter = {
     closed: qClosed, deals: wonQuarter.length, target: qTarget,
     pct: qTarget ? Math.round(qClosed / qTarget * 100) : null,
@@ -19766,14 +19811,12 @@ function computeSalesView(leads, reps, rep, ym, today){
 
   // Every deal won in the shown month, newest first. A month with none falls
   // back to the latest eight overall so the table is never blank.
-  const byClosed = (a, b) => (a.m.closedAt < b.m.closedAt ? 1 : a.m.closedAt > b.m.closedAt ? -1 : 0);
+  const byClosed = (a, b) => (a.closedAt < b.closedAt ? 1 : a.closedAt > b.closedAt ? -1 : 0);
   const recentClosedScope = wonMonth.length ? 'month' : 'latest';
   const recentClosed = (wonMonth.length ? wonMonth.slice().sort(byClosed) : won.slice().sort(byClosed).slice(0, 8))
-    .map(x => ({ id: x.lead.id, name: x.lead.name || '', room: (x.lead.deal && x.lead.deal.room) || x.lead.roomName || '',
-                 rent: Number(x.lead.deal && x.lead.deal.rent) || 0, months: Number(x.lead.deal && x.lead.deal.months) || 0,
-                 fee: x.m.fee, feePending: !x.m.fee || !!(x.lead.deal && x.lead.deal.fee_pending),
-                 segment: String((x.lead.deal && x.lead.deal.segment) || ''),
-                 closedAt: x.m.closedAt, feeReceivedAt: salesDay(x.lead.deal && x.lead.deal.fee_received_at), owner: salesOwner(x.lead) }));
+    .map(x => ({ id: x.id, name: x.name, room: x.room, rent: x.rent, months: x.months,
+                 fee: x.fee, feePending: x.feePending, segment: x.segment,
+                 closedAt: x.closedAt, feeReceivedAt: x.feeReceivedAt, owner: x.owner }));
 
   const since90 = salesAddDays(t, -90);
   const reasonLabel = r => { const hit = SALES_LOST_REASONS.find(x => x[0] === r); return hit ? hit[1] : (r || 'Other'); };
@@ -19789,8 +19832,8 @@ function computeSalesView(leads, reps, rep, ym, today){
     const d = new Date(y, m - 1 - k, 1);
     months.push(d.getFullYear() + '-' + salesPad2(d.getMonth() + 1));
   }
-  const monthly = salesMonthly(mine, repRows, months);
-  const quarterly = salesQuarterly(mine, repRows, Number(ym.slice(0, 4)));
+  const monthly = salesMonthlyItems(won, repRows, months);
+  const quarterly = salesQuarterlyItems(won, repRows, Number(ym.slice(0, 4)));
   const f = salesFunnel(mine, t, 90);
   const funnel = Object.assign({ conversionPct: Math.round(f.conversion * 100) }, f);
 
@@ -19798,8 +19841,8 @@ function computeSalesView(leads, reps, rep, ym, today){
   // closed this month, their open pipeline, and their share of the team total.
   const byRep = team ? members.map(m => {
     const mk = salesRepKey(m);
-    const own = wonMonth.filter(x => salesOwner(x.lead) === mk);
-    const closed = sum(own, x => x.m.fee);
+    const own = wonMonth.filter(x => x.owner === mk);
+    const closed = sum(own, x => x.fee);
     return { email: mk, name: String(m.name || mk), segment: String(m.segment || ''), closed, deals: own.length,
              pipeline: sum(openDeals.filter(d => d.owner === mk), d => d.expected),
              sharePct: mClosed ? Math.round(closed / mClosed * 100) : 0 };
@@ -22585,7 +22628,9 @@ renderLeads();
     if(!salesGranted()){ $('sales-denied').style.display = ''; $('sales-page').style.display = 'none'; return; }
     $('sales-denied').style.display = 'none'; $('sales-page').style.display = '';
     fillSelects();
-    const v = computeSalesView(window.leads || [], window.salesReps || [], salesCurrentRep(), salesCurrentYm(), salesToday());
+    // One ledger for the whole page. Passing it here is what stops the target
+    // card and the closed-deal table below it reporting different months.
+    const v = computeSalesView(window.leads || [], window.salesReps || [], salesCurrentRep(), salesCurrentYm(), salesToday(), cdLedger());
     const pt = $('page-title'), ps = $('page-sub');
     if(pt) pt.innerHTML = `Sales <em>· ${esc(v.repName)}</em>`;
     if(ps) ps.textContent = `${v.period.month.label} · CAD`;
