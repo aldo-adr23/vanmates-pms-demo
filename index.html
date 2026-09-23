@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23c"></script>
+<script src="pms-supabase.js?v=2026-09-23d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21575,21 +21575,25 @@ function fillLeadFields(l){
   document.getElementById('lead-modal-sub').textContent = `${leadSourceLabelText(l.source)} · ${fmtDate(l.created_at)}`;
   document.getElementById('lead-status').innerHTML =
     LEAD_STATUSES.map(s => `<option value="${s}" ${(l.status||'new')===s?'selected':''}>${leadCap(s)}</option>`).join('');
-  const cur = l.assignee || '';
+  // The owner is whoever holds the claim; `assignee` is only set by a hand-off.
+  // LINE leads are auto-claimed for the Japan rep with no assignee, so the
+  // claim is what the select shows.
+  const cur = l.assignee || l.claimed_by || '';
   const asSel = document.getElementById('lead-assignee');
-  // Only the signed-in user is offered as an assignee. The whole team used to
-  // be listed, but a lead is owned by whoever claims it, and handing one to a
-  // teammate who has no part in sales is not a move anybody makes on purpose.
-  // A lead already assigned to somebody else keeps that person in the list —
-  // dropping them would leave the select on a value the lead does not have and
-  // blank the assignment on the next save.
+  // Reassigning is an admin's hand-off, so an admin sees the whole team; anyone
+  // else sees themselves and the current owner (the select is disabled for
+  // them anyway). A lead already assigned to somebody else keeps that person in
+  // the list — dropping them would leave the select on a value the lead does
+  // not have and blank the assignment on the next save.
   const me = activeRole() || {};
   const meValue = me.email || me.name || '';
+  const isAdmin = me.role === 'admin';
   const assignable = (typeof teamMembers !== 'undefined' ? teamMembers : [])
     .filter(m => {
       const v = m.email || m.name || '';
-      return v && (v === meValue || v === cur);
-    });
+      return v && (isAdmin || v === meValue || v === cur);
+    })
+    .slice().sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
   asSel.innerHTML =
     `<option value="">Unassigned</option>` +
     assignable.map(m => {
@@ -21654,6 +21658,15 @@ async function saveLead(){
     follow_up_at: (document.getElementById('lead-follow-up') || {}).value || null,
     last_touched_at: new Date().toISOString()
   };
+  // An admin handing the lead to someone moves the claim too, so the new owner
+  // gets what an owner gets (the LINE chat, follow-up buttons, Sales credit).
+  // The ownership trigger lets admins do this and never lets a claim be cleared.
+  const asNew = patch.assignee;
+  if(asNew && (activeRole() || {}).role === 'admin' && String(asNew).toLowerCase() !== String(l.claimed_by || '').toLowerCase()
+     && (typeof teamMembers !== 'undefined' ? teamMembers : []).some(m => String(m.email || '').toLowerCase() === String(asNew).toLowerCase())){
+    patch.claimed_by = asNew;
+    patch.claimed_at = new Date().toISOString();
+  }
   // Existing rows go through UPDATE (claimant RLS policy); the server trigger
   // keeps ownership columns intact for non-admins. Manual "Add lead" still
   // inserts via upsert in submitAddLead.
