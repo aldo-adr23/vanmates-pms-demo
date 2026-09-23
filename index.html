@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22o"></script>
+<script src="pms-supabase.js?v=2026-09-23a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20638,6 +20638,24 @@ function jleadChatWho(m){
   return by ? by.split('@')[0].replace(/^./, c => c.toUpperCase()) : 'Staff';
 }
 
+// Translation for reps who don't read Japanese. Only text with Japanese in it
+// goes to the translator, each distinct text once (the cache is keyed by text),
+// at most 40 per call; the reply translator gets the last 8 messages as context.
+const JLEAD_TR_BATCH = 40;
+function jleadHasJapanese(s){ return /[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]/.test(String(s || '')); }
+function jleadUntranslated(msgs, cache){
+  const seen = {}, out = [];
+  (msgs || []).forEach(m => {
+    const t = String((m && m.text) || '');
+    if(!jleadHasJapanese(t) || seen[t] || (cache && Object.prototype.hasOwnProperty.call(cache, t))) return;
+    seen[t] = 1; out.push(t);
+  });
+  return out.slice(-JLEAD_TR_BATCH);
+}
+function jleadReplyContext(msgs){
+  return (msgs || []).filter(m => m && String(m.text || '').trim()).slice(-8).map(m => ({ from: m.from === 'customer' ? 'customer' : 'vanmates', text: String(m.text) }));
+}
+
 // The rep's "followed up" click, appended — never rewrites earlier entries.
 function jleadAddFollowUp(l, by, iso){
   return jleadFollowUps(l).concat([{ at: iso, by: String(by || '') }]);
@@ -21094,10 +21112,14 @@ function renderJLeadChat(l){
     <div style="border:1px solid var(--line, #E4DBC9);border-radius:10px;overflow:hidden">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:var(--cream-2)">
         <div class="name-main">LINE conversation <span id="jlead-chat-mode" class="name-sub"></span></div>
-        <div id="jlead-chat-quota" class="name-sub"></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <label class="name-sub" style="display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap" title="Show customer messages in English and write replies in English (sent in Japanese)"><input type="checkbox" id="jlead-chat-en"> English mode</label>
+          <div id="jlead-chat-quota" class="name-sub"></div>
+        </div>
       </div>
       <div id="jlead-chat-thread" style="max-height:340px;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px"><div class="name-sub">Loading…</div></div>
       <div style="padding:10px 12px;border-top:1px solid var(--line, #E4DBC9)">
+        <div id="jlead-chat-preview" style="display:none;margin-bottom:8px;padding:8px 10px;border:1px solid #2563eb33;background:#2563eb0d;border-radius:8px;font-size:13px"></div>
         <textarea id="jlead-chat-input" class="form-input" rows="3" maxlength="2000" placeholder="Reply on LINE as Vanmates…" style="display:block;width:100%;box-sizing:border-box;min-height:76px;resize:vertical"></textarea>
         <div class="name-sub" style="font-size:11px;margin-top:3px">Enter to send · Shift+Enter for a new line</div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px">
@@ -21107,15 +21129,24 @@ function renderJLeadChat(l){
         </div>
       </div>
     </div>`;
-  _jleadChatLead = l.id;
-  document.getElementById('jlead-chat-send').addEventListener('click', () => jleadChatSend(l.id));
+  _jleadChatLead = l.id; _jleadChatMsgs = []; _jleadTrDraft = null;
+  const en = document.getElementById('jlead-chat-en');
+  en.checked = jleadEnglishMode();
+  en.addEventListener('change', () => {
+    try { localStorage.setItem('jleads.english', en.checked ? '1' : '0'); } catch(_){}
+    jleadTrClearDraft(); jleadChatModeUi(); jleadChatRender(false);
+    if(en.checked) jleadTranslateThread(l.id);
+  });
+  jleadChatModeUi();
+  document.getElementById('jlead-chat-input').addEventListener('input', () => { if(_jleadTrDraft) jleadTrClearDraft(); });
+  document.getElementById('jlead-chat-send').addEventListener('click', () => jleadChatSubmit(l.id));
   document.getElementById('jlead-chat-release').addEventListener('click', () => jleadChatRelease(l.id));
   // Enter sends, Shift+Enter is a new line. While a Japanese IME is composing,
   // Enter only confirms the conversion (isComposing / keyCode 229) — never send then.
   document.getElementById('jlead-chat-input').addEventListener('keydown', e => {
     if(e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
-    if(!_jleadChatBusy) jleadChatSend(l.id);
+    if(!_jleadChatBusy) jleadChatSubmit(l.id);
   });
   _jleadChatTick = 0; _jleadChatActiveAt = Date.now();
   jleadChatLoad(l.id, true, false);
@@ -21135,16 +21166,9 @@ async function jleadChatLoad(leadId, scroll, light){
   if(_jleadChatLead !== leadId) return;                 // drawer moved on meanwhile
   const t = document.getElementById('jlead-chat-thread'); if(!t) return;
   if(!res.ok){ t.innerHTML = `<div class="name-sub">${esc(res.error || ('Could not load the conversation (HTTP ' + res.http + ').'))}</div>`; return; }
-  const near = t.scrollTop + t.clientHeight >= t.scrollHeight - 40;
-  t.innerHTML = (res.messages || []).map(m => {
-    const mine = m.from !== 'customer';
-    const bg = m.from === 'customer' ? '#F3EFE7' : m.from === 'maya' ? '#EFE6D6' : '#F6DFDA';
-    const when = new Date(m.at); const stamp = isNaN(when) ? '' : when.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-    const body = esc(m.text || '').replace(/\n/g, '<br>') + (m.photos ? `<div class="name-sub">📷 ${m.photos} photo(s) sent</div>` : '');
-    return `<div style="align-self:${mine ? 'flex-end' : 'flex-start'};max-width:82%;background:${bg};border-radius:10px;padding:6px 9px">
-      <div class="name-sub" style="font-size:11px">${esc(jleadChatWho(m))} · ${esc(stamp)}</div><div>${body}</div></div>`;
-  }).join('') || '<div class="name-sub">No messages logged yet.</div>';
-  if(scroll || near) t.scrollTop = t.scrollHeight;
+  _jleadChatMsgs = res.messages || [];
+  jleadChatRender(scroll);
+  if(jleadEnglishMode()) jleadTranslateThread(leadId);
   if(res.staffMode === null || res.staffMode === undefined) return;   // light refresh: keep mode + quota as shown
   const mode = document.getElementById('jlead-chat-mode');
   if(mode) mode.textContent = res.staffMode ? '· staff is handling (Maya paused)' : '· Maya is answering';
@@ -21154,9 +21178,108 @@ async function jleadChatLoad(leadId, scroll, light){
   const note = document.getElementById('jlead-chat-note');
   if(note && !_jleadChatBusy) note.textContent = q.level === 'full' ? 'Monthly LINE quota used up — reply from the LINE console.' : q.level === 'warn' ? 'LINE quota nearly used up this month.' : '';
 }
-async function jleadChatSend(leadId){
+/* ---- English mode (VM - JLeads Translate) --------------------------------
+   Customer and Maya messages show in English with the Japanese below; the rep
+   writes in English, Enter shows the Japanese that will go out plus what it
+   means, Enter again sends it. Translations are cached per text in this browser. */
+const JLEAD_TR_URL = 'https://adr23.app.n8n.cloud/webhook/jleads-translate';
+const JLEAD_TR_CACHE_MAX = 400;
+let _jleadChatMsgs = [], _jleadTrDraft = null, _jleadTrBusy = false, _jleadTrCache = null;
+function jleadEnglishMode(){ try { return localStorage.getItem('jleads.english') !== '0'; } catch(_){ return true; } }
+function jleadTrCache(){
+  if(_jleadTrCache) return _jleadTrCache;
+  try { _jleadTrCache = JSON.parse(localStorage.getItem('jleads.tr') || '{}') || {}; } catch(_){ _jleadTrCache = {}; }
+  return _jleadTrCache;
+}
+function jleadTrSave(){
+  const c = jleadTrCache(), k = Object.keys(c);
+  if(k.length > JLEAD_TR_CACHE_MAX) k.slice(0, k.length - JLEAD_TR_CACHE_MAX).forEach(x => { delete c[x]; });
+  try { localStorage.setItem('jleads.tr', JSON.stringify(c)); } catch(_){}
+}
+async function jleadTrCall(body){
+  const go = async (tok) => fetch(JLEAD_TR_URL, { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + tok }, body: JSON.stringify(body) });
+  try {
+    let r = await go(await jleadChatToken(false));
+    if(r.status === 401) r = await go(await jleadChatToken(true));
+    let j = {}; try { j = await r.json(); } catch(_){}
+    return Object.assign({ http: r.status }, j);
+  } catch(e){ return { ok:false, error:'Translator unreachable. Check your connection.' }; }
+}
+async function jleadTranslateThread(leadId){
+  if(_jleadTrBusy) return;
+  const todo = jleadUntranslated(_jleadChatMsgs, jleadTrCache());
+  if(!todo.length) return;
+  _jleadTrBusy = true;
+  const res = await jleadTrCall({ mode:'in', texts: todo });
+  _jleadTrBusy = false;
+  if(!res.ok || !Array.isArray(res.t)){
+    const note = document.getElementById('jlead-chat-note'); if(note && !_jleadChatBusy) note.textContent = res.error || 'Translation failed.';
+    return;
+  }
+  const c = jleadTrCache(); todo.forEach((t, i) => { c[t] = res.t[i]; }); jleadTrSave();
+  if(_jleadChatLead === leadId) jleadChatRender(false);
+}
+function jleadChatRender(scroll){
+  const t = document.getElementById('jlead-chat-thread'); if(!t) return;
+  const near = t.scrollTop + t.clientHeight >= t.scrollHeight - 40;
+  const en = jleadEnglishMode(), c = jleadTrCache();
+  t.innerHTML = _jleadChatMsgs.map(m => {
+    const mine = m.from !== 'customer';
+    const bg = m.from === 'customer' ? '#F3EFE7' : m.from === 'maya' ? '#EFE6D6' : '#F6DFDA';
+    const when = new Date(m.at); const stamp = isNaN(when) ? '' : when.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    const txt = String(m.text || ''), br = (x) => esc(x).replace(/\n/g, '<br>');
+    let body;
+    if(en && jleadHasJapanese(txt)){
+      const tr = Object.prototype.hasOwnProperty.call(c, txt) ? c[txt] : null;
+      body = (tr != null ? `<div>${br(tr)}</div>` : `<div class="name-sub"><i>Translating…</i></div>`)
+        + `<div class="name-sub" style="margin-top:4px;padding-top:4px;border-top:1px dashed #00000022;font-size:12px">${br(txt)}</div>`;
+    } else body = `<div>${br(txt)}</div>`;
+    if(m.photos) body += `<div class="name-sub">📷 ${m.photos} photo(s) sent</div>`;
+    return `<div style="align-self:${mine ? 'flex-end' : 'flex-start'};max-width:82%;background:${bg};border-radius:10px;padding:6px 9px">
+      <div class="name-sub" style="font-size:11px">${esc(jleadChatWho(m))} · ${esc(stamp)}</div>${body}</div>`;
+  }).join('') || '<div class="name-sub">No messages logged yet.</div>';
+  if(scroll || near) t.scrollTop = t.scrollHeight;
+}
+function jleadChatModeUi(){
+  const en = jleadEnglishMode(), input = document.getElementById('jlead-chat-input'), btn = document.getElementById('jlead-chat-send');
+  if(input) input.placeholder = en ? 'Write in English. Enter shows the Japanese, Enter again sends it.' : 'Reply on LINE as Vanmates…';
+  if(btn && !_jleadChatBusy) btn.textContent = en ? (_jleadTrDraft ? 'Send Japanese' : 'Translate') : 'Send on LINE';
+}
+function jleadTrClearDraft(){
+  _jleadTrDraft = null;
+  const p = document.getElementById('jlead-chat-preview'); if(p){ p.style.display = 'none'; p.innerHTML = ''; }
+  jleadChatModeUi();
+}
+// Enter / the button: in English mode the first press translates, the second
+// (text unchanged) sends the Japanese; otherwise it sends as typed.
+async function jleadChatSubmit(leadId){
+  if(!jleadEnglishMode()) return jleadChatSend(leadId);
   const input = document.getElementById('jlead-chat-input'), note = document.getElementById('jlead-chat-note'), btn = document.getElementById('jlead-chat-send');
   const text = String((input && input.value) || '').trim();
+  if(!text){ if(note) note.textContent = 'Type a message first.'; return; }
+  if(_jleadTrDraft && _jleadTrDraft.src === text) return jleadChatSend(leadId, _jleadTrDraft.ja);
+  if(_jleadTrBusy) return;
+  _jleadTrBusy = true; _jleadChatActiveAt = Date.now(); if(btn) btn.disabled = true; if(note) note.textContent = 'Translating…';
+  const res = await jleadTrCall({ mode:'out', text, context: jleadReplyContext(_jleadChatMsgs) });
+  _jleadTrBusy = false; if(btn) btn.disabled = false;
+  if(_jleadChatLead !== leadId) return;
+  if(!res.ok || !res.ja){ if(note) note.textContent = res.error || 'Translation failed. Try again.'; return; }
+  if(String((input && input.value) || '').trim() !== text){ if(note) note.textContent = ''; return; }   // edited meanwhile
+  _jleadTrDraft = { src: text, ja: res.ja };
+  const p = document.getElementById('jlead-chat-preview');
+  if(p){
+    p.style.display = 'block';
+    p.innerHTML = `<div class="name-sub" style="font-size:11px">Will send (Japanese):</div><div style="margin:2px 0 6px">${esc(res.ja).replace(/\n/g, '<br>')}</div>`
+      + (res.back ? `<div class="name-sub" style="font-size:12px">Means: ${esc(res.back)}</div>` : '')
+      + `<div class="name-sub" style="font-size:11px;margin-top:4px">Enter to send · edit your text to redo it</div>`;
+  }
+  if(note) note.textContent = '';
+  jleadChatModeUi();
+}
+async function jleadChatSend(leadId, override){
+  const input = document.getElementById('jlead-chat-input'), note = document.getElementById('jlead-chat-note'), btn = document.getElementById('jlead-chat-send');
+  const typed = String((input && input.value) || '').trim();
+  const text = override ? String(override).trim() : typed;
   if(!text){ if(note) note.textContent = 'Type a message first.'; return; }
   _jleadChatBusy = true; _jleadChatActiveAt = Date.now(); if(btn) btn.disabled = true; if(note) note.textContent = 'Sending…';
   // Optimistic: the bubble shows at once; the next refresh replaces it with the logged one.
@@ -21165,12 +21288,13 @@ async function jleadChatSend(leadId){
   pending.innerHTML = `<div class="name-sub" style="font-size:11px">You · sending…</div><div>${esc(text).replace(/\n/g, '<br>')}</div>`;
   if(t){ t.appendChild(pending); t.scrollTop = t.scrollHeight; }
   if(input) input.value = '';
+  if(override) jleadTrClearDraft();
   const res = await jleadChatCall('send', leadId, text);
-  _jleadChatBusy = false; if(btn) btn.disabled = false;
+  _jleadChatBusy = false; if(btn) btn.disabled = false; jleadChatModeUi();
   if(!res.ok){
     pending.style.opacity = '1'; pending.style.background = '#FBE3E0';
     pending.firstElementChild.textContent = 'Not sent';
-    if(input && !input.value) input.value = text;
+    if(input && !input.value) input.value = override ? typed : text;
     if(note) note.textContent = res.error || ('Not sent (HTTP ' + res.http + ').');
     return;
   }
