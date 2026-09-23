@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23g"></script>
+<script src="pms-supabase.js?v=2026-09-23h"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20744,6 +20744,20 @@ function jleadStage(l, idx){
   return 'new';
 }
 
+// Ownership history: who held the lead, and who moved it. Stored on the lead as
+// `ownerHistory` [{at, from, to, by, how}] — how = 'claimed' | 'took' |
+// 'reassigned'. Older leads have none, so the first entry is synthesised from
+// the claim itself; appending always starts from that, so nothing is lost.
+function leadOwnerHistory(l){
+  const h = (Array.isArray(l && l.ownerHistory) ? l.ownerHistory : []).filter(e => e && e.to && e.at);
+  if(h.length) return h.slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const by = String((l && l.claimed_by) || ''), at = String((l && l.claimed_at) || '');
+  return by && at ? [{ at, from: '', to: by, by: '', how: 'claimed' }] : [];
+}
+function leadAddOwnerEvent(l, ev){
+  return leadOwnerHistory(l).concat([{ at: String(ev.at), from: String(ev.from || ''), to: String(ev.to), by: String(ev.by || ''), how: String(ev.how || 'reassigned') }]);
+}
+
 // `statusMatch` is injected rather than referenced so this core stays pure and
 // testable on its own; the caller passes leadStatusFilterMatches, which gives
 // JLeads the same 'open' default as the Leads list. `now` is injected for the
@@ -20819,9 +20833,23 @@ function renderLeadClaimBlock(l){
       <div><div class="name-main">${who}</div>
       <div class="name-sub">${fmtDate(c.at)} · ${esc(c.by)}</div></div>
       ${canTake ? `<button class="btn" id="jlead-take-btn" type="button" title="Make this lead yours: you get the follow-ups, status changes and the Sales credit">Take this lead</button>` : ''}
-    </div>`;
+    </div>${leadOwnerHistoryHtml(l)}`;
   const tb = document.getElementById('jlead-take-btn');
   if(tb) tb.addEventListener('click', () => jleadTake(l.id, tb));
+}
+
+// Who held the lead, oldest first; shown once it has changed hands.
+function leadOwnerHistoryHtml(l){
+  const h = leadOwnerHistory(l);
+  if(h.length < 2) return '';
+  const team = typeof teamMembers !== 'undefined' ? teamMembers : [];
+  const nm = (e) => { const m = team.find(x => String(x.email || '').toLowerCase() === String(e || '').toLowerCase()); return m ? (m.name || m.email) : String(e || '').split('@')[0]; };
+  const when = (iso) => { const d = new Date(iso); return isNaN(d) ? esc(iso) : esc(d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })); };
+  const line = (e) => e.how === 'took' ? `<b>${esc(nm(e.to))}</b> took it from ${esc(nm(e.from))}`
+    : e.how === 'reassigned' ? `${esc(nm(e.by))} reassigned it from ${esc(nm(e.from) || 'nobody')} to <b>${esc(nm(e.to))}</b>`
+    : `Claimed by <b>${esc(nm(e.to))}</b>`;
+  return `<details style="margin-top:6px" ${h.length <= 4 ? 'open' : ''}><summary class="name-sub" style="cursor:pointer;font-size:12px">Owner history (${h.length})</summary>
+    <div style="padding:4px 2px 0 14px;display:flex;flex-direction:column;gap:2px">${h.slice().reverse().map(e => `<div class="name-sub" style="font-size:12px">${when(e.at)} · ${line(e)}</div>`).join('')}</div></details>`;
 }
 
 // Sales rep takes a LINE lead from its current owner. Done by n8n (the leads
@@ -20837,7 +20865,8 @@ async function jleadTake(id, btn){
     showToast(res.error || 'Could not take the lead');
     return;
   }
-  Object.assign(l, { claimed_by: res.claimed_by, claimed_at: res.claimed_at, assignee: res.assignee, takenFrom: res.takenFrom });
+  Object.assign(l, { claimed_by: res.claimed_by, claimed_at: res.claimed_at, assignee: res.assignee, takenFrom: res.takenFrom },
+    Array.isArray(res.ownerHistory) ? { ownerHistory: res.ownerHistory } : {});
   renderLeadClaimBlock(l);
   // Only the assignee select changes; unsaved notes or status in the drawer stay as typed.
   const asSel = document.getElementById('lead-assignee');
@@ -21749,6 +21778,7 @@ async function saveLead(){
      && (typeof teamMembers !== 'undefined' ? teamMembers : []).some(m => String(m.email || '').toLowerCase() === String(asNew).toLowerCase())){
     patch.claimed_by = asNew;
     patch.claimed_at = new Date().toISOString();
+    patch.ownerHistory = leadAddOwnerEvent(l, { at: patch.claimed_at, from: l.claimed_by || '', to: asNew, by: (activeRole() || {}).email || '', how: 'reassigned' });
   }
   // Existing rows go through UPDATE (claimant RLS policy); the server trigger
   // keeps ownership columns intact for non-admins. Manual "Add lead" still
