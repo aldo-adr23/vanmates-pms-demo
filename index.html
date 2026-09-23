@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23d"></script>
+<script src="pms-supabase.js?v=2026-09-23e"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21319,7 +21319,7 @@ function jleadTrShowDraft(src, ja, back){
    once, so Enter sends with no translation wait. "Save" stores the current
    reply, plus its Japanese when a preview for exactly that text is showing. */
 const JLEAD_TPL_URL = 'https://adr23.app.n8n.cloud/webhook/jleads-templates';
-let _jleadTpls = null, _jleadTplQ = '';
+let _jleadTpls = null, _jleadTplQ = '', _jleadTplEdit = null;
 async function jleadTplCall(body){
   const go = async (tok) => fetch(JLEAD_TPL_URL, { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + tok }, body: JSON.stringify(body) });
   try {
@@ -21331,8 +21331,8 @@ async function jleadTplCall(body){
 }
 async function jleadTplToggle(l){
   const box = document.getElementById('jlead-chat-tpl'); if(!box) return;
-  if(box.style.display === 'block'){ box.style.display = 'none'; return; }
-  box.style.display = 'block';
+  if(box.style.display === 'block'){ box.style.display = 'none'; _jleadTplEdit = null; return; }
+  box.style.display = 'block'; _jleadTplEdit = null;
   _jleadChatActiveAt = Date.now();
   jleadTplRender(l);
   if(!_jleadTpls) await jleadTplLoad(l);
@@ -21345,27 +21345,73 @@ async function jleadTplLoad(l){
 }
 function jleadTplRender(l){
   const box = document.getElementById('jlead-chat-tpl'); if(!box || box.style.display !== 'block') return;
+  if(_jleadTplEdit) return jleadTplRenderEditor(l, box);
   const list = (_jleadTpls || []).filter(t => jleadTemplateMatches(t, _jleadTplQ));
   const rows = _jleadTpls === null ? '<div class="name-sub" style="padding:8px 10px">Loading…</div>'
-    : list.length ? list.map(t => `<div data-tpl="${esc(t.id)}" style="display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-top:1px solid #0000000d;cursor:pointer">
+    : list.length ? list.map(t => `<div data-tpl="${esc(t.id)}" style="display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-top:1px solid #0000000d;cursor:pointer" title="Click to use">
         <div style="flex:1;min-width:0"><div class="name-main" style="font-size:13px">${esc(t.title)}${t.ja ? ' <span class="name-sub" title="Has approved Japanese: sends with no translation wait">· JA ✓</span>' : ''}</div>
           <div class="name-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.text)}</div></div>
-        ${t.mine ? `<button class="btn btn-ghost btn-mini" type="button" data-tpl-del="${esc(t.id)}" title="Delete template" style="padding:0 6px">✕</button>` : ''}</div>`).join('')
-    : `<div class="name-sub" style="padding:8px 10px">${_jleadTpls.length ? 'No template matches.' : 'No templates yet. Save one below.'}</div>`;
-  box.innerHTML = `<div style="padding:8px 10px"><input id="jlead-tpl-q" class="form-input" placeholder="Search templates…" value="${esc(_jleadTplQ)}" style="width:100%;box-sizing:border-box;padding:5px 8px;font-size:13px"></div>
-    <div style="max-height:190px;overflow-y:auto">${rows}</div>
-    <div style="display:flex;gap:6px;padding:8px 10px;border-top:1px solid #0000001a;background:var(--cream-2)">
-      <input id="jlead-tpl-title" class="form-input" placeholder="Name, to save the current reply as a template" style="flex:1;padding:5px 8px;font-size:13px">
-      <button class="btn btn-mini" id="jlead-tpl-save" type="button">Save</button></div>`;
+        ${t.mine ? `<button class="btn btn-ghost btn-mini" type="button" data-tpl-edit="${esc(t.id)}" style="padding:0 8px">Edit</button><button class="btn btn-ghost btn-mini" type="button" data-tpl-del="${esc(t.id)}" title="Delete template" style="padding:0 6px">✕</button>` : ''}</div>`).join('')
+    : `<div class="name-sub" style="padding:8px 10px">${_jleadTpls.length ? 'No template matches.' : 'No templates yet.'}</div>`;
+  box.innerHTML = `<div style="display:flex;gap:6px;padding:8px 10px"><input id="jlead-tpl-q" class="form-input" placeholder="Search templates…" value="${esc(_jleadTplQ)}" style="flex:1;padding:5px 8px;font-size:13px">
+      <button class="btn btn-mini" id="jlead-tpl-new" type="button" title="New template (starts from what is in the reply box)">+ New template</button></div>
+    <div style="max-height:220px;overflow-y:auto">${rows}</div>`;
   const q = document.getElementById('jlead-tpl-q');
   q.addEventListener('input', () => { _jleadTplQ = q.value; const pos = q.selectionStart; jleadTplRender(l); const q2 = document.getElementById('jlead-tpl-q'); if(q2){ q2.focus(); q2.setSelectionRange(pos, pos); } });
   box.querySelectorAll('[data-tpl]').forEach(r => r.addEventListener('click', e => {
-    if(e.target.closest('[data-tpl-del]')) return;
+    if(e.target.closest('[data-tpl-del]') || e.target.closest('[data-tpl-edit]')) return;
     const t = (_jleadTpls || []).find(x => String(x.id) === r.dataset.tpl); if(t) jleadTplUse(l, t);
   }));
   box.querySelectorAll('[data-tpl-del]').forEach(b => b.addEventListener('click', () => jleadTplDelete(l, b.dataset.tplDel, b)));
-  document.getElementById('jlead-tpl-save').addEventListener('click', () => jleadTplSave(l));
-  document.getElementById('jlead-tpl-title').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); jleadTplSave(l); } });
+  box.querySelectorAll('[data-tpl-edit]').forEach(b => b.addEventListener('click', () => {
+    const t = (_jleadTpls || []).find(x => String(x.id) === b.dataset.tplEdit); if(!t) return;
+    _jleadTplEdit = { id: t.id, title: t.title, text: t.text, ja: t.ja }; jleadTplRender(l);
+  }));
+  document.getElementById('jlead-tpl-new').addEventListener('click', () => {
+    // Start from the reply box, with the customer's name turned back into {name}.
+    const input = document.getElementById('jlead-chat-input');
+    const text = String((input && input.value) || '').trim();
+    const who = jleadTemplateName(l && l.name);
+    const generic = (x) => who && who.length > 1 ? String(x).split(who).join('{name}') : String(x || '');
+    const en = jleadEnglishMode();
+    const ja = en ? (_jleadTrDraft && _jleadTrDraft.src === text ? _jleadTrDraft.ja : '') : (jleadHasJapanese(text) ? text : '');
+    _jleadTplEdit = { id: null, title: '', text: generic(en || !ja ? text : ''), ja: generic(ja) };
+    jleadTplRender(l);
+  });
+}
+// New / edit form: name, English (what the rep reads and what gets translated),
+// Japanese (what is sent; optional, filled by Translate and editable).
+function jleadTplRenderEditor(l, box){
+  const e = _jleadTplEdit;
+  box.innerHTML = `<div style="padding:10px;display:flex;flex-direction:column;gap:6px">
+      <div class="name-main" style="font-size:13px">${e.id ? 'Edit template' : 'New template'}</div>
+      <input id="jlead-tpl-title" class="form-input" maxlength="80" placeholder="Name (e.g. Offer a viewing)" value="${esc(e.title)}" style="padding:5px 8px;font-size:13px">
+      <label class="name-sub" style="font-size:11px">Message in English <span style="opacity:.8">· {name} = the customer's name</span></label>
+      <textarea id="jlead-tpl-text" class="form-input" rows="3" maxlength="2000" style="padding:5px 8px;font-size:13px;resize:vertical">${esc(e.text)}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <label class="name-sub" style="font-size:11px">Japanese that gets sent <span style="opacity:.8">· optional; without it the English is translated when used</span></label>
+        <button class="btn btn-ghost btn-mini" id="jlead-tpl-tr" type="button">Translate from English</button></div>
+      <textarea id="jlead-tpl-ja" class="form-input" rows="3" maxlength="2000" style="padding:5px 8px;font-size:13px;resize:vertical">${esc(e.ja)}</textarea>
+      <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:2px">
+        <button class="btn btn-ghost btn-mini" id="jlead-tpl-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary btn-mini" id="jlead-tpl-save" type="button">${e.id ? 'Save changes' : 'Save template'}</button></div></div>`;
+  const keep = () => { e.title = document.getElementById('jlead-tpl-title').value; e.text = document.getElementById('jlead-tpl-text').value; e.ja = document.getElementById('jlead-tpl-ja').value; };
+  ['jlead-tpl-title','jlead-tpl-text','jlead-tpl-ja'].forEach(id => document.getElementById(id).addEventListener('input', keep));
+  document.getElementById('jlead-tpl-cancel').addEventListener('click', () => { _jleadTplEdit = null; jleadTplRender(l); });
+  document.getElementById('jlead-tpl-save').addEventListener('click', () => { keep(); jleadTplSave(l); });
+  document.getElementById('jlead-tpl-tr').addEventListener('click', async (ev) => {
+    keep();
+    const btn = ev.currentTarget, src = String(e.text || '').trim();
+    if(!src){ showToast('Write the English first'); return; }
+    btn.disabled = true; btn.textContent = 'Translating…';
+    // {name} is swapped for a marker the translator will not touch, then restored.
+    const res = await jleadTrCall({ mode:'out', text: src.split('{name}').join('[[NAME]]') });
+    btn.disabled = false; btn.textContent = 'Translate from English';
+    if(!res.ok || !res.ja){ showToast(res.error || 'Translation failed'); return; }
+    e.ja = String(res.ja).split('[[NAME]]').join('{name}');
+    const ta = document.getElementById('jlead-tpl-ja'); if(ta) ta.value = e.ja;
+  });
+  document.getElementById('jlead-tpl-title').focus();
 }
 function jleadTplUse(l, t){
   const input = document.getElementById('jlead-chat-input'); if(!input) return;
@@ -21378,20 +21424,16 @@ function jleadTplUse(l, t){
   input.focus(); _jleadChatActiveAt = Date.now();
 }
 async function jleadTplSave(l){
-  const input = document.getElementById('jlead-chat-input'), ti = document.getElementById('jlead-tpl-title'), btn = document.getElementById('jlead-tpl-save');
-  const text = String((input && input.value) || '').trim(), title = String((ti && ti.value) || '').trim();
-  if(!text){ showToast('Write the reply first, then save it as a template'); return; }
-  if(!title){ showToast('Give the template a name'); if(ti) ti.focus(); return; }
-  // The customer's name becomes {name} again, so the template works for anyone.
-  const who = jleadTemplateName(l && l.name);
-  const generic = (x) => who && who.length > 1 ? String(x).split(who).join('{name}') : String(x);
-  const ja = jleadEnglishMode() ? (_jleadTrDraft && _jleadTrDraft.src === text ? _jleadTrDraft.ja : '') : (jleadHasJapanese(text) ? text : '');
-  if(btn) btn.disabled = true;
-  const res = await jleadTplCall({ action:'save', title, text: generic(text), ja: ja ? generic(ja) : '' });
+  const e = _jleadTplEdit; if(!e) return;
+  const title = String(e.title || '').trim(), text = String(e.text || '').trim(), ja = String(e.ja || '').trim();
+  if(!title){ showToast('Give the template a name'); return; }
+  if(!text){ showToast('Write the message first'); return; }
+  const btn = document.getElementById('jlead-tpl-save'); if(btn) btn.disabled = true;
+  const res = await jleadTplCall(e.id ? { action:'update', id: Number(e.id), title, text, ja } : { action:'save', title, text, ja });
   if(btn) btn.disabled = false;
   if(!res.ok){ showToast(res.error || 'Could not save the template'); return; }
-  showToast(ja ? 'Template saved with its Japanese' : 'Template saved');
-  _jleadTpls = null; await jleadTplLoad(l);
+  showToast(e.id ? 'Template updated' : 'Template saved');
+  _jleadTplEdit = null; _jleadTpls = null; await jleadTplLoad(l);
 }
 async function jleadTplDelete(l, id, btn){
   if(btn) btn.disabled = true;
