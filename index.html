@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23f"></script>
+<script src="pms-supabase.js?v=2026-09-23g"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20811,11 +20811,43 @@ function renderLeadClaimBlock(l){
     return;
   }
   const who = c.state === 'mine' ? 'You claimed this lead' : `Claimed by ${esc(c.byName)}`;
+  // A LINE lead can be taken over by anyone on the sales team (every one is
+  // auto-claimed for the Japan rep, so there is nothing left to "claim").
+  const canTake = c.state === 'other' && typeof isJLead === 'function' && isJLead(l) && typeof jleadCanChat === 'function' && jleadCanChat(l);
   box.innerHTML = `
-    <div style="padding:12px 14px;border:1px solid var(--line, #E4DBC9);background:var(--cream-2);border-radius:10px">
-      <div class="name-main">${who}</div>
-      <div class="name-sub">${fmtDate(c.at)} · ${esc(c.by)}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--line, #E4DBC9);background:var(--cream-2);border-radius:10px">
+      <div><div class="name-main">${who}</div>
+      <div class="name-sub">${fmtDate(c.at)} · ${esc(c.by)}</div></div>
+      ${canTake ? `<button class="btn" id="jlead-take-btn" type="button" title="Make this lead yours: you get the follow-ups, status changes and the Sales credit">Take this lead</button>` : ''}
     </div>`;
+  const tb = document.getElementById('jlead-take-btn');
+  if(tb) tb.addEventListener('click', () => jleadTake(l.id, tb));
+}
+
+// Sales rep takes a LINE lead from its current owner. Done by n8n (the leads
+// RLS only lets the owner or an admin change a lead); the lead records who it
+// was taken from.
+async function jleadTake(id, btn){
+  const l = leads.find(x => String(x.id) === String(id));
+  if(!l) return;
+  if(btn){ btn.disabled = true; btn.textContent = 'Taking…'; }
+  const res = await jleadChatCall('take', id);
+  if(!res.ok){
+    if(btn){ btn.disabled = false; btn.textContent = 'Take this lead'; }
+    showToast(res.error || 'Could not take the lead');
+    return;
+  }
+  Object.assign(l, { claimed_by: res.claimed_by, claimed_at: res.claimed_at, assignee: res.assignee, takenFrom: res.takenFrom });
+  renderLeadClaimBlock(l);
+  // Only the assignee select changes; unsaved notes or status in the drawer stay as typed.
+  const asSel = document.getElementById('lead-assignee');
+  if(asSel && String(_editingLeadId) === String(id)){
+    if(![...asSel.options].some(o => o.value === res.assignee)) asSel.insertAdjacentHTML('beforeend', `<option value="${esc(res.assignee)}">${esc((activeRole() || {}).name || res.assignee)}</option>`);
+    asSel.value = res.assignee; asSel.dataset.synced = res.assignee;
+  }
+  if(typeof renderJLeadCustomer === 'function') renderJLeadCustomer(l);
+  renderLeads();
+  showToast('This lead is yours now' + (res.takenFrom ? ' (was ' + res.takenFrom.split('@')[0] + ')' : ''));
 }
 
 async function claimLead(id){
