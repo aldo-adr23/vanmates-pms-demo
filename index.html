@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23e"></script>
+<script src="pms-supabase.js?v=2026-09-23f"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21000,6 +21000,15 @@ function jleadAgoShort(ms, now){
   const m = Math.max(0, Math.round((now - ms) / 60000));
   return m < 60 ? m + ' min' : m < 1440 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' d';
 }
+// The LINE chat is open to the whole sales team (an active sales_reps row), not
+// just the owner, so a non-Japanese rep can pick up any conversation through
+// English mode. Editing the lead itself (handled, follow-ups, customer mark)
+// stays with the owner and admins: that is what the leads RLS allows.
+function jleadCanChat(l){
+  if(jleadCanAct(l)) return true;
+  const me = String((activeRole() || {}).email || '').toLowerCase();
+  return !!me && (typeof salesReps !== 'undefined' ? salesReps : []).some(r => r && r.active !== false && String(r.email || r.id || '').toLowerCase() === me && String(r.id || '').indexOf('team:') !== 0);
+}
 function jleadCanAct(l){
   const who = activeRole() || {};
   return leadClaimState(l, who, typeof teamMembers !== 'undefined' ? teamMembers : []).state === 'mine' || who.role === 'admin';
@@ -21123,8 +21132,8 @@ function renderJLeadChat(l){
   jleadChatStop();
   if(!l || !isJLead(l)){ box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = 'block';
-  if(!jleadCanAct(l)){
-    box.innerHTML = `<div class="name-sub">LINE conversation — only the lead's owner or an admin can open it.</div>`;
+  if(!jleadCanChat(l)){
+    box.innerHTML = `<div class="name-sub">LINE conversation — only the sales team, the lead's owner or an admin can open it.</div>`;
     return;
   }
   box.innerHTML = `
