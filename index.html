@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-22n"></script>
+<script src="pms-supabase.js?v=2026-09-22o"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2085,6 +2085,12 @@
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input id="jleads-search" placeholder="Search by name, email, city, LINE id…" autocomplete="off" />
         </div>
+        <select id="jleads-filter-stage" class="form-input" style="max-width:190px" title="Customer = matches a closed deal, homestay client, tenant or won lead (or marked by hand)">
+          <option value="">All leads</option>
+          <option value="new">New (untouched)</option>
+          <option value="ongoing">Ongoing (in conversation)</option>
+          <option value="customer">Existing customers</option>
+        </select>
         <select id="jleads-filter-tier" class="form-input" style="max-width:200px">
           <option value="">All tiers</option>
           <option value="hot">Hot — link or booking intent</option>
@@ -3596,6 +3602,7 @@ hello@vanmates.com · vanmates.com</textarea>
     </div>
     <div class="modal-body">
       <div id="lead-claim-block" style="margin-bottom:14px"></div>
+      <div id="jlead-customer" style="display:none;margin-bottom:14px"></div>
       <div id="jlead-chat" style="display:none;margin-bottom:14px"></div>
       <div class="form-row" style="grid-template-columns:1fr 1fr 1fr">
             <div class="form-field"><label>Status</label><select class="form-input" id="lead-status"></select></div>
@@ -20636,28 +20643,98 @@ function jleadAddFollowUp(l, by, iso){
   return jleadFollowUps(l).concat([{ at: iso, by: String(by || '') }]);
 }
 
+// Customer or prospect? Some people who write to Maya already rent from us.
+// Nothing on the LINE side says so, so a lead is matched against the customer
+// records the portal has already loaded: closed deals, homestay clients,
+// tenants and leads won elsewhere. Email is the reliable key. A full name
+// (at least two romaji words, in any order and any case) is the fallback,
+// because 22 of the first 107 LINE leads left no email. A rep's manual call
+// (`customerOverride` 'yes' | 'no') beats both, since the deal ledger only
+// goes back to 2026 and a name match can be wrong.
+function jleadNameKey(name){
+  const w = String(name || '').toLowerCase().replace(/[^a-z]+/g, ' ').split(' ').filter(x => x.length > 1);
+  return w.length >= 2 ? w.sort().join(' ') : '';
+}
+function jleadEmailKey(e){
+  const k = String(e || '').trim().toLowerCase();
+  return k.indexOf('@') > 0 && !/@vanmates\.com$/.test(k) ? k : '';
+}
+function jleadCustomerIndex(src){
+  const idx = { byEmail: {}, byName: {} };
+  const add = (email, name, rec) => {
+    const e = jleadEmailKey(email), n = jleadNameKey(name);
+    if(e) (idx.byEmail[e] = idx.byEmail[e] || []).push(rec);
+    if(n) (idx.byName[n] = idx.byName[n] || []).push(rec);
+  };
+  const s = src || {};
+  (s.closedDeals || []).forEach(d => d && add(d.email, d.customer || d.name,
+    { kind:'deal', id: d.id, label: String(d.stage || 'Closed deal'), date: String(d.closed_at || d.move_in || '').slice(0, 10) }));
+  (s.homestayClients || []).forEach(c => c && add(c.email, c.name,
+    { kind:'homestay', id: c.id, label: 'Homestay client', date: String(c.arrival || c.checkIn || '').slice(0, 10) }));
+  (s.tenants || []).forEach(t => t && add(t.email, t.name,
+    { kind:'tenant', id: t.id, label: 'Tenant' + (t.property ? ' · ' + t.property : ''), date: String(t.moveIn || t.move_in || '').slice(0, 10) }));
+  (s.leads || []).forEach(l => l && String(l.status || '') === 'won' && add(l.email, l.name,
+    { kind:'won', id: l.id, label: 'Won lead', date: String(l.created_at || '').slice(0, 10) }));
+  return idx;
+}
+function jleadCustomer(l, idx){
+  const none = { is:false, via:'', records:[], latest:null };
+  if(!l) return none;
+  const ix = idx || { byEmail:{}, byName:{} };
+  const e = jleadEmailKey(l.email), n = jleadNameKey(l.name);
+  const byE = e ? (ix.byEmail[e] || []) : [];
+  const byN = n ? (ix.byName[n] || []) : [];
+  const seen = {}, records = [];
+  byE.concat(byN).forEach(r => { const k = r.kind + ':' + r.id; if(String(r.id) === String(l.id) || seen[k]) return; seen[k] = 1; records.push(r); });
+  records.sort((a,b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const latest = records[0] || null;
+  const ov = String(l.customerOverride || '');
+  if(ov === 'no') return { is:false, via:'manual', records, latest };
+  if(ov === 'yes') return { is:true, via:'manual', records, latest };
+  if(String(l.status || '') === 'won') return { is:true, via:'status', records, latest };
+  if(!records.length) return none;
+  const via = byE.some(r => String(r.id) !== String(l.id)) ? 'email' : 'name';
+  return { is:true, via, records, latest };
+}
+// Where the lead sits for sales: a customer already, a conversation someone has
+// worked (status moved on, Maya handed off, staff replied or marked it handled
+// in the portal, or a follow-up was logged), or untouched. Being claimed does
+// not count: every LINE lead is auto-assigned to the Japan rep on arrival.
+function jleadStage(l, idx){
+  if(jleadCustomer(l, idx).is) return 'customer';
+  const st = String((l && l.status) || 'new');
+  if(st !== 'new' || (l && (l.lastHandoffAt || l.handoffHandledAt)) || jleadFollowUps(l).length) return 'ongoing';
+  return 'new';
+}
+
 // `statusMatch` is injected rather than referenced so this core stays pure and
 // testable on its own; the caller passes leadStatusFilterMatches, which gives
 // JLeads the same 'open' default as the Leads list. `now` is injected for the
 // same reason. With the follow-up filter on 'due', the longest-overdue comes first.
-function selectJLeads(all, filters, statusMatch, now){
+function selectJLeads(all, filters, statusMatch, now, custIdx){
   const fu = (filters && filters.followup) || '';
+  const stage = (filters && filters.stage) || '';
   const t = now == null ? Date.now() : now;
   const list = (all || [])
     .filter(isJLead)
     .filter(l => statusMatch ? statusMatch(l, filters && filters.status) : true)
     .filter(l => jleadMatches(l, filters))
+    .filter(l => !stage || jleadStage(l, custIdx) === stage)
     .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : jleadFollowUp(l, t).state === fu));
   if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
   // Customers waiting for a human are pinned on top, longest-waiting first, in
-  // every sort. 'tier' then orders hot → qualified → new → untiered, newest
-  // first within a tier; the default is simply newest first.
+  // every sort. 'tier' then puts prospects before existing customers (a hot
+  // tier on a customer is not a new sale) and orders hot → qualified → new →
+  // untiered, newest first within a tier; the default is simply newest first.
   const byTier = filters && filters.sort === 'tier';
   const rank = (l) => { const i = JLEAD_TIERS.indexOf(jleadTier(l)); return i < 0 ? -1 : i; };
+  const cust = {};
+  if(byTier) list.forEach(l => { cust[l.id] = jleadCustomer(l, custIdx).is; });
   return list.sort((a,b) => {
     const ha = jleadHandoff(a), hb = jleadHandoff(b);
     if(ha.waiting !== hb.waiting) return ha.waiting ? -1 : 1;
     if(ha.waiting) return ha.at - hb.at;
+    if(byTier && cust[a.id] !== cust[b.id]) return cust[a.id] ? 1 : -1;
     if(byTier && rank(a) !== rank(b)) return rank(b) - rank(a);
     return String(b.created_at || '').localeCompare(String(a.created_at || ''));
   });
@@ -20788,7 +20865,27 @@ function renderLeads(){
   renderJLeads();
 }
 
-const JLEAD_FILTERS = { search:'', tier:'', housing:'', status:'open', followup:'', sort:'' };
+const JLEAD_FILTERS = { search:'', stage:'', tier:'', housing:'', status:'open', followup:'', sort:'' };
+
+// Built per render from what the portal already holds; ~2k rows, cheap.
+function jleadCustIdx(){
+  return jleadCustomerIndex({
+    closedDeals:     typeof closedDeals !== 'undefined' ? closedDeals : [],
+    homestayClients: typeof homestayClients !== 'undefined' ? homestayClients : [],
+    tenants:         typeof tenants !== 'undefined' ? tenants : [],
+    leads:           typeof leads !== 'undefined' ? leads : []
+  });
+}
+function jleadCustomerDate(d){ return d ? fmtDate(d) : ''; }
+function jleadCustomerBadge(c){
+  if(!c.is) return '';
+  const r = c.latest;
+  const tip = c.records.map(x => x.label + (x.date ? ' · ' + x.date : '')).join('\n')
+    + (c.via === 'name' ? '\n(matched by name only, check before treating as a customer)' : '')
+    + (c.via === 'manual' ? '\n(marked by hand)' : '');
+  const txt = 'Customer' + (r ? ' · ' + r.label + (r.date ? ' ' + jleadCustomerDate(r.date) : '') : '');
+  return `<div style="margin-top:3px" title="${esc(tip)}"><span class="badge" style="background:#1f9d571a;color:#1f9d57;border-color:#1f9d5733">${esc(txt)}${c.via === 'name' ? ' ?' : ''}</span></div>`;
+}
 
 function jleadTierBadge(t){
   if(!t) return '<span class="name-sub">—</span>';
@@ -20812,7 +20909,8 @@ function renderJLeads(){
   const body = document.getElementById('jleads-body');
   if(!body) return;
   const now = Date.now();
-  const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches, now);
+  const custIdx = jleadCustIdx();
+  const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches, now, custIdx);
   const countEl = document.getElementById('jleads-count');
   if(countEl) countEl.textContent = list.length;
   const dueEl = document.getElementById('jleads-due');
@@ -20833,7 +20931,7 @@ function renderJLeads(){
   }
   body.innerHTML = list.map(l => `
     <tr data-lead="${esc(l.id)}" style="cursor:pointer">
-      <td><div class="name-main">${esc(l.name || '—')}</div></td>
+      <td><div class="name-main">${esc(l.name || '—')}</div>${jleadCustomerBadge(jleadCustomer(l, custIdx))}</td>
       <td>${jleadContactCell(l)}</td>
       <td>${esc(l.city || '—')}</td>
       <td>${esc(jleadHousing(l) || '—')}</td>
@@ -20894,6 +20992,49 @@ function jleadFollowUpState(l, now){
     ? `<button class="btn" type="button" data-jlead-followed="${esc(l.id)}" style="margin-top:4px;padding:3px 10px;font-size:12px">Done ✓</button>`
     : `<div class="name-sub">${c.state === 'unclaimed' ? 'claim to follow up' : 'for ' + esc(c.byName)}</div>`;
   return `<span class="badge" style="background:#B94A3F1a;color:#B94A3F;border-color:#B94A3F33">Due · ${esc(JLEAD_STEP_LABEL[f.step - 1])}</span>${last}${btn}`;
+}
+
+// Customer or prospect, in the lead drawer: what the match found, and the rep's
+// override when the records are missing (pre-2026 customers, no email) or wrong.
+function renderJLeadCustomer(l){
+  const box = document.getElementById('jlead-customer');
+  if(!box) return;
+  if(!l || !isJLead(l)){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  const c = jleadCustomer(l, jleadCustIdx());
+  const ov = String(l.customerOverride || '');
+  const head = c.is
+    ? (c.via === 'manual' ? 'Existing customer (marked by hand)' : c.via === 'status' ? 'Existing customer (lead won)' : c.via === 'name' ? 'Probably an existing customer (same name, check it)' : 'Existing customer')
+    : (ov === 'no' ? 'Not a customer (marked by hand)' : 'New prospect: no customer record found');
+  const recs = c.records.slice(0, 5).map(r => `<div class="name-sub">${esc(r.label)}${r.date ? ' · ' + esc(jleadCustomerDate(r.date)) : ''}</div>`).join('')
+    + (c.records.length > 5 ? `<div class="name-sub">+ ${c.records.length - 5} more</div>` : '');
+  const btn = (v, t) => `<button class="btn" type="button" data-jlead-cust="${v}" style="padding:3px 10px;font-size:12px">${t}</button>`;
+  const btns = !jleadCanAct(l) ? '' : [
+    ov !== 'yes' && !(c.is && c.via !== 'manual') ? btn('yes', 'Mark as customer') : '',
+    ov !== 'no' && c.is ? btn('no', 'Not a customer') : '',
+    ov ? btn('', 'Back to automatic') : ''
+  ].filter(Boolean).join(' ');
+  const col = c.is ? '#1f9d57' : '#7A6E5E';
+  box.style.display = 'block';
+  box.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 14px;border:1px solid ${col}33;background:${col}0d;border-radius:10px">
+      <div><div class="name-main" style="color:${col}">${esc(head)}</div>${recs}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${btns}</div></div>`;
+  box.querySelectorAll('button[data-jlead-cust]').forEach(b => b.addEventListener('click', () => setJLeadCustomer(l.id, b.dataset.jleadCust, b)));
+}
+async function setJLeadCustomer(id, v, btn){
+  const l = leads.find(x => String(x.id) === String(id));
+  if(!l) return;
+  if(!jleadCanAct(l)){ showToast('Claim this lead first'); return; }
+  const patch = { customerOverride: v };
+  if(btn) btn.disabled = true;
+  if(window.vmDb && typeof vmDb.updateLead === 'function'){
+    if(!vmDb.sb){ showToast('Not saved — no database connection'); if(btn) btn.disabled = false; return; }
+    const ok = await vmDb.updateLead(Object.assign({}, l, patch));   // toasts the reason on failure
+    if(!ok){ if(btn) btn.disabled = false; return; }
+  }
+  Object.assign(l, patch);
+  renderJLeadCustomer(l);
+  renderJLeads();
+  showToast(v === 'yes' ? 'Marked as an existing customer' : v === 'no' ? 'Marked as not a customer' : 'Back to automatic matching');
 }
 
 // A rep has picked up the handed-off customer (in the LINE console). Clears the
@@ -21241,6 +21382,7 @@ function openLead(id){
   if(!l) return;
   _editingLeadId = l.id;
   fillLeadFields(l);
+  if(typeof renderJLeadCustomer === 'function') renderJLeadCustomer(l);
   if(typeof renderJLeadChat === 'function') renderJLeadChat(l);
   document.getElementById('lead-modal-backdrop').classList.add('open');
 }
@@ -21295,6 +21437,7 @@ document.getElementById('leads-search')       && document.getElementById('leads-
 document.getElementById('leads-filter-source')&& document.getElementById('leads-filter-source').addEventListener('change', e => { LEAD_FILTERS.source = e.target.value; renderLeads(); });
 document.getElementById('leads-filter-status')&& document.getElementById('leads-filter-status').addEventListener('change', e => { LEAD_FILTERS.status = e.target.value; renderLeads(); });
 document.getElementById('jleads-search')       && document.getElementById('jleads-search').addEventListener('input',  e => { JLEAD_FILTERS.search = e.target.value; renderJLeads(); });
+document.getElementById('jleads-filter-stage') && document.getElementById('jleads-filter-stage').addEventListener('change', e => { JLEAD_FILTERS.stage = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-tier')  && document.getElementById('jleads-filter-tier').addEventListener('change', e => { JLEAD_FILTERS.tier = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-housing')&& document.getElementById('jleads-filter-housing').addEventListener('change', e => { JLEAD_FILTERS.housing = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-status')&& document.getElementById('jleads-filter-status').addEventListener('change', e => { JLEAD_FILTERS.status = e.target.value; renderJLeads(); });
