@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-24g"></script>
+<script src="pms-supabase.js?v=2026-09-24h"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -13366,7 +13366,9 @@ function ddDaysSub(k){
    the first 186 live rows were "processing", so a status column said nothing
    while 155 refunds sat past the legal limit mid-list. */
 const DD_GROUPS = [
-  { key:"overdue",  label:"Overdue",    sub:`moved out more than ${DD_LEGAL_DAYS} days ago`, open:true },
+  { key:"overdue45", label:"Overdue 45+ days",  sub:"moved out more than 45 days ago",  open:true },
+  { key:"overdue30", label:"Overdue 31–45 days", sub:"moved out 31–45 days ago",         open:true },
+  { key:"overdue15", label:`Overdue ${DD_LEGAL_DAYS+1}–30 days`, sub:`moved out ${DD_LEGAL_DAYS+1}–30 days ago`, open:true },
   { key:"due",      label:"Due now",    sub:`moved out in the last ${DD_LEGAL_DAYS} days`,  open:true },
   { key:"upcoming", label:"Upcoming",   sub:"not moved out yet",                             open:false },
   { key:"noinfo",   label:"Needs info", sub:"no move-out date",                              open:false },
@@ -13385,7 +13387,8 @@ function ddBucket(rec, today){
   const d = ddDaysSince(rec.moveOut, today);
   if (d == null) return "noinfo";
   if (d < 0) return "upcoming";
-  return d <= DD_LEGAL_DAYS ? "due" : "overdue";
+  if (d <= DD_LEGAL_DAYS) return "due";
+  return d > 45 ? "overdue45" : d > 30 ? "overdue30" : "overdue15";
 }
 function ddGroup(list, today){
   // Keeps the incoming (already sorted) order inside each group.
@@ -13518,7 +13521,7 @@ function renderDeposits(){
   };
   body.innerHTML = groups.map(g => {
     const open = forceOpen || (g.key in openState ? openState[g.key] : g.open);
-    const tone = g.key === "overdue" ? "var(--red-dark)" : g.key === "done" ? "#3e6049" : "var(--ink)";
+    const tone = g.key.startsWith("overdue") ? "var(--red-dark)" : g.key === "done" ? "#3e6049" : "var(--ink)";
     return `
       <tr class="dd-group" data-dd-group="${g.key}" style="cursor:pointer;background:var(--cream)">
         <td colspan="4" style="padding:12px 14px">
