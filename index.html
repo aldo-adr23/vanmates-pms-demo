@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23h"></script>
+<script src="pms-supabase.js?v=2026-09-23i"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2115,6 +2115,7 @@
         </select>
         <select id="jleads-filter-followup" class="form-input" style="max-width:210px">
           <option value="">All follow-ups</option>
+          <option value="reply">New replies (customer wrote back)</option>
           <option value="handoff">Waiting for staff (Maya handed off)</option>
           <option value="due">Follow up today</option>
           <option value="waiting">Waiting (nudged recently)</option>
@@ -20758,12 +20759,29 @@ function leadAddOwnerEvent(l, ev){
   return leadOwnerHistory(l).concat([{ at: String(ev.at), from: String(ev.from || ''), to: String(ev.to), by: String(ev.by || ''), how: String(ev.how || 'reassigned') }]);
 }
 
+// New replies. LINE Maya stamps the lead on every customer message:
+// lastCustomerAt / lastCustomerText, and lastCustomerWaiting 'yes' when Maya
+// stayed silent because staff are handling the customer ('no' when Maya
+// answered). A reply is pending until staff answer from the portal (which
+// stamps handoffHandledAt) — 'unread' until this viewer opens the chat after
+// it arrived (`seenAt`, per browser), 'read' after.
+function jleadNewReply(l, seenAt){
+  const at = jleadTs(l && l.lastCustomerAt);
+  if(at == null || String((l && l.lastCustomerWaiting) || '') !== 'yes') return { state:'none' };
+  const answered = jleadTs(l && l.handoffHandledAt);
+  if(answered != null && answered >= at) return { state:'none' };
+  const seen = jleadTs(seenAt);
+  return { state: seen != null && seen >= at ? 'read' : 'unread', at, text: String((l && l.lastCustomerText) || '') };
+}
+
 // `statusMatch` is injected rather than referenced so this core stays pure and
 // testable on its own; the caller passes leadStatusFilterMatches, which gives
 // JLeads the same 'open' default as the Leads list. `now` is injected for the
 // same reason. With the follow-up filter on 'due', the longest-overdue comes first.
 function selectJLeads(all, filters, statusMatch, now, custIdx){
   const fu = (filters && filters.followup) || '';
+  const seen = (filters && filters.seen) || {};
+  const reply = (l) => jleadNewReply(l, seen[l.id]);
   const stage = (filters && filters.stage) || '';
   const t = now == null ? Date.now() : now;
   const list = (all || [])
@@ -20771,7 +20789,7 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     .filter(l => statusMatch ? statusMatch(l, filters && filters.status) : true)
     .filter(l => jleadMatches(l, filters))
     .filter(l => !stage || jleadStage(l, custIdx) === stage)
-    .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : jleadFollowUp(l, t).state === fu));
+    .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : fu === 'reply' ? reply(l).state !== 'none' : jleadFollowUp(l, t).state === fu));
   if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
   // Customers waiting for a human are pinned on top, longest-waiting first, in
   // every sort. 'tier' then puts prospects before existing customers (a hot
@@ -20785,6 +20803,11 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     const ha = jleadHandoff(a), hb = jleadHandoff(b);
     if(ha.waiting !== hb.waiting) return ha.waiting ? -1 : 1;
     if(ha.waiting) return ha.at - hb.at;
+    // Then customers who wrote back and are waiting on staff: unread first,
+    // each group newest reply first.
+    const ra = reply(a), rb = reply(b), rr = (r) => r.state === 'unread' ? 2 : r.state === 'read' ? 1 : 0;
+    if(rr(ra) !== rr(rb)) return rr(rb) - rr(ra);
+    if(rr(ra)) return rb.at - ra.at;
     if(byTier && cust[a.id] !== cust[b.id]) return cust[a.id] ? 1 : -1;
     if(byTier && rank(a) !== rank(b)) return rank(b) - rank(a);
     return String(b.created_at || '').localeCompare(String(a.created_at || ''));
@@ -20965,6 +20988,27 @@ function renderLeads(){
 
 const JLEAD_FILTERS = { search:'', stage:'', tier:'', housing:'', status:'open', followup:'', sort:'' };
 
+// When this viewer last opened each lead's LINE chat (per browser). A customer
+// reply newer than that shows as unread.
+var _jleadSeen = null, _jleadUnreadIds = null;
+function jleadSeenMap(){
+  if(_jleadSeen) return _jleadSeen;
+  try { _jleadSeen = JSON.parse(localStorage.getItem('jleads.seen') || '{}') || {}; } catch(_){ _jleadSeen = {}; }
+  return _jleadSeen;
+}
+function jleadMarkSeen(id){
+  const m = jleadSeenMap(); m[id] = new Date().toISOString();
+  try { localStorage.setItem('jleads.seen', JSON.stringify(m)); } catch(_){}
+}
+function jleadReplyBlock(l, now){
+  const r = jleadNewReply(l, jleadSeenMap()[l.id]);
+  if(r.state === 'none') return '';
+  const c = r.state === 'unread' ? '#2563eb' : '#7A6E5E';
+  const label = r.state === 'unread' ? 'New reply' : 'Awaiting reply';
+  return `<div style="margin-bottom:6px" title="${esc(r.text)}"><span class="badge" style="background:${r.state === 'unread' ? c : c + '1a'};color:${r.state === 'unread' ? '#fff' : c};border-color:${c}33">${label} · ${esc(jleadAgoShort(r.at, now))}</span>`
+    + (r.text ? `<div class="name-sub" style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">「${esc(r.text)}」</div>` : '') + `</div>`;
+}
+
 // Built per render from what the portal already holds; ~2k rows, cheap.
 function jleadCustIdx(){
   return jleadCustomerIndex({
@@ -21008,6 +21052,7 @@ function renderJLeads(){
   if(!body) return;
   const now = Date.now();
   const custIdx = jleadCustIdx();
+  JLEAD_FILTERS.seen = jleadSeenMap();
   const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches, now, custIdx);
   const countEl = document.getElementById('jleads-count');
   if(countEl) countEl.textContent = list.length;
@@ -21016,7 +21061,19 @@ function renderJLeads(){
     const all = typeof leads !== 'undefined' ? leads : [];
     const due = all.filter(l => jleadFollowUp(l, now).state === 'due').length;
     const waiting = all.filter(l => isJLead(l) && jleadHandoff(l).waiting).length;
-    dueEl.innerHTML = (waiting ? '· <b style="color:#B94A3F">' + waiting + ' waiting for staff</b> ' : '') + (due ? '· ' + due + ' to follow up today' : '');
+    const unread = all.filter(l => isJLead(l) && jleadNewReply(l, jleadSeenMap()[l.id]).state === 'unread');
+    dueEl.innerHTML = (unread.length ? '· <b style="color:#2563eb">' + unread.length + ' new ' + (unread.length === 1 ? 'reply' : 'replies') + '</b> ' : '')
+      + (waiting ? '· <b style="color:#B94A3F">' + waiting + ' waiting for staff</b> ' : '') + (due ? '· ' + due + ' to follow up today' : '');
+    // A reply that arrives while the portal is open (realtime) gets a toast.
+    const ids = unread.map(l => l.id);
+    if(_jleadUnreadIds && all.length){
+      const fresh = unread.filter(l => _jleadUnreadIds.indexOf(l.id) < 0 && l.id !== _jleadChatLead);
+      if(fresh.length && typeof showToast === 'function') showToast(fresh.length === 1 ? 'New LINE reply from ' + (fresh[0].name || 'a customer') : fresh.length + ' new LINE replies');
+    }
+    if(all.length) _jleadUnreadIds = ids;   // baseline set once leads have loaded
+    // The open chat refreshes at once when its customer writes, instead of on the next 20 s poll.
+    const open = _jleadChatLead ? all.find(l => l.id === _jleadChatLead) : null;
+    if(open && open.lastCustomerAt && open.lastCustomerAt !== _jleadChatCustAt){ const first = _jleadChatCustAt === undefined; _jleadChatCustAt = open.lastCustomerAt; if(!first) jleadChatLoad(open.id, false, true); }
   }
   const emptyEl = document.getElementById('jleads-empty');
   if(emptyEl){
@@ -21085,7 +21142,7 @@ function jleadHandoffBlock(l, now){
     + btn + `</div>`;
 }
 function jleadFollowUpCell(l, now){
-  return jleadHandoffBlock(l, now) + jleadFollowUpState(l, now);
+  return jleadReplyBlock(l, now) + jleadHandoffBlock(l, now) + jleadFollowUpState(l, now);
 }
 function jleadFollowUpState(l, now){
   const f = jleadFollowUp(l, now);
@@ -21172,7 +21229,9 @@ const JLEAD_CHAT_URL = 'https://adr23.app.n8n.cloud/webhook/jleads-line-chat';
 // skipped while the tab is hidden, a full refresh (staff mode + LINE quota) only
 // on open, after a send/hand-back and every 5th tick, and none after 15 idle min.
 const JLEAD_CHAT_POLL_MS = 20000, JLEAD_CHAT_IDLE_MS = 15 * 60000, JLEAD_CHAT_FULL_EVERY = 5;
-let _jleadChatTimer = null, _jleadChatLead = null, _jleadChatBusy = false, _jleadChatTick = 0, _jleadChatActiveAt = 0;
+var _jleadChatCustAt;
+// var, not let: renderJLeads (defined earlier) reads these and may run first.
+var _jleadChatTimer = null, _jleadChatLead = null, _jleadChatBusy = false, _jleadChatTick = 0, _jleadChatActiveAt = 0;
 async function jleadChatToken(refresh){
   const sb = window.vmDb && window.vmDb.sb; if(!sb) return '';
   if(refresh){ try { await sb.auth.refreshSession(); } catch(_){} }
@@ -21220,7 +21279,7 @@ function renderJLeadChat(l){
         </div>
       </div>
     </div>`;
-  _jleadChatLead = l.id; _jleadChatMsgs = []; _jleadTrDraft = null;
+  _jleadChatLead = l.id; _jleadChatMsgs = []; _jleadTrDraft = null; _jleadChatCustAt = l.lastCustomerAt || '';
   const en = document.getElementById('jlead-chat-en');
   en.checked = jleadEnglishMode();
   en.addEventListener('change', () => {
@@ -21260,6 +21319,11 @@ async function jleadChatLoad(leadId, scroll, light){
   if(!res.ok){ t.innerHTML = `<div class="name-sub">${esc(res.error || ('Could not load the conversation (HTTP ' + res.http + ').'))}</div>`; return; }
   _jleadChatMsgs = res.messages || [];
   jleadChatRender(scroll);
+  // Opening (or refreshing) the chat means this viewer has seen the latest reply.
+  const lead = leads.find(x => x.id === leadId);
+  const before = lead ? jleadNewReply(lead, jleadSeenMap()[leadId]).state : 'none';
+  jleadMarkSeen(leadId);
+  if(before === 'unread') renderJLeads();
   if(jleadEnglishMode()) jleadTranslateThread(leadId);
   if(res.staffMode === null || res.staffMode === undefined) return;   // light refresh: keep mode + quota as shown
   const mode = document.getElementById('jlead-chat-mode');
