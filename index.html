@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-24f"></script>
+<script src="pms-supabase.js?v=2026-09-24g"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1362,6 +1362,11 @@
     <button class="nav-item" data-view="deposits">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><circle cx="20" cy="20" r="3" fill="currentColor" stroke="none" opacity=".15"/></svg>
       Damage deposits
+      <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="checkouts">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+      Checkouts
       <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="financials">
@@ -2627,6 +2632,42 @@
     </section>
 
         <!-- ============ DAMAGE DEPOSITS ============ -->
+    <section class="view" data-view="checkouts">
+      <div class="filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="cko-search" placeholder="Search by resident, email, house, room or checkout ID…" autocomplete="off" />
+        </div>
+        <select id="cko-filter-flag" class="form-input" style="max-width:220px">
+          <option value="">All cases</option>
+          <option value="action">Needs action</option>
+          <option value="short_notice">Short notice</option>
+          <option value="short_notice_review_required">Review requested</option>
+          <option value="unverified">Unverified</option>
+          <option value="mirror_failed">Asana mirror failed</option>
+          <option value="email_failed">Email failed</option>
+          <option value="refund_change_requested">Refund change requested</option>
+          <option value="email_unconfirmed">Email unconfirmed</option>
+        </select>
+        <select id="cko-filter-city" class="form-input" style="max-width:170px">
+          <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
+        </select>
+        <button class="btn btn-ghost" id="cko-refresh" type="button">Refresh</button>
+      </div>
+      <div class="card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px">
+          <div class="card-title"><b id="cko-count">0</b> checkouts</div>
+          <div class="name-sub">Submitted on vanmates.com/checkout · read-only for now</div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Resident</th><th>House / room</th><th>Move-out</th><th>Notice</th><th>Status</th><th>Flags</th><th>Submitted</th></tr></thead>
+          <tbody id="cko-body"></tbody>
+        </table>
+        </div>
+        <div id="cko-empty" class="name-sub" style="display:none;padding:28px;text-align:center">No checkouts match.</div>
+      </div>
+    </section>
     <section class="view" data-view="deposits">
 
       <div class="kpi-grid">
@@ -7370,9 +7411,9 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
-                nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits"]},
+                nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
@@ -7618,6 +7659,7 @@ const ALL_PAGES = [
   ["vacancies",        "Vacancies"],
   ["maintenance",      "Maintenance"],
   ["deposits",         "Damage deposits"],
+  ["checkouts",        "Checkouts"],
   ["financials",       "Financials"],
   ["team",             "Team"],
   ["settings",         "Settings"],
@@ -8185,7 +8227,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
-    "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits",
+    "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits","checkouts":"Checkouts",
     "team":"Team","settings":"Settings"
   };
   const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
@@ -9792,6 +9834,7 @@ const titles = {
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
+  checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
   assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
@@ -9835,6 +9878,7 @@ function goToView(v, savedView){
   if(v === "homestay-finance" && typeof loadHomestayFinanceLive === "function") loadHomestayFinanceLive();
   if(v === "assistants" && typeof asOpen === "function") asOpen();
   if(v === "sales" && typeof renderSales === "function") renderSales();
+  if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
 
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
@@ -19963,6 +20007,237 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
            leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel, byRep };
 }
 /* SALES-CORE-END */
+/* CHECKOUT-CORE-START */
+/* Checkouts page (Phase 1, read-only). vanmates.com/checkout ran the rules
+   when the resident submitted and stored every computed value on the case
+   (notice days, short flag, fees and wording shown), so this core only
+   shapes, filters, orders and labels. Spec: rina
+   docs/superpowers/specs/2026-09-24-checkout-phase1-design.md */
+const CKO_FLAG_LABELS = {
+  short_notice: 'Short notice',
+  short_notice_review_required: 'Review requested',
+  unverified: 'Unverified',
+  mirror_failed: 'Asana mirror failed',
+  email_failed: 'Email failed',
+  refund_change_requested: 'Refund change requested',
+  email_unconfirmed: 'Email unconfirmed',
+};
+// Flags that mean somebody has to do something. Plain short notice is information.
+// refund_change_requested leads: staff must confirm the new refund details before paying.
+const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'short_notice_review_required', 'email_failed', 'email_unconfirmed', 'unverified'];
+const CKO_EVENT_LABELS = {
+  created: 'Submitted', resubmitted: 'Resubmitted', mirror_ok: 'Asana task created', mirror_comment: 'Asana task updated',
+  mirror_failed: 'Asana mirror failed', email_sent: 'Confirmation emailed', email_failed: 'Email failed',
+  refund_change_requested: 'Refund change requested', email_unconfirmed: 'Email sent, not recorded',
+};
+function ckoFlagLabel(f){ return CKO_FLAG_LABELS[f] || String(f || '').replace(/_/g, ' '); }
+function ckoNeedsAction(c){ return (c.flags || []).some(f => CKO_ACTION_FLAGS.indexOf(f) !== -1); }
+function ckoFromRow(r){
+  const d = (r && r.data) || {};
+  return {
+    id: r.id, email: r.email || '', name: d.name || r.email || '', city: d.city || '', house: d.house || '', room: d.room || '',
+    moveOut: r.move_out_date || '', noticeDays: r.notice_days == null ? null : r.notice_days, short: !!r.short_notice,
+    status: r.status || '', flags: Array.isArray(r.flags) ? r.flags : [], verified: !!r.verified,
+    asanaGid: r.asana_gid || '', createdAt: r.created_at || '', data: d,
+  };
+}
+// f = { q, flag: '' | 'action' | <flag>, city }
+function ckoFilter(cases, f){
+  f = f || {};
+  const q = String(f.q || '').trim().toLowerCase();
+  return (cases || []).filter(c => {
+    if (f.city && c.city !== f.city) return false;
+    if (f.flag === 'action' && !ckoNeedsAction(c)) return false;
+    if (f.flag && f.flag !== 'action' && c.flags.indexOf(f.flag) === -1) return false;
+    if (q && [c.id, c.name, c.email, c.house, c.room].join(' ').toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+}
+function ckoSort(cases){
+  return (cases || []).slice().sort((a, b) =>
+    (ckoNeedsAction(b) - ckoNeedsAction(a)) ||
+    String(a.moveOut).localeCompare(String(b.moveOut)) ||
+    String(a.createdAt).localeCompare(String(b.createdAt)));
+}
+function ckoNoticeText(c){
+  if (c.noticeDays == null) return '—';
+  return c.noticeDays + (c.noticeDays === 1 ? ' day' : ' days') + (c.short ? ' · short' : '');
+}
+function ckoAsanaUrl(gid){ return gid ? 'https://app.asana.com/0/1108699774415541/' + encodeURIComponent(gid) : ''; }
+function ckoTimeline(events){
+  const q = (v) => (v == null ? '?' : v);
+  return (events || []).slice().sort((a, b) => String(a.at).localeCompare(String(b.at))).map(e => {
+    const after = e.after || {}, before = e.before || {};
+    let detail = '';
+    if (e.type === 'created') detail = `move-out ${q(after.move_out_date)}, notice ${q(after.notice_days)} days`;
+    else if (e.type === 'resubmitted') detail = `move-out ${q(before.move_out_date)} → ${q(after.move_out_date)}, notice ${q(before.notice_days)} → ${q(after.notice_days)} days`;
+    else if (after.message) detail = String(after.message);
+    else if (after.step) detail = 'at ' + after.step;
+    return { at: e.at, who: String(e.actor || '').replace(/^resident:/, ''), what: CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' '), detail };
+  });
+}
+// Timestamps are stored in UTC; portal staff work in Pacific time, so dates and
+// times on this page are shown in America/Vancouver (labelled PT).
+const CKO_TZ_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+function ckoLocal(ts){
+  const t = ts ? new Date(ts) : null;
+  if (!t || isNaN(t.getTime())) return { date: '', time: '' };
+  const p = {};
+  CKO_TZ_FMT.formatToParts(t).forEach(x => { p[x.type] = x.value; });
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` };
+}
+/* CHECKOUT-CORE-END */
+/* ---- Checkouts (DOM side of CHECKOUT-CORE) -------------------------------
+   Read when the page is opened, not hydrated: cases are few, and bank
+   details (checkout_refund_details) are never read here at all. Paged the
+   same way as selectAll() because PostgREST stops at 1,000 rows. */
+const CKO_STATE = { q: '', flag: '', city: '' };
+let ckoCases = null, ckoLoading = null;
+// Drawer token: every open (and every close) bumps it, so a response that
+// arrives after the user moved on is dropped instead of overwriting the panel.
+let ckoOpenSeq = 0;
+function ckoChip(f){
+  const cls = CKO_ACTION_FLAGS.indexOf(f) !== -1 ? 'red' : 'blue';
+  return `<span class="tag-pill ${cls}" style="font-size:11px;margin:1px">${esc(ckoFlagLabel(f))}</span>`;
+}
+async function loadCheckouts(force){
+  if (ckoLoading) return ckoLoading;
+  if (ckoCases && !force) { renderCheckouts(); return; }
+  const sb = window.vmDb && window.vmDb.sb;
+  const body = document.getElementById('cko-body');
+  if (!sb) { if (body) body.innerHTML = '<tr><td colspan="7" class="name-sub">Not connected to the database.</td></tr>'; return; }
+  if (body && !ckoCases) body.innerHTML = '<tr><td colspan="7" class="name-sub">Loading…</td></tr>';
+  ckoLoading = (async () => {
+    try {
+      const rows = [], PAGE = 1000;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await sb.from('checkout_cases')
+          .select('id,email,status,flags,verified,notice_received_at,move_out_date,notice_days,short_notice,asana_gid,data,created_at')
+          .is('deleted_at', null).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, from + PAGE - 1);
+        if (error) throw error;
+        rows.push(...(data || []));
+        if (!data || data.length < PAGE) break;
+      }
+      ckoCases = rows.map(ckoFromRow);
+      renderCheckouts();
+    } catch (e) {
+      console.error('[checkouts] load failed', e);
+      if (body) body.innerHTML = `<tr><td colspan="7" class="name-sub">Could not load checkouts: ${esc(e.message || e)}</td></tr>`;
+    } finally { ckoLoading = null; }
+  })();
+  return ckoLoading;
+}
+function renderCheckouts(){
+  const body = document.getElementById('cko-body');
+  if (!body || !ckoCases) return;
+  const rows = ckoSort(ckoFilter(ckoCases, CKO_STATE));
+  document.getElementById('cko-count').textContent = rows.length;
+  document.getElementById('cko-empty').style.display = rows.length ? 'none' : '';
+  const badge = document.querySelector('.nav-item[data-view="checkouts"] .nav-count');
+  if (badge) badge.textContent = ckoCases.filter(ckoNeedsAction).length || '—';
+  body.innerHTML = rows.map(c => `<tr data-cko-id="${esc(c.id)}" style="cursor:pointer">
+      <td><b>${esc(c.name)}</b><div class="name-sub">${esc(c.id)} · ${esc(c.email)}</div></td>
+      <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
+      <td>${esc(fmtDate(c.moveOut))}</td>
+      <td>${esc(ckoNoticeText(c))}</td>
+      <td>${esc(c.status)}</td>
+      <td>${c.flags.map(ckoChip).join(' ')}</td>
+      <td>${esc(fmtDate(ckoLocal(c.createdAt).date))}</td>
+    </tr>`).join('');
+}
+async function openCheckout(id){
+  const tok = ++ckoOpenSeq;
+  if (!ckoCases) await loadCheckouts();
+  if (tok !== ckoOpenSeq) return false;
+  if (!ckoCases) { if (typeof showToast === 'function') showToast('Could not load checkouts'); return false; }
+  const c = ckoCases.find(x => x.id === id);
+  if (!c) { if (typeof showToast === 'function') showToast('Checkout not found'); return false; }
+  // Open straight away with the header and a loading body, so a slow events
+  // read never looks like a dead click; the body is filled in below.
+  document.getElementById('panel-hero').textContent = (c.name || '?').slice(0, 1).toUpperCase();
+  document.getElementById('panel-title').innerHTML = esc(c.name);
+  document.getElementById('panel-sub').textContent = `${c.id} · ${c.house} · ${c.room}${c.city ? ' · ' + c.city : ''}`;
+  document.getElementById('panel-meta').innerHTML = c.flags.map(ckoChip).join(' ');
+  document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}" class="name-sub" style="padding:18px 0">Loading…</div>`;
+  document.getElementById('detail-panel').classList.add('open');
+  document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+  document.getElementById('panel-backdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  let events = [];
+  try {
+    const { data, error } = await window.vmDb.sb.from('checkout_events').select('at,actor,type,before,after').eq('case_id', id).order('at', { ascending: true });
+    if (error) throw error;
+    events = data || [];
+  } catch (e) { console.error('[checkouts] events failed', e); }
+  // Still ours? Another checkout, a close, or another feature's drawer may
+  // have taken the shared panel while we waited.
+  if (tok !== ckoOpenSeq || !document.querySelector(`#panel-body [data-cko-tok="${tok}"]`)) return false;
+  const d = c.data || {}, acks = d.acks || {}, dep = acks.deposit || {}, sn = acks.short_notice, n = d.notice || {}, k = d.keys || {}, x = d.exception;
+  const kv = (label, value) => `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${esc(label)}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
+  const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${esc(t)}</h4>`;
+  const money = (v) => (v == null ? '—' : '$' + esc(v));
+  const day = (ts) => fmtDate(ckoLocal(ts).date);
+  document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}">
+    ${h('Move-out')}
+    ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
+    ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
+    ${kv('Notice', esc(ckoNoticeText(c)) + (n.required ? ` <span class="name-sub">of ${esc(n.required)} required</span>` : ''))}
+    ${kv('Status', esc(c.status))}
+    ${kv('Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
+    ${kv('Submitted', esc(day(c.createdAt)) + (ckoLocal(c.createdAt).time ? ' ' + esc(ckoLocal(c.createdAt).time) + ' <span class="name-sub">PT</span>' : ''))}
+    ${h('Resident')}
+    ${kv('Email', esc(c.email))}
+    ${kv('Phone', esc(d.phone || '—'))}
+    ${kv('Forwarding address', esc(d.forwarding_address || '—'))}
+    ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + ' · will return')}
+    ${kv('Reason', esc(d.reason || '—') + (d.reason_details ? `<div class="name-sub">${esc(d.reason_details)}</div>` : ''))}
+    ${kv('Refund method', esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
+    ${h('Acknowledgements')}
+    ${kv('Deposit & cleaning', dep.at ? `${esc(day(dep.at))} · deposit shown ${money(dep.deposit_shown)} · cleaning ${money(dep.cleaning_fee)}${dep.wire_fee ? ' · wire ' + money(dep.wire_fee) : ''}<div class="name-sub">"${esc(dep.text || '')}"</div>` : '—')}
+    ${kv('Short notice', sn ? `${esc(day(sn.at))}<div class="name-sub">"${esc(sn.text || '')}"</div>` : 'Not needed')}
+    ${h('Notice review')}
+    ${x ? kv('Requested', `${esc(x.reason || '')} · ${esc(day(x.requested_at))}<div>${esc(x.explanation || '')}</div>`) : kv('Requested', 'No')}
+    ${h('Links')}
+    ${kv('Asana', c.asanaGid ? `<a href="${esc(ckoAsanaUrl(c.asanaGid))}" target="_blank" rel="noopener">Open task</a>` : '<span class="name-sub">Not mirrored yet</span>')}
+    ${h('Timeline (PT)')}
+    ${ckoTimeline(events).map(e => { const t = ckoLocal(e.at); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' PT' : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>'}
+  </div>`;
+  return true;
+}
+window.loadCheckouts = loadCheckouts;
+window.renderCheckouts = renderCheckouts;
+window.openCheckout = openCheckout;
+
+(function wireCheckouts(){
+  const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+  on('cko-search', 'input', e => { CKO_STATE.q = e.target.value; renderCheckouts(); });
+  on('cko-filter-flag', 'change', e => { CKO_STATE.flag = e.target.value; renderCheckouts(); });
+  on('cko-filter-city', 'change', e => { CKO_STATE.city = e.target.value; renderCheckouts(); });
+  on('cko-refresh', 'click', () => loadCheckouts(true));
+  on('cko-body', 'click', e => { const tr = e.target.closest('[data-cko-id]'); if (tr) openCheckout(tr.dataset.ckoId); });
+  // The shared drawer's close paths (button, backdrop, Escape): invalidate any
+  // checkout open still in flight. Extra listeners, closeProperty is untouched.
+  const ckoCancel = () => { ckoOpenSeq++; };
+  on('panel-close', 'click', ckoCancel);
+  on('panel-backdrop', 'click', ckoCancel);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') ckoCancel(); });
+})();
+
+/* Deep link from the Asana task: portal.vanmates.com/#checkout=<id>. Runs after
+   hydrate (see the post-hydrate hook next to openLeadFromHash). */
+function openCheckoutFromHash(){
+  let hash = location.hash || '';
+  if (!hash) { try { hash = sessionStorage.getItem('vm_next_hash') || ''; } catch (e) {} }
+  const m = hash.match(/^#checkout=(CO-\d{2}-\d{5})$/);
+  if (!m) return false;
+  try { sessionStorage.removeItem('vm_next_hash'); } catch (e) {}
+  if (typeof goToView === 'function') goToView('checkouts');
+  openCheckout(m[1]);
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+  return true;
+}
+window.openCheckoutFromHash = openCheckoutFromHash;
+window.addEventListener('hashchange', openCheckoutFromHash);
 /* CLOSED-DEALS-CORE-START */
 /* The closed-deal ledger behind the Sales page. Rows from `closed_deals`
    (Zoho today, the portal as Zoho is retired) and won `leads` go in; one
@@ -22048,9 +22323,9 @@ document.addEventListener('keydown', e => {
 function openLeadFromHash(){
   let hash = location.hash || '';
   if(!hash){ try { hash = sessionStorage.getItem('vm_next_hash') || ''; } catch(e){} }
-  try { sessionStorage.removeItem('vm_next_hash'); } catch(e){}
   const m = hash.match(/^#lead=([A-Za-z0-9._:-]+)$/);
   if(!m) return false;
+  try { sessionStorage.removeItem('vm_next_hash'); } catch(e){}
   if(!leads.find(x => String(x.id) === m[1])){
     if(leads.length && typeof showToast === 'function') showToast('Lead not found — it may have been deleted');
     if(leads.length) history.replaceState(null, '', location.pathname + location.search);
@@ -22161,6 +22436,8 @@ renderLeads();
     }
     try { if (typeof window.openLeadFromHash === 'function') window.openLeadFromHash(); }
     catch (e) { console.warn('[vmDb] openLeadFromHash failed:', e.message); }
+    try { if (typeof window.openCheckoutFromHash === 'function') window.openCheckoutFromHash(); }
+    catch (e) { console.warn('[vmDb] openCheckoutFromHash failed:', e.message); }
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
