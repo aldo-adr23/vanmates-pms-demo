@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-24c"></script>
+<script src="pms-supabase.js?v=2026-09-24d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2653,9 +2653,15 @@
           <span class="val" id="dd-chip-city"></span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
         </div>
+        <div class="filter-chip" data-dd-filter="method">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/></svg>
+          <span class="label">Method</span>
+          <span class="val" id="dd-chip-method"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
         <select class="sort-select" id="dd-sort">
+          <option value="oldest">Sort: Oldest move-out first</option>
           <option value="recent">Sort: Most recent move-out</option>
-          <option value="oldest">Sort: Oldest pending first</option>
           <option value="amount-desc">Sort: Largest deposit</option>
           <option value="status">Sort: By status</option>
         </select>
@@ -2668,13 +2674,10 @@
           <thead>
             <tr>
               <th>Tenant</th>
-              <th>Property / room</th>
               <th>City</th>
               <th>Move-out</th>
-              <th class="right">Deposit</th>
-              <th class="right">Deductions</th>
+              <th>Method</th>
               <th class="right">Refund</th>
-              <th>Status</th>
               <th></th>
             </tr>
           </thead>
@@ -13261,7 +13264,7 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
 
 
 /* ============ DAMAGE DEPOSITS ============ */
-const DD_FILTERS = { search:"", status:new Set(), city:new Set(), sort:"recent" };
+const DD_FILTERS = { search:"", status:new Set(), city:new Set(), method:new Set(), sort:"oldest" };
 
 /* DD-CORE-START */
 /* Deposits run on the REAL clock, like homestay (see homestayToday). Since
@@ -13313,6 +13316,39 @@ function ddDaysSub(k){
   const tail = `vs ${DD_LEGAL_DAYS}-day legal limit`;
   return diff === 0 ? `at the ${tail.slice(3)}` : `${diff < 0 ? "▼" : "▲"} ${Math.abs(diff)} day${Math.abs(diff)===1?"":"s"} ${tail}`;
 }
+/* The list is grouped by what finance has to do next, not by status: 183 of
+   the first 186 live rows were "processing", so a status column said nothing
+   while 155 refunds sat past the legal limit mid-list. */
+const DD_GROUPS = [
+  { key:"overdue",  label:"Overdue",    sub:`moved out more than ${DD_LEGAL_DAYS} days ago`, open:true },
+  { key:"due",      label:"Due now",    sub:`moved out in the last ${DD_LEGAL_DAYS} days`,  open:true },
+  { key:"upcoming", label:"Upcoming",   sub:"not moved out yet",                             open:false },
+  { key:"noinfo",   label:"Needs info", sub:"no move-out date",                              open:false },
+  { key:"done",     label:"Refunded",   sub:"completed",                                     open:false },
+];
+const DD_METHODS = { "e-transfer":"E-transfer", wire:"Wire", eft:"EFT", other:"Other" };
+function ddMethodKey(m){
+  const k = String(m == null ? "" : m).toLowerCase().replace(/[^a-z]/g, "");
+  if (k === "etransfer" || k === "interac") return "e-transfer";
+  if (k === "wire" || k === "wiretransfer") return "wire";
+  if (k === "eft") return "eft";
+  return k ? "other" : "";
+}
+function ddBucket(rec, today){
+  if (rec.status === "completed") return "done";
+  const d = ddDaysSince(rec.moveOut, today);
+  if (d == null) return "noinfo";
+  if (d < 0) return "upcoming";
+  return d <= DD_LEGAL_DAYS ? "due" : "overdue";
+}
+function ddGroup(list, today){
+  // Keeps the incoming (already sorted) order inside each group.
+  return DD_GROUPS.map(g => {
+    const rows = list.filter(r => ddBucket(r, today) === g.key);
+    const owed = rows.reduce((s,r) => s + (Number(r.deposit) || 0) - depositTotalDeductions(r), 0);
+    return { ...g, rows, owed };
+  }).filter(g => g.rows.length);
+}
 /* DD-CORE-END */
 function dedDays(rec){
   return ddDaysSince(rec.moveOut, ddToday());
@@ -13335,6 +13371,7 @@ function applyDepositFilters(){
   }
   if(DD_FILTERS.status.size) list = list.filter(r => DD_FILTERS.status.has(r.status));
   if(DD_FILTERS.city.size)   list = list.filter(r => DD_FILTERS.city.has(r.city));
+  if(DD_FILTERS.method.size) list = list.filter(r => DD_FILTERS.method.has(ddMethodKey(r.method)));
 
   // Sort with null-safe move-out comparison: records without a move-out date
   // sort to the end (so the table doesn't get NaN-ordered, which is what was
@@ -13351,6 +13388,14 @@ function applyDepositFilters(){
   };
   list.sort(sorters[DD_FILTERS.sort] || sorters.recent);
   return list;
+}
+
+const DD_OPEN_KEY = "vm_dd_groups_open";
+function ddOpenState(){
+  try { return JSON.parse(localStorage.getItem(DD_OPEN_KEY) || "{}") || {}; } catch(e){ return {}; }
+}
+function ddSaveOpenState(st){
+  try { localStorage.setItem(DD_OPEN_KEY, JSON.stringify(st)); } catch(e){}
 }
 
 function renderDeposits(){
@@ -13372,104 +13417,101 @@ function renderDeposits(){
   document.getElementById("dd-kpi-days-sub").textContent = ddDaysSub(k);
   document.getElementById("dd-kpi-deductions").innerHTML = `${k.deductionRate.toFixed(1)}<span style="font-size:18px;color:var(--muted)">%</span>`;
 
-  body.innerHTML = list.map(r => {
+  const today = ddToday();
+  const groups = ddGroup(list, today);
+  const openState = ddOpenState();
+  const forceOpen = !!DD_FILTERS.search.trim();
+  const rowHtml = r => {
     const ded = depositTotalDeductions(r);
-    const refund = (r.deposit || 0) - ded;
-    const dDays = dedDays(r);   // may be null if no move-out date set
-    const moveOutLabel = dDays == null
-      ? ""
-      : (dDays >= 0
-          ? `${dDays} day${dDays===1?"":"s"} ago`
-          : `in ${Math.abs(dDays)} day${Math.abs(dDays)===1?"":"s"}`);
+    const refund = (Number(r.deposit) || 0) - ded;
+    const dDays = ddDaysSince(r.moveOut, today);
+    const moveOutLabel = dDays == null ? ""
+      : dDays === 0 ? "today"
+      : dDays > 0 ? `${dDays} day${dDays===1?"":"s"} ago`
+      : `in ${-dDays} day${dDays===-1?"":"s"}`;
+    const late = dDays != null && dDays > DD_LEGAL_DAYS && r.status !== "completed";
     const sm = depositStatuses[r.status] || {cls:"badge-grey", label:r.status || "Unknown"};
     const color = r.color || "#A88965";
     const ini = r.ini || (r.name||"?").slice(0,2).toUpperCase();
     const flag = r.flag || "";
-    const country = r.country || (r.program ? r.program + " program" : "");
-    const property = r.property || "—";
-    const room = r.room || "";
-    const city = r.city || "—";
-    const moveOutDisplay = r.moveOut ? fmtDate(r.moveOut) : "—";
+    const place = [r.property, r.room].filter(Boolean).map(esc).join(" · ");
+    const mk = ddMethodKey(r.method);
+    // "processing" is the default state and says nothing; only other states get a badge.
+    const badge = (r.status && r.status !== "processing" && r.status !== "completed")
+      ? `<span class="badge ${sm.cls}" style="margin-right:8px"><span class="dot"></span>${sm.label}</span>` : "";
     return `
-      <tr data-deposit-id="${r.id}" style="cursor:pointer">
+      <tr data-deposit-id="${esc(r.id)}" style="cursor:pointer">
         <td>
           <div class="name-cell">
-            <div class="avatar" style="background:linear-gradient(135deg, ${color}, ${shade(color,-25)})">${ini}</div>
+            <div class="avatar" style="background:linear-gradient(135deg, ${color}, ${shade(color,-25)})">${esc(ini)}</div>
             <div>
               <div class="name-main">${esc(r.name)}${flag ? ' <span class="flag">'+esc(flag)+'</span>' : ''}</div>
-              <div class="name-sub">${esc(country)}</div>
+              <div class="name-sub">${place || '<span style="color:var(--red-dark);font-weight:600">no house on file</span>'}</div>
             </div>
           </div>
         </td>
+        <td>${esc(r.city || "—")}</td>
         <td>
-          <div class="name-main">${esc(property)}</div>
-          <div class="name-sub">${esc(room)}</div>
-        </td>
-        <td>${esc(city)}</td>
-        <td>
-          <div class="name-main">${moveOutDisplay}</div>
-          <div class="name-sub" style="font-size:11px;color:${(dDays != null && dDays > 14 && r.status !== "completed") ? "var(--red-dark)" : "var(--muted)"}">${moveOutLabel}</div>
+          <div class="name-main">${r.moveOut ? fmtDate(r.moveOut) : "—"}</div>
+          <div class="name-sub" style="font-size:11px;color:${late ? "var(--red-dark)" : "var(--muted)"};${late ? "font-weight:600" : ""}">${moveOutLabel}</div>
           ${r.expectedPaymentDate && r.status !== "completed"
             ? `<div class="name-sub" style="font-size:10.5px;color:var(--blue, #3F6E94);margin-top:2px;font-weight:600">Expected: ${esc(r.expectedPaymentDate)}</div>`
             : ''}
         </td>
-        <td class="right"><span class="num">${fmt(r.deposit)}</span></td>
-        <td class="right">${ded > 0
-          ? `<span class="num" style="color:var(--red-dark)">−${fmt(ded)}</span><div class="name-sub" style="font-size:11px">${(r.damages||[]).length} item${(r.damages||[]).length===1?"":"s"}</div>`
-          : `<span class="card-sub" style="font-size:12px">no deductions</span>`}</td>
-        <td class="right"><span class="num" style="color:#3e6049">${fmt(refund)}</span></td>
-        <td><span class="badge ${sm.cls}"><span class="dot"></span>${sm.label}</span></td>
+        <td>${mk ? `<span class="badge badge-grey">${esc(DD_METHODS[mk])}</span>` : '<span class="card-sub">—</span>'}</td>
         <td class="right">
-          ${r.status === "completed"
-            ? `<button class="btn btn-ghost" data-deposit-view="${r.id}" style="padding:6px 12px;font-size:12px">View</button>`
-            : `<button class="btn btn-primary" data-deposit-view="${r.id}" style="padding:6px 12px;font-size:12px">Process</button>`}
+          <span class="num" style="color:#3e6049;font-size:14px">${fmt(refund)}</span>
+          <div class="name-sub" style="font-size:11px">of ${fmt(r.deposit)}${ded > 0 ? ` · <span style="color:var(--red-dark)">−${fmt(ded)}</span>` : ""}</div>
         </td>
+        <td class="right" style="white-space:nowrap">
+          ${badge}${r.status === "completed"
+            ? `<button class="btn btn-ghost" data-deposit-view="${esc(r.id)}" style="padding:6px 12px;font-size:12px">View</button>`
+            : `<button class="btn btn-primary" data-deposit-view="${esc(r.id)}" style="padding:6px 12px;font-size:12px">Process</button>`}
+        </td>
+      </tr>`;
+  };
+  body.innerHTML = groups.map(g => {
+    const open = forceOpen || (g.key in openState ? openState[g.key] : g.open);
+    const tone = g.key === "overdue" ? "var(--red-dark)" : g.key === "done" ? "#3e6049" : "var(--ink)";
+    return `
+      <tr class="dd-group" data-dd-group="${g.key}" style="cursor:pointer;background:var(--cream)">
+        <td colspan="4" style="padding:12px 14px">
+          <span style="display:inline-block;width:14px;color:var(--muted);transition:transform .15s;transform:rotate(${open ? 90 : 0}deg)">▸</span>
+          <span style="font-family:var(--serif);font-size:15px;font-weight:700;color:${tone}">${g.label}</span>
+          <span class="card-sub" style="font-size:12px;margin-left:6px">${g.rows.length} · ${g.sub}</span>
+        </td>
+        <td class="right num" style="padding:12px 14px;font-size:14px;font-weight:700;color:${tone}">${fmt(g.owed)}</td>
+        <td class="right card-sub" style="padding:12px 14px;font-size:11.5px">${g.key === "done" ? "refunded" : "owed"}</td>
       </tr>
-    `;
+      ${open ? g.rows.map(rowHtml).join("") : ""}`;
   }).join("");
 
-  // Update footer totals based on the visible (filtered) list
+  body.querySelectorAll("tr.dd-group").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const k = tr.dataset.ddGroup;
+      const g = DD_GROUPS.find(x => x.key === k);
+      const st = ddOpenState();
+      const wasOpen = k in st ? st[k] : g.open;
+      st[k] = !wasOpen;
+      ddSaveOpenState(st);
+      renderDeposits();
+    });
+  });
+
+  // Footer: what Vanmates still owes across the filtered view
   const foot = document.getElementById("dd-foot");
   if(foot){
-    const visiblePending = list.filter(x => x.status !== "completed");
-    const visibleCompleted = list.filter(x => x.status === "completed");
-    const pendDeposit = visiblePending.reduce((s,x) => s + x.deposit, 0);
-    const pendDed     = visiblePending.reduce((s,x) => s + depositTotalDeductions(x), 0);
-    const pendRefund  = pendDeposit - pendDed;
-    const compDeposit = visibleCompleted.reduce((s,x) => s + x.deposit, 0);
-    const compDed     = visibleCompleted.reduce((s,x) => s + depositTotalDeductions(x), 0);
-    const compRefund  = compDeposit - compDed;
-
-    if(list.length === 0){
-      foot.innerHTML = "";
-    } else {
-      foot.innerHTML = `
-        ${visiblePending.length > 0 ? `
-          <tr style="background:#FFF6F2">
-            <td colspan="4" style="font-family:var(--serif);font-size:15px;font-weight:700;color:var(--ink);padding:14px 14px">
-              Total Vanmates owes
-              <span class="card-sub" style="font-weight:500;font-size:11.5px;text-transform:none;letter-spacing:0;display:block;margin-top:1px">${visiblePending.length} pending refund${visiblePending.length===1?"":"s"} in current view</span>
-            </td>
-            <td class="right num" style="font-size:14px;padding:14px 14px">${fmt(pendDeposit)}</td>
-            <td class="right num" style="font-size:14px;color:var(--red-dark);padding:14px 14px">${pendDed > 0 ? '−' + fmt(pendDed) : '—'}</td>
-            <td class="right num" style="font-size:18px;color:var(--red-dark);font-family:var(--serif);font-weight:700;letter-spacing:-.4px;padding:14px 14px">${fmt(pendRefund)}</td>
-            <td colspan="2" style="padding:14px"></td>
-          </tr>
-        ` : ''}
-        ${visibleCompleted.length > 0 ? `
-          <tr style="background:var(--cream)">
-            <td colspan="4" style="font-family:var(--serif);font-size:14px;font-weight:600;color:var(--muted);padding:12px 14px">
-              Already refunded
-              <span class="card-sub" style="font-weight:500;font-size:11.5px;text-transform:none;letter-spacing:0;display:block;margin-top:1px">${visibleCompleted.length} completed in current view</span>
-            </td>
-            <td class="right num" style="color:var(--muted);padding:12px 14px">${fmt(compDeposit)}</td>
-            <td class="right num" style="color:var(--muted);padding:12px 14px">${compDed > 0 ? '−' + fmt(compDed) : '—'}</td>
-            <td class="right num" style="font-size:14px;color:#3e6049;padding:12px 14px">${fmt(compRefund)}</td>
-            <td colspan="2" style="padding:12px"></td>
-          </tr>
-        ` : ''}
-      `;
-    }
+    const pend = list.filter(x => x.status !== "completed");
+    const owed = pend.reduce((s,x) => s + (Number(x.deposit) || 0) - depositTotalDeductions(x), 0);
+    foot.innerHTML = pend.length ? `
+      <tr style="background:#FFF6F2">
+        <td colspan="4" style="font-family:var(--serif);font-size:15px;font-weight:700;color:var(--ink);padding:14px">
+          Total Vanmates owes
+          <span class="card-sub" style="font-weight:500;font-size:11.5px;display:block;margin-top:1px">${pend.length} pending refund${pend.length===1?"":"s"} in current view</span>
+        </td>
+        <td class="right num" style="font-size:18px;color:var(--red-dark);font-family:var(--serif);font-weight:700;padding:14px">${fmt(owed)}</td>
+        <td></td>
+      </tr>` : "";
   }
 
   // Wire row + button clicks
@@ -13492,6 +13534,7 @@ function renderDeposits(){
   if(DD_FILTERS.search) chips.push({k:"search", v:DD_FILTERS.search, l:'Search: "'+DD_FILTERS.search+'"'});
   DD_FILTERS.status.forEach(v => chips.push({k:"status", v, l: depositStatuses[v]?.label || v}));
   DD_FILTERS.city.forEach(v => chips.push({k:"city", v, l:v}));
+  DD_FILTERS.method.forEach(v => chips.push({k:"method", v, l: DD_METHODS[v] || v}));
   if(chips.length === 0) ac.innerHTML = "";
   else {
     ac.innerHTML = chips.map(c =>
@@ -13504,7 +13547,7 @@ function renderDeposits(){
       renderDeposits();
     }));
     document.getElementById("dd-clear-all").addEventListener("click", () => {
-      DD_FILTERS.search = ""; DD_FILTERS.status.clear(); DD_FILTERS.city.clear();
+      DD_FILTERS.search = ""; DD_FILTERS.status.clear(); DD_FILTERS.city.clear(); DD_FILTERS.method.clear();
       document.getElementById("dd-search").value = "";
       document.querySelectorAll('.filter-dropdown[data-dd] input[type=checkbox]').forEach(cb => cb.checked = false);
       renderDeposits();
@@ -13519,6 +13562,7 @@ function renderDeposits(){
   };
   setChip("dd-chip-status", DD_FILTERS.status);
   setChip("dd-chip-city", DD_FILTERS.city);
+  setChip("dd-chip-method", DD_FILTERS.method);
 }
 
 function attachDDDropdown(filterKey, options, labelMap){
@@ -13560,6 +13604,7 @@ function attachDDDropdown(filterKey, options, labelMap){
 attachDDDropdown("status", Object.keys(depositStatuses),
   Object.fromEntries(Object.entries(depositStatuses).map(([k,v]) => [k, v.label])));
 attachDDDropdown("city", [...new Set(damageDeposits.map(r => r.city))].sort());
+attachDDDropdown("method", ["e-transfer","wire","eft"], DD_METHODS);
 
 document.getElementById("dd-search")?.addEventListener("input", e => {
   DD_FILTERS.search = e.target.value; renderDeposits();
