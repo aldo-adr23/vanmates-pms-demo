@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23i"></script>
+<script src="pms-supabase.js?v=2026-09-23j"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20791,8 +20791,8 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     .filter(l => !stage || jleadStage(l, custIdx) === stage)
     .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : fu === 'reply' ? reply(l).state !== 'none' : jleadFollowUp(l, t).state === fu));
   if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
-  // Customers waiting for a human are pinned on top, longest-waiting first, in
-  // every sort. 'tier' then puts prospects before existing customers (a hot
+  // Unread replies, then customers waiting for a human (longest-waiting first),
+  // then opened-but-unanswered replies are pinned on top in every sort. 'tier' then puts prospects before existing customers (a hot
   // tier on a customer is not a new sale) and orders hot → qualified → new →
   // untiered, newest first within a tier; the default is simply newest first.
   const byTier = filters && filters.sort === 'tier';
@@ -20800,14 +20800,19 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
   const cust = {};
   if(byTier) list.forEach(l => { cust[l.id] = jleadCustomer(l, custIdx).is; });
   return list.sort((a,b) => {
+    // Unread customer replies come first (newest first): someone wrote back
+    // just now and is waiting on staff.
+    const ra = reply(a), rb = reply(b);
+    const ua = ra.state === 'unread', ub = rb.state === 'unread';
+    if(ua !== ub) return ua ? -1 : 1;
+    if(ua) return rb.at - ra.at;
     const ha = jleadHandoff(a), hb = jleadHandoff(b);
     if(ha.waiting !== hb.waiting) return ha.waiting ? -1 : 1;
     if(ha.waiting) return ha.at - hb.at;
-    // Then customers who wrote back and are waiting on staff: unread first,
-    // each group newest reply first.
-    const ra = reply(a), rb = reply(b), rr = (r) => r.state === 'unread' ? 2 : r.state === 'read' ? 1 : 0;
-    if(rr(ra) !== rr(rb)) return rr(rb) - rr(ra);
-    if(rr(ra)) return rb.at - ra.at;
+    // Then replies already opened but not yet answered, newest first.
+    const qa = ra.state === 'read', qb = rb.state === 'read';
+    if(qa !== qb) return qa ? -1 : 1;
+    if(qa) return rb.at - ra.at;
     if(byTier && cust[a.id] !== cust[b.id]) return cust[a.id] ? 1 : -1;
     if(byTier && rank(a) !== rank(b)) return rank(b) - rank(a);
     return String(b.created_at || '').localeCompare(String(a.created_at || ''));
@@ -21006,7 +21011,11 @@ function jleadReplyBlock(l, now){
   const c = r.state === 'unread' ? '#2563eb' : '#7A6E5E';
   const label = r.state === 'unread' ? 'New reply' : 'Awaiting reply';
   return `<div style="margin-bottom:6px" title="${esc(r.text)}"><span class="badge" style="background:${r.state === 'unread' ? c : c + '1a'};color:${r.state === 'unread' ? '#fff' : c};border-color:${c}33">${label} · ${esc(jleadAgoShort(r.at, now))}</span>`
-    + (r.text ? `<div class="name-sub" style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">「${esc(r.text)}」</div>` : '') + `</div>`;
+    + (r.text ? `<div class="name-sub" style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">「${esc(r.text)}」</div>` : '')
+    // Replies sent from the LINE Official Account app are invisible to the
+    // portal, so the owner can clear the flag by hand.
+    + (jleadCanAct(l) ? `<button class="btn" type="button" data-jlead-handled="${esc(l.id)}" title="You answered this customer outside the portal (e.g. in the LINE app)" style="margin-top:4px;padding:3px 10px;font-size:12px">Replied elsewhere ✓</button>` : '')
+    + `</div>`;
 }
 
 // Built per render from what the portal already holds; ~2k rows, cheap.
@@ -21217,7 +21226,7 @@ async function markJLeadHandled(id, btn){
   }
   Object.assign(l, patch);
   renderJLeads();
-  showToast('Marked handled — it comes back if Maya hands this customer off again');
+  showToast('Marked handled: it comes back when the customer writes again or Maya hands them off');
 }
 
 /* ---- LINE conversation in the lead drawer (JLeads) --------------------------
