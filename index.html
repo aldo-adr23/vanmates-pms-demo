@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23k"></script>
+<script src="pms-supabase.js?v=2026-09-23l"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2116,6 +2116,7 @@
         <select id="jleads-filter-followup" class="form-input" style="max-width:210px">
           <option value="">All follow-ups</option>
           <option value="reply">New replies (customer wrote back)</option>
+          <option value="active">Active today (messages in the last 24 h)</option>
           <option value="handoff">Waiting for staff (Maya handed off)</option>
           <option value="due">Follow up today</option>
           <option value="waiting">Waiting (nudged recently)</option>
@@ -2124,6 +2125,7 @@
         <select id="jleads-sort" class="form-input" style="max-width:170px" title="Waiting-for-staff customers always stay on top">
           <option value="">Sort: newest first</option>
           <option value="tier">Sort: tier (hot first)</option>
+          <option value="activity">Sort: latest activity</option>
         </select>
       </div>
 
@@ -20777,6 +20779,24 @@ function jleadNewReply(l, seenAt){
   return { state: seen != null && seen >= at ? 'read' : 'unread', at, text: String((l && l.lastCustomerText) || '') };
 }
 
+// Customer chatting with Maya (she answered, nobody needs to act): shown as a
+// soft badge until this viewer opens the chat, for messages from the last
+// JLEAD_MAYA_CHAT_DAYS days. A reply waiting on staff is jleadNewReply instead.
+const JLEAD_MAYA_CHAT_DAYS = 3;
+function jleadMayaChat(l, seenAt, now){
+  const at = jleadTs(l && l.lastCustomerAt);
+  if(at == null || String((l && l.lastCustomerWaiting) || '') !== 'no') return { state:'none' };
+  if(now != null && now - at > JLEAD_MAYA_CHAT_DAYS * JLEAD_DAY_MS) return { state:'none' };
+  const seen = jleadTs(seenAt);
+  if(seen != null && seen >= at) return { state:'none' };
+  return { state:'unread', at, text: String((l && l.lastCustomerText) || '') };
+}
+// Customer wrote in the last 24 h (live stamp or hourly sync).
+function jleadActiveToday(l, now){
+  const at = jleadLastMessageAt(l);
+  return at != null && now - at <= JLEAD_DAY_MS && !!((l && l.lastCustomerAt) || (l && l.lastMessageAt));
+}
+
 // `statusMatch` is injected rather than referenced so this core stays pure and
 // testable on its own; the caller passes leadStatusFilterMatches, which gives
 // JLeads the same 'open' default as the Leads list. `now` is injected for the
@@ -20792,13 +20812,14 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     .filter(l => statusMatch ? statusMatch(l, filters && filters.status) : true)
     .filter(l => jleadMatches(l, filters))
     .filter(l => !stage || jleadStage(l, custIdx) === stage)
-    .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : fu === 'reply' ? reply(l).state !== 'none' : jleadFollowUp(l, t).state === fu));
+    .filter(l => !fu || (fu === 'handoff' ? jleadHandoff(l).waiting : fu === 'reply' ? reply(l).state !== 'none' : fu === 'active' ? jleadActiveToday(l, t) : jleadFollowUp(l, t).state === fu));
   if(fu === 'due') return list.sort((a,b) => jleadFollowUp(a, t).dueAt - jleadFollowUp(b, t).dueAt);
   // Unread replies, then customers waiting for a human (longest-waiting first),
   // then opened-but-unanswered replies are pinned on top in every sort. 'tier' then puts prospects before existing customers (a hot
   // tier on a customer is not a new sale) and orders hot → qualified → new →
   // untiered, newest first within a tier; the default is simply newest first.
   const byTier = filters && filters.sort === 'tier';
+  const byActivity = filters && filters.sort === 'activity';
   const rank = (l) => { const i = JLEAD_TIERS.indexOf(jleadTier(l)); return i < 0 ? -1 : i; };
   const cust = {};
   if(byTier) list.forEach(l => { cust[l.id] = jleadCustomer(l, custIdx).is; });
@@ -20816,6 +20837,8 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     const qa = ra.state === 'read', qb = rb.state === 'read';
     if(qa !== qb) return qa ? -1 : 1;
     if(qa) return rb.at - ra.at;
+    // 'activity': most recent customer message first (Maya or staff chats alike).
+    if(byActivity){ const x = jleadLastMessageAt(a) || 0, y = jleadLastMessageAt(b) || 0; if(x !== y) return y - x; }
     if(byTier && cust[a.id] !== cust[b.id]) return cust[a.id] ? 1 : -1;
     if(byTier && rank(a) !== rank(b)) return rank(b) - rank(a);
     return String(b.created_at || '').localeCompare(String(a.created_at || ''));
@@ -21010,7 +21033,14 @@ function jleadMarkSeen(id){
 }
 function jleadReplyBlock(l, now){
   const r = jleadNewReply(l, jleadSeenMap()[l.id]);
-  if(r.state === 'none') return '';
+  if(r.state === 'none'){
+    // Nothing waiting on staff, but the customer is talking to Maya: a soft
+    // note until this viewer opens the chat.
+    const mc = jleadMayaChat(l, jleadSeenMap()[l.id], now);
+    if(mc.state === 'none') return '';
+    return `<div style="margin-bottom:6px" title="${esc(mc.text)}"><span class="badge" style="background:#7A6E5E1a;color:#7A6E5E;border-color:#7A6E5E33">💬 Chatting with Maya · ${esc(jleadAgoShort(mc.at, now))}</span>`
+      + (mc.text ? `<div class="name-sub" style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">「${esc(mc.text)}」</div>` : '') + `</div>`;
+  }
   const c = r.state === 'unread' ? '#2563eb' : '#7A6E5E';
   const label = r.state === 'unread' ? 'New reply' : 'Awaiting reply';
   return `<div style="margin-bottom:6px" title="${esc(r.text)}"><span class="badge" style="background:${r.state === 'unread' ? c : c + '1a'};color:${r.state === 'unread' ? '#fff' : c};border-color:${c}33">${label} · ${esc(jleadAgoShort(r.at, now))}</span>`
@@ -21074,8 +21104,10 @@ function renderJLeads(){
     const due = all.filter(l => jleadFollowUp(l, now).state === 'due').length;
     const waiting = all.filter(l => isJLead(l) && jleadHandoff(l).waiting).length;
     const unread = all.filter(l => isJLead(l) && jleadNewReply(l, jleadSeenMap()[l.id]).state === 'unread');
+    const chatting = all.filter(l => isJLead(l) && jleadMayaChat(l, jleadSeenMap()[l.id], now).state === 'unread').length;
     dueEl.innerHTML = (unread.length ? '· <b style="color:#2563eb">' + unread.length + ' new ' + (unread.length === 1 ? 'reply' : 'replies') + '</b> ' : '')
-      + (waiting ? '· <b style="color:#B94A3F">' + waiting + ' waiting for staff</b> ' : '') + (due ? '· ' + due + ' to follow up today' : '');
+      + (waiting ? '· <b style="color:#B94A3F">' + waiting + ' waiting for staff</b> ' : '')
+      + (chatting ? '· ' + chatting + ' chatting with Maya ' : '') + (due ? '· ' + due + ' to follow up today' : '');
     // A reply that arrives while the portal is open (realtime) gets a toast.
     const ids = unread.map(l => l.id);
     if(_jleadUnreadIds && all.length){
@@ -21334,8 +21366,9 @@ async function jleadChatLoad(leadId, scroll, light){
   // Opening (or refreshing) the chat means this viewer has seen the latest reply.
   const lead = leads.find(x => x.id === leadId);
   const before = lead ? jleadNewReply(lead, jleadSeenMap()[leadId]).state : 'none';
+  const beforeMaya = lead ? jleadMayaChat(lead, jleadSeenMap()[leadId], Date.now()).state : 'none';
   jleadMarkSeen(leadId);
-  if(before === 'unread') renderJLeads();
+  if(before === 'unread' || beforeMaya === 'unread') renderJLeads();
   if(jleadEnglishMode()) jleadTranslateThread(leadId);
   if(res.staffMode === null || res.staffMode === undefined) return;   // light refresh: keep mode + quota as shown
   const mode = document.getElementById('jlead-chat-mode');
@@ -21895,7 +21928,7 @@ document.getElementById('jleads-filter-followup')&& document.getElementById('jle
 // The sort is a per-viewer preference; storage can be unavailable (private mode).
 (function(){
   const el = document.getElementById('jleads-sort'); if(!el) return;
-  try { const v = localStorage.getItem('jleads.sort'); if(v === 'tier'){ JLEAD_FILTERS.sort = v; el.value = v; } } catch(_){}
+  try { const v = localStorage.getItem('jleads.sort'); if(v === 'tier' || v === 'activity'){ JLEAD_FILTERS.sort = v; el.value = v; } } catch(_){}
   el.addEventListener('change', e => { JLEAD_FILTERS.sort = e.target.value; try { localStorage.setItem('jleads.sort', e.target.value); } catch(_){} renderJLeads(); });
 })();
 document.getElementById('lead-modal-close')   && document.getElementById('lead-modal-close').addEventListener('click', closeLeadModal);
