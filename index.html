@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-23j"></script>
+<script src="pms-supabase.js?v=2026-09-23k"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20592,7 +20592,10 @@ const JLEAD_FOLLOWUP_TIERS = ['hot','qualified'];
 const JLEAD_DAY_MS = 86400000;
 function jleadTs(v){ const t = new Date(v || '').getTime(); return isNaN(t) ? null : t; }
 function jleadLastMessageAt(l){
-  return jleadTs(l && l.lastMessageAt) || jleadTs(l && l.created_at);
+  // lastCustomerAt is stamped live by LINE Maya on every message; lastMessageAt
+  // by the hourly inbox sync. Whichever is newer.
+  const a = jleadTs(l && l.lastMessageAt), b = jleadTs(l && l.lastCustomerAt);
+  return (a != null || b != null) ? Math.max(a || 0, b || 0) : jleadTs(l && l.created_at);
 }
 function jleadFollowUps(l){
   return (Array.isArray(l && l.lineFollowUps) ? l.lineFollowUps : [])
