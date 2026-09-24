@@ -1256,7 +1256,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-24b"></script>
+<script src="pms-supabase.js?v=2026-09-24c"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2631,8 +2631,8 @@
 
       <div class="kpi-grid">
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Pending refunds</div><div class="kpi-value" id="dd-kpi-pending">5</div><div class="kpi-trend up" id="dd-kpi-pending-sub">$13,460 owed</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg days to refund</div><div class="kpi-value" id="dd-kpi-days">8<span style="font-size:18px;color:var(--muted)"> d</span></div><div class="kpi-trend up">▼ 6 days vs 14-day legal limit</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Refunded YTD</div><div class="kpi-value" id="dd-kpi-refunded" style="color:#3e6049">$13,575</div><div class="kpi-trend up">across 5 tenants</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg days to refund</div><div class="kpi-value" id="dd-kpi-days">8<span style="font-size:18px;color:var(--muted)"> d</span></div><div class="kpi-trend up" id="dd-kpi-days-sub">▼ 6 days vs 14-day legal limit</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Refunded</div><div class="kpi-value" id="dd-kpi-refunded" style="color:#3e6049">$13,575</div><div class="kpi-trend up" id="dd-kpi-refunded-sub">across 5 tenants</div></div>
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg deduction rate</div><div class="kpi-value" id="dd-kpi-deductions">5.0<span style="font-size:18px;color:var(--muted)">%</span></div><div class="kpi-trend up">healthy · industry avg ~12%</div></div>
       </div>
 
@@ -13263,14 +13263,59 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
 /* ============ DAMAGE DEPOSITS ============ */
 const DD_FILTERS = { search:"", status:new Set(), city:new Set(), sort:"recent" };
 
-function dedDays(rec){
-  // Days since move-out (or until move-out if future). Returns null when no move-out date set.
-  const d = parseLocalDate(rec.moveOut);
-  if (!d) return null;
-  return daysBetween(d, TODAY);
+/* DD-CORE-START */
+/* Deposits run on the REAL clock, like homestay (see homestayToday). Since
+   2026-09-24 the page holds finance's live Sheet15 refunds, so the frozen demo
+   TODAY showed September move-outs as "in 158 days" and stamped processed
+   refunds with an April refund date. */
+const DD_LEGAL_DAYS = 14;
+function ddToday(){
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+function ddIsoDate(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function ddParse(s){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? "" : s));
+  return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+}
+function ddDaysSince(moveOut, today){
+  // Days since move-out (negative = move-out still ahead); null without a date.
+  const d = ddParse(moveOut);
+  return d ? Math.round((today - d) / 86400000) : null;
 }
 function depositTotalDeductions(rec){
-  return (rec.damages || []).reduce((s, d) => s + d.amt, 0);
+  return (rec.damages || []).reduce((s, d) => s + (Number(d.amt) || 0), 0);
+}
+function ddKpis(all){
+  const net = r => (Number(r.deposit) || 0) - depositTotalDeductions(r);
+  const pending = all.filter(r => r.status !== "completed");
+  const completed = all.filter(r => r.status === "completed");
+  const days = completed
+    .map(r => { const a = ddParse(r.moveOut), b = ddParse(r.refundDate); return a && b ? Math.round((b - a) / 86400000) : null; })
+    .filter(d => d != null);
+  const dep = completed.reduce((s,r) => s + (Number(r.deposit) || 0), 0);
+  const ded = completed.reduce((s,r) => s + depositTotalDeductions(r), 0);
+  return {
+    pendingCount: pending.length,
+    pendingTotal: pending.reduce((s,r) => s + net(r), 0),
+    refundedCount: completed.length,
+    refundedTotal: completed.reduce((s,r) => s + net(r), 0),
+    avgDays: days.length ? Math.round(days.reduce((a,b) => a+b, 0) / days.length) : null,
+    datedRefunds: days.length,
+    deductionRate: dep > 0 ? ded / dep * 100 : 0,
+  };
+}
+function ddDaysSub(k){
+  if (k.avgDays == null) return "no dated refunds yet";
+  const diff = k.avgDays - DD_LEGAL_DAYS;
+  const tail = `vs ${DD_LEGAL_DAYS}-day legal limit`;
+  return diff === 0 ? `at the ${tail.slice(3)}` : `${diff < 0 ? "▼" : "▲"} ${Math.abs(diff)} day${Math.abs(diff)===1?"":"s"} ${tail}`;
+}
+/* DD-CORE-END */
+function dedDays(rec){
+  return ddDaysSince(rec.moveOut, ddToday());
 }
 
 function applyDepositFilters(){
@@ -13316,28 +13361,16 @@ function renderDeposits(){
   document.getElementById("dd-empty").style.display = list.length ? "none" : "block";
 
   // Update KPIs (always based on full data, not the filtered list)
-  const all = damageDeposits;
-  const pending = all.filter(r => r.status !== "completed");
-  const pendingTotal = pending.reduce((s,r) => s + (r.deposit - depositTotalDeductions(r)), 0);
-  document.getElementById("dd-kpi-pending").textContent = pending.length;
-  document.getElementById("dd-kpi-pending-sub").textContent = `${fmt(pendingTotal)} owed`;
-
-  const completed = all.filter(r => r.status === "completed");
-  const refundedYTD = completed.reduce((s,r) => s + (r.deposit - depositTotalDeductions(r)), 0);
-  document.getElementById("dd-kpi-refunded").textContent = fmt(refundedYTD);
-
-  // Avg days to refund (only completed records)
-  const days = completed
-    .filter(r => r.refundDate && r.moveOut)
-    .map(r => daysBetween(parseLocalDate(r.moveOut), parseLocalDate(r.refundDate)));
-  const avgDays = days.length ? Math.round(days.reduce((a,b)=>a+b,0)/days.length) : 0;
-  document.getElementById("dd-kpi-days").innerHTML = `${avgDays}<span style="font-size:18px;color:var(--muted)"> d</span>`;
-
-  // Avg deduction rate
-  const totalDep = completed.reduce((s,r) => s + r.deposit, 0);
-  const totalDeducted = completed.reduce((s,r) => s + depositTotalDeductions(r), 0);
-  const avgRate = totalDep > 0 ? (totalDeducted / totalDep * 100) : 0;
-  document.getElementById("dd-kpi-deductions").innerHTML = `${avgRate.toFixed(1)}<span style="font-size:18px;color:var(--muted)">%</span>`;
+  const k = ddKpis(damageDeposits);
+  document.getElementById("dd-kpi-pending").textContent = k.pendingCount;
+  document.getElementById("dd-kpi-pending-sub").textContent = `${fmt(k.pendingTotal)} owed`;
+  document.getElementById("dd-kpi-refunded").textContent = fmt(k.refundedTotal);
+  document.getElementById("dd-kpi-refunded-sub").textContent = `across ${k.refundedCount} tenant${k.refundedCount===1?"":"s"}`;
+  document.getElementById("dd-kpi-days").innerHTML = k.avgDays == null
+    ? "—"
+    : `${k.avgDays}<span style="font-size:18px;color:var(--muted)"> d</span>`;
+  document.getElementById("dd-kpi-days-sub").textContent = ddDaysSub(k);
+  document.getElementById("dd-kpi-deductions").innerHTML = `${k.deductionRate.toFixed(1)}<span style="font-size:18px;color:var(--muted)">%</span>`;
 
   body.innerHTML = list.map(r => {
     const ded = depositTotalDeductions(r);
@@ -13843,7 +13876,7 @@ function openDeposit(id){
       }
       // Update the deposit record
       r.status = "completed";
-      r.refundDate = new Date(TODAY).toISOString().slice(0, 10);
+      r.refundDate = ddIsoDate(ddToday());
       r.processedBy = (typeof activeRole === "function" ? activeRole().name : "Aldo Diaz Rodriguez");
       if(!r.method) r.method = "e-transfer"; // default if not chosen
       if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', r);
