@@ -1254,12 +1254,18 @@
     var next = encodeURIComponent(location.pathname + location.search);
     location.replace('signin.html' + (next && next !== '%2F' ? '?next=' + next : ''));
   }
+  if (hasSession) {
+    try {
+      var nextPath = sessionStorage.getItem('vm_next_path');
+      if (nextPath && /^cs\.html(#c=[\w-]+)?$/.test(nextPath)) { sessionStorage.removeItem('vm_next_path'); location.replace(nextPath); }
+    } catch (e) {}
+  }
 })();
 </script>
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-25c"></script>
+<script src="pms-supabase.js?v=2026-09-25d"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1304,6 +1310,11 @@
       Sales
       <span class="nav-count">—</span>
     </button>
+    <a class="nav-item" data-view="cs" href="cs.html" style="text-decoration:none">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Customer Service
+      <span class="nav-count" id="nav-cs-count">↗</span>
+    </a>
     <button class="nav-item" data-view="assistants">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg>
       Assistants
@@ -7703,6 +7714,7 @@ const ALL_PAGES = [
   ["leads",            "Leads"],
   ["jleads",           "JLeads"],
   ["sales",            "Sales"],
+  ["cs",               "Customer Service"],
   ["assistants",       "Assistants"],
   ["tenants",          "Tenants"],
   ["properties",       "Properties & rooms"],
@@ -9954,7 +9966,10 @@ function goToView(v, savedView){
 
 // Sidebar navigation
 document.querySelectorAll(".nav-item[data-view]").forEach(btn=>{
-  btn.addEventListener("click", ()=> goToView(btn.dataset.view));
+  btn.addEventListener("click", ()=> {
+    if (btn.tagName === 'A') return;   // real links (cs.html) navigate normally
+    goToView(btn.dataset.view);
+  });
 });
 
 // KPI card drill-downs (Dashboard, Portfolio, Vacancies, Maintenance, Financials)
