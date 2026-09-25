@@ -32,17 +32,11 @@ function csUnread(c, reads) {
 function csSort(list, tab, reads) {
   var out = list.slice();
   if (tab === 'needs_reply') {
+    // Messaging-app order: urgent cases pinned on top, then newest activity first.
     out.sort(function (x, y) {
-      var ux = csUnread(x, reads) > 0 ? 0 : 1, uy = csUnread(y, reads) > 0 ? 0 : 1;
+      var ux = x.priority === 'urgent' ? 0 : 1, uy = y.priority === 'urgent' ? 0 : 1;
       if (ux !== uy) return ux - uy;
-      var px = CS_PRIORITY_RANK[x.priority] == null ? 2 : CS_PRIORITY_RANK[x.priority];
-      var py = CS_PRIORITY_RANK[y.priority] == null ? 2 : CS_PRIORITY_RANK[y.priority];
-      if (px !== py) return px - py;
-      var tx = csT(x.last_customer_at), ty = csT(y.last_customer_at);
-      if (tx === null && ty === null) return 0;
-      if (tx === null) return 1;
-      if (ty === null) return -1;
-      return tx - ty;
+      return (csT(y.last_message_at) || 0) - (csT(x.last_message_at) || 0);
     });
   } else {
     out.sort(function (x, y) { return (csT(y.last_message_at) || 0) - (csT(x.last_message_at) || 0); });
