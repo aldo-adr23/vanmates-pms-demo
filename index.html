@@ -1259,7 +1259,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-25b"></script>
+<script src="pms-supabase.js?v=2026-09-25-inv"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1317,6 +1317,10 @@
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v11H3z"/><path d="M9 21V13h6v8"/></svg>
       Properties &amp; Rooms
       <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="partner-inventory">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
+      Partner inventory
     </button>
     <button class="nav-item" data-view="portfolio">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/><path d="M9 11h.01M15 11h.01"/></svg>
@@ -2632,6 +2636,10 @@
         </div>
       </div>
       <div class="team-grid" id="team-grid"></div>
+    </section>
+
+    <section class="view" data-view="partner-inventory">
+      <div id="inv-root"><p class="name-sub">Loading…</p></div>
     </section>
 
         <!-- ============ DAMAGE DEPOSITS ============ -->
@@ -7468,7 +7476,7 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -8280,6 +8288,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
 
   const pageLabels = {
     "dashboard":"Dashboard","leads":"Leads","jleads":"JLeads","tenants":"Tenants","properties":"Properties & rooms",
+    "partner-inventory":"Partner inventory",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
     "homestay-bookings":"Homestay bookings",
@@ -9892,6 +9901,7 @@ const titles = {
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
+  "partner-inventory": ["<em>Partner inventory</em>", "Live Asana rooms by building: the terms agencies will see, and which rooms are partner-ready"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
   assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
@@ -9936,6 +9946,7 @@ function goToView(v, savedView){
   if(v === "assistants" && typeof asOpen === "function") asOpen();
   if(v === "sales" && typeof renderSales === "function") renderSales();
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
+  if(v === "partner-inventory" && typeof loadPartnerInventory === "function") loadPartnerInventory();
 
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
@@ -20074,6 +20085,331 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
            leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel, byRep };
 }
 /* SALES-CORE-END */
+/* INVENTORY-CORE-START */
+/* Partner inventory page: the Asana mirror's buildings (inventory_properties)
+   and rooms (inventory_room_effective). Pure: rows in, display shapes out.
+   Spec: rina docs/superpowers/specs/2026-09-25-partner-inventory-page-design.md */
+const INV_AMENITIES = [
+  ['furnished', 'Furnished'], ['wifi', 'Wi-Fi included'], ['utilities', 'Utilities included'],
+  ['laundry_in_suite', 'In-suite laundry'], ['laundry_shared', 'Shared laundry'], ['gym', 'Gym'],
+  ['parking', 'Parking'], ['pets', 'Pet-friendly'], ['female_only', 'Female-only floor/unit'],
+];
+const INV_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function invDollars(cents){ return cents == null ? '' : (cents / 100).toFixed(cents % 100 ? 2 : 0); }
+function invCents(input){
+  const s = String(input == null ? '' : input).trim().replace(/[$,\s]/g, '');
+  if (s === '') return { ok: true, value: null };
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return { ok: false, value: null };
+  return { ok: true, value: Math.round(Number(s) * 100) };
+}
+function invMonths(input){
+  const s = String(input == null ? '' : input).trim();
+  if (s === '') return { ok: true, value: null };
+  if (!/^\d{1,2}$/.test(s) || Number(s) < 1) return { ok: false, value: null };
+  return { ok: true, value: Number(s) };
+}
+function invReadiness(p){
+  const missing = [];
+  if (!p || p.deposit_cents == null) missing.push('deposit');
+  if (!p || p.cleaning_fee_cents == null) missing.push('cleaning fee');
+  if (!p || p.min_stay_months == null) missing.push('minimum stay');
+  return { ready: missing.length === 0, missing };
+}
+function invDay(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  return m ? `${INV_MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : '';
+}
+function invRoomStatus(r, today){
+  const from = r.available_from;
+  if (r.status === 'available' && (!from || from <= today)) return { label: 'Free now', tone: 'green' };
+  if (r.status === 'available' || r.status === 'available_later') {
+    if (!from) return { label: 'Free later', tone: 'blue' };
+    return { label: `Free from ${r.available_from_approx ? '~' : ''}${invDay(from)}`, tone: 'blue' };
+  }
+  const map = { occupied: ['Occupied', ''], not_bookable: ['On hold', 'gold'], hidden: ['Hidden', ''], unknown: ['Unknown Asana section', 'red'] };
+  const hit = map[r.status] || [String(r.status), ''];
+  return { label: hit[0], tone: hit[1] };
+}
+// Terms side of SQL room_is_bookable; date overlap is checked when booking.
+function invPartnerReady(r){
+  if (!r || !r.partner_bookable) return false;
+  if (r.status !== 'available' && r.status !== 'available_later') return false;
+  return r.deposit_cents != null && r.cleaning_fee_cents != null && r.min_stay_months != null;
+}
+const INV_STATUS_ORDER = { available: 0, available_later: 1, not_bookable: 2, occupied: 3, unknown: 4, hidden: 5 };
+function invGroup(props, rooms, city){
+  const byId = new Map();
+  props.filter(p => !city || p.city === city).forEach(p => byId.set(p.id, { prop: p, rooms: [], ready: 0 }));
+  const unlinked = [];
+  rooms.filter(r => !city || r.city === city).forEach(r => {
+    if (!r.property_id) { if (r.status !== 'hidden') unlinked.push(r); return; }
+    const g = byId.get(r.property_id);
+    if (!g) return;
+    g.rooms.push(r);
+    if (invPartnerReady(r)) g.ready++;
+  });
+  const rank = s => (s in INV_STATUS_ORDER ? INV_STATUS_ORDER[s] : 9);
+  const groups = [...byId.values()];
+  groups.forEach(g => {
+    g.rooms.sort((a, b) => rank(a.status) - rank(b.status)
+      || String(a.available_from || '').localeCompare(String(b.available_from || ''))
+      || String(a.task_name).localeCompare(String(b.task_name)));
+    g.visible = g.rooms.filter(r => r.status !== 'hidden').length;
+  });
+  groups.sort((a, b) => b.visible - a.visible || String(a.prop.name).localeCompare(String(b.prop.name)));
+  return { groups, unlinked };
+}
+function invAgo(ms){
+  if (!isFinite(ms)) return 'never';
+  const m = Math.round(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+function invHealth(lastSyncedAt, events, nowMs){
+  const age = lastSyncedAt ? nowMs - Date.parse(lastSyncedAt) : Infinity;
+  const alerts = events.filter(e => e.kind === 'double_booking' || e.kind === 'human_edit_skip');
+  const nightly = events.filter(e => e.kind === 'nightly_run')
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+  const d = (nightly && nightly.detail) || {};
+  const refused = !!nightly && ((d.hideRefused || []).length + (d.failedProjects || []).length + (d.unknownSections || []).length) > 0;
+  const text = [
+    `Asana last synced ${invAgo(age)}`,
+    nightly ? (refused ? 'nightly check needs attention' : 'nightly check OK') : 'no nightly check yet',
+    `${alerts.length} open alert${alerts.length === 1 ? '' : 's'}`,
+  ].join(' · ');
+  const amber = !(age <= 86400000) || alerts.length > 0 || refused || !nightly;
+  return { tone: amber ? 'amber' : 'ok', text };
+}
+/* INVENTORY-CORE-END */
+/* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
+   Read when the page is opened. Writes go through the signed-in admin's
+   session; RLS and column grants decide (only property_id and *_override on
+   rooms). An update that returns no row was refused, and the page says so.
+   After every save the page reads everything again. */
+const INV_STATE = { city: 'vancouver', q: '', open: new Set() };
+let invData = null, invLoading = null;
+function invToday(){ return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }); }
+function invIsAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
+async function invSelectAll(sb, table, cols, build){
+  const rows = [], PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = sb.from(table).select(cols);
+    if (build) q = build(q);
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return rows;
+}
+async function loadPartnerInventory(force){
+  const root = document.getElementById('inv-root');
+  if (!invIsAdmin()) { if (root) root.innerHTML = '<p class="name-sub">Admins only.</p>'; return; }
+  if (invLoading) return invLoading;
+  if (invData && !force) { renderPartnerInventory(); return; }
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) { if (root) root.innerHTML = '<p class="name-sub">Not connected to the database.</p>'; return; }
+  if (root && !invData) root.innerHTML = '<p class="name-sub">Loading…</p>';
+  invLoading = (async () => {
+    try {
+      const since = new Date(Date.now() - 30 * 86400000).toISOString();
+      const [props, rooms, events] = await Promise.all([
+        invSelectAll(sb, 'inventory_properties', '*', q => q.order('name').order('id')),
+        invSelectAll(sb, 'inventory_room_effective',
+          'id,city,task_name,property_id,effective_room_type,price_cents,status,available_from,available_from_approx,deposit_cents,cleaning_fee_cents,min_stay_months,partner_bookable,deposit_cents_override,cleaning_fee_cents_override,min_stay_months_override,private_bath_override,synced_at',
+          q => q.order('task_name').order('id')),
+        invSelectAll(sb, 'inventory_sync_events', 'kind,detail,created_at', q => q.gte('created_at', since).order('created_at').order('id')),
+      ]);
+      invData = { props, rooms, events };
+      renderPartnerInventory();
+    } catch (e) {
+      console.error('[inventory] load failed', e);
+      if (root) root.innerHTML = `<p class="name-sub">Could not load the inventory: ${esc(e.message || e)}</p>`;
+    } finally { invLoading = null; }
+  })();
+  return invLoading;
+}
+async function invReload(){ if (invLoading) { try { await invLoading; } catch (e) {} } return loadPartnerInventory(true); }
+function invMoney(c){ return c == null ? '—' : '$' + invDollars(c); }
+function invApplySearch(root){
+  const q = INV_STATE.q.trim().toLowerCase();
+  const cards = root.querySelectorAll('[data-inv-prop]');
+  let shown = 0;
+  cards.forEach(card => {
+    const match = !q || (card.dataset.invQ || '').includes(q);
+    card.hidden = !match;
+    if (match) shown++;
+  });
+  const nomatch = root.querySelector('#inv-nomatch');
+  if (nomatch) nomatch.hidden = !(q && cards.length && shown === 0);
+}
+function renderPartnerInventory(){
+  const root = document.getElementById('inv-root');
+  if (!root || !invData) return;
+  const scrollY = window.scrollY;
+  const today = invToday();
+  const lastSync = invData.rooms.reduce((m, r) => (r.synced_at && r.synced_at > m ? r.synced_at : m), '');
+  const health = invHealth(lastSync || null, invData.events, Date.now());
+  const { groups, unlinked } = invGroup(invData.props, invData.rooms, INV_STATE.city);
+  const cities = [['vancouver', 'Vancouver'], ['toronto', 'Toronto']];
+  root.innerHTML = `
+    <div style="margin-bottom:12px"><span class="tag-pill ${health.tone === 'ok' ? 'green' : 'gold'}">${esc(health.text)}</span></div>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <div class="tabs" role="tablist">${cities.map(([k, l]) =>
+        `<button type="button" class="tab${INV_STATE.city === k ? ' active' : ''}" role="tab" data-inv-city="${k}">${l}</button>`).join('')}</div>
+      <input id="inv-search" class="form-input" style="max-width:280px" placeholder="Search building or room…" value="${esc(INV_STATE.q)}" autocomplete="off">
+    </div>
+    ${unlinked.length ? invUnlinkedHtml(unlinked) : ''}
+    ${groups.map(g => invCardHtml(g, today)).join('') || '<p class="name-sub">No buildings in this city.</p>'}
+    <p class="name-sub" id="inv-nomatch" hidden>No buildings match.</p>`;
+  invWire(root);
+  invApplySearch(root);
+  window.scrollTo(0, scrollY);
+}
+function invUnlinkedHtml(list){
+  const opts = invData.props.filter(p => p.city === INV_STATE.city)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  return `<div class="card" style="padding:16px;margin-bottom:14px">
+    <strong>Unlinked rooms (${list.length})</strong> <span class="name-sub">Not bookable by partners until linked to a building.</span>
+    ${list.map(r => `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap" data-inv-room="${esc(r.id)}">
+      <span style="flex:1;min-width:200px">${esc(r.task_name)}</span>
+      <select class="form-input" data-inv-link style="max-width:260px"><option value="">Choose building…</option>${opts}</select>
+      <button class="btn btn-ghost btn-mini" type="button" data-inv-link-save>Link</button></div>`).join('')}
+  </div>`;
+}
+function invCardHtml(g, today){
+  const p = g.prop, rd = invReadiness(p), am = Array.isArray(p.amenities) ? p.amenities : [];
+  const pill = rd.ready ? '<span class="tag-pill green">Ready for partners</span>'
+    : `<span class="tag-pill gold">Missing: ${esc(rd.missing.join(', '))}</span>`;
+  const field = (name, label, value, mode) =>
+    `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${label}<input class="form-input" name="${name}" value="${esc(value)}"${mode ? ` inputmode="${mode}"` : ''}></label>`;
+  const hidden = g.rooms.length - g.visible;
+  const q = esc([p.name, ...g.rooms.map(r => r.task_name)].join(' ').toLowerCase());
+  return `<div class="card" style="padding:16px;margin-bottom:14px" data-inv-prop="${esc(p.id)}" data-inv-q="${q}">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+      <div><strong>${esc(p.name)}</strong> <span class="name-sub">${esc(p.address || '')}</span><br>
+        <span class="name-sub">${g.visible} rooms${hidden > 0 ? ` (${hidden} hidden)` : ''} · ${g.ready} partner-ready</span> ${pill}</div>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-inv-bookable${p.partner_bookable ? ' checked' : ''}${rd.ready || p.partner_bookable ? '' : ' disabled'}> Partner bookable</label>
+    </div>
+    <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px">
+      ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal')}
+      ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal')}
+      ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric')}
+      ${field('utilities', 'Utilities', p.utilities_note || '')}
+      ${field('wifi', 'Wi-Fi', p.wifi_note || '')}
+      ${field('laundry', 'Laundry', p.laundry_note || '')}
+      <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px">${INV_AMENITIES.map(([k, l]) =>
+        `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="am" value="${k}"${am.includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>
+      <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save terms</button> <span class="name-sub" data-inv-msg></span></div>
+    </form>
+    <details style="margin-top:10px"${INV_STATE.open.has(p.id) ? ' open' : ''}><summary>Rooms (${g.rooms.length})</summary>
+      <div style="overflow-x:auto"><table style="width:100%;margin-top:8px;border-collapse:collapse">
+        <thead><tr class="name-sub" style="text-align:left"><th>Room</th><th>Type</th><th>Price</th><th>Status</th><th>Partner-ready</th><th title="Saves instantly">Private bath (saves instantly)</th><th>Overrides: deposit · cleaning · min stay</th></tr></thead>
+        <tbody>${g.rooms.map(r => invRoomRowHtml(r, today)).join('')}</tbody>
+      </table></div>
+    </details>
+  </div>`;
+}
+function invRoomRowHtml(r, today){
+  const s = invRoomStatus(r, today);
+  const o = (k, v, w) => `<input class="form-input" data-inv-o="${k}" style="width:${w}px;display:inline-block" placeholder="—" value="${esc(v)}">`;
+  return `<tr data-inv-room="${esc(r.id)}" style="border-top:1px solid var(--line)">
+    <td>${esc(r.task_name)}</td><td>${esc(r.effective_room_type || '—')}</td><td>${invMoney(r.price_cents)}</td>
+    <td><span class="tag-pill ${s.tone}">${esc(s.label)}</span></td>
+    <td>${invPartnerReady(r) ? '✓' : ''}</td>
+    <td><input type="checkbox" data-inv-bath${r.private_bath_override ? ' checked' : ''}></td>
+    <td style="white-space:nowrap">${o('deposit', invDollars(r.deposit_cents_override), 80)} ${o('cleaning', invDollars(r.cleaning_fee_cents_override), 80)} ${o('minstay', r.min_stay_months_override == null ? '' : r.min_stay_months_override, 56)}
+      <button class="btn btn-ghost btn-mini" type="button" data-inv-room-save>Save</button></td>
+  </tr>`;
+}
+function invWire(root){
+  root.querySelectorAll('[data-inv-city]').forEach(b => b.addEventListener('click', () => { INV_STATE.city = b.dataset.invCity; renderPartnerInventory(); window.scrollTo(0, 0); }));
+  const s = root.querySelector('#inv-search');
+  if (s) s.addEventListener('input', () => { INV_STATE.q = s.value; invApplySearch(root); });
+  root.querySelectorAll('[data-inv-prop]').forEach(card => {
+    const details = card.querySelector('details');
+    if (details) details.addEventListener('toggle', () => {
+      const id = card.dataset.invProp;
+      if (details.open) INV_STATE.open.add(id); else INV_STATE.open.delete(id);
+    });
+  });
+  root.querySelectorAll('[data-inv-form]').forEach(f => f.addEventListener('submit', e => { e.preventDefault(); invSaveTerms(f); }));
+  root.querySelectorAll('[data-inv-bookable]').forEach(c => c.addEventListener('change', () => invSaveBookable(c)));
+  root.querySelectorAll('[data-inv-bath]').forEach(c => c.addEventListener('change', () => invSaveBath(c, c.closest('[data-inv-room]'))));
+  root.querySelectorAll('[data-inv-room-save]').forEach(b => b.addEventListener('click', () => invSaveRoom(b.closest('[data-inv-room]'))));
+  root.querySelectorAll('[data-inv-link-save]').forEach(b => b.addEventListener('click', () => invLinkRoom(b.closest('[data-inv-room]'))));
+}
+async function invUpdate(table, id, patch){
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) throw new Error('not connected');
+  const { data, error } = await sb.from(table).update(patch).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('not saved (no permission, or the row is gone)');
+}
+function invStamp(){ return { updated_at: new Date().toISOString(), updated_by: (CURRENT_USER && CURRENT_USER.email) || null }; }
+async function invSaveTerms(form){
+  const id = form.closest('[data-inv-prop]').dataset.invProp;
+  const el = form.elements, msg = form.querySelector('[data-inv-msg]');
+  const btn = form.querySelector('button[type="submit"]');
+  const dep = invCents(el.deposit.value), cle = invCents(el.cleaning.value), ms = invMonths(el.minstay.value);
+  if (!dep.ok || !cle.ok || !ms.ok) { msg.textContent = 'Amounts must be numbers (e.g. 1000 or 150.50); minimum stay in whole months.'; return; }
+  const patch = Object.assign({
+    deposit_cents: dep.value, cleaning_fee_cents: cle.value, min_stay_months: ms.value,
+    utilities_note: el.utilities.value.trim() || null, wifi_note: el.wifi.value.trim() || null, laundry_note: el.laundry.value.trim() || null,
+    amenities: [...form.querySelectorAll('input[name=am]:checked')].map(x => x.value),
+  }, invStamp());
+  const p = invData.props.find(x => x.id === id);
+  let unbooked = false;
+  if (!invReadiness(patch).ready) { patch.partner_bookable = false; unbooked = !!(p && p.partner_bookable); }
+  msg.textContent = 'Saving…';
+  if (btn) btn.disabled = true;
+  try {
+    await invUpdate('inventory_properties', id, patch);
+    showToast(unbooked ? 'Saved, and hidden from partners until the terms are complete' : 'Terms saved');
+    await invReload();
+  } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
+}
+async function invSaveBookable(c){
+  const id = c.closest('[data-inv-prop]').dataset.invProp;
+  c.disabled = true;
+  try {
+    await invUpdate('inventory_properties', id, Object.assign({ partner_bookable: c.checked }, invStamp()));
+    showToast(c.checked ? 'Now bookable by partners' : 'Hidden from partners');
+    await invReload();
+  } catch (e) { c.checked = !c.checked; c.disabled = false; showToast('Could not save: ' + (e.message || e)); }
+}
+async function invSaveBath(c, tr){
+  c.disabled = true;
+  try {
+    await invUpdate('inventory_rooms', tr.dataset.invRoom, { private_bath_override: c.checked ? true : null });
+    showToast('Private bath saved');
+    await invReload();
+  } catch (e) { c.checked = !c.checked; c.disabled = false; showToast('Could not save: ' + (e.message || e)); }
+}
+async function invSaveRoom(tr){
+  const v = k => tr.querySelector(`[data-inv-o="${k}"]`).value;
+  const dep = invCents(v('deposit')), cle = invCents(v('cleaning')), ms = invMonths(v('minstay'));
+  if (!dep.ok || !cle.ok || !ms.ok) { showToast('Overrides must be numbers; minimum stay in whole months'); return; }
+  const btn = tr.querySelector('[data-inv-room-save]');
+  const patch = {
+    deposit_cents_override: dep.value, cleaning_fee_cents_override: cle.value, min_stay_months_override: ms.value,
+  };
+  if (btn) btn.disabled = true;
+  try { await invUpdate('inventory_rooms', tr.dataset.invRoom, patch); showToast('Room saved'); await invReload(); }
+  catch (e) { showToast('Could not save: ' + (e.message || e)); if (btn) btn.disabled = false; }
+}
+async function invLinkRoom(row){
+  const pid = row.querySelector('[data-inv-link]').value;
+  if (!pid) { showToast('Choose a building first'); return; }
+  const btn = row.querySelector('[data-inv-link-save]');
+  if (btn) btn.disabled = true;
+  try { await invUpdate('inventory_rooms', row.dataset.invRoom, { property_id: pid }); showToast('Room linked'); await invReload(); }
+  catch (e) { showToast('Could not save: ' + (e.message || e)); if (btn) btn.disabled = false; }
+}
 /* CHECKOUT-CORE-START */
 /* Checkouts page. Phase 1 stored every value the resident's form computed
    (notice days, short flag, fees and wording shown); Phase 2a adds the case
