@@ -1259,7 +1259,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-25a"></script>
+<script src="pms-supabase.js?v=2026-09-25b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -19308,9 +19308,15 @@ if(_origGoToView){
   const sb = window.vmDb.sb;
   try {
     // 1. team_members
-    const { data: tms, error: tmErr } = await sb
+    const TM_COLS = 'id,email,name,role,title,city,assigned_property,color,avatar_url,allowed_pages,created_at';
+    let { data: tms, error: tmErr } = await sb
       .from('team_members')
-      .select('id,email,name,role,title,city,assigned_property,color,avatar_url,allowed_pages,created_at');
+      .select(TM_COLS + ',can_approve_refunds');
+    // Before checkout-refund-approver-2026-09-25.sql runs the column is missing;
+    // read the rest rather than lose the whole team (nobody is a refund approver).
+    if (tmErr && /can_approve_refunds/.test(tmErr.message || '')) {
+      ({ data: tms, error: tmErr } = await sb.from('team_members').select(TM_COLS));
+    }
     if (tmErr) {
       console.warn("[hydrateTeam] team_members error:", tmErr);
     } else if (Array.isArray(tms)) {
@@ -19329,6 +19335,7 @@ if(_origGoToView){
           color:    row.color || existing?.color || "#8A7B6C",
           avatar_url: row.avatar_url || existing?.avatar_url || null,
           allowed_pages: row.allowed_pages,  // NULL or array
+          can_approve_refunds: row.can_approve_refunds === true,  // checkout money steps (vm_is_finance)
           ini:      existing?.ini || initials,
           lastLogin: existing?.lastLogin || "today",
         };
@@ -20118,7 +20125,7 @@ const CKO_OUTCOME_OPTIONS = [['approved', 'Approve (charges waived)'], ['partial
 const CKO_CHANNEL_OPTIONS = [['whatsapp', 'WhatsApp'], ['email', 'Email'], ['phone', 'Phone'], ['in_person', 'In person']];
 // The guided steps, one per open status (Information Incomplete moves when the
 // resident submits the form, so it has no step). who: 'owner' = the case owner
-// or an admin; 'finance' = admin or accountant. Field types: datetime (a
+// or an admin; 'finance' = admin, accountant or can_approve_refunds. Field types: datetime (a
 // datetime-local input, sent as ISO), team (a team-member select), select,
 // number, money, date, text, textarea, computed (shown, never typed).
 const CKO_STEPS = {
@@ -20190,12 +20197,14 @@ function ckoFromRow(r){
     statusChangedAt: r.status_changed_at || r.created_at || '', outcome: r.outcome || '', closedAt: r.closed_at || '',
   };
 }
-// me = { email, role }. Anything else (a missing me, a map() index) is nobody.
-function ckoMeOf(me){ return me && typeof me === 'object' && !Array.isArray(me) ? { email: String(me.email || '').toLowerCase(), role: String(me.role || '') } : { email: '', role: '' }; }
+// me = { email, role, can_approve_refunds }. Anything else (a missing me, a map()
+// index) is nobody. can_approve_refunds counts only when it is literally true.
+function ckoMeOf(me){ return me && typeof me === 'object' && !Array.isArray(me) ? { email: String(me.email || '').toLowerCase(), role: String(me.role || ''), can_approve_refunds: me.can_approve_refunds === true } : { email: '', role: '', can_approve_refunds: false }; }
 function ckoNowMs(now){ return typeof now === 'number' ? now : now instanceof Date ? now.getTime() : Date.now(); }
 function ckoIsOpen(c){ return c.status !== 'Closed'; }
 function ckoIsAdmin(me){ return ckoMeOf(me).role === 'admin'; }
-function ckoIsFinance(me){ const r = ckoMeOf(me).role; return r === 'admin' || r === 'accountant'; }
+// As vm_is_finance(): admin, accountant, or a teammate flagged can_approve_refunds.
+function ckoIsFinance(me){ const m = ckoMeOf(me); return m.role === 'admin' || m.role === 'accountant' || m.can_approve_refunds; }
 // The owner or an admin: who may run owner steps, release, cancel and flag.
 function ckoCanManage(c, me){ const m = ckoMeOf(me); return m.role === 'admin' || (!!c.owner && c.owner === m.email); }
 // Whole days since the case reached its current status (null when unknown).
@@ -20228,7 +20237,7 @@ function ckoNextStep(c, me){
   const s = CKO_STEPS[key], f = c.flags || [], m = ckoMeOf(me);
   const out = (allowed, reason) => ({ step: key, label: s.label, allowed, reason, fields: s.fields });
   if (s.who === 'finance') {
-    if (!ckoIsFinance(m)) return out(false, 'Only an admin or an accountant can do this.');
+    if (!ckoIsFinance(m)) return out(false, 'Only an admin, an accountant or a refund approver can do this.');
     if (key === 'approve_refund' && f.indexOf('missing_refund_info') !== -1) return out(false, CKO_ERROR_TEXT.refund_info_missing);
     return out(true, '');
   }
@@ -20588,7 +20597,7 @@ let ckoOpenSeq = 0;
 // the buttons must match what the server will allow.
 function ckoMe(){
   const u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || {};
-  return { email: String(u.email || '').toLowerCase(), role: String(u.role || '') };
+  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true };
 }
 function ckoTeam(){ return typeof teamMembers !== 'undefined' ? teamMembers : []; }
 function ckoName(email){
