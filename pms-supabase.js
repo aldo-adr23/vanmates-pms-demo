@@ -9,6 +9,7 @@
  *   vmDb.claimLead(id)                    → atomic claim of an unclaimed lead
  *   vmDb.fetchLead(id)                    → re-read one lead's data jsonb
  *   vmDb.updateLead(record)               → UPDATE an existing lead (claimant RLS)
+ *   vmDb.checkoutRpc(name, args)          → call a checkout_* RPC → {data, error:{code,message}|null}
  *   vmDb.toast(msg, kind)                 → tiny inline toast for sync events
  *
  * The PMS calls hydrate() once at boot and then re-runs all render fns. After
@@ -35,7 +36,8 @@
       toast:   () => {},
       claimLead: async () => ({ ok:false, row:null, error:'no-supabase' }),
       fetchLead: async () => null,
-      updateLead: () => false
+      updateLead: () => false,
+      checkoutRpc: async () => ({ data: null, error: { code: '', message: 'no-supabase' } })
     };
     return;
   }
@@ -463,6 +465,33 @@
     return true;
   }
 
+  /* ------------------- checkouts: one RPC per action ------------------- */
+  /* CHECKOUT-RPC-START */
+  // Every Checkouts write (take, assign, advance, cancel, …) is one
+  // security-definer RPC that raises 'checkout:<code>' when it refuses. The
+  // caller gets that code back so the drawer can say why in words
+  // (CKO_ERROR_TEXT in index.html). No toast here: the drawer shows the
+  // reason next to the form that caused it.
+  async function checkoutRpc(name, args) {
+    if (!/^checkout_[a-z_]+$/.test(String(name || ''))) {
+      return { data: null, error: { code: '', message: 'not a checkout RPC: ' + name } };
+    }
+    try {
+      const { data, error } = await sb.rpc(name, args || {});
+      if (error) {
+        const msg = String(error.message || '');
+        const m = msg.match(/checkout:([a-z_]+(?::[a-z_]+)?)/);
+        console.warn('[vmDb] ' + name + ' refused:', msg);
+        return { data: null, error: { code: m ? m[1] : '', message: msg } };
+      }
+      return { data: data == null ? null : data, error: null };
+    } catch (e) {
+      console.error('[vmDb] ' + name + ' failed:', e);
+      return { data: null, error: { code: '', message: String((e && e.message) || e) } };
+    }
+  }
+  /* CHECKOUT-RPC-END */
+
   // Admin-only: list all soft-deleted rows for a table. Used by the Restore
   // panel in Settings → Trash.
   async function listDeleted(arrayName) {
@@ -634,7 +663,7 @@
   }
 
   window.vmDb = { hydrate, upsert, delete: deleteRow, restore: restoreRow, listDeleted,
-                   claimLead, fetchLead, updateLead,
+                   claimLead, fetchLead, updateLead, checkoutRpc,
                    keyFor, uploadFile, fileUrl, deleteFile, subscribeRealtime, toast, sb };
   console.log('[vmDb] persistence layer ready (Phase 2.4f: soft delete + audit + storage + realtime)');
 })();
