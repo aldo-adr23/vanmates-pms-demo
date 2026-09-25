@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content" />
+<meta name="theme-color" content="#0f3d3e" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="VM Inbox" />
+<link rel="manifest" href="cs-manifest.json" />
+<title>Customer Service · Vanmates</title>
+<script>
+// Synchronous gate, same test as index.html's authGate. After sign-in, index.html bounces back here
+// via sessionStorage.vm_next_path (signin.html always lands on index.html).
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now()));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'cs.html' + location.hash); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root {
+  --brand: #0f3d3e; --brand-2: #eaf4f3; --ink: #14181a; --muted: #6b7478; --line: #e6e8e9; --bg: #ffffff; --bg-2: #f6f6f2;
+  --in: #ffffff; --maya: #e9f0ff; --me: #0f3d3e; --me-ink: #ffffff; --note: #fff6c2; --danger: #c0392b; --ok: #2a8a5b;
+  --urgent-bg: #fde2e1; --urgent: #a31212; --new-bg: #fff2d1; --new: #8a5a00; --wa: #25d366; --ln: #06c755;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg);
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+button, select, input, textarea { font: inherit; }
+button { cursor: pointer; }
+.top { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--brand); color: #fff; }
+.top b { font-size: 15px; }
+.top .counts { font-size: 12px; opacity: .85; }
+.top .sp { flex: 1; }
+.top a { color: #cfe7e4; font-size: 13px; text-decoration: none; }
+.tabs { flex: none; display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); background: #fff; overflow-x: auto; }
+.tab { border: 0; background: none; padding: 11px 12px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; min-height: 44px; }
+.tab.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--brand); }
+.badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px;
+  font-weight: 700; text-align: center; line-height: 18px; }
+.app { flex: 1; min-height: 0; display: flex; }
+.list { width: 340px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.chips { display: flex; gap: 6px; padding: 8px 10px; overflow-x: auto; flex: none; }
+.chip { border: 0; border-radius: 16px; background: #eef0f0; padding: 6px 12px; font-size: 13px; white-space: nowrap; min-height: 44px; }
+.chip.on { background: var(--brand); color: #fff; }
+.search { flex: none; padding: 0 10px 8px; display: flex; gap: 6px; }
+.search input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.filters { flex: none; display: none; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 10px 10px; }
+.filters.show { display: grid; }
+.fbtns { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+.fdone { display: none; }
+.filters select, .filters input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px; background: #fff; min-height: 44px; }
+.rows { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.row { display: flex; gap: 10px; padding: 11px 12px; border-bottom: 1px solid #f2f3f3; cursor: pointer; }
+.row:hover { background: #fafbfb; }
+.row.sel { background: var(--brand-2); box-shadow: inset 3px 0 var(--brand); }
+.av { width: 42px; height: 42px; border-radius: 50%; background: #dfe3e4; flex: none; position: relative; display: flex; align-items: center;
+  justify-content: center; font-weight: 700; color: #3a4448; }
+.chb { position: absolute; right: -2px; bottom: -2px; width: 17px; height: 17px; border-radius: 50%; border: 2px solid #fff; color: #fff;
+  font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.chb.whatsapp { background: var(--wa); } .chb.line { background: var(--ln); }
+.meta { flex: 1; min-width: 0; }
+.l1 { display: flex; gap: 6px; align-items: baseline; }
+.name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.time { color: var(--muted); font-size: 12px; flex: none; }
+.prev { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.row.unread .prev { color: var(--ink); font-weight: 600; }
+.tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #eef1f6; color: #3d4a5c; }
+.tag.urgent { background: var(--urgent-bg); color: var(--urgent); } .tag.high { background: #ffe9d6; color: #8a3d00; }
+.tag.new { background: var(--new-bg); color: var(--new); }
+.empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-2); }
+.chead { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #fff; border-bottom: 1px solid var(--line); }
+.chead .who { flex: 1; min-width: 0; }
+.chead .who b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chead .sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iconbtn { border: 0; background: none; font-size: 20px; min-width: 44px; min-height: 44px; border-radius: 22px; color: var(--brand); }
+.back { display: none; }
+.summary { flex: none; margin: 8px 12px 0; background: #f6f3ff; border-left: 3px solid #6c5ce7; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.summary b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #5a4bd1; margin-bottom: 2px; }
+.msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; -webkit-overflow-scrolling: touch; }
+.b { max-width: min(78%, 560px); padding: 8px 11px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
+.b.left { align-self: flex-start; background: var(--in); border: 1px solid #eceeee; }
+.b.left.maya { background: var(--maya); border: 1px dashed #9fb3d6; }
+.b.right { align-self: flex-end; background: var(--me); color: var(--me-ink); }
+.b.right.failed { background: #fbe3e1; color: var(--danger); border: 1px solid var(--danger); }
+.b.note { align-self: stretch; max-width: none; background: var(--note); border-radius: 8px; font-size: 13px; }
+.b.system { align-self: center; background: #e9ebeb; color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: 10px; }
+.b .by { display: block; font-size: 11px; opacity: .75; margin-bottom: 2px; }
+.b .at { display: block; font-size: 10px; opacity: .6; margin-top: 3px; text-align: right; }
+.b img { display: block; max-width: 240px; max-height: 240px; border-radius: 8px; margin-top: 4px; }
+.b .file { display: inline-block; margin-top: 4px; padding: 4px 8px; border-radius: 6px; background: rgba(0,0,0,.06); color: inherit; }
+.earlier { align-self: center; border: 0; background: #e9ebeb; color: var(--muted); border-radius: 10px; padding: 4px 12px; font-size: 12px; }
+.actions { flex: none; display: flex; gap: 6px; padding: 6px 10px; background: #fff; border-top: 1px solid var(--line); overflow-x: auto; }
+.act { flex: none; border: 1px solid var(--brand); color: var(--brand); background: #fff; border-radius: 18px; padding: 7px 13px; min-height: 44px; white-space: nowrap; }
+.act.primary { background: var(--brand); color: #fff; }
+select.act { padding-right: 8px; }
+.composer { flex: none; background: #fff; border-top: 1px solid var(--line); padding: 8px 10px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+.cmodes { display: flex; gap: 14px; font-size: 12px; margin-bottom: 6px; align-items: center; }
+.cmodes button { border: 0; background: none; padding: 2px 0; min-height: 44px; color: var(--muted); border-bottom: 2px solid transparent; }
+.cmodes button.on { color: var(--ink); border-bottom-color: var(--brand); font-weight: 600; }
+.cmodes .win { margin-left: auto; color: var(--ok); } .cmodes .win.closed { color: var(--danger); }
+.crow { display: flex; gap: 8px; align-items: flex-end; }
+.crow textarea { flex: 1; min-width: 0; resize: none; border: 1px solid #cfd4d6; border-radius: 18px; padding: 9px 12px; max-height: 140px; min-height: 42px; }
+.composer.note textarea { background: #fffbe0; }
+.send { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--brand); color: #fff; font-size: 18px; }
+.send:disabled { opacity: .5; }
+.wide { width: 100%; border: 0; border-radius: 10px; background: var(--brand); color: #fff; padding: 12px; min-height: 44px; font-weight: 600; }
+.info { width: 290px; flex: none; border-left: 1px solid var(--line); background: #fcfcfc; overflow-y: auto; padding: 14px; font-size: 13px; }
+.info h4 { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.info h4:first-child { margin-top: 0; }
+.kv { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; } .kv span:first-child { color: var(--muted); } .kv span:last-child { text-align: right; }
+.info .close { display: none; }
+.linkbtn { border: 0; background: none; color: var(--brand); padding: 4px 8px; min-height: 44px; text-decoration: underline; display: inline-flex; align-items: center; justify-content: center; }
+.history { flex: 1; overflow-y: auto; padding: 14px; display: none; }
+body[data-tab="history"] .history { display: block; }
+body[data-tab="history"] .app { display: none; }
+.hfilters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.hfilters select { border: 1px solid var(--line); border-radius: 8px; padding: 7px; background: #fff; min-height: 38px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fff; }
+.tile .k { font-size: 12px; color: var(--muted); } .tile .v { font-size: 26px; font-weight: 700; } .tile .s { font-size: 12px; color: var(--muted); }
+table.h { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+table.h th { text-align: left; font-size: 12px; color: var(--muted); background: #f6f7f7; padding: 8px 10px; }
+table.h td { padding: 9px 10px; border-top: 1px solid #f0f1f1; vertical-align: top; }
+table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: #fafbfb; }
+.ok { color: var(--ok); font-weight: 600; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.modal.show { display: flex; }
+.modal .card { background: #fff; border-radius: 12px; padding: 16px; width: min(440px, 100%); }
+.modal textarea { width: 100%; min-height: 70px; border: 1px solid #cfd4d6; border-radius: 8px; padding: 8px; margin: 8px 0; }
+.modal .btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.toast { position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #222; color: #fff;
+  padding: 9px 14px; border-radius: 8px; font-size: 13px; display: none; z-index: 60; max-width: calc(100% - 32px); }
+.toast.show { display: block; }
+.gate { padding: 60px 20px; text-align: center; color: var(--muted); }
+#csum, #cacts, #ccomp { flex: none; }
+#me { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30vw; }
+.modal .err { color: var(--danger); font-size: 13px; margin-bottom: 8px; }
+.nochat { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+
+/* ≥1100: the info panel is always visible, so no ⓘ toggle */
+@media (min-width: 1100px) { .infobtn { display: none; } }
+/* 760–1099: info panel becomes an overlay */
+@media (max-width: 1099px) {
+  .info { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; box-shadow: -4px 0 20px rgba(0,0,0,.12); display: none; background: #fff;
+    padding-top: max(14px, env(safe-area-inset-top)); }
+  body.info-open .info { display: block; }
+  .info .close { display: block; margin-left: auto; }
+}
+/* < 760: messaging-app flow */
+@media (max-width: 759px) {
+  .top .counts { display: none; }
+  .top a.portal { font-size: 12px; }
+  input, select, textarea { font-size: 16px; }   /* iOS zooms the page on focus below 16px */
+  .filters.show { position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; background: #fff; border-radius: 14px 14px 0 0;
+    box-shadow: 0 -6px 24px rgba(0,0,0,.18); padding: 14px 16px; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .fdone { display: inline-block; }
+  .list { width: 100%; border-right: 0; }
+  .chat { display: none; }
+  body[data-pane="chat"] .list { display: none; }
+  body[data-pane="chat"] .chat { display: flex; }
+  body[data-pane="chat"] .tabs { display: none; }
+  .back { display: inline-block; }
+  .info { width: 100%; }
+  .filters { grid-template-columns: 1fr; }
+  table.h thead { display: none; }
+  table.h tr { display: block; border-top: 1px solid var(--line); padding: 8px 10px; }
+  table.h td { display: block; border: 0; padding: 2px 0; }
+  table.h td[data-l]::before { content: attr(data-l) ": "; color: var(--muted); font-size: 12px; }
+}
+</style>
+</head>
+<body data-tab="needs_reply" data-pane="list">
+<header class="top">
+  <b>Customer Service</b>
+  <span class="counts" id="counts"></span>
+  <span class="sp"></span>
+  <a class="portal" href="index.html">← Portal</a>
+  <span id="me" style="font-size:13px"></span>
+</header>
+<nav class="tabs" id="tabs">
+  <button class="tab on" data-tab="needs_reply">Needs reply <span class="badge" id="n-needs" hidden></span></button>
+  <button class="tab" data-tab="waiting">Waiting <span id="n-waiting"></span></button>
+  <button class="tab" data-tab="maya">Maya <span id="n-maya"></span></button>
+  <button class="tab" data-tab="history">History</button>
+</nav>
+<div class="app" id="app">
+  <aside class="list">
+    <div class="chips" id="chips">
+      <button class="chip on" data-chip="all">All</button>
+      <button class="chip" data-chip="mine">Mine</button>
+      <button class="chip" data-chip="unassigned">Unassigned</button>
+      <button class="chip" data-chip="unread">Unread</button>
+      <button class="chip" id="ftoggle">Filters ▾</button>
+    </div>
+    <div class="search"><input id="q" type="search" placeholder="Search name, phone, message" autocomplete="off" /></div>
+    <div class="filters" id="filters">
+      <select data-f="platform"><option value="">All platforms</option><option value="whatsapp">WhatsApp</option><option value="line">LINE</option></select>
+      <select data-f="agent" id="f-agent"><option value="">All agents</option></select>
+      <select data-f="status"><option value="">All statuses</option><option value="new">New</option><option value="open">Open</option>
+        <option value="waiting_customer">Waiting for customer</option><option value="waiting_internal">Waiting for internal team</option></select>
+      <select data-f="priority"><option value="">All priorities</option><option value="urgent">Urgent</option><option value="high">High</option>
+        <option value="normal">Normal</option><option value="low">Low</option></select>
+      <select data-f="source"><option value="">All sources</option><option value="whatsapp_maya">WhatsApp Maya</option>
+        <option value="line_maya">LINE Maya</option><option value="japan_team">Japan team</option><option value="cs_agent">Taken back by CS</option></select>
+      <input data-f="from" type="date" aria-label="From date" />
+      <input data-f="to" type="date" aria-label="To date" />
+      <div class="fbtns"><button type="button" class="act" id="fclear">Clear filters</button><button type="button" class="act primary fdone" id="fdone">Done</button></div>
+    </div>
+    <div class="rows" id="rows"><div class="empty">Loading…</div></div>
+  </aside>
+  <main class="chat" id="chat"><div class="nochat">Pick a conversation</div></main>
+  <aside class="info" id="info"></aside>
+</div>
+<section class="history" id="history"></section>
+<div class="modal" id="modal"><div class="card" id="modalCard"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script src="cs-core.js?v=2026-09-25d"></script>
+<script>
+(function () {
+  'use strict';
+  var C = window.CSCore;
+  var esc = C.csEsc;
+  var CS_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/cs-send';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
+    { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var NARROW = window.matchMedia('(max-width: 759px)');
+  var URL_TTL = 55 * 60000;   // signed URLs live 3600 s; re-sign after 55 min
+
+  var S = { me: null, team: [], convs: {}, reads: {}, tab: 'needs_reply', f: { chip: 'all' }, openId: null, msgs: [], cases: [],
+    events: [], showEarlier: false, mode: 'reply', sending: false, rtOk: false, everSubscribed: false, urls: new Map(), pend: new Set(),
+    revealPhone: false, drafts: {}, loading: false, composerSig: '', listRaf: 0, threadSeq: 0, hSeq: 0, convSeq: 0,
+    threadLoading: false, msgBuf: {} };
+
+  function $(id) { return document.getElementById(id); }
+  function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 3500); }
+  function clock(iso) { var d = new Date(iso); return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function nameOf(email) { var m = S.team.filter(function (t) { return String(t.email).toLowerCase() === String(email || '').toLowerCase(); })[0]; return m ? (m.name || C.csFirstName(email)) : C.csFirstName(email); }
+  function isCoarse() { return window.matchMedia('(pointer: coarse)').matches; }
+  function chatVisible() {
+    return !!S.openId && document.visibilityState === 'visible' && S.tab !== 'history' && (!NARROW.matches || document.body.dataset.pane === 'chat');
+  }
+
+  // ───────── boot ─────────
+  function isAuthError(err) {
+    return err.name === 'AuthSessionMissingError' || err.status === 400 || err.status === 401 || err.status === 403;
+  }
+  function showOffline() {
+    $('rows').innerHTML = '<div class="gate"><p>Can’t reach the server — check your connection</p><button class="act primary" id="reloadBtn">Reload</button></div>';
+    $('reloadBtn').addEventListener('click', function () { location.reload(); });
+  }
+
+  async function boot() {
+    var u = await sb.auth.getUser();
+    if (u && u.error && (navigator.onLine === false || !isAuthError(u.error))) { showOffline(); return; }
+    var user = u && u.data && u.data.user;
+    if (!user) { try { sessionStorage.setItem('vm_next_path', 'cs.html' + location.hash); } catch (e) {} location.replace('signin.html'); return; }
+    var tm = await sb.from('team_members').select('id,email,name,role,allowed_pages');
+    if (tm.error) { $('rows').innerHTML = '<div class="gate">Could not load the team: ' + esc(tm.error.message) + '</div>'; return; }
+    S.me = (tm.data || []).filter(function (m) { return m.id === user.id; })[0] || null;
+    if (!C.csIsMember(S.me)) {
+      document.body.innerHTML = '<div class="gate"><p>Your account does not have Customer Service access.</p><p>Ask an admin to add the <b>Customer Service</b> page to your profile in Team.</p><p><a href="index.html">Back to the portal</a></p></div>';
+      return;
+    }
+    S.team = (tm.data || []).filter(C.csIsMember);
+    $('me').textContent = S.me.name || S.me.email;
+    $('f-agent').innerHTML = '<option value="">All agents</option>' + S.team.map(function (m) { return '<option value="' + esc(m.email) + '">' + esc(m.name || m.email) + '</option>'; }).join('');
+    wire();
+    await loadConvs();
+    subscribe();
+    var m = /#c=([\w-]+)/.exec(location.hash);
+    if (m) {
+      // On a phone, open it as a push so the in-app Back / the phone's back gesture returns to
+      // the list instead of leaving the app (there'd be nothing before the deep link otherwise).
+      if (NARROW.matches) { history.replaceState(null, '', location.pathname + location.search); openConv(m[1], 'push'); }
+      else openConv(m[1], 'replace');
+    }
+  }
+
+  // CS-owned conversations, plus the recent ones handed back to Maya / the Japan team (the Maya tab).
+  async function loadConvs() {
+    var seq = ++S.convSeq;
+    var prevConvs = S.convs;
+    var res;
+    try {
+      res = await Promise.all([
+        sb.from('cs_conversations').select('*').eq('owner_kind', 'cs').is('deleted_at', null)
+          .order('last_message_at', { ascending: false, nullsFirst: false }).limit(2000),
+        sb.from('cs_conversations').select('*').neq('owner_kind', 'cs').in('last_outcome', ['returned_maya', 'returned_japan_team', 'expired'])
+          .is('deleted_at', null).order('last_message_at', { ascending: false, nullsFirst: false }).limit(300)
+      ]);
+    } catch (e) {
+      if (seq !== S.convSeq) return;   // a newer load is already in flight — keep S.convs as-is
+      toast('Could not load conversations: ' + (e && e.message ? e.message : 'unknown error'));
+      return;
+    }
+    if (seq !== S.convSeq) return;   // stale response
+    var err = res[0].error || res[1].error;
+    if (err) { toast('Could not load conversations: ' + err.message); return; }   // keep S.convs as-is
+    var next = {};
+    (res[0].data || []).concat(res[1].data || []).forEach(function (c) { next[c.id] = c; });
+    if (S.openId && !next[S.openId] && prevConvs[S.openId]) next[S.openId] = prevConvs[S.openId];
+    S.convs = next;
+    var rd = await sb.from('cs_reads').select('conversation_id,read_count');
+    if (seq !== S.convSeq) return;
+    S.reads = {};
+    (rd.data || []).forEach(function (x) { S.reads[x.conversation_id] = x; });
+    renderList();
+  }
+
+  function scheduleList() {
+    if (S.listRaf) return;
+    S.listRaf = requestAnimationFrame(function () { S.listRaf = 0; renderList(); });
+  }
+
+  function subscribe() {
+    sb.channel('cs-inbox')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cs_conversations' }, function (p) {
+        var c = p.new && p.new.id ? p.new : null;
+        if (!c) {
+          var gone = p.old && p.old.id;
+          if (gone && S.convs[gone]) { delete S.convs[gone]; scheduleList(); if (gone === S.openId) closeChat(); }
+          return;
+        }
+        var prev = S.convs[c.id];
+        if (c.deleted_at) {
+          if (prev) { delete S.convs[c.id]; scheduleList(); }
+          if (c.id === S.openId) { toast('This conversation was removed.'); closeChat(); }
+          return;
+        }
+        var next = Object.assign({}, prev, c);
+        S.convs[c.id] = next;
+        if (!(C.csTab(prev) === null && C.csTab(next) === null)) scheduleList();
+        if (c.id === S.openId) {
+          if (prev && prev.current_case_id !== next.current_case_id) loadThread(c.id);
+          else { renderChat(); renderInfo(); }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cs_messages' }, function (p) {
+        var m = p.new;
+        if (!m || !m.id || m.conversation_id !== S.openId) return;
+        if (S.loading || S.threadLoading) { S.msgBuf[m.id] = Object.assign({}, S.msgBuf[m.id], m); return; }
+        var i = S.msgs.findIndex(function (x) { return x.id === m.id; });
+        if (i === -1) S.msgs.push(m); else S.msgs[i] = Object.assign({}, S.msgs[i], m);
+        renderMessages(true);
+        if (m.author_kind === 'customer') markRead(S.openId);
+      })
+      .subscribe(function (status) {
+        if (status === 'SUBSCRIBED') {
+          if (S.everSubscribed) refreshAll();   // re-joined after a drop: catch up on what we missed
+          S.everSubscribed = true; S.rtOk = true;
+        } else {
+          S.rtOk = false;
+        }
+      });
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') refreshAll().then(function () { if (S.openId) markRead(S.openId); });
+    });
+    setInterval(function () { if (!S.rtOk && document.visibilityState === 'visible') refreshAll(); }, 60000);
+  }
+
+  async function refreshAll() {
+    await loadConvs();
+    if (S.openId) await loadThread(S.openId);
+  }
+
+  // ───────── list ─────────
+  function tabList(tab) { return Object.keys(S.convs).map(function (k) { return S.convs[k]; }).filter(function (c) { return C.csTab(c) === tab; }); }
+
+  function renderCounts() {
+    var needs = tabList('needs_reply'), waiting = tabList('waiting'), maya = tabList('maya');
+    var unread = needs.concat(waiting).filter(function (c) { return C.csUnread(c, S.reads) > 0; }).length;
+    var nb = $('n-needs'); nb.hidden = !needs.length; nb.textContent = needs.length;
+    $('n-waiting').textContent = waiting.length || '';
+    $('n-maya').textContent = maya.length || '';
+    var unassigned = needs.filter(function (c) { return !c.assignee; }).length;
+    var mine = needs.concat(waiting).filter(function (c) { return String(c.assignee || '').toLowerCase() === String(S.me.email).toLowerCase(); }).length;
+    $('counts').textContent = unassigned + ' unassigned · ' + mine + ' mine · ' + unread + ' unread';
+    document.title = (needs.length ? '(' + needs.length + ') ' : '') + 'Customer Service · Vanmates';
+  }
+
+  function tagsFor(c) {
+    var t = [];
+    if (c.priority === 'urgent' || c.priority === 'high') t.push('<span class="tag ' + c.priority + '">' + (c.priority === 'urgent' ? 'Urgent' : 'High') + '</span>');
+    if (c.last_source) t.push('<span class="tag">' + esc(C.CS_SOURCE_LABEL[c.last_source] || c.last_source) + '</span>');
+    if (c.owner_kind === 'cs') {
+      if (!c.assignee) t.push('<span class="tag new">New · unassigned</span>');
+      else t.push('<span class="tag">' + esc(C.CS_STATUS_LABEL[c.status] || c.status) + ' · ' + esc(nameOf(c.assignee)) + '</span>');
+    } else if (c.last_outcome) {
+      t.push('<span class="tag">' + esc(C.CS_OUTCOME_LABEL[c.last_outcome] || c.last_outcome) + '</span>');
+    }
+    return t.join('');
+  }
+
+  var FILTER_KEYS = ['platform', 'agent', 'status', 'priority', 'source', 'from', 'to'];
+  function renderFilterToggle() {
+    var n = FILTER_KEYS.filter(function (k) { return !!S.f[k]; }).length;
+    $('ftoggle').textContent = n ? 'Filters (' + n + ')' : 'Filters ▾';
+  }
+  function clearFilters() {
+    FILTER_KEYS.forEach(function (k) { delete S.f[k]; });
+    Array.prototype.forEach.call($('filters').querySelectorAll('[data-f]'), function (el) { el.value = ''; });
+    renderFilterToggle(); renderList();
+  }
+
+  function renderList() {
+    renderCounts();
+    if (S.tab === 'history') return;
+    var now = new Date();
+    var list = C.csSort(C.csFilter(tabList(S.tab), S.f, S.me.email, S.reads), S.tab, S.reads);
+    if (!list.length) {
+      $('rows').innerHTML = '<div class="empty">' + (S.tab === 'needs_reply' ? 'Nothing needs a reply. 🎉' : 'Nothing here.') + '</div>';
+      return;
+    }
+    $('rows').innerHTML = list.map(function (c) {
+      var u = C.csUnread(c, S.reads);
+      return '<div class="row' + (u ? ' unread' : '') + (c.id === S.openId ? ' sel' : '') + '" data-id="' + esc(c.id) + '">' +
+        '<div class="av">' + esc(initials(c.customer_name)) + '<span class="chb ' + esc(c.channel) + '">' + (c.channel === 'line' ? 'L' : 'W') + '</span></div>' +
+        '<div class="meta"><div class="l1"><span class="name">' + esc(c.customer_name || c.customer_phone || 'Unknown') + '</span>' +
+        '<span class="time">' + esc(C.csAgo(c.last_message_at, now)) + (u ? ' <span class="badge">' + u + '</span>' : '') + '</span></div>' +
+        '<div class="prev">' + esc(C.csPreview(c)) + '</div><div class="tags">' + tagsFor(c) + '</div></div></div>';
+    }).join('');
+  }
+
+  // ───────── conversation ─────────
+  // how: 'push' (row tap on a phone, so Back returns to the list) | 'replace' | 'pop' (history already moved)
+  async function openConv(id, how) {
+    S.openId = id; S.showEarlier = false; S.mode = 'reply'; S.revealPhone = false;
+    S.msgs = []; S.cases = []; S.events = []; S.loading = true; S.composerSig = ''; S.msgBuf = {};
+    if (how === 'push') history.pushState({ c: id }, '', '#c=' + id);
+    else if (how !== 'pop') history.replaceState(null, '', '#c=' + id);
+    document.body.dataset.pane = 'chat';
+    $('chat').innerHTML = '<div class="nochat">Loading…</div>';
+    $('info').innerHTML = '';
+    if (!S.convs[id]) {
+      var one = await sb.from('cs_conversations').select('*').eq('id', id).maybeSingle();
+      if (id !== S.openId) return;
+      if (one.data) S.convs[id] = one.data;
+    }
+    if (!S.convs[id]) { toast('Conversation not found.'); closeChat(); return; }
+    scheduleList();
+    await loadThread(id);
+    markRead(id);
+  }
+
+  function closeChat() {
+    document.body.dataset.pane = 'list'; document.body.classList.remove('info-open');
+    S.openId = null; S.loading = false;
+    S.msgs = []; S.cases = []; S.events = [];
+    $('chat').innerHTML = '<div class="nochat">Pick a conversation</div>';
+    // Back action keeps using history.back() when there's a pushed conversation to pop; a
+    // deletion-triggered close (the conversation currently open was removed) follows the same rule,
+    // else it just clears the hash so the URL doesn't keep pointing at a gone conversation.
+    if (history.state && history.state.c) history.back();
+    else history.replaceState(null, '', location.pathname + location.search);
+    renderList();
+  }
+
+  // Any cs_messages event for the open conversation that lands while a load is outstanding is
+  // buffered here (by id) instead of touching S.msgs, then drained once the load completes.
+  function drainMsgBuf() {
+    var buf = S.msgBuf; S.msgBuf = {};
+    Object.keys(buf).forEach(function (k) {
+      var m = buf[k];
+      var i = S.msgs.findIndex(function (x) { return x.id === m.id; });
+      if (i === -1) S.msgs.push(m); else S.msgs[i] = Object.assign({}, S.msgs[i], m);
+    });
+    S.msgs.sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+  }
+
+  async function loadThread(id) {
+    var seq = ++S.threadSeq;
+    var wasLoading = S.loading;   // true only for the first load (openConv sets it before calling)
+    var prevMsgs = S.msgs;
+    S.threadLoading = true;
+    var res, err;
+    try {
+      res = await Promise.all([
+        sb.from('cs_messages').select('*').eq('conversation_id', id).order('created_at', { ascending: false }).limit(500),
+        sb.from('cs_cases').select('*').eq('conversation_id', id).order('opened_at', { ascending: false }),
+        sb.from('cs_events').select('*').eq('conversation_id', id).order('created_at', { ascending: false }).limit(50)
+      ]);
+      err = res[0].error || res[1].error || res[2].error;
+    } catch (e) {
+      err = e;
+    }
+    if (id !== S.openId || seq !== S.threadSeq) return;   // a newer call owns S.threadLoading now
+    S.threadLoading = false;
+    if (err) {
+      S.loading = false;
+      if (!wasLoading) return;   // background refresh: keep S.msgs/S.cases/S.events as they were
+      $('chat').innerHTML = '<div class="nochat">Could not load this conversation — <button class="act" data-act="reload">Retry</button></div>';
+      return;
+    }
+    var msgs = (res[0].data || []).slice().reverse();
+    if (!wasLoading) {
+      // Refresh: keep any message already in S.msgs that the query missed (replication lag) —
+      // one not in the result and newer than the newest row the query did return.
+      var haveIds = {}; msgs.forEach(function (m) { haveIds[m.id] = true; });
+      var newest = msgs.length ? new Date(msgs[msgs.length - 1].created_at) : null;
+      prevMsgs.forEach(function (m) {
+        if (!haveIds[m.id] && (!newest || new Date(m.created_at) > newest)) msgs.push(m);
+      });
+    }
+    S.msgs = msgs; S.cases = res[1].data || []; S.events = res[2].data || [];
+    drainMsgBuf();
+    S.loading = false;
+    renderChat();
+    if (!wasLoading) renderMessages(true);
+    renderInfo();
+  }
+
+  async function markRead(id) {
+    if (id !== S.openId || !chatVisible()) return;
+    var r = await sb.rpc('cs_mark_read', { p_conv: id });
+    if (r.data && r.data.ok) { S.reads[id] = { conversation_id: id, read_count: (S.convs[id] || {}).customer_msg_count || 0 }; scheduleList(); }
+  }
+
+  function buildComposer(c, mode, now) {
+    if (mode === 'take_back') {
+      return '<div class="composer"><button class="wide" data-act="take_back">Take back from ' + (c.owner_kind === 'japan_team' ? 'the Japan team' : 'Maya') + '</button></div>';
+    }
+    if (mode === 'template' && S.mode === 'reply') {
+      return '<div class="composer"><div class="cmodes"><button class="on" data-mode="reply">Reply</button><button data-mode="note">Internal note</button>' +
+        '<span class="win closed">WhatsApp 24h window closed</span></div>' +
+        '<button class="wide" data-act="template"' + (S.sending ? ' disabled' : '') + '>Send follow-up template</button></div>';
+    }
+    var win = c.channel === 'whatsapp' && S.mode === 'reply' ? '<span class="win" id="win"></span>' : '';
+    return '<div class="composer' + (S.mode === 'note' ? ' note' : '') + '"><div class="cmodes"><button class="' + (S.mode === 'reply' ? 'on' : '') + '" data-mode="reply">Reply</button>' +
+      '<button class="' + (S.mode === 'note' ? 'on' : '') + '" data-mode="note">Internal note</button>' + win + '</div>' +
+      '<div class="crow"><textarea id="box" rows="1" placeholder="' + (S.mode === 'note' ? 'Internal note — the customer never sees this' : (isCoarse() ? 'Reply…' : 'Reply… (Enter sends, Shift+Enter new line)')) + '"></textarea>' +
+      '<button class="send" id="sendBtn" aria-label="Send"' + (S.sending ? ' disabled' : '') + '>➤</button></div></div>';
+  }
+
+  // Soft render: header, summary and actions are rebuilt; the composer (focus, IME state, draft) is kept unless its mode changed.
+  function renderChat() {
+    if (S.loading) return;
+    var c = S.convs[S.openId];
+    if (!c) return;
+    var now = new Date();
+    var fresh = false;
+    if (!$('chead')) {
+      $('chat').innerHTML = '<div class="chead" id="chead"></div><div id="csum"></div><div class="msgs" id="msgs"></div><div id="cacts"></div><div id="ccomp"></div>';
+      S.composerSig = ''; fresh = true;
+    }
+    var card = C.csSummaryCard(S.cases, c.current_case_id);
+    var mode = C.csComposerMode(c, now);
+    var acct = C.CS_ACCOUNT_LABEL[c.channel_account] || c.channel;
+    var sub = [acct, S.revealPhone ? c.customer_phone : C.csMaskPhone(c.customer_phone)];
+    if (c.owner_kind === 'cs') sub.push(C.CS_STATUS_LABEL[c.status] || c.status, c.assignee ? nameOf(c.assignee) : 'Unassigned');
+    else sub.push(c.owner_kind === 'japan_team' ? 'With the Japan team' : 'With Maya');
+    if (c.priority === 'urgent' || c.priority === 'high') sub.push(c.priority === 'urgent' ? '🔴 Urgent' : '🟠 High');
+
+    var actions = '';
+    if (c.owner_kind === 'cs') {
+      if (!c.assignee) actions += '<button class="act primary" data-act="claim">Claim</button>';
+      actions += '<select class="act" data-act="status" aria-label="Status">' + ['open', 'waiting_customer', 'waiting_internal'].map(function (s) {
+        return '<option value="' + s + '"' + (c.status === s ? ' selected' : '') + '>' + esc(C.CS_STATUS_LABEL[s]) + '</option>'; }).join('') +
+        (c.status === 'new' ? '<option value="new" selected>New</option>' : '') + '</select>';
+      // No unassign option: Return to Maya is the only way to release a case (the DB refuses an empty email).
+      var known = S.team.some(function (m) { return String(m.email).toLowerCase() === String(c.assignee || '').toLowerCase(); });
+      var placeholder = !c.assignee ? '<option value="" disabled selected hidden>Assign…</option>'
+        : !known ? '<option value="" disabled selected hidden>' + esc(nameOf(c.assignee)) + '</option>' : '';
+      actions += '<select class="act" data-act="assign" aria-label="Assign">' + placeholder +
+        S.team.map(function (m) { return '<option value="' + esc(m.email) + '"' + (String(m.email).toLowerCase() === String(c.assignee || '').toLowerCase() ? ' selected' : '') + '>' + esc(m.name || m.email) + '</option>'; }).join('') + '</select>';
+      actions += '<select class="act" data-act="priority" aria-label="Priority">' + ['urgent', 'high', 'normal', 'low'].map(function (p) {
+        return '<option value="' + p + '"' + (c.priority === p ? ' selected' : '') + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>'; }).join('') + '</select>';
+      actions += '<button class="act" data-act="return">Return to Maya</button>';
+      if (c.channel === 'line') actions += '<button class="act" data-act="return_japan">Return to Japan team</button>';
+      actions += '<button class="act primary" data-act="resolve">Resolve ✓</button>';
+    }
+
+    $('chead').innerHTML = '<button class="iconbtn back" data-act="back" aria-label="Back">‹</button>' +
+      '<div class="who"><b>' + esc(c.customer_name || c.customer_phone || 'Unknown') + '</b><div class="sub">' + esc(sub.join(' · ')) + '</div></div>' +
+      '<button class="iconbtn infobtn" data-act="info" aria-label="Customer info">ⓘ</button>';
+    $('csum').innerHTML = card && card.body ? '<div class="summary"><b>' + esc(card.title) + '</b>' + esc(card.body) + '</div>' : '';
+    $('cacts').innerHTML = actions ? '<div class="actions">' + actions + '</div>' : '';
+
+    var sig = mode + '|' + S.mode + '|' + c.channel;
+    if (sig !== S.composerSig) {
+      $('ccomp').innerHTML = buildComposer(c, mode, now);
+      S.composerSig = sig;
+      var box = $('box');
+      if (box) { box.value = S.drafts[S.openId] || ''; autosize(box); }
+    }
+    var w = $('win');
+    if (w) {
+      var ww = C.csWindow(c.last_customer_at, now);
+      w.textContent = ww.open ? 'Window open · ' + ww.hoursLeft + 'h left' : 'Window closed';
+      w.classList.toggle('closed', !ww.open);
+    }
+    if (fresh) renderMessages(false);
+  }
+
+  function renderMessages(stickToBottom) {
+    if (S.loading) return;
+    var box = $('msgs');
+    if (!box) return;
+    var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    var c = S.convs[S.openId] || {};
+    var k = S.cases.filter(function (x) { return x.id === c.current_case_id; })[0] || S.cases[0];
+    var split = S.showEarlier ? { earlier: [], shown: S.msgs } : C.csSplitEarlier(S.msgs, k && k.opened_at);
+    var html = split.earlier.length ? '<button class="earlier" data-act="earlier">Earlier: ' + split.earlier.length + ' messages with Maya · show</button>' : '';
+    html += split.shown.map(function (m) {
+      var side = C.csSide(m);
+      var cls = side === 'center' ? (m.author_kind === 'note' ? 'b note' : 'b system') : 'b ' + side + (m.author_kind === 'maya' ? ' maya' : '') + (m.delivery === 'failed' ? ' failed' : '');
+      if (m.author_kind === 'system') return '<div class="' + cls + '">' + esc(m.body) + ' · ' + esc(clock(m.created_at)) + '</div>';
+      var by = m.author_kind === 'maya' ? 'Maya' : m.author_kind === 'note' ? '📝 ' + nameOf(m.author) + ' (internal)' : m.author_kind === 'staff' ? nameOf(m.author) : '';
+      var atts = (m.attachments || []).map(function (a) {
+        var u = mediaUrl(a.path);
+        if (a.kind === 'image') return '<img alt="" data-path="' + esc(a.path) + '"' + (u ? ' src="' + esc(u) + '"' : '') + ' />';
+        return '<a class="file" target="_blank" rel="noopener" data-path="' + esc(a.path) + '" href="' + esc(u || '#') + '">📎 ' + esc(a.name || 'file') + '</a>';
+      }).join('');
+      var fail = m.delivery === 'failed' ? '<span class="by">Not delivered: ' + esc(m.delivery_error || 'error') + ' · <button class="linkbtn" data-act="retry" data-body="' + esc(m.body) + '">Retry</button></span>' : '';
+      return '<div class="' + cls + '">' + (by ? '<span class="by">' + esc(by) + '</span>' : '') + esc(m.body) + atts + fail + '<span class="at">' + esc(clock(m.created_at)) + '</span></div>';
+    }).join('');
+    box.innerHTML = html || '<div class="empty">No messages yet.</div>';
+    resolveMedia(box);
+    if (!stickToBottom || nearBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  // Signed media URLs: cached per path for 55 min, signed in one batch, in-flight paths deduped.
+  function mediaUrl(p) { var e = p && S.urls.get(p); return e && e.exp > Date.now() ? e.url : ''; }
+  function applyMedia(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('[data-path]'), function (el) {
+      var u = mediaUrl(el.getAttribute('data-path'));
+      if (!u) return;
+      if (el.tagName === 'IMG') { if (el.getAttribute('src') !== u) el.src = u; } else if (el.getAttribute('href') !== u) el.href = u;
+    });
+  }
+  async function resolveMedia(root) {
+    applyMedia(root);
+    var need = [];
+    Array.prototype.forEach.call(root.querySelectorAll('[data-path]'), function (el) {
+      var p = el.getAttribute('data-path');
+      if (p && !mediaUrl(p) && !S.pend.has(p) && need.indexOf(p) === -1) need.push(p);
+    });
+    if (!need.length) return;
+    need.forEach(function (p) { S.pend.add(p); });
+    try {
+      var r = await sb.storage.from('cs-media').createSignedUrls(need, 3600);
+      var exp = Date.now() + URL_TTL;
+      (r.data || []).forEach(function (x) { if (x && x.path && x.signedUrl && !x.error) S.urls.set(x.path, { url: x.signedUrl, exp: exp }); });
+    } catch (e) {
+      console.warn('[cs] media signing failed', e);
+    } finally {
+      need.forEach(function (p) { S.pend.delete(p); });
+    }
+    var box = $('msgs');   // the thread may have re-rendered while we waited
+    if (box) applyMedia(box);
+  }
+
+  function renderInfo() {
+    if (S.loading) return;
+    var c = S.convs[S.openId];
+    if (!c) { $('info').innerHTML = ''; return; }
+    var now = new Date();
+    var p = c.profile || {};
+    var kv = function (k, v) { return v ? '<div class="kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>' : ''; };
+    var open = S.cases.filter(function (k) { return k.id === c.current_case_id; })[0];
+    var html = '<button class="iconbtn close" data-act="info" aria-label="Close">✕</button>';
+    html += '<h4>Customer</h4>' + kv('Name', c.customer_name) +
+      '<div class="kv"><span>Phone</span><span>' + esc(S.revealPhone ? c.customer_phone : C.csMaskPhone(c.customer_phone)) +
+      (S.revealPhone ? '' : ' <button class="linkbtn" data-act="reveal">show</button>') + '</span></div>' +
+      kv('Channel', C.CS_ACCOUNT_LABEL[c.channel_account] || c.channel) + kv('Email', p.email || c.customer_email) + kv('Language', p.language);
+    var bk = kv('House', p.house) + kv('Room', p.room) + kv('City', p.city) + kv('Open tickets', p.open_tickets);
+    html += '<h4>Tenant (from Maya)</h4>' + (bk || '<div style="color:var(--muted)">Not a known tenant.</div>');
+    if (open) {
+      html += '<h4>Transfer</h4>' + kv('Source', C.CS_SOURCE_LABEL[open.source] || open.source) + kv('By', open.transferred_by === 'maya' ? 'Maya' : nameOf(open.transferred_by)) +
+        kv('When', clock(open.opened_at)) + kv('Topic', open.topic) + kv('Note', open.transfer_note) +
+        kv('Claimed', open.claimed_by ? nameOf(open.claimed_by) + ' · ' + clock(open.claimed_at) : '');
+    }
+    if (S.cases.length) {
+      html += '<h4>Cases (' + S.cases.length + ')</h4>' + S.cases.map(function (k) {
+        return '<div style="padding:4px 0;border-bottom:1px solid #eee"><div>' + esc(k.topic || '(no topic)') + '</div><div style="color:var(--muted);font-size:12px">' +
+          esc(clock(k.opened_at)) + ' · ' + esc(k.outcome ? C.CS_OUTCOME_LABEL[k.outcome] : 'Open') + ' · ' + esc(C.csTook(k, now)) + '</div></div>';
+      }).join('');
+    }
+    if (S.events.length) {
+      html += '<h4>Activity</h4>' + S.events.slice(0, 15).map(function (e) {
+        var what = e.kind + (e.payload && e.payload.status ? ' → ' + (C.CS_STATUS_LABEL[e.payload.status] || e.payload.status) : '') +
+          (e.payload && e.payload.to ? ' → ' + nameOf(e.payload.to) : '') + (e.payload && e.payload.priority && e.kind === 'priority' ? ' → ' + e.payload.priority : '');
+        return '<div style="font-size:12px;color:var(--muted)">' + esc(clock(e.created_at)) + ' · ' + esc(what) + (e.actor ? ' · ' + esc(e.actor === 'maya' || e.actor === 'sweep' ? e.actor : nameOf(e.actor)) : '') + '</div>';
+      }).join('');
+    }
+    $('info').innerHTML = html;
+  }
+
+  // ───────── actions ─────────
+  async function rpcRaw(name, args) {
+    var r = await sb.rpc(name, args);
+    if (r.error) return { error: r.error.message };
+    if (r.data && r.data.ok === false) return { error: r.data.error || 'Not allowed.' };
+    return { data: r.data || true };
+  }
+  async function rpc(name, args) {
+    var r = await rpcRaw(name, args);
+    if (r.error) { toast(r.error); return false; }
+    return r.data;
+  }
+
+  async function token() { try { var s = await sb.auth.getSession(); return (s.data && s.data.session && s.data.session.access_token) || ''; } catch (e) { return ''; } }
+
+  function setBusy(on) {
+    Array.prototype.forEach.call(document.querySelectorAll('#sendBtn, #ccomp [data-act="template"], [data-act="retry"]'), function (b) { b.disabled = on; });
+  }
+
+  // The n8n webhook writes the message to the DB (realtime delivers it) and only then answers {ok}.
+  // alreadyBusy: the caller (submitBox) owns S.sending.
+  async function sendToCustomer(kind, text, alreadyBusy) {
+    if (!alreadyBusy) {
+      if (S.sending) return false;
+      S.sending = true; setBusy(true);
+    }
+    var conv = S.openId;
+    try {
+      var res = await fetch(CS_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await token()) },
+        body: JSON.stringify({ conversation_id: conv, kind: kind, text: text }) });
+      var j = {}; try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service.' }; }
+      if (!j.ok) { toast(j.error || 'Not sent.'); return false; }
+      return true;
+    } catch (e) {
+      toast('Send service unreachable — check your connection and try again.');
+      return false;
+    } finally {
+      if (!alreadyBusy) { S.sending = false; setBusy(false); }
+    }
+  }
+
+  async function submitBox() {
+    if (S.sending) return;
+    var box = $('box'); if (!box) return;
+    var text = box.value.trim(); if (!text) return;
+    var conv = S.openId, mode = S.mode;
+    S.sending = true; setBusy(true);
+    var ok = false;
+    try {
+      ok = mode === 'note' ? await rpc('cs_add_note', { p_conv: conv, p_body: text }) : await sendToCustomer('text', text, true);
+    } finally {
+      S.sending = false; setBusy(false);
+    }
+    if (!ok) return;
+    if (String(S.drafts[conv] || '').trim() === text) delete S.drafts[conv];
+    var now = $('box');   // re-query: the chat may have re-rendered or switched while we waited
+    if (S.openId === conv && now && now.value.trim() === text) { now.value = ''; autosize(now); }
+    if (mode === 'note' && S.openId === conv) loadThread(conv);
+  }
+
+  function autosize(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px'; }
+
+  function closeModal() { $('modal').classList.remove('show'); }
+  function resolveModal(outcome) {
+    var conv = S.openId;
+    var c = S.convs[conv]; var open = S.cases.filter(function (k) { return k.id === c.current_case_id; })[0] || {};
+    var title = outcome === 'resolved_cs' ? 'Resolve this case' : outcome === 'returned_maya' ? 'Return to Maya' : 'Return to the Japan team';
+    $('modalCard').innerHTML = '<b>' + title + '</b><div style="color:var(--muted);font-size:13px;margin-top:4px">One line for History: what it was about and how it ended.</div>' +
+      '<textarea id="topicBox">' + esc(open.topic || '') + '</textarea><div class="err" id="modalErr"></div>' +
+      '<div class="btns"><button class="act" data-m="cancel">Cancel</button><button class="act primary" data-m="ok">' + (outcome === 'resolved_cs' ? 'Resolve' : 'Return') + '</button></div>';
+    $('modal').classList.add('show');
+    $('modalCard').onclick = async function (e) {
+      var b = e.target.closest('[data-m]'); if (!b) return;
+      if (b.dataset.m === 'cancel') return closeModal();
+      if (b.disabled) return;
+      b.disabled = true; $('modalErr').textContent = '';
+      var r = await rpcRaw('cs_close', { p_conv: conv, p_outcome: outcome, p_topic: $('topicBox').value });
+      if (r.error) { b.disabled = false; $('modalErr').textContent = r.error; return; }   // stay open with the error
+      closeModal();
+      toast(outcome === 'resolved_cs' ? 'Resolved · back to Maya' : 'Returned');
+      if (S.openId === conv) loadThread(conv);
+    };
+  }
+
+  async function onAction(act, el) {
+    var id = S.openId;
+    if (act === 'back') { if (history.state && history.state.c) history.back(); else closeChat(); return; }
+    if (act === 'info') { document.body.classList.toggle('info-open'); return; }
+    if (act === 'reveal') { S.revealPhone = true; renderInfo(); renderChat(); return; }
+    if (act === 'earlier') { S.showEarlier = true; renderMessages(false); return; }
+    if (act === 'claim') { if (await rpc('cs_claim', { p_conv: id })) toast('Claimed · Maya paused'); return; }
+    if (act === 'take_back') { if (await rpc('cs_take_back', { p_conv: id })) { toast('Taken back · Maya paused'); loadThread(id); } return; }
+    if (act === 'resolve') return resolveModal('resolved_cs');
+    if (act === 'return') return resolveModal('returned_maya');
+    if (act === 'return_japan') return resolveModal('returned_japan_team');
+    if (act === 'template') { if (await sendToCustomer('template', '')) toast('Follow-up template sent'); return; }
+    if (act === 'retry') {
+      if (S.sending) { toast('Still sending…'); return; }
+      if (await sendToCustomer('text', el.getAttribute('data-body') || '')) toast('Sent');
+      return;
+    }
+    if (act === 'reload') { loadThread(S.openId); return; }
+  }
+
+  async function onSelect(act, value) {
+    if (!value) return;
+    var id = S.openId;
+    if (act === 'status') await rpc('cs_set_status', { p_conv: id, p_status: value });
+    if (act === 'assign') await rpc('cs_assign', { p_conv: id, p_email: value });
+    if (act === 'priority') await rpc('cs_set_priority', { p_conv: id, p_priority: value });
+    if (S.openId === id) loadThread(id);
+  }
+
+  // ───────── history ─────────
+  var H = { period: 'week', platform: '', source: '', agent: '' };
+  async function renderHistory() {
+    var seq = ++S.hSeq;
+    var el = $('history');
+    var agents = '<option value="">All agents</option>' + S.team.map(function (m) { return '<option value="' + esc(m.email) + '"' + (H.agent === m.email ? ' selected' : '') + '>' + esc(m.name || m.email) + '</option>'; }).join('');
+    var sel = function (k, opts) { return '<select data-h="' + k + '">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + (H[k] === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>'; };
+    el.innerHTML = '<div class="hfilters">' + sel('period', [['today', 'Last 24 h'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['all', 'All time']]) +
+      sel('platform', [['', 'All platforms'], ['whatsapp', 'WhatsApp'], ['line', 'LINE']]) +
+      sel('source', [['', 'All sources'], ['whatsapp_maya', 'WhatsApp Maya'], ['line_maya', 'LINE Maya'], ['japan_team', 'Japan team'], ['cs_agent', 'Taken back by CS']]) +
+      '<select data-h="agent">' + agents + '</select></div><div id="hbody"><div class="empty">Loading…</div></div>';
+    var now = new Date();
+    var q = sb.from('cs_cases').select('*, cs_conversations(customer_name, channel, channel_account)').order('opened_at', { ascending: false }).limit(2000);
+    var from = C.csPeriodFrom(H.period, now); if (from) q = q.gte('opened_at', from);
+    if (H.source) q = q.eq('source', H.source);
+    if (H.agent) q = q.eq('claimed_by', H.agent);
+    var r = await q;
+    if (seq !== S.hSeq) return;   // a newer filter change is already loading
+    if (r.error) { $('hbody').innerHTML = '<div class="empty">' + esc(r.error.message) + '</div>'; return; }
+    var cases = (r.data || []).filter(function (k) { return !H.platform || (k.cs_conversations && k.cs_conversations.channel === H.platform); });
+    var s = C.csHistoryStats(cases, now);
+    var src = Object.keys(s.bySource).map(function (k) { return (C.CS_SOURCE_LABEL[k] || k) + ' ' + s.bySource[k]; }).join(' · ');
+    var tile = function (k, v, sub) { return '<div class="tile"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + esc(sub || '') + '</div></div>'; };
+    var html = '<div class="tiles">' + tile('Cases opened', s.opened, src) + tile('Resolved by CS', s.resolvedCs, s.pctResolved + '% of opened') +
+      tile('Returned to Maya / Japan team', s.returned, s.expired ? s.expired + ' more expired unclaimed' : 'without a resolution') +
+      tile('Still open', s.open, (s.medianFirstReplyMin != null ? 'median first reply ' + C.csDuration(s.medianFirstReplyMin * 60000) : '') +
+        (s.medianResolveMin != null ? ' · median resolve ' + C.csDuration(s.medianResolveMin * 60000) : '')) + '</div>';
+    html += '<table class="h"><thead><tr><th>Opened</th><th>Customer</th><th>What it was about</th><th>Source → handled by</th><th>Outcome</th><th>Took</th></tr></thead><tbody>' +
+      cases.map(function (k) {
+        var cv = k.cs_conversations || {};
+        return '<tr class="click" data-conv="' + esc(k.conversation_id) + '"><td data-l="Opened">' + esc(clock(k.opened_at)) + '</td>' +
+          '<td data-l="Customer">' + esc(cv.customer_name || '') + ' <span class="tag">' + (cv.channel === 'line' ? 'LINE' : 'WA') + '</span></td>' +
+          '<td>' + esc(k.topic || '—') + '</td>' +
+          '<td data-l="Source">' + esc((C.CS_SOURCE_LABEL[k.source] || k.source) + (k.source === 'japan_team' && k.transferred_by ? ' (' + nameOf(k.transferred_by) + ')' : '')) +
+          ' → ' + esc(k.claimed_by ? nameOf(k.claimed_by) : '—') + '</td>' +
+          '<td data-l="Outcome">' + (k.outcome === 'resolved_cs' ? '<span class="ok">Resolved by CS</span>' : esc(k.outcome ? C.CS_OUTCOME_LABEL[k.outcome] : 'Open')) + '</td>' +
+          '<td data-l="Took"><b>' + esc(C.csTook(k, now)) + '</b></td></tr>';
+      }).join('') + '</tbody></table>';
+    if (!cases.length) html += '<div class="empty">No cases in this period.</div>';
+    $('hbody').innerHTML = html;
+  }
+
+  // ───────── wiring ─────────
+  function setTab(tab) {
+    S.tab = tab; document.body.dataset.tab = tab;
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) { b.classList.toggle('on', b.dataset.tab === tab); });
+    if (tab === 'history') renderHistory(); else renderList();
+  }
+
+  function wire() {
+    $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) setTab(b.dataset.tab); });
+    $('chips').addEventListener('click', function (e) {
+      var b = e.target.closest('.chip'); if (!b) return;
+      if (b.id === 'ftoggle') { $('filters').classList.toggle('show'); return; }
+      S.f.chip = b.dataset.chip;
+      Array.prototype.forEach.call(document.querySelectorAll('.chip[data-chip]'), function (x) { x.classList.toggle('on', x === b); });
+      renderList();
+    });
+    $('q').addEventListener('input', function () { S.f.q = this.value; renderList(); });
+    $('filters').addEventListener('change', function (e) { var el = e.target; if (el.dataset.f) { S.f[el.dataset.f] = el.value; renderFilterToggle(); renderList(); } });
+    $('fclear').addEventListener('click', clearFilters);
+    $('fdone').addEventListener('click', function () { $('filters').classList.remove('show'); });
+    $('rows').addEventListener('click', function (e) {
+      var r = e.target.closest('.row'); if (!r) return;
+      if (r.dataset.id === S.openId && document.body.dataset.pane === 'chat') return;
+      openConv(r.dataset.id, NARROW.matches ? 'push' : 'replace');
+    });
+    $('history').addEventListener('change', function (e) { var el = e.target; if (el.dataset.h) { H[el.dataset.h] = el.value; renderHistory(); } });
+    $('history').addEventListener('click', function (e) {
+      var r = e.target.closest('tr[data-conv]'); if (!r) return;
+      var id = r.dataset.conv;
+      setTab(C.csTab(S.convs[id]) || 'needs_reply');
+      openConv(id, NARROW.matches ? 'push' : 'replace');
+    });
+    var onClick = function (e) {
+      var m = e.target.closest('[data-mode]');
+      if (m) { S.mode = m.dataset.mode; renderChat(); if ($('box')) $('box').focus(); return; }
+      if (e.target.closest('#sendBtn')) { submitBox(); return; }
+      var f = e.target.closest('a.file');
+      if (f && f.getAttribute('href') === '#') { e.preventDefault(); toast('Still loading the file — try again in a moment.'); return; }
+      var a = e.target.closest('button[data-act]'); if (a) onAction(a.dataset.act, a);
+    };
+    $('chat').addEventListener('click', onClick);
+    $('info').addEventListener('click', onClick);
+    $('chat').addEventListener('change', function (e) { var s = e.target.closest('select[data-act]'); if (s) onSelect(s.dataset.act, s.value); });
+    $('chat').addEventListener('input', function (e) {
+      if (e.target.id !== 'box') return;
+      autosize(e.target);
+      if (S.openId) S.drafts[S.openId] = e.target.value;
+    });
+    $('chat').addEventListener('keydown', function (e) {
+      if (e.target.id !== 'box' || e.key !== 'Enter') return;
+      if (e.isComposing || e.keyCode === 229) return;       // IME (Japanese input) confirm, not send
+      if (e.shiftKey || isCoarse()) return;                  // new line; phones send with the button
+      e.preventDefault(); submitBox();
+    });
+    $('modal').addEventListener('click', function (e) { if (e.target.id === 'modal') closeModal(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && $('modal').classList.contains('show')) closeModal(); });
+    // Back/forward (phone back gesture included): open the conversation in the hash, or go back to the list.
+    window.addEventListener('popstate', function () {
+      var m = /#c=([\w-]+)/.exec(location.hash);
+      if (m) { if (m[1] !== S.openId) openConv(m[1], 'pop'); }
+      else if (S.openId) closeChat();
+    });
+    // Phones: size the page to the visible viewport so the composer sits right above the keyboard.
+    if (window.visualViewport) {
+      var fit = function () { document.body.style.height = NARROW.matches ? window.visualViewport.height + 'px' : ''; };
+      window.visualViewport.addEventListener('resize', fit);
+      fit();
+    }
+  }
+
+  boot().catch(function (e) { console.error('[cs] boot failed', e); $('rows').innerHTML = '<div class="gate">Something went wrong loading the inbox. Reload the page.</div>'; });
+})();
+</script>
+</body>
+</html>
