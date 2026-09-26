@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-25h"></script>
+<script src="pms-supabase.js?v=2026-09-26p"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1330,6 +1330,14 @@
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v11H3z"/><path d="M9 21V13h6v8"/></svg>
       Properties &amp; Rooms
       <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="partner-inventory">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
+      Partner inventory
+    </button>
+    <button class="nav-item" data-view="partners">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/></svg>
+      Partners
     </button>
     <button class="nav-item" data-view="portfolio">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/><path d="M9 11h.01M15 11h.01"/></svg>
@@ -2645,6 +2653,14 @@
         </div>
       </div>
       <div class="team-grid" id="team-grid"></div>
+    </section>
+
+    <section class="view" data-view="partner-inventory">
+      <div id="inv-root"><p class="name-sub">Loading…</p></div>
+    </section>
+
+    <section class="view" data-view="partners">
+      <div id="ptn-root"><p class="name-sub">Loading…</p></div>
     </section>
 
         <!-- ============ DAMAGE DEPOSITS ============ -->
@@ -7522,7 +7538,7 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -8335,6 +8351,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
 
   const pageLabels = {
     "dashboard":"Dashboard","leads":"Leads","jleads":"JLeads","tenants":"Tenants","properties":"Properties & rooms",
+    "partner-inventory":"Partner inventory","partners":"Partners",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
     "homestay-bookings":"Homestay bookings",
@@ -9947,6 +9964,8 @@ const titles = {
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
+  "partner-inventory": ["<em>Partner inventory</em>", "Live Asana rooms by building: the terms agencies will see, and which rooms are partner-ready"],
+  partners: ["<em>Partners</em>", "Agencies on partners.vanmates.com: accounts, users and their bookings"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
   assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
@@ -9992,6 +10011,8 @@ function goToView(v, savedView){
   if(v === "sales" && typeof renderSales === "function") renderSales();
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
   if(v === "settings" && typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();
+  if(v === "partner-inventory" && typeof loadPartnerInventory === "function") loadPartnerInventory();
+  if(v === "partners" && typeof loadPartners === "function") loadPartners();
 
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
@@ -20134,6 +20155,776 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
            leads: leadsK, followUps, attention, recentClosed, recentClosedScope, lost, monthly, quarterly, funnel, byRep };
 }
 /* SALES-CORE-END */
+/* INVENTORY-CORE-START */
+/* Partner inventory page: the Asana mirror's buildings (inventory_properties)
+   and rooms (inventory_room_effective). Pure: rows in, display shapes out.
+   Spec: rina docs/superpowers/specs/2026-09-25-partner-inventory-page-design.md */
+const INV_AMENITIES = [
+  ['furnished', 'Furnished'], ['wifi', 'Wi-Fi included'], ['utilities', 'Utilities included'],
+  ['laundry_in_suite', 'In-suite laundry'], ['laundry_shared', 'Shared laundry'], ['gym', 'Gym'],
+  ['parking', 'Parking'], ['pets', 'Pet-friendly'], ['female_only', 'Female-only floor/unit'],
+];
+const INV_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function invDollars(cents){ return cents == null ? '' : (cents / 100).toFixed(cents % 100 ? 2 : 0); }
+function invCents(input){
+  const s = String(input == null ? '' : input).trim().replace(/[$,\s]/g, '');
+  if (s === '') return { ok: true, value: null };
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return { ok: false, value: null };
+  return { ok: true, value: Math.round(Number(s) * 100) };
+}
+function invMonths(input){
+  const s = String(input == null ? '' : input).trim();
+  if (s === '') return { ok: true, value: null };
+  if (!/^\d{1,2}$/.test(s) || Number(s) < 1) return { ok: false, value: null };
+  return { ok: true, value: Number(s) };
+}
+function invReadiness(p){
+  const missing = [];
+  if (!p || p.deposit_cents == null) missing.push('deposit');
+  if (!p || p.cleaning_fee_cents == null) missing.push('cleaning fee');
+  if (!p || p.min_stay_months == null) missing.push('minimum stay');
+  return { ready: missing.length === 0, missing };
+}
+function invDay(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  return m ? `${INV_MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : '';
+}
+function invRoomStatus(r, today){
+  const from = r.available_from;
+  if (r.status === 'available' && (!from || from <= today)) return { label: 'Free now', tone: 'green' };
+  if (r.status === 'available' || r.status === 'available_later') {
+    if (!from) return { label: 'Free later', tone: 'blue' };
+    return { label: `Free from ${r.available_from_approx ? '~' : ''}${invDay(from)}`, tone: 'blue' };
+  }
+  const map = { occupied: ['Occupied', ''], not_bookable: ['On hold', 'gold'], hidden: ['Hidden', ''], unknown: ['Unknown Asana section', 'red'] };
+  const hit = map[r.status] || [String(r.status), ''];
+  return { label: hit[0], tone: hit[1] };
+}
+// Terms side of SQL room_is_bookable; date overlap is checked when booking.
+function invPartnerReady(r){
+  if (!r || !r.partner_bookable) return false;
+  if (r.status !== 'available' && r.status !== 'available_later') return false;
+  return r.deposit_cents != null && r.cleaning_fee_cents != null && r.min_stay_months != null;
+}
+const INV_STATUS_ORDER = { available: 0, available_later: 1, not_bookable: 2, occupied: 3, unknown: 4, hidden: 5 };
+function invGroup(props, rooms, city){
+  const byId = new Map();
+  props.filter(p => !city || p.city === city).forEach(p => byId.set(p.id, { prop: p, rooms: [], ready: 0 }));
+  const unlinked = [];
+  rooms.filter(r => !city || r.city === city).forEach(r => {
+    if (!r.property_id) { if (r.status !== 'hidden') unlinked.push(r); return; }
+    const g = byId.get(r.property_id);
+    if (!g) return;
+    g.rooms.push(r);
+    if (invPartnerReady(r)) g.ready++;
+  });
+  const rank = s => (s in INV_STATUS_ORDER ? INV_STATUS_ORDER[s] : 9);
+  const groups = [...byId.values()];
+  groups.forEach(g => {
+    g.rooms.sort((a, b) => rank(a.status) - rank(b.status)
+      || String(a.available_from || '').localeCompare(String(b.available_from || ''))
+      || String(a.task_name).localeCompare(String(b.task_name)));
+    g.visible = g.rooms.filter(r => r.status !== 'hidden').length;
+  });
+  groups.sort((a, b) => b.visible - a.visible || String(a.prop.name).localeCompare(String(b.prop.name)));
+  return { groups, unlinked };
+}
+function invAgo(ms){
+  if (!isFinite(ms)) return 'never';
+  const m = Math.round(ms / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+function invHealth(lastSyncedAt, events, nowMs){
+  const age = lastSyncedAt ? nowMs - Date.parse(lastSyncedAt) : Infinity;
+  const alerts = events.filter(e => e.kind === 'double_booking' || e.kind === 'human_edit_skip');
+  const nightly = events.filter(e => e.kind === 'nightly_run')
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+  const d = (nightly && nightly.detail) || {};
+  const refused = !!nightly && ((d.hideRefused || []).length + (d.failedProjects || []).length + (d.unknownSections || []).length) > 0;
+  const text = [
+    `Asana last synced ${invAgo(age)}`,
+    nightly ? (refused ? 'nightly check needs attention' : 'nightly check OK') : 'no nightly check yet',
+    `${alerts.length} open alert${alerts.length === 1 ? '' : 's'}`,
+  ].join(' · ');
+  const amber = !(age <= 86400000) || alerts.length > 0 || refused || !nightly;
+  return { tone: amber ? 'amber' : 'ok', text };
+}
+/* INVENTORY-CORE-END */
+/* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
+   Read when the page is opened. Writes go through the signed-in admin's
+   session; RLS and column grants decide (only property_id and *_override on
+   rooms). An update that returns no row was refused, and the page says so.
+   After every save the page reads everything again. */
+const INV_STATE = { city: 'vancouver', q: '', open: new Set() };
+let invData = null, invLoading = null;
+function invToday(){ return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }); }
+function invIsAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
+async function invSelectAll(sb, table, cols, build){
+  const rows = [], PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = sb.from(table).select(cols);
+    if (build) q = build(q);
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return rows;
+}
+async function loadPartnerInventory(force){
+  const root = document.getElementById('inv-root');
+  if (!invIsAdmin()) { if (root) root.innerHTML = '<p class="name-sub">Admins only.</p>'; return; }
+  if (invLoading) return invLoading;
+  if (invData && !force) { renderPartnerInventory(); return; }
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) { if (root) root.innerHTML = '<p class="name-sub">Not connected to the database.</p>'; return; }
+  if (root && !invData) root.innerHTML = '<p class="name-sub">Loading…</p>';
+  invLoading = (async () => {
+    try {
+      const since = new Date(Date.now() - 30 * 86400000).toISOString();
+      const [props, rooms, events] = await Promise.all([
+        invSelectAll(sb, 'inventory_properties', '*', q => q.order('name').order('id')),
+        invSelectAll(sb, 'inventory_room_effective',
+          'id,city,task_name,property_id,effective_room_type,price_cents,status,available_from,available_from_approx,deposit_cents,cleaning_fee_cents,min_stay_months,partner_bookable,deposit_cents_override,cleaning_fee_cents_override,min_stay_months_override,private_bath_override,synced_at',
+          q => q.order('task_name').order('id')),
+        invSelectAll(sb, 'inventory_sync_events', 'kind,detail,created_at', q => q.gte('created_at', since).order('created_at').order('id')),
+      ]);
+      invData = { props, rooms, events };
+      renderPartnerInventory();
+    } catch (e) {
+      console.error('[inventory] load failed', e);
+      if (root) root.innerHTML = `<p class="name-sub">Could not load the inventory: ${esc(e.message || e)}</p>`;
+    } finally { invLoading = null; }
+  })();
+  return invLoading;
+}
+async function invReload(){ if (invLoading) { try { await invLoading; } catch (e) {} } return loadPartnerInventory(true); }
+function invMoney(c){ return c == null ? '—' : '$' + invDollars(c); }
+function invApplySearch(root){
+  const q = INV_STATE.q.trim().toLowerCase();
+  const cards = root.querySelectorAll('[data-inv-prop]');
+  let shown = 0;
+  cards.forEach(card => {
+    const match = !q || (card.dataset.invQ || '').includes(q);
+    card.hidden = !match;
+    if (match) shown++;
+  });
+  const nomatch = root.querySelector('#inv-nomatch');
+  if (nomatch) nomatch.hidden = !(q && cards.length && shown === 0);
+}
+function renderPartnerInventory(){
+  const root = document.getElementById('inv-root');
+  if (!root || !invData) return;
+  const scrollY = window.scrollY;
+  const today = invToday();
+  const lastSync = invData.rooms.reduce((m, r) => (r.synced_at && r.synced_at > m ? r.synced_at : m), '');
+  const health = invHealth(lastSync || null, invData.events, Date.now());
+  const { groups, unlinked } = invGroup(invData.props, invData.rooms, INV_STATE.city);
+  const cities = [['vancouver', 'Vancouver'], ['toronto', 'Toronto']];
+  root.innerHTML = `
+    <div style="margin-bottom:12px"><span class="tag-pill ${health.tone === 'ok' ? 'green' : 'gold'}">${esc(health.text)}</span></div>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <div class="tabs" role="tablist">${cities.map(([k, l]) =>
+        `<button type="button" class="tab${INV_STATE.city === k ? ' active' : ''}" role="tab" data-inv-city="${k}">${l}</button>`).join('')}</div>
+      <input id="inv-search" class="form-input" style="max-width:280px" placeholder="Search building or room…" value="${esc(INV_STATE.q)}" autocomplete="off">
+    </div>
+    ${unlinked.length ? invUnlinkedHtml(unlinked) : ''}
+    ${groups.map(g => invCardHtml(g, today)).join('') || '<p class="name-sub">No buildings in this city.</p>'}
+    <p class="name-sub" id="inv-nomatch" hidden>No buildings match.</p>`;
+  invWire(root);
+  invApplySearch(root);
+  window.scrollTo(0, scrollY);
+}
+function invUnlinkedHtml(list){
+  const opts = invData.props.filter(p => p.city === INV_STATE.city)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  return `<div class="card" style="padding:16px;margin-bottom:14px">
+    <strong>Unlinked rooms (${list.length})</strong> <span class="name-sub">Not bookable by partners until linked to a building.</span>
+    ${list.map(r => `<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap" data-inv-room="${esc(r.id)}">
+      <span style="flex:1;min-width:200px">${esc(r.task_name)}</span>
+      <select class="form-input" data-inv-link style="max-width:260px"><option value="">Choose building…</option>${opts}</select>
+      <button class="btn btn-ghost btn-mini" type="button" data-inv-link-save>Link</button></div>`).join('')}
+  </div>`;
+}
+function invCardHtml(g, today){
+  const p = g.prop, rd = invReadiness(p), am = Array.isArray(p.amenities) ? p.amenities : [];
+  const pill = rd.ready ? '<span class="tag-pill green">Ready for partners</span>'
+    : `<span class="tag-pill gold">Missing: ${esc(rd.missing.join(', '))}</span>`;
+  const field = (name, label, value, mode) =>
+    `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${label}<input class="form-input" name="${name}" value="${esc(value)}"${mode ? ` inputmode="${mode}"` : ''}></label>`;
+  const hidden = g.rooms.length - g.visible;
+  const q = esc([p.name, ...g.rooms.map(r => r.task_name)].join(' ').toLowerCase());
+  return `<div class="card" style="padding:16px;margin-bottom:14px" data-inv-prop="${esc(p.id)}" data-inv-q="${q}">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+      <div><strong>${esc(p.name)}</strong> <span class="name-sub">${esc(p.address || '')}</span><br>
+        <span class="name-sub">${g.visible} rooms${hidden > 0 ? ` (${hidden} hidden)` : ''} · ${g.ready} partner-ready</span> ${pill}</div>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-inv-bookable${p.partner_bookable ? ' checked' : ''}${rd.ready || p.partner_bookable ? '' : ' disabled'}> Partner bookable</label>
+    </div>
+    <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px">
+      ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal')}
+      ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal')}
+      ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric')}
+      ${field('utilities', 'Utilities', p.utilities_note || '')}
+      ${field('wifi', 'Wi-Fi', p.wifi_note || '')}
+      ${field('laundry', 'Laundry', p.laundry_note || '')}
+      <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px">${INV_AMENITIES.map(([k, l]) =>
+        `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="am" value="${k}"${am.includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>
+      <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save terms</button> <span class="name-sub" data-inv-msg></span></div>
+    </form>
+    <details style="margin-top:10px"${INV_STATE.open.has(p.id) ? ' open' : ''}><summary>Rooms (${g.rooms.length})</summary>
+      <div style="overflow-x:auto"><table style="width:100%;margin-top:8px;border-collapse:collapse">
+        <thead><tr class="name-sub" style="text-align:left"><th>Room</th><th>Type</th><th>Price</th><th>Status</th><th>Partner-ready</th><th title="Saves instantly">Private bath (saves instantly)</th><th>Overrides: deposit · cleaning · min stay</th></tr></thead>
+        <tbody>${g.rooms.map(r => invRoomRowHtml(r, today)).join('')}</tbody>
+      </table></div>
+    </details>
+  </div>`;
+}
+function invRoomRowHtml(r, today){
+  const s = invRoomStatus(r, today);
+  const o = (k, v, w) => `<input class="form-input" data-inv-o="${k}" style="width:${w}px;display:inline-block" placeholder="—" value="${esc(v)}">`;
+  return `<tr data-inv-room="${esc(r.id)}" style="border-top:1px solid var(--line)">
+    <td>${esc(r.task_name)}</td><td>${esc(r.effective_room_type || '—')}</td><td>${invMoney(r.price_cents)}</td>
+    <td><span class="tag-pill ${s.tone}">${esc(s.label)}</span></td>
+    <td>${invPartnerReady(r) ? '✓' : ''}</td>
+    <td><input type="checkbox" data-inv-bath${r.private_bath_override ? ' checked' : ''}></td>
+    <td style="white-space:nowrap">${o('deposit', invDollars(r.deposit_cents_override), 80)} ${o('cleaning', invDollars(r.cleaning_fee_cents_override), 80)} ${o('minstay', r.min_stay_months_override == null ? '' : r.min_stay_months_override, 56)}
+      <button class="btn btn-ghost btn-mini" type="button" data-inv-room-save>Save</button></td>
+  </tr>`;
+}
+function invWire(root){
+  root.querySelectorAll('[data-inv-city]').forEach(b => b.addEventListener('click', () => { INV_STATE.city = b.dataset.invCity; renderPartnerInventory(); window.scrollTo(0, 0); }));
+  const s = root.querySelector('#inv-search');
+  if (s) s.addEventListener('input', () => { INV_STATE.q = s.value; invApplySearch(root); });
+  root.querySelectorAll('[data-inv-prop]').forEach(card => {
+    const details = card.querySelector('details');
+    if (details) details.addEventListener('toggle', () => {
+      const id = card.dataset.invProp;
+      if (details.open) INV_STATE.open.add(id); else INV_STATE.open.delete(id);
+    });
+  });
+  root.querySelectorAll('[data-inv-form]').forEach(f => f.addEventListener('submit', e => { e.preventDefault(); invSaveTerms(f); }));
+  root.querySelectorAll('[data-inv-bookable]').forEach(c => c.addEventListener('change', () => invSaveBookable(c)));
+  root.querySelectorAll('[data-inv-bath]').forEach(c => c.addEventListener('change', () => invSaveBath(c, c.closest('[data-inv-room]'))));
+  root.querySelectorAll('[data-inv-room-save]').forEach(b => b.addEventListener('click', () => invSaveRoom(b.closest('[data-inv-room]'))));
+  root.querySelectorAll('[data-inv-link-save]').forEach(b => b.addEventListener('click', () => invLinkRoom(b.closest('[data-inv-room]'))));
+}
+async function invUpdate(table, id, patch){
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) throw new Error('not connected');
+  const { data, error } = await sb.from(table).update(patch).eq('id', id).select('id');
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('not saved (no permission, or the row is gone)');
+}
+function invStamp(){ return { updated_at: new Date().toISOString(), updated_by: (CURRENT_USER && CURRENT_USER.email) || null }; }
+async function invSaveTerms(form){
+  const id = form.closest('[data-inv-prop]').dataset.invProp;
+  const el = form.elements, msg = form.querySelector('[data-inv-msg]');
+  const btn = form.querySelector('button[type="submit"]');
+  const dep = invCents(el.deposit.value), cle = invCents(el.cleaning.value), ms = invMonths(el.minstay.value);
+  if (!dep.ok || !cle.ok || !ms.ok) { msg.textContent = 'Amounts must be numbers (e.g. 1000 or 150.50); minimum stay in whole months.'; return; }
+  const patch = Object.assign({
+    deposit_cents: dep.value, cleaning_fee_cents: cle.value, min_stay_months: ms.value,
+    utilities_note: el.utilities.value.trim() || null, wifi_note: el.wifi.value.trim() || null, laundry_note: el.laundry.value.trim() || null,
+    amenities: [...form.querySelectorAll('input[name=am]:checked')].map(x => x.value),
+  }, invStamp());
+  const p = invData.props.find(x => x.id === id);
+  let unbooked = false;
+  if (!invReadiness(patch).ready) { patch.partner_bookable = false; unbooked = !!(p && p.partner_bookable); }
+  msg.textContent = 'Saving…';
+  if (btn) btn.disabled = true;
+  try {
+    await invUpdate('inventory_properties', id, patch);
+    showToast(unbooked ? 'Saved, and hidden from partners until the terms are complete' : 'Terms saved');
+    await invReload();
+  } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
+}
+async function invSaveBookable(c){
+  const id = c.closest('[data-inv-prop]').dataset.invProp;
+  c.disabled = true;
+  try {
+    await invUpdate('inventory_properties', id, Object.assign({ partner_bookable: c.checked }, invStamp()));
+    showToast(c.checked ? 'Now bookable by partners' : 'Hidden from partners');
+    await invReload();
+  } catch (e) { c.checked = !c.checked; c.disabled = false; showToast('Could not save: ' + (e.message || e)); }
+}
+async function invSaveBath(c, tr){
+  c.disabled = true;
+  try {
+    await invUpdate('inventory_rooms', tr.dataset.invRoom, { private_bath_override: c.checked ? true : null });
+    showToast('Private bath saved');
+    await invReload();
+  } catch (e) { c.checked = !c.checked; c.disabled = false; showToast('Could not save: ' + (e.message || e)); }
+}
+async function invSaveRoom(tr){
+  const v = k => tr.querySelector(`[data-inv-o="${k}"]`).value;
+  const dep = invCents(v('deposit')), cle = invCents(v('cleaning')), ms = invMonths(v('minstay'));
+  if (!dep.ok || !cle.ok || !ms.ok) { showToast('Overrides must be numbers; minimum stay in whole months'); return; }
+  const btn = tr.querySelector('[data-inv-room-save]');
+  const patch = {
+    deposit_cents_override: dep.value, cleaning_fee_cents_override: cle.value, min_stay_months_override: ms.value,
+  };
+  if (btn) btn.disabled = true;
+  try { await invUpdate('inventory_rooms', tr.dataset.invRoom, patch); showToast('Room saved'); await invReload(); }
+  catch (e) { showToast('Could not save: ' + (e.message || e)); if (btn) btn.disabled = false; }
+}
+async function invLinkRoom(row){
+  const pid = row.querySelector('[data-inv-link]').value;
+  if (!pid) { showToast('Choose a building first'); return; }
+  const btn = row.querySelector('[data-inv-link-save]');
+  if (btn) btn.disabled = true;
+  try { await invUpdate('inventory_rooms', row.dataset.invRoom, { property_id: pid }); showToast('Room linked'); await invReload(); }
+  catch (e) { showToast('Could not save: ' + (e.message || e)); if (btn) btn.disabled = false; }
+}
+/* PARTNERS-CORE-START */
+/* Partners page (admin only): agencies, their users, and partner bookings for
+   partners.vanmates.com. Pure: rows in, display shapes and validated rows out.
+   The bounds mirror rina vanmates-partners sql/2026-09-26-partner-portal.sql.
+   Spec: rina docs/superpowers/specs/2026-09-26-partner-portal-phase-a-design.md */
+const PTN_BOOKING_STATUSES = ['CONFIRMED', 'READY_FOR_MOVE_IN', 'CHECKED_IN', 'COMPLETED', 'CANCELLED'];
+const PTN_AGENCY_STATUSES = ['pending', 'active', 'suspended', 'inactive'];
+const PTN_LANGS = ['en', 'es', 'ja'];
+const PTN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function ptnBookingStatus(s){
+  const map = {
+    CONFIRMED: ['Confirmed', 'green'], READY_FOR_MOVE_IN: ['Ready for move-in', 'blue'],
+    CHECKED_IN: ['Checked in', 'blue'], COMPLETED: ['Completed', ''], CANCELLED: ['Cancelled', 'red'],
+  };
+  if (!s) return { label: '—', tone: '' };
+  const hit = map[s] || [String(s), ''];
+  return { label: hit[0], tone: hit[1] };
+}
+// The Asana write-back of one booking from its asana_outbox rows. A book row
+// that failed, or was skipped for any reason but an early cancel, needs a human
+// whatever came after it; otherwise the latest row (by id) decides. A cancelled
+// booking whose booking was written but never un-written still shows in Asana.
+const PTN_CANCEL_SKIP = 'cancelled before write-back';
+function ptnWriteback(rows, bookingStatus){
+  const list = (rows || []).slice().sort((a, b) => Number(b.id) - Number(a.id));
+  const r = list[0];
+  if (!r) return { key: 'none', label: 'No write-back', tone: '' };
+  const bad = list.find(x => x.action === 'book'
+    && (x.status === 'failed' || (x.status === 'skipped' && x.last_error !== PTN_CANCEL_SKIP)));
+  if (bad) return { key: 'attention', label: `Needs attention (${bad.status})`, tone: 'red', detail: bad.last_error || '' };
+  if (bookingStatus === 'CANCELLED' && r.action === 'book' && r.status === 'done') {
+    return { key: 'stale', label: 'Asana still shows booked', tone: 'red' };
+  }
+  const suffix = r.action === 'cancel' ? ' (cancel)' : '';
+  if (r.status === 'pending' || r.status === 'sending') return { key: 'waiting', label: 'Waiting' + suffix, tone: 'gold' };
+  if (r.status === 'done') return { key: 'written', label: 'Written to Asana' + suffix, tone: 'green' };
+  if (r.status === 'skipped' && r.last_error === PTN_CANCEL_SKIP) {
+    return { key: 'not_needed', label: 'Not needed (cancelled before write-back)', tone: '' };
+  }
+  if (r.status === 'skipped' || r.status === 'failed') {
+    return { key: 'attention', label: `Needs attention (${r.status})`, tone: 'red', detail: r.last_error || '' };
+  }
+  return { key: 'unknown', label: String(r.status), tone: '' };
+}
+// filters: { agency, city, status } where '' means any and status 'active' means not cancelled.
+function ptnFilterBookings(list, f){
+  f = f || {};
+  return (list || []).filter(b =>
+    (!f.agency || b.agency_id === f.agency)
+    && (!f.city || b.city === f.city)
+    && (!f.status || (f.status === 'active' ? b.status !== 'CANCELLED' : b.status === f.status)));
+}
+function ptnValidEmail(s){
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s == null ? '' : s).trim());
+}
+function ptnText(v){ const s = String(v == null ? '' : v).trim(); return s === '' ? null : s; }
+function ptnValidateAgency(f){
+  f = f || {};
+  const errors = [];
+  const row = {
+    name: ptnText(f.name), legal_name: ptnText(f.legal_name), country: ptnText(f.country),
+    billing_address: ptnText(f.billing_address), contact_name: ptnText(f.contact_name),
+    contact_email: ptnText(f.contact_email), contact_phone: ptnText(f.contact_phone),
+    billing_email: ptnText(f.billing_email),
+    language: ptnText(f.language) || 'en', currency: (ptnText(f.currency) || 'CAD').toUpperCase(),
+    status: ptnText(f.status) || 'pending',
+  };
+  if (!row.name) errors.push('Name is required');
+  if (row.contact_email && !ptnValidEmail(row.contact_email)) errors.push('Contact email is not a valid email');
+  if (row.billing_email && !ptnValidEmail(row.billing_email)) errors.push('Billing email is not a valid email');
+  if (!PTN_LANGS.includes(row.language)) errors.push('Language must be en, es or ja');
+  if (!PTN_AGENCY_STATUSES.includes(row.status)) errors.push('Status must be pending, active, suspended or inactive');
+  return { ok: errors.length === 0, errors, row };
+}
+function ptnValidateUser(f){
+  f = f || {};
+  const errors = [];
+  const row = {
+    name: ptnText(f.name), email: (ptnText(f.email) || '').toLowerCase(),
+    role: ptnText(f.role) || 'counsellor', sees_all_bookings: !!f.sees_all_bookings,
+    language: ptnText(f.language), status: ptnText(f.status) || 'active',
+  };
+  if (!row.name) errors.push('Name is required');
+  if (!ptnValidEmail(row.email)) errors.push('Email is not a valid email');
+  if (row.role !== 'admin' && row.role !== 'counsellor') errors.push('Role must be admin or counsellor');
+  if (row.language && !PTN_LANGS.includes(row.language)) errors.push('Language must be en, es or ja');
+  if (row.status !== 'active' && row.status !== 'disabled') errors.push('Status must be active or disabled');
+  return { ok: errors.length === 0, errors, row };
+}
+function ptnMoney(cents, currency){
+  if (cents == null) return '—';
+  const n = (cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 });
+  return `$${n} ${currency || 'CAD'}`;
+}
+function ptnDay(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? `${PTN_MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : '';
+}
+// Timestamps (created_at, last_login_at) as the Vancouver calendar day; date-only values as written.
+function ptnStamp(iso){
+  const s = String(iso || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return ptnDay(s);
+  const t = Date.parse(s);
+  if (!s || isNaN(t)) return '';
+  return new Date(t).toLocaleDateString('en-US', { timeZone: 'America/Vancouver', month: 'short', day: 'numeric', year: 'numeric' });
+}
+// Staff may cancel only before the move-in happens.
+function ptnCanCancel(status){ return status === 'CONFIRMED' || status === 'READY_FOR_MOVE_IN'; }
+/* PARTNERS-CORE-END */
+/* ---- Partners (DOM side of PARTNERS-CORE) ------------------------------------
+   Admin only. Reads through the signed-in admin's session; RLS (vm_is_admin())
+   decides. A write that returns no row was refused, and the page says so.
+   "Send sign-in link" asks the partner app, which re-checks the staff JWT and
+   team_members.role = 'admin'. Cancel goes through partner_cancel_booking, which
+   also releases the room and queues the Asana write-back. */
+const PARTNERS_APP = 'https://partners.vanmates.com';
+const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, editUser: null, cancelId: null, filters: { agency: '', city: '', status: '' } };
+let ptnData = null, ptnLoading = null, ptnLoadedAt = 0;
+function ptnIsAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
+function ptnActor(){ return (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.email) || null; }
+async function ptnSelectAll(sb, table, cols, build){
+  const rows = [], PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = sb.from(table).select(cols);
+    if (build) q = build(q);
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return rows;
+}
+async function ptnSelectIn(sb, table, cols, col, values){
+  const out = [], uniq = [...new Set(values.filter(Boolean))];
+  for (let k = 0; k < uniq.length; k += 100) {
+    out.push(...await ptnSelectAll(sb, table, cols, q => q.in(col, uniq.slice(k, k + 100)).order('id')));
+  }
+  return out;
+}
+async function loadPartners(force){
+  const root = document.getElementById('ptn-root');
+  if (!ptnIsAdmin()) { if (root) root.innerHTML = '<p class="name-sub">Admins only.</p>'; return; }
+  if (ptnLoading) return ptnLoading;
+  if (ptnData && !force && Date.now() - ptnLoadedAt < 60000) { renderPartners(); return; }
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) { if (root) root.innerHTML = '<p class="name-sub">Not connected to the database.</p>'; return; }
+  if (root && !ptnData) root.innerHTML = '<p class="name-sub">Loading…</p>';
+  ptnLoading = (async () => {
+    try {
+      const [agencies, users, bookings] = await Promise.all([
+        ptnSelectAll(sb, 'partner_agencies', '*', q => q.order('name').order('id')),
+        ptnSelectAll(sb, 'partner_users', '*', q => q.order('name').order('id')),
+        ptnSelectAll(sb, 'partner_bookings', '*', q => q.order('created_at', { ascending: false }).order('id')),
+      ]);
+      const [students, rooms, outbox] = await Promise.all([
+        ptnSelectIn(sb, 'partner_students', 'id,agency_id,given_name,family_name,email', 'id', bookings.map(b => b.student_id)),
+        ptnSelectIn(sb, 'inventory_rooms', 'id,task_name,city', 'id', bookings.map(b => b.room_id)),
+        ptnSelectIn(sb, 'asana_outbox', 'id,booking_id,action,status,last_error', 'booking_id', bookings.map(b => b.id)),
+      ]);
+      const room = new Map(rooms.map(r => [r.id, r]));
+      bookings.forEach(b => { const r = room.get(b.room_id); b.city = r ? r.city : null; b.room_name = r ? r.task_name : null; });
+      ptnData = { agencies, users, bookings, students, outbox };
+      ptnLoadedAt = Date.now();
+      if (!PTN_STATE.agencyId || !agencies.some(a => a.id === PTN_STATE.agencyId)) PTN_STATE.agencyId = agencies.length ? agencies[0].id : '';
+      renderPartners();
+    } catch (e) {
+      console.error('[partners] load failed', e);
+      const hint = /partner_/.test(String(e.message || '')) ? ' (has the partner-portal SQL been applied?)' : '';
+      if (root) root.innerHTML = `<p class="name-sub">Could not load partners: ${esc(e.message || e)}${esc(hint)}</p>`;
+    } finally { ptnLoading = null; }
+  })();
+  return ptnLoading;
+}
+async function ptnReload(){ if (ptnLoading) { try { await ptnLoading; } catch (e) {} } return loadPartners(true); }
+function ptnPill(p){ return `<span class="tag-pill ${esc(p.tone)}">${esc(p.label)}</span>`; }
+function ptnAgencyTone(s){ return ({ active: 'green', pending: 'gold', suspended: 'red' })[s] || ''; }
+function ptnOptions(list, selected){
+  return list.map(([v, l]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(l)}</option>`).join('');
+}
+function renderPartners(){
+  const root = document.getElementById('ptn-root');
+  if (!root || !ptnData) return;
+  const scrollY = window.scrollY;
+  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`]];
+  const body = PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml() : ptnAgenciesHtml();
+  root.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="tabs" role="tablist">${tabs.map(([k, l]) =>
+        `<button type="button" class="tab${PTN_STATE.tab === k ? ' active' : ''}" role="tab" data-ptn-tab="${k}">${esc(l)}</button>`).join('')}</div>
+      <button class="btn btn-ghost" id="ptn-refresh" type="button">Refresh</button>
+    </div>
+    ${body}`;
+  ptnWire(root);
+  window.scrollTo(0, scrollY);
+}
+function ptnField(name, label, value, extra){
+  return `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${esc(label)}<input class="form-input" name="${name}" value="${esc(value == null ? '' : value)}"${extra || ''}></label>`;
+}
+function ptnSelectField(name, label, list, value){
+  return `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${esc(label)}<select class="form-input" name="${name}">${ptnOptions(list, value)}</select></label>`;
+}
+const PTN_LANG_OPTS = [['en', 'English'], ['es', 'Español'], ['ja', '日本語']];
+function ptnAgencyFormHtml(a){
+  a = a || {};
+  return `<form class="card" data-ptn-agency-form style="padding:16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+    <strong style="grid-column:1/-1">${a.id ? 'Edit ' + esc(a.name) : 'New agency'}</strong>
+    ${ptnField('name', 'Name *', a.name)}
+    ${ptnField('legal_name', 'Legal name', a.legal_name)}
+    ${ptnField('country', 'Country', a.country)}
+    ${ptnField('billing_address', 'Billing address', a.billing_address)}
+    ${ptnField('contact_name', 'Contact name', a.contact_name)}
+    ${ptnField('contact_email', 'Contact email', a.contact_email, ' type="email"')}
+    ${ptnField('contact_phone', 'Contact phone', a.contact_phone)}
+    ${ptnField('billing_email', 'Billing email', a.billing_email, ' type="email"')}
+    ${ptnSelectField('language', 'Language', PTN_LANG_OPTS, a.language || 'en')}
+    ${ptnField('currency', 'Currency', a.currency || 'CAD')}
+    ${ptnSelectField('status', 'Status', PTN_AGENCY_STATUSES.map(s => [s, s[0].toUpperCase() + s.slice(1)]), a.status || 'pending')}
+    <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save agency</button>
+      <button class="btn btn-ghost" type="button" data-ptn-agency-cancel>Close</button> <span class="name-sub" data-ptn-msg></span></div>
+  </form>`;
+}
+function ptnAgenciesHtml(){
+  const d = ptnData;
+  const edit = PTN_STATE.editAgency === 'new' ? {} : (PTN_STATE.editAgency && d.agencies.find(a => a.id === PTN_STATE.editAgency));
+  const count = (list, id) => list.filter(x => x.agency_id === id).length;
+  return `<div style="margin-bottom:12px"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button></div>
+    ${edit ? ptnAgencyFormHtml(edit) : ''}
+    ${d.agencies.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th><th>Users</th><th>Bookings</th><th></th></tr></thead>
+      <tbody>${d.agencies.map(a => `<tr style="border-top:1px solid var(--line)">
+        <td style="padding:8px"><strong>${esc(a.name)}</strong>${a.legal_name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}</td>
+        <td>${esc(a.country || '—')}</td>
+        <td>${esc(a.contact_name || '')}${a.contact_email ? `<br><span class="name-sub">${esc(a.contact_email)}</span>` : ''}</td>
+        <td>${esc(a.billing_email || '—')}</td><td>${esc(a.language)}</td>
+        <td>${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}</td>
+        <td>${count(d.users, a.id)}</td><td>${count(d.bookings, a.id)}</td>
+        <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
+          <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button></td>
+      </tr>`).join('')}</tbody></table></div>` : '<p class="name-sub">No agencies yet.</p>'}`;
+}
+function ptnUserFormHtml(u){
+  u = u || {};
+  return `<form class="card" data-ptn-user-form style="padding:16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+    <strong style="grid-column:1/-1">${u.id ? 'Edit ' + esc(u.name) : 'New user'}</strong>
+    ${ptnField('name', 'Name *', u.name)}
+    ${ptnField('email', 'Email *', u.email, ' type="email"')}
+    ${ptnSelectField('role', 'Role', [['counsellor', 'Counsellor'], ['admin', 'Agency admin']], u.role || 'counsellor')}
+    ${ptnSelectField('language', 'Language', [['', 'Agency default'], ...PTN_LANG_OPTS], u.language || '')}
+    ${ptnSelectField('status', 'Status', [['active', 'Active'], ['disabled', 'Disabled']], u.status || 'active')}
+    <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="sees_all_bookings"${u.sees_all_bookings ? ' checked' : ''}> Sees all agency bookings</label>
+    <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save user</button>
+      <button class="btn btn-ghost" type="button" data-ptn-user-cancel>Close</button> <span class="name-sub" data-ptn-msg></span></div>
+  </form>`;
+}
+function ptnUsersHtml(){
+  const d = ptnData;
+  if (!d.agencies.length) return '<p class="name-sub">Create an agency first.</p>';
+  const agency = d.agencies.find(a => a.id === PTN_STATE.agencyId);
+  const users = d.users.filter(u => u.agency_id === PTN_STATE.agencyId);
+  const edit = PTN_STATE.editUser === 'new' ? {} : (PTN_STATE.editUser && users.find(u => u.id === PTN_STATE.editUser));
+  return `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <select class="form-input" data-ptn-agency-pick style="max-width:320px">${ptnOptions(d.agencies.map(a => [a.id, a.name]), PTN_STATE.agencyId)}</select>
+      ${agency ? ptnPill({ label: agency.status, tone: ptnAgencyTone(agency.status) }) : ''}
+      <button class="btn btn-primary" type="button" data-ptn-user-new>Add user</button>
+    </div>
+    ${agency && agency.status !== 'active' ? '<p class="name-sub">This agency is not active, so its users cannot sign in yet.</p>' : ''}
+    ${edit ? ptnUserFormHtml(edit) : ''}
+    ${users.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Name</th><th>Email</th><th>Role</th><th>Sees all</th><th>Language</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody>${users.map(u => `<tr style="border-top:1px solid var(--line)">
+        <td style="padding:8px">${esc(u.name)}</td><td>${esc(u.email)}</td>
+        <td>${u.role === 'admin' ? 'Agency admin' : 'Counsellor'}</td><td>${u.sees_all_bookings ? '✓' : ''}</td>
+        <td>${esc(u.language || '—')}</td>
+        <td>${ptnPill({ label: u.status, tone: u.status === 'active' ? 'green' : '' })}</td>
+        <td>${esc(ptnStamp(u.last_login_at) || 'never')}</td>
+        <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-user-edit="${esc(u.id)}">Edit</button>
+          ${ptnInviteButton(u, agency)}</td>
+      </tr>`).join('')}</tbody></table></div>` : '<p class="name-sub">No users in this agency yet.</p>'}`;
+}
+function ptnInviteButton(u, agency){
+  const why = u.status !== 'active' ? 'This user is disabled'
+    : !agency || agency.status !== 'active' ? `The agency is ${agency ? agency.status : 'missing'}, so its users cannot sign in` : '';
+  return `<button class="btn btn-ghost btn-mini" type="button" data-ptn-invite="${esc(u.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Send sign-in link</button>`;
+}
+function ptnBookingsHtml(){
+  const d = ptnData, f = PTN_STATE.filters;
+  const agency = new Map(d.agencies.map(a => [a.id, a]));
+  const user = new Map(d.users.map(u => [u.id, u]));
+  const student = new Map(d.students.map(s => [s.id, s]));
+  const outbox = new Map();
+  d.outbox.forEach(o => { if (!outbox.has(o.booking_id)) outbox.set(o.booking_id, []); outbox.get(o.booking_id).push(o); });
+  const list = ptnFilterBookings(d.bookings, f);
+  const statusOpts = [['', 'All statuses'], ['active', 'Not cancelled'], ...PTN_BOOKING_STATUSES.map(s => [s, ptnBookingStatus(s).label])];
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <select class="form-input" data-ptn-filter="agency" style="max-width:260px">${ptnOptions([['', 'All agencies'], ...d.agencies.map(a => [a.id, a.name])], f.agency)}</select>
+      <select class="form-input" data-ptn-filter="city" style="max-width:180px">${ptnOptions([['', 'All cities'], ['vancouver', 'Vancouver'], ['toronto', 'Toronto']], f.city)}</select>
+      <select class="form-input" data-ptn-filter="status" style="max-width:200px">${ptnOptions(statusOpts, f.status)}</select>
+      <span class="name-sub">${list.length} of ${d.bookings.length}</span>
+    </div>
+    ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Booking</th><th>Agency</th><th>Counsellor</th><th>Student</th><th>Room</th><th>Dates</th><th>Status</th><th>Contract value</th><th>Asana write-back</th><th></th></tr></thead>
+      <tbody>${list.map(b => {
+        const a = agency.get(b.agency_id), u = user.get(b.user_id), s = student.get(b.student_id);
+        const wb = ptnWriteback(outbox.get(b.id), b.status);
+        const cancelling = PTN_STATE.cancelId === b.id;
+        return `<tr style="border-top:1px solid var(--line)" data-ptn-booking="${esc(b.id)}">
+          <td style="padding:8px;white-space:nowrap"><strong>${esc(b.id)}</strong><br><span class="name-sub">${esc(ptnStamp(b.created_at))}</span></td>
+          <td>${esc(a ? a.name : '—')}</td>
+          <td>${esc(u ? u.name : '—')}${u ? `<br><span class="name-sub">${esc(u.email)}</span>` : ''}</td>
+          <td>${esc(s ? `${s.given_name} ${s.family_name}` : '—')}${s ? `<br><span class="name-sub">${esc(s.email)}</span>` : ''}</td>
+          <td>${esc(b.room_name || '—')}${b.city ? `<br><span class="name-sub">${esc(b.city)}</span>` : ''}</td>
+          <td style="white-space:nowrap">${esc(ptnDay(b.move_in))} → ${esc(ptnDay(b.move_out))}</td>
+          <td>${ptnPill(ptnBookingStatus(b.status))}${b.cancel_reason ? `<br><span class="name-sub">${esc(b.cancel_reason)}</span>` : ''}</td>
+          <td style="white-space:nowrap">${esc(ptnMoney(b.contract_value_cents, b.currency))}</td>
+          <td><span class="tag-pill ${esc(wb.tone)}" title="${esc(wb.detail || '')}">${esc(wb.label)}</span></td>
+          <td>${!ptnCanCancel(b.status) || cancelling ? '' : `<button class="btn btn-ghost btn-mini" type="button" data-ptn-cancel-open>Cancel</button>`}</td>
+        </tr>${cancelling ? `<tr data-ptn-booking="${esc(b.id)}"><td colspan="10" style="padding:8px">
+          <form data-ptn-cancel-form style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span>Cancel <strong>${esc(b.id)}</strong>? This releases the room and queues the Asana update.</span>
+            <input class="form-input" name="reason" placeholder="Reason (required)" style="flex:1;min-width:220px" autocomplete="off">
+            <button class="btn btn-primary" type="submit">Cancel booking</button>
+            <button class="btn btn-ghost" type="button" data-ptn-cancel-close>Keep it</button>
+            <span class="name-sub" data-ptn-msg></span>
+          </form></td></tr>` : ''}`;
+      }).join('')}</tbody></table></div>` : '<p class="name-sub">No bookings match.</p>'}`;
+}
+function ptnWire(root){
+  const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => fn(el, e)));
+  on('#ptn-refresh', 'click', b => { b.disabled = true; ptnReload(); });
+  on('[data-ptn-tab]', 'click', b => { PTN_STATE.tab = b.dataset.ptnTab; renderPartners(); window.scrollTo(0, 0); });
+  on('[data-ptn-agency-new]', 'click', () => { PTN_STATE.editAgency = 'new'; renderPartners(); });
+  on('[data-ptn-agency-edit]', 'click', b => { PTN_STATE.editAgency = b.dataset.ptnAgencyEdit; renderPartners(); window.scrollTo(0, 0); });
+  on('[data-ptn-agency-cancel]', 'click', () => { PTN_STATE.editAgency = null; renderPartners(); });
+  on('[data-ptn-agency-users]', 'click', b => { PTN_STATE.agencyId = b.dataset.ptnAgencyUsers; PTN_STATE.editUser = null; PTN_STATE.tab = 'users'; renderPartners(); window.scrollTo(0, 0); });
+  on('[data-ptn-agency-form]', 'submit', (f, e) => { e.preventDefault(); ptnSaveAgency(f); });
+  on('[data-ptn-agency-pick]', 'change', s => { PTN_STATE.agencyId = s.value; PTN_STATE.editUser = null; renderPartners(); });
+  on('[data-ptn-user-new]', 'click', () => { PTN_STATE.editUser = 'new'; renderPartners(); });
+  on('[data-ptn-user-edit]', 'click', b => { PTN_STATE.editUser = b.dataset.ptnUserEdit; renderPartners(); window.scrollTo(0, 0); });
+  on('[data-ptn-user-cancel]', 'click', () => { PTN_STATE.editUser = null; renderPartners(); });
+  on('[data-ptn-user-form]', 'submit', (f, e) => { e.preventDefault(); ptnSaveUser(f); });
+  on('[data-ptn-invite]', 'click', b => ptnInvite(b));
+  on('[data-ptn-filter]', 'change', s => { PTN_STATE.filters[s.dataset.ptnFilter] = s.value; PTN_STATE.cancelId = null; renderPartners(); });
+  on('[data-ptn-cancel-open]', 'click', b => {
+    PTN_STATE.cancelId = b.closest('[data-ptn-booking]').dataset.ptnBooking; renderPartners();
+    const input = root.querySelector('[data-ptn-cancel-form] input[name=reason]'); if (input) input.focus();
+  });
+  on('[data-ptn-cancel-close]', 'click', () => { PTN_STATE.cancelId = null; renderPartners(); });
+  on('[data-ptn-cancel-form]', 'submit', (f, e) => { e.preventDefault(); ptnCancelBooking(f); });
+}
+// A write that returns no row was refused by RLS (or the row is gone).
+async function ptnWrite(query){
+  const { data, error } = await query.select('id');
+  if (error) {
+    if (error.code === '23505') throw new Error('that email is already used by another partner user');
+    throw error;
+  }
+  if (!data || !data.length) throw new Error('not saved (no permission, or the row is gone)');
+  return data[0].id;
+}
+async function ptnSaveAgency(form){
+  const sb = window.vmDb && window.vmDb.sb;
+  const msg = form.querySelector('[data-ptn-msg]'), btn = form.querySelector('button[type="submit"]');
+  const el = form.elements, v = {};
+  ['name', 'legal_name', 'country', 'billing_address', 'contact_name', 'contact_email', 'contact_phone', 'billing_email', 'language', 'currency', 'status']
+    .forEach(k => { v[k] = el[k].value; });
+  const r = ptnValidateAgency(v);
+  if (!r.ok) { msg.textContent = r.errors.join('. '); return; }
+  if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
+  const id = PTN_STATE.editAgency === 'new' ? null : PTN_STATE.editAgency;
+  const row = Object.assign({}, r.row, { updated_at: new Date().toISOString(), updated_by: ptnActor() });
+  msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
+  try {
+    const newId = await ptnWrite(id ? sb.from('partner_agencies').update(row).eq('id', id) : sb.from('partner_agencies').insert(row));
+    showToast(id ? 'Agency saved' : 'Agency created');
+    PTN_STATE.editAgency = null;
+    if (!id) PTN_STATE.agencyId = newId;
+    await ptnReload();
+  } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
+}
+async function ptnSaveUser(form){
+  const sb = window.vmDb && window.vmDb.sb;
+  const msg = form.querySelector('[data-ptn-msg]'), btn = form.querySelector('button[type="submit"]');
+  const el = form.elements;
+  const r = ptnValidateUser({
+    name: el.name.value, email: el.email.value, role: el.role.value, language: el.language.value,
+    status: el.status.value, sees_all_bookings: el.sees_all_bookings.checked,
+  });
+  if (!r.ok) { msg.textContent = r.errors.join('. '); return; }
+  if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
+  const id = PTN_STATE.editUser === 'new' ? null : PTN_STATE.editUser;
+  const row = Object.assign({}, r.row, { updated_by: ptnActor() });
+  if (!id) row.agency_id = PTN_STATE.agencyId;
+  msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
+  try {
+    await ptnWrite(id ? sb.from('partner_users').update(row).eq('id', id) : sb.from('partner_users').insert(row));
+    showToast(id ? 'User saved' : 'User added');
+    PTN_STATE.editUser = null;
+    await ptnReload();
+  } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
+}
+async function ptnToken(refresh){
+  const sb = window.vmDb && window.vmDb.sb; if (!sb) return '';
+  if (refresh) { try { await sb.auth.refreshSession(); } catch (_) {} }
+  try { const { data } = await sb.auth.getSession(); return (data && data.session && data.session.access_token) || ''; } catch (_) { return ''; }
+}
+async function ptnInvite(btn){
+  const userId = btn.dataset.ptnInvite;
+  btn.disabled = true;
+  const call = tok => fetch(`${PARTNERS_APP}/api/staff/invite`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  try {
+    let tok = await ptnToken(false);
+    if (!tok) throw new Error('you are not signed in to the database; reload the portal');
+    let res = await call(tok);
+    if (res.status === 401) { tok = await ptnToken(true); if (tok) res = await call(tok); }
+    let body = null; try { body = await res.json(); } catch (_) {}
+    if (res.ok && body && body.ok) { showToast('Sign-in link sent'); return; }
+    const why = { 401: 'your session was not accepted', 403: 'only portal admins can send links', 404: 'that user was not found' }[res.status];
+    throw new Error(why || (body && (body.error || body.code)) || `HTTP ${res.status}`);
+  } catch (e) { showToast('Could not send the link: ' + (e.message || e)); }
+  finally { btn.disabled = false; }
+}
+async function ptnCancelBooking(form){
+  const sb = window.vmDb && window.vmDb.sb;
+  const id = form.closest('[data-ptn-booking]').dataset.ptnBooking;
+  const msg = form.querySelector('[data-ptn-msg]'), btn = form.querySelector('button[type="submit"]');
+  const reason = form.elements.reason.value.trim();
+  if (!reason) { msg.textContent = 'A reason is required.'; return; }
+  if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
+  msg.textContent = 'Cancelling…'; if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('partner_cancel_booking', { p_booking_id: id, p_reason: reason });
+    if (error) throw error;
+    if (!data || !data.ok) {
+      const code = data && data.code;
+      const why = { FORBIDDEN: 'only portal admins can cancel', NOT_FOUND: 'booking not found', ALREADY_CANCELLED: 'it is already cancelled' }[code];
+      throw new Error(why || code || 'refused');
+    }
+    showToast(`${id} cancelled`);
+    PTN_STATE.cancelId = null;
+    await ptnReload();
+  } catch (e) { msg.textContent = 'Could not cancel: ' + (e.message || e); if (btn) btn.disabled = false; }
+}
 /* CHECKOUT-CORE-START */
 /* Checkouts page. Phase 1 stored every value the resident's form computed
    (notice days, short flag, fees and wording shown); Phase 2a adds the case
