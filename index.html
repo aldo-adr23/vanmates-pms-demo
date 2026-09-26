@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-26q"></script>
+<script src="pms-supabase.js?v=2026-09-26r"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20969,7 +20969,7 @@ const CKO_EVENT_LABELS = {
   cancelled: 'Checkout cancelled', review_decided: 'Short-notice review decided', flag_set: 'Flag set',
   flag_cleared: 'Flag cleared', note: 'Note', staff_created: 'Opened by staff',
   completed_by_resident: 'Resident completed the form', date_changed: 'Move-out date changed',
-  outbox_failed: 'Asana / email update failed',
+  outbox_failed: 'Asana / email update failed', status_link_reset: 'Resident link reset',
   cleaning_booked: 'Move-out clean booked in Limpio', cleaning_cancelled: 'Limpio clean cancelled',
   cleaning_report: 'Cleaning report received',
   deduction_added: 'Charge added', deduction_changed: 'Charge changed', deduction_removed: 'Charge removed',
@@ -21060,7 +21060,7 @@ function ckoFromRow(r){
     id: r.id, email: r.email || '', name: d.name || r.email || '', city: d.city || '', house: d.house || '', room: d.room || '',
     moveOut: r.move_out_date || '', noticeDays: r.notice_days == null ? null : r.notice_days, short: !!r.short_notice,
     status: r.status || '', flags: Array.isArray(r.flags) ? r.flags : [], verified: !!r.verified,
-    asanaGid: r.asana_gid || '', createdAt: r.created_at || '', data: d,
+    asanaGid: r.asana_gid || '', createdAt: r.created_at || '', data: d, statusToken: r.status_token || '',
     owner: String(r.owner_email || '').toLowerCase(), ownedAt: r.owned_at || '',
     statusChangedAt: r.status_changed_at || r.created_at || '', outcome: r.outcome || '', closedAt: r.closed_at || '',
   };
@@ -22092,6 +22092,35 @@ function ckoOverdueText(a, city){
   const t = ckoLocal(a.due, city);
   return (a.stage === 'payment' ? 'payment' : 'review') + ' overdue' + (t.date ? ' (due ' + t.date + ' ' + t.time + ' ' + ckoZoneLabel(city) + ')' : '');
 }
+// ---- Phase 3b: the resident's private status page link ----
+// Same format as the n8n emails' statusUrl (checkout-intake/email.js). c: a case from
+// ckoFromRow (statusToken, data.lang) or a raw checkout_cases row (status_token). A token
+// that is not exactly 43 base64url characters gives no link.
+function ckoStatusUrl(c){
+  const t = String((c && (c.statusToken || c.status_token)) || '');
+  if (!/^[A-Za-z0-9_-]{43}$/.test(t)) return null;
+  return 'https://vanmates.com/checkout/status?t=' + t + (((c && c.data) || {}).lang === 'ja' ? '&lang=ja' : '');
+}
+// Reset link = checkout_rotate_status_token: the case owner or an admin (the RPC refuses anyone else).
+function ckoCanResetLink(c, me){ return ckoCanManage(c, me); }
+function ckoRotateArgs(c){
+  const id = String((c && c.id) || '');
+  return id ? { ok: true, args: { p_case: id } } : { ok: false, error: 'No case selected.' };
+}
+// The Case block's "Resident link" row: Copy for anyone on the team (when there is a
+// token), Reset for the owner or an admin.
+function ckoResidentLink(c, me){
+  const url = ckoStatusUrl(c);
+  return { url, canCopy: !!url, canReset: ckoCanResetLink(c, me) };
+}
+// The list read's columns; status_token only exists after the 3b migration.
+const CKO_CASE_COLS = 'id,email,status,flags,verified,notice_received_at,move_out_date,notice_days,short_notice,asana_gid,data,created_at,owner_email,owned_at,status_changed_at,outcome,closed_at';
+function ckoCaseSelect(withToken){ return withToken ? CKO_CASE_COLS + ',status_token' : CKO_CASE_COLS; }
+// PostgREST's "column does not exist" (42703), or any error naming status_token.
+function ckoMissingTokenColumn(err){
+  if (!err) return false;
+  return String(err.code || '') === '42703' || /status_token/.test(String(err.message || '') + ' ' + String(err.details || '') + ' ' + String(err.hint || ''));
+}
 /* CHECKOUT-CORE-END */
 /* ---- Checkouts (DOM side of CHECKOUT-CORE) -------------------------------
    Read when the page is opened, not hydrated: cases are few, and bank
@@ -22123,6 +22152,8 @@ function ckoChip(f){
   const cls = CKO_RED_FLAGS.indexOf(f) !== -1 ? 'red' : 'blue';
   return `<span class="tag-pill ${cls}" style="font-size:11px;margin:1px">${esc(ckoFlagLabel(f))}</span>`;
 }
+// Phase 3b: set once a read found no status_token column (portal live before the migration).
+let ckoNoTokenColumn = false;
 async function loadCheckouts(force){
   if (ckoLoading) return ckoLoading;
   if (ckoCases && !force) { renderCheckouts(); return; }
@@ -22134,9 +22165,16 @@ async function loadCheckouts(force){
     try {
       const rows = [], PAGE = 1000;
       for (let from = 0; ; from += PAGE) {
-        const { data, error } = await sb.from('checkout_cases')
-          .select('id,email,status,flags,verified,notice_received_at,move_out_date,notice_days,short_notice,asana_gid,data,created_at,owner_email,owned_at,status_changed_at,outcome,closed_at')
+        const page = (cols) => sb.from('checkout_cases').select(cols)
           .is('deleted_at', null).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, from + PAGE - 1);
+        let { data, error } = await page(ckoCaseSelect(!ckoNoTokenColumn));
+        // Before the 3b migration there is no status_token column (42703): retry this page
+        // once without it and remember that for the session ("No link yet" in the drawer).
+        if (error && !ckoNoTokenColumn && ckoMissingTokenColumn(error)) {
+          ckoNoTokenColumn = true;
+          console.warn('[checkouts] status_token column missing; reading without it');
+          ({ data, error } = await page(ckoCaseSelect(false)));
+        }
         if (error) throw error;
         rows.push(...(data || []));
         if (!data || data.length < PAGE) break;
@@ -22422,6 +22460,14 @@ function ckoChargesHtml(c, b, kv, h){
 }
 // banner: a refusal to show above the action bar once the case is re-read.
 // refocus: after a write, move focus to the banner (when shown) or the actions.
+// Phase 3b: the Case block's "Resident link" row (ckoResidentLink decides what shows).
+function ckoResidentLinkRow(c, kv){
+  const r = ckoResidentLink(c, ckoMe());
+  const btn = (act, label, title) => `<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="${act}" title="${esc(title)}">${esc(label)}</button>`;
+  const parts = [r.canCopy ? btn('copy_link', 'Copy resident link', 'Copy the private status page link to send to the resident') : '<span class="name-sub">No link yet</span>'];
+  if (r.canReset) parts.push(btn('reset_link', 'Reset link', 'Make a new link; the old one stops working'));
+  return kv('Resident link', `<span id="cko-link" style="display:inline-flex;flex-wrap:wrap;gap:6px">${parts.join('')}</span>`);
+}
 async function openCheckout(id, banner, refocus){
   const tok = ++ckoOpenSeq;
   CKO_FORM = null;
@@ -22480,6 +22526,7 @@ async function openCheckout(id, banner, refocus){
     ${h('Case')}
     ${kv('Status', esc(c.status) + (c.outcome ? ` <span class="name-sub">(${esc(c.outcome)})</span>` : ''))}
     ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
+    ${ckoResidentLinkRow(c, kv)}
     ${kv('At this status', waited == null ? '—' : esc(waited) + (waited === 1 ? ' day' : ' days'))}
     ${slaParts.length ? kv('Deadlines', `<span data-cko-sla>${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</span>`) : ''}
     ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
@@ -22615,7 +22662,7 @@ function ckoPanelCase(){
 // The open drawer still shows this case (it may have been closed or switched).
 function ckoShowing(id){ const p = document.getElementById('detail-panel'); return !!(p && p.classList.contains('open') && document.querySelector(`#panel-body [data-cko-panel="${String(id).replace(/["\\]/g, "\\$&")}"]`)); }
 function ckoRefusalText(err){ return err.code ? ckoErrorText(err.code) : 'Could not save: ' + (err.message || 'unknown error'); }
-function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button, #cko-charges button, #cko-charges-form button').forEach(b => { b.disabled = disabled; }); }
+function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button, #cko-charges button, #cko-charges-form button, #cko-link button').forEach(b => { b.disabled = disabled; }); }
 // Buttons back on after a refusal that keeps the form open, with the action
 // bar's and the Charges block's own rules (a disabled Submit stays disabled).
 function ckoRestoreButtons(){
@@ -22681,6 +22728,24 @@ function ckoAct(act, lineId){
   const flag = (f, on, done) => ckoCall(id, 'checkout_set_flag', { p_case: id, p_flag: f, p_on: on }, done);
   switch (act) {
     case 'form_back': { CKO_FORM = null; host.innerHTML = ''; const cf = document.getElementById('cko-charges-form'); if (cf) cf.innerHTML = ''; return; }
+    // ---- Phase 3b: the resident status link ----
+    case 'copy_link': {
+      const url = ckoStatusUrl(c);
+      if (!url) { showToast('This case has no resident link yet'); return; }
+      const fallback = () => { window.prompt('Copy the resident link:', url); };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(() => showToast('Resident link copied'), fallback);
+        else fallback();
+      } catch (e) { fallback(); }
+      return;
+    }
+    case 'reset_link': {
+      if (!ckoCanResetLink(c, ckoMe())) return;
+      const b = ckoRotateArgs(c);
+      if (!b.ok) { showToast(b.error); return; }
+      if (!confirm('Reset the resident link? The link in the emails already sent stops working at once. Copy the new link afterwards to send it to the resident.')) return;
+      return ckoCall(id, 'checkout_rotate_status_token', b.args, 'New link created — the old one no longer works');
+    }
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
       if (!confirm('Release this case? It goes back to Unassigned.')) return;
