@@ -5,7 +5,7 @@ var CS_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 var CS_SOURCE_LABEL = { whatsapp_maya: 'WhatsApp Maya', line_maya: 'LINE Maya', japan_team: 'Japan team', cs_agent: 'Taken back by CS' };
 var CS_STATUS_LABEL = { new: 'New', open: 'Open', waiting_customer: 'Waiting for customer', waiting_internal: 'Waiting for internal team', resolved: 'Resolved' };
 var CS_OUTCOME_LABEL = { resolved_cs: 'Resolved by CS', returned_maya: 'Returned to Maya', returned_japan_team: 'Returned to Japan team', expired: 'Expired (unclaimed)' };
-var CS_ACCOUNT_LABEL = { '559783360556273': 'WhatsApp 672', '1016410864897572': 'WhatsApp 647' };
+var CS_ACCOUNT_LABEL = { '559783360556273': 'WhatsApp 672', '1016410864897572': 'WhatsApp 647', 'U17118aed7e39ff029163378e64195565': 'LINE' };
 var CS_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function csT(iso) { var t = iso ? new Date(iso).getTime() : NaN; return isNaN(t) ? null : t; }
@@ -210,6 +210,27 @@ function csSummaryCard(cases, currentCaseId) {
   if (k.source === 'cs_agent') return { title: 'Taken back by CS', body: k.topic || '', topic: k.topic || '' };
   return { title: "Maya's handoff summary", body: k.ai_summary || k.topic || '', topic: k.topic || '' };
 }
+// Same Japanese ranges JLeads uses (hiragana/katakana/CJK): whether a text needs translating.
+function csHasJapanese(s) { return /[぀-ヿ㐀-鿿ｦ-ﾟ]/.test(String(s || '')); }
+
+// LINE monthly push quota: amber once 80% used, red (send disabled) once the limit is reached.
+// No limit (unlimited plan, or unknown) never warns.
+function csQuotaLevel(used, limit) {
+  var u = Number(used) || 0, l = limit ? Number(limit) : 0;
+  if (!l) return 'ok';
+  if (u >= l) return 'full';
+  if (u >= l * 0.8) return 'warn';
+  return 'ok';
+}
+
+// The line CS's first reply of a case opens with (VM - CS Send prepends it); shown as a hint so
+// agents don't introduce themselves twice. LINE's is Maya's own handoff phrasing, in Japanese.
+function csIntroHint(channel, name) {
+  var first = csFirstName(name) || 'you';
+  return channel === 'line' ? ('Vanmatesの' + first + 'です。Mayaから引き継ぎました。')
+    : ('Hi, this is ' + first + ' from the Vanmates team — I’m picking up from Maya.');
+}
+
 function csEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -222,6 +243,7 @@ if (typeof window !== 'undefined') {
     csTook: csTook, csHistoryStats: csHistoryStats, csPeriodFrom: csPeriodFrom, csSide: csSide, csSplitEarlier: csSplitEarlier,
     csAgo: csAgo, csFirstName: csFirstName, csPreview: csPreview, csMaskPhone: csMaskPhone, csComposerMode: csComposerMode,
     csIsMember: csIsMember, csSummaryCard: csSummaryCard, csEsc: csEsc,
+    csHasJapanese: csHasJapanese, csQuotaLevel: csQuotaLevel, csIntroHint: csIntroHint,
     CS_PRIORITY_RANK: CS_PRIORITY_RANK, CS_SOURCE_LABEL: CS_SOURCE_LABEL, CS_STATUS_LABEL: CS_STATUS_LABEL,
     CS_OUTCOME_LABEL: CS_OUTCOME_LABEL, CS_ACCOUNT_LABEL: CS_ACCOUNT_LABEL };
 }
