@@ -224,6 +224,7 @@
     text-align:left;transition:background .12s, color .12s;
   }
   .settings-nav button:hover{background:var(--cream-2)}
+  .settings-nav button[hidden]{display:none}
   .settings-nav button.active{background:var(--red-soft);color:var(--red-dark);font-weight:700}
   .settings-nav button svg{width:16px;height:16px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:2}
   .settings-section{display:none}
@@ -569,6 +570,7 @@
   .tag-pill.gold{background:linear-gradient(135deg,#F6E5BC,#EFD49A);color:#7d5b1d}
   .tag-pill.red{background:var(--red-soft);color:var(--red-dark)}
   .tag-pill.green{background:var(--green-soft);color:#3e6049}
+  .tag-pill.amber{background:var(--amber-soft);color:var(--ink)}
   .tag-pill.blue{background:var(--blue-soft);color:#2b4f6e}
 
   /* Pagination */
@@ -1265,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-25g"></script>
+<script src="pms-supabase.js?v=2026-09-25h"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2676,6 +2678,7 @@
           <option value="damage_review">Damage review</option>
           <option value="resident_dispute">Resident dispute</option>
           <option value="date_changed">Move-out date changed</option>
+          <option value="finance_overdue">Finance overdue</option>
         </select>
         <select id="cko-filter-city" class="form-input" style="max-width:170px">
           <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
@@ -2683,7 +2686,20 @@
         <button class="btn btn-ghost" id="cko-refresh" type="button">Refresh</button>
         <button class="btn btn-primary" id="cko-new" type="button">New checkout</button>
       </div>
-      <div class="card">
+      <div class="card" id="cko-fin-card" hidden>
+        <div class="card-head" style="justify-content:space-between;flex-wrap:wrap;gap:10px;padding:14px 18px">
+          <div class="card-title">Finance <em>queue</em></div>
+          <div id="cko-fin-stats" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Resident</th><th>House / room</th><th>Stage · due</th><th>Since move-out</th><th>At stage</th><th>Refund</th><th>Owner</th><th>Approved by</th></tr></thead>
+          <tbody id="cko-fin-body"></tbody>
+        </table>
+        </div>
+        <div id="cko-fin-empty" class="name-sub" style="display:none;padding:28px;text-align:center">Nothing is waiting for finance.</div>
+      </div>
+      <div class="card" id="cko-list-card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
           <div class="card-title"><b id="cko-count">0</b> checkouts</div>
           <div class="name-sub">Worked here · Asana follows within a few minutes</div>
@@ -2698,6 +2714,11 @@
       </div>
     </section>
     <section class="view" data-view="deposits">
+
+      <div class="card card-pad" id="dd-cko-banner" role="note" style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--blue-soft)">
+        <div><b>New move-outs are handled in Checkouts → Finance.</b><div class="card-sub">This list keeps the older deposits until they are paid out.</div></div>
+        <button type="button" class="btn btn-ghost" data-cko-open-finance>Open Checkouts → Finance</button>
+      </div>
 
       <div class="kpi-grid">
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Pending refunds</div><div class="kpi-value" id="dd-kpi-pending">5</div><div class="kpi-trend up" id="dd-kpi-pending-sub">$13,460 owed</div></div>
@@ -2797,10 +2818,32 @@
             <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span>Data &amp; export</span>
           </button>
+          <button data-sec="checkout-fees" id="set-nav-cko-fees" hidden>
+            <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg>
+            <span>Checkout fees</span>
+          </button>
         </nav>
 
         <!-- Section content -->
         <div>
+          <!-- Checkout fees (admins; Checkouts Phase 3a) -->
+          <div class="settings-section" data-sec="checkout-fees">
+            <div class="card card-pad">
+              <div class="card-head" style="flex-wrap:wrap;gap:10px;justify-content:space-between">
+                <div><div class="card-title">Checkout <em>fees and deadlines</em></div><div class="card-sub">Standard cleaning and per-key amounts pre-fill a case's charges when it reaches Charges Review, and the day counts set its review and payment deadlines. A house row overrides its city. Changes never touch cases already in review.</div></div>
+                <button type="button" class="btn btn-primary" id="cko-fee-add">Add rule</button>
+              </div>
+              <div id="cko-fee-form"></div>
+              <div class="card-sub" id="cko-fee-msg" role="status" aria-live="polite" style="min-height:18px;color:var(--red-dark)"></div>
+              <div style="overflow-x:auto">
+              <table>
+                <thead><tr><th>City</th><th>House</th><th class="right">Cleaning</th><th class="right">Per key</th><th>Review</th><th>Payment</th><th>Final deadline</th><th>Last changed</th><th></th></tr></thead>
+                <tbody id="cko-fee-body"></tbody>
+              </table>
+              </div>
+            </div>
+          </div>
+
           <!-- General -->
           <div class="settings-section active" data-sec="general">
             <div class="card card-pad" style="margin-bottom:18px">
@@ -9948,6 +9991,7 @@ function goToView(v, savedView){
   if(v === "assistants" && typeof asOpen === "function") asOpen();
   if(v === "sales" && typeof renderSales === "function") renderSales();
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
+  if(v === "settings" && typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();
 
   // If navigating to Tenants with a saved view, activate it
   if(v === "tenants" && savedView){
@@ -19400,6 +19444,7 @@ if(_origGoToView){
 
     // 4. Re-render anything that depends on the team / invites lists
     if (typeof applyRolePermissions === "function") applyRolePermissions();
+    if (typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();   // Settings → Checkout fees: admins only
     if (typeof renderPendingInvites === "function") renderPendingInvites();
     if (typeof renderSettingsTeam   === "function") renderSettingsTeam();
     if (typeof renderTeam           === "function") renderTeam();   // <-- Team page Active members grid
@@ -20117,11 +20162,12 @@ const CKO_FLAG_LABELS = {
   damage_review: 'Damage review',
   resident_dispute: 'Resident dispute',
   date_changed: 'Move-out date changed',
+  finance_overdue: 'Finance overdue',
 };
 // Flags that mean somebody has to do something, for everyone. Plain short
 // notice is information. short_notice_review_required needs action for admins
 // only (only they can decide it), so it is checked in ckoNeedsAction instead.
-const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed'];
+const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed', 'finance_overdue'];
 // Flags drawn red on the chip (the rest are blue).
 const CKO_RED_FLAGS = CKO_ACTION_FLAGS.concat(['short_notice_review_required', 'missing_keys', 'damage_review', 'missing_refund_info', 'unverified']);
 const CKO_EVENT_LABELS = {
@@ -20135,6 +20181,9 @@ const CKO_EVENT_LABELS = {
   outbox_failed: 'Asana / email update failed',
   cleaning_booked: 'Move-out clean booked in Limpio', cleaning_cancelled: 'Limpio clean cancelled',
   cleaning_report: 'Cleaning report received',
+  deduction_added: 'Charge added', deduction_changed: 'Charge changed', deduction_removed: 'Charge removed',
+  deposit_held_set: 'Deposit held recorded', charges_submitted: 'Charges submitted for approval', charges_sent_back: 'Charges sent back',
+  refund_approved: 'Refund approved', refund_reapproved: 'Refund re-approved', refund_sent: 'Refund sent', finance_overdue: 'Finance overdue',
 };
 const CKO_KEYS_OPTIONS = [['returned', 'All returned'], ['partial', 'Some returned'], ['missing', 'None returned']];
 const CKO_RESULT_OPTIONS = [['good', 'Good'], ['cleaning_required', 'Cleaning required'], ['damage', 'Damage']];
@@ -20159,17 +20208,11 @@ const CKO_STEPS = {
     { name: 'notes', label: 'Notes (required unless Good)', type: 'textarea', required: false },
   ] },
   to_charges: { from: 'Inspection Completed', to: 'Charges Review', label: 'Send to charges review', who: 'owner', fields: [] },
-  approve_refund: { from: 'Charges Review', to: 'Deposit Processing', label: 'Approve refund', who: 'finance', fields: [
-    { name: 'deposit', label: 'Deposit held ($)', type: 'money', required: true },
-    { name: 'cleaning', label: 'Cleaning ($)', type: 'money', required: true },
-    { name: 'extra', label: 'Other charges ($)', type: 'money', required: true },
-    { name: 'total_refund', label: 'Refund to send ($)', type: 'computed', required: false },
-    { name: 'expected_payment_date', label: 'Expected payment date', type: 'date', required: true },
-  ] },
-  mark_sent: { from: 'Deposit Processing', to: 'Deposit Sent', label: 'Mark sent', who: 'finance', fields: [
-    { name: 'sent_on', label: 'Sent on', type: 'date', required: true },
-    { name: 'reference', label: 'Payment reference', type: 'text', required: true },
-  ] },
+  // Phase 3a: approve and mark sent run from the drawer's Charges block
+  // (block: 'charges'), with lines_version and the payment method; their
+  // arguments come from ckoApproveArgs / ckoMarkSentArgs, not a step form.
+  approve_refund: { from: 'Charges Review', to: 'Deposit Processing', label: 'Approve refund', who: 'finance', block: 'charges', fields: [] },
+  mark_sent: { from: 'Deposit Processing', to: 'Deposit Sent', label: 'Mark sent', who: 'finance', block: 'charges', fields: [] },
   close: { from: 'Deposit Sent', to: 'Closed', label: 'Close', who: 'finance', fields: [] },
 };
 const CKO_ERROR_TEXT = {
@@ -20187,6 +20230,19 @@ const CKO_ERROR_TEXT = {
   refund_info_missing: 'The resident has not given refund details yet.',
   open_case_exists: 'This resident already has an open checkout.',
   unknown_step: 'Unknown step.',
+  unpriced_lines: 'Price every charge first (some have no amount).',
+  reason_required: 'Give a reason for changing this amount.',
+  not_submitted: 'The charges have not been submitted for approval yet.',
+  top_up_due: 'A top-up is still due. Mark it sent before closing.',
+  locked: 'The charges are locked at this stage (flag a dispute to change them).',
+  line_gone: 'That charge is no longer there. The case has been reloaded.',
+  already_sent: 'This refund was already marked sent.',
+  legacy_lines_required: 'Add the carried-over charges as lines before re-approving.',
+  remove_reason_required: 'Give a reason for removing this charge.',
+  reapprove_reason_required: 'Give a reason for the re-approval.',
+  // A full code wins over the generic "Missing: <field>." wording.
+  'missing:lines_version': 'Reload the case and try again.',
+  'invalid:lines': 'A case can have at most 50 charges.',
   missing: 'Missing',
   invalid: 'Not valid',
 };
@@ -20198,6 +20254,10 @@ const CKO_FIELD_LABELS = {
   notice_received_at: 'notice received at', channel: 'channel', city: 'city',
   charges: 'the approved refund amounts', evidence: 'evidence', name: 'name', phone: 'phone', house: 'house', room: 'room',
   resident_note: 'note to the resident',
+  deposit_held: 'deposit held', lines_version: 'the charges on screen', amount: 'amount', description: 'description', type: 'charge type',
+  override_reason: 'reason for the change', note: 'note', method: 'payment method', kind: 'payment kind', shareable: 'share the reference',
+  cleaning_fee: 'cleaning fee', key_fee: 'per-key fee', review_days: 'review days', payment_days: 'payment days', deadline_days: 'final deadline days',
+  id: 'charge', p: 'fee rule', lines: 'charges', days: 'days',
 };
 // Length caps the migration enforces (characters, after trimming).
 const CKO_MAX_TEXT = 4000, CKO_MAX_SHORT = 200;
@@ -20256,6 +20316,7 @@ function ckoNextStep(c, me){
   if (s.who === 'finance') {
     if (!ckoIsFinance(m)) return out(false, 'Only an admin, an accountant or a refund approver can do this.');
     if (key === 'approve_refund' && f.indexOf('missing_refund_info') !== -1) return out(false, CKO_ERROR_TEXT.refund_info_missing);
+    if (key === 'close' && ckoTopUpDue(c) > 0) return out(false, CKO_ERROR_TEXT.top_up_due);
     return out(true, '');
   }
   // As checkout_advance: only schedule needs an owner (needs_owner, even for
@@ -20275,7 +20336,8 @@ function ckoActions(c, me){
   if (open && admin) a.push({ act: 'assign', label: c.owner ? 'Reassign' : 'Assign' });
   if (open && c.owner && manage) a.push({ act: 'release', label: 'Release' });
   if (open && admin && f.indexOf('short_notice_review_required') !== -1) a.push({ act: 'decide', label: 'Decide review' });
-  if (open && manage) a.push(f.indexOf('resident_dispute') === -1 ? { act: 'flag_dispute', label: 'Flag dispute' } : { act: 'clear_dispute', label: 'Clear dispute' });
+  // Finance may flag / clear a dispute too (Phase 3a: it unlocks the charges).
+  if (open && (manage || ckoIsFinance(m))) a.push(f.indexOf('resident_dispute') === -1 ? { act: 'flag_dispute', label: 'Flag dispute' } : { act: 'clear_dispute', label: 'Clear dispute' });
   if (open && manage && f.indexOf('missing_keys') !== -1) a.push({ act: 'clear_missing_keys', label: 'Keys sorted' });
   if (open && manage && f.indexOf('date_changed') !== -1) a.push({ act: 'clear_date_changed', label: 'Date change seen' });
   a.push({ act: 'note', label: 'Add note' });
@@ -20307,6 +20369,7 @@ function ckoTab(cases, tab, me, now){
     if (tab === 'action') return ckoNeedsAction(c, m, now);
     if (tab === 'mine') return !!m.email && c.owner === m.email;
     if (tab === 'unassigned') return !c.owner;
+    if (tab === 'finance') return ckoInFinance(c);
     return true;
   });
 }
@@ -20315,9 +20378,10 @@ function ckoTab(cases, tab, me, now){
 function ckoSort(cases, me, now){
   return (cases || []).map(c => {
     const d = ckoDaysWaiting(c, now);
-    return { c, act: ckoNeedsAction(c, me, now) ? 1 : 0, w: d == null ? -1 : d, noMo: c.moveOut ? 0 : 1, mo: String(c.moveOut), cr: String(c.createdAt) };
+    return { c, act: ckoNeedsAction(c, me, now) ? 1 : 0, od: (c.flags || []).indexOf('finance_overdue') !== -1 ? 1 : 0, w: d == null ? -1 : d, noMo: c.moveOut ? 0 : 1, mo: String(c.moveOut), cr: String(c.createdAt) };
   }).sort((a, b) =>
     (b.act - a.act) ||
+    (b.od - a.od) ||
     (b.w - a.w) ||
     (a.noMo - b.noMo) ||
     a.mo.localeCompare(b.mo) ||
@@ -20357,11 +20421,12 @@ function ckoErrorCode(msg){ const m = String(msg || '').match(/checkout:([a-z_]+
 function ckoErrorText(code){
   code = String(code || '');
   if (!code) return 'Something went wrong. Try again.';
+  if (CKO_ERROR_TEXT[code]) return CKO_ERROR_TEXT[code];
   const [k, field] = code.split(':');
   if (field && (k === 'missing' || k === 'invalid')) return CKO_ERROR_TEXT[k] + ': ' + (CKO_FIELD_LABELS[field] || field.replace(/_/g, ' ')) + '.';
   return CKO_ERROR_TEXT[k] || 'Refused: ' + code.replace(/_/g, ' ') + '.';
 }
-const ckoRound2 = (n) => Math.round(n * 100) / 100;
+const ckoRound2 = (n) => Math.round((n + Math.sign(n) * Number.EPSILON) * 100) / 100;
 // Form values (strings, as read off the inputs) -> { ok, fields } for
 // checkout_advance, or { ok: false, error } naming the first problem.
 // ctx = { city, now }: the case's city (its zone reads a datetime-local value
@@ -20405,7 +20470,6 @@ function ckoStepPayload(step, v, ctx){
     }
   }
   if (step === 'inspection_done' && fields.result !== 'good' && !fields.notes) return { ok: false, error: ckoErrorText('missing:notes') };
-  if (step === 'approve_refund') fields.total_refund = ckoRefundTotal(fields);
   return { ok: true, fields };
 }
 // max(0, deposit - cleaning - extra), each rounded to cents first as the DB does.
@@ -20438,7 +20502,8 @@ function ckoOverrideArgs(c, to, reason){
   const r = ckoReqText(reason, 'reason');
   if (r.error) return { ok: false, error: r.error };
   const ch = (c.data || {}).charges;
-  if (to === 'Deposit Processing' && !(ch && typeof ch === 'object' && !Array.isArray(ch))) return { ok: false, error: ckoErrorText('missing:charges') };
+  // An approved refund: the 2a object, or at least one 3a snapshot.
+  if (to === 'Deposit Processing' && !(Array.isArray(ch) ? ch.length : ch && typeof ch === 'object')) return { ok: false, error: ckoErrorText('missing:charges') };
   return { ok: true, args: { p_case: c.id, p_to: to, p_reason: r.text, p_from: c.status } };
 }
 function ckoNoteArgs(c, text){
@@ -20615,7 +20680,9 @@ function ckoCleaningReportText(after){
 }
 // nameOf(email) -> display name; defaults to the email itself. city: the
 // case's city, for times inside a detail (optional: Pacific).
-function ckoTimeline(events, nameOf, city){
+// snapshots (optional): ckoChargesSnapshots(c), to spell out a refund_approved /
+// refund_reapproved event's figures (the event itself carries only the version).
+function ckoTimeline(events, nameOf, city, snapshots){
   nameOf = typeof nameOf === 'function' ? nameOf : (e) => String(e || '');
   const q = (v) => (v == null ? '?' : v);
   return (events || []).slice().sort((a, b) => String(a.at).localeCompare(String(b.at))).map(e => {
@@ -20637,11 +20704,20 @@ function ckoTimeline(events, nameOf, city){
     else if (e.type === 'outbox_failed') detail = String(after.error || '');
     else if (e.type === 'cleaning_booked' || e.type === 'cleaning_cancelled') detail = String(after.task_id || '') + (after.replaced ? ' · replaces ' + after.replaced : '');
     else if (e.type === 'cleaning_report') detail = ckoCleaningReportText(after);
+    else if (e.type === 'deduction_added' || e.type === 'deduction_changed' || e.type === 'deduction_removed') detail = ckoDeductionText(e.type, before, after);
+    else if (e.type === 'deposit_held_set') detail = ckoMoneyText(after.amount) + (before.amount != null ? ' (was ' + ckoMoneyText(before.amount) + ')' : '') + (after.note ? ' · ' + after.note : '');
+    else if (e.type === 'charges_submitted') detail = [after.lines_version != null ? 'charges version ' + after.lines_version : '', ckoAmt(after.refund) != null ? 'refund ' + ckoMoneyText(after.refund) : '',
+      ckoAmt(after.owed_by_resident) > 0 ? 'owed by resident ' + ckoMoneyText(after.owed_by_resident) : ''].filter(Boolean).join(' · ');
+    else if (e.type === 'charges_sent_back') detail = String(after.note || '');
+    else if (e.type === 'refund_approved' || e.type === 'refund_reapproved') detail = ckoApprovalText(after, snapshots);
+    else if (e.type === 'refund_sent') detail = ckoPaymentText(after);
+    else if (e.type === 'finance_overdue') detail = ckoOverdueText(after, city);
     else if (after.message) detail = String(after.message);
     else if (after.step) detail = 'at ' + after.step;
     const actor = String(e.actor || '');
     const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor.replace(/^resident:/, '');
     const what = e.type === 'cleaning_report' && after.outcome === 'updated' ? 'Cleaning report updated'
+      : e.type === 'refund_sent' && after.kind === 'top_up' ? 'Top-up sent'
       : CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' ');
     return { at: e.at, who, what, detail };
   });
@@ -20696,6 +20772,535 @@ function ckoZonedIso(v, city){
   const hits = [before, after].map(o => wall - o).filter(t => off(t) === wall - t);
   return new Date(hits.length ? Math.min.apply(null, hits) : wall - before).toISOString();
 }
+/* ---- Phase 3a: charges, finance approval, deadlines ----------------------
+   Charges are one row per line in checkout_deductions, read only through the
+   checkout_lines RPC (the browser has no table access). Approved snapshots
+   (data.charges, a list), payments (data.payments), top_up_due, the review /
+   payment clocks (data.sla) and the deposit held (data.deposit_held) live on
+   the case. The money arithmetic is the database's: ckoLinesTotals mirrors
+   _checkout_totals only as a fallback for display. Phase 2a cases keep their
+   single data.charges object and data.payment, shown read-only. Spec: rina
+   docs/superpowers/specs/2026-09-25-checkout-phase3a-design.md */
+const CKO_LINE_TYPES = [['cleaning', 'Cleaning'], ['keys', 'Keys / fobs'], ['damage', 'Damage'], ['unpaid_balance', 'Unpaid balance'], ['other', 'Other']];
+const CKO_LINE_SOURCES = { rule: 'Standard fee', report: 'From the cleaning report', manual: 'Added by staff' };
+const CKO_METHOD_OPTIONS = [['etransfer', 'e-Transfer'], ['wire', 'Wire'], ['eft', 'EFT'], ['cheque', 'Cheque']];
+const CKO_PAY_KINDS = [['refund', 'Refund'], ['top_up', 'Top-up']];
+// Line text cap (checkout_deductions.description) and evidence entries per line.
+const CKO_MAX_LINE = 500, CKO_MAX_EVIDENCE = 20;
+function ckoLineTypeLabel(t){ const o = CKO_LINE_TYPES.find(x => x[0] === t); return o ? o[1] : (String(t == null ? '' : t).replace(/_/g, ' ') || '—'); }
+// A stored amount rounded to cents, or null (blank, junk or negative).
+function ckoAmt(v){ if (v == null || v === '' || typeof v === 'boolean') return null; const n = Number(v); return isFinite(n) && n >= 0 ? ckoRound2(n) : null; }
+function ckoMoneyText(v){ const n = ckoAmt(v); return n == null ? '—' : '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+// Display-only mirror of _checkout_totals: cleaning sums cleaning lines,
+// outstanding sums unpaid_balance, deductions sums keys + damage + other.
+// depositHeld is data.deposit_held ({amount}) or a number; unknown -> refund
+// and owed null. Unpriced lines (amount null) count, they add nothing.
+function ckoLinesTotals(lines, depositHeld){
+  const dh = ckoObj(depositHeld), deposit = ckoAmt(dh ? dh.amount : depositHeld);
+  let cleaning = 0, deductions = 0, outstanding = 0, unpriced = 0;
+  (Array.isArray(lines) ? lines : []).forEach(l => {
+    const a = ckoAmt(l && l.amount), t = l && l.type;
+    if (a == null) { unpriced++; return; }
+    if (t === 'cleaning') cleaning += a; else if (t === 'unpaid_balance') outstanding += a; else deductions += a;
+  });
+  cleaning = ckoRound2(cleaning); deductions = ckoRound2(deductions); outstanding = ckoRound2(outstanding);
+  const charged = ckoRound2(cleaning + deductions + outstanding);
+  return { deposit, cleaning, deductions, outstanding, charged,
+    refund: deposit == null ? null : ckoRound2(Math.max(0, deposit - charged)),
+    owed_by_resident: deposit == null ? null : ckoRound2(Math.max(0, charged - deposit)), unpriced };
+}
+// One checkout_lines line, shaped for the drawer. changed: a pre-filled
+// (rule) amount that staff moved; the original is shown struck through.
+function ckoLine(l){
+  l = ckoObj(l) || {};
+  const amount = ckoAmt(l.amount), original = ckoAmt(l.original_amount);
+  return { id: String(l.id || ''), type: String(l.type || ''), typeLabel: ckoLineTypeLabel(l.type), amount,
+    description: String(l.description == null ? '' : l.description).trim(), owner: String(l.owner_email || '').toLowerCase(),
+    evidence: (Array.isArray(l.evidence) ? l.evidence : []).map(x => String(x == null ? '' : x).trim()).filter(Boolean),
+    source: String(l.source || ''), sourceLabel: CKO_LINE_SOURCES[l.source] || '', original,
+    reason: String(l.override_reason == null ? '' : l.override_reason).trim(), updatedAt: String(l.updated_at || ''),
+    changed: original != null && amount != null && Math.abs(amount - original) > 0.005 };
+}
+// The checkout_lines reply -> { lines, version, depositHeld, totals, rule }.
+// Server totals win; any missing figure falls back to ckoLinesTotals.
+function ckoLinesBundle(raw){
+  const r = ckoObj(raw) || {};
+  const lines = (Array.isArray(r.lines) ? r.lines : []).map(ckoLine);
+  const dh = ckoObj(r.deposit_held);
+  const depositHeld = dh && ckoAmt(dh.amount) != null ? { amount: ckoAmt(dh.amount), source: String(dh.source || ''),
+    note: String(dh.note == null ? '' : dh.note).trim(), by: String(dh.by || '').toLowerCase(), at: String(dh.at || '') } : null;
+  const t = ckoObj(r.totals), local = ckoLinesTotals(lines, depositHeld);
+  const pick = (k) => (t && ckoAmt(t[k]) != null ? ckoAmt(t[k]) : local[k]);
+  const totals = { deposit: pick('deposit'), cleaning: pick('cleaning'), deductions: pick('deductions'), outstanding: pick('outstanding'),
+    refund: pick('refund'), owed_by_resident: pick('owed_by_resident'),
+    unpriced: t && Number.isInteger(t.unpriced) && t.unpriced >= 0 ? t.unpriced : local.unpriced };
+  totals.charged = ckoRound2(totals.cleaning + totals.deductions + totals.outstanding);
+  const ru = ckoObj(r.rule);
+  const int = (v) => (Number.isInteger(v) ? v : null);
+  const rule = ru ? { city: String(ru.city || ''), house: String(ru.house || ''), cleaning_fee: ckoAmt(ru.cleaning_fee), key_fee: ckoAmt(ru.key_fee),
+    review_days: int(ru.review_days), payment_days: int(ru.payment_days), deadline_days: int(ru.deadline_days) } : null;
+  // editable: the server's answer for this caller (checkout_lines.editable),
+  // or null when it did not say (ckoLinesEditable then applies the rules).
+  // version null when checkout_lines did not send one: the argument builders
+  // then refuse (ckoNoVersion) instead of sending a guessed 0.
+  return { lines, version: Number.isInteger(r.lines_version) && r.lines_version >= 0 ? r.lines_version : null, depositHeld, totals, rule,
+    editable: typeof r.editable === 'boolean' ? r.editable : null };
+}
+// 'legacy' = a Phase 2a case with one approved data.charges object (shown
+// read-only, never re-approved here); everything else uses lines. A case
+// back at Charges Review is always lines.
+function ckoChargesModel(c){
+  const ch = ((c && c.data) || {}).charges;
+  return ckoObj(ch) && !(c && c.status === 'Charges Review') ? 'legacy' : 'lines';
+}
+function ckoSnapshot(s, i){
+  s = ckoObj(s) || {};
+  const v = Number(s.version);
+  return { version: Number.isInteger(v) && v > 0 ? v : i + 1, legacy: s.legacy === true,
+    lines: (Array.isArray(s.lines) ? s.lines : []).map(l => { l = ckoObj(l) || {}; return { type: String(l.type || ''), typeLabel: ckoLineTypeLabel(l.type),
+      description: String(l.description == null ? '' : l.description).trim(), amount: ckoAmt(l.amount),
+      evidence: (Array.isArray(l.evidence) ? l.evidence : []).map(x => String(x == null ? '' : x).trim()).filter(Boolean), source: String(l.source || '') }; }),
+    deposit: ckoAmt(s.deposit), cleaning: ckoAmt(s.cleaning), deductions: ckoAmt(s.deductions), outstanding: ckoAmt(s.outstanding),
+    refund: ckoAmt(s.refund), owed_by_resident: ckoAmt(s.owed_by_resident),
+    expected_payment_date: ckoIsDate(s.expected_payment_date) ? s.expected_payment_date : '',
+    approved_by: String(s.approved_by || '').toLowerCase(), approved_at: String(s.approved_at || ''), reason: String(s.reason == null ? '' : s.reason).trim(),
+    paid: ckoAmt(s.paid) };
+}
+// Approved snapshots, oldest first. The Phase 2a object {deposit, cleaning,
+// extra, total_refund, expected_payment_date} reads as one legacy v1 (extra
+// counts as deductions). Nothing approved (or junk) -> [].
+function ckoChargesSnapshots(c){
+  const ch = ((c && c.data) || {}).charges;
+  if (Array.isArray(ch)) return ch.filter(x => ckoObj(x)).map(ckoSnapshot).sort((a, b) => a.version - b.version);
+  const o = ckoObj(ch);
+  if (!o) return [];
+  const dep = ckoAmt(o.deposit), cln = ckoAmt(o.cleaning), ext = ckoAmt(o.extra);
+  return [{ version: 1, legacy: true, lines: [], deposit: dep, cleaning: cln, deductions: ext, outstanding: 0, refund: ckoAmt(o.total_refund),
+    owed_by_resident: dep == null ? null : ckoRound2(Math.max(0, (cln || 0) + (ext || 0) - dep)),
+    expected_payment_date: ckoIsDate(o.expected_payment_date) ? o.expected_payment_date : '', approved_by: '', approved_at: '', reason: '', paid: null }];
+}
+// Payments made, in the order recorded (data.payments). A Phase 2a case's
+// data.payment {sent_on, reference} reads as a refund ahead of them.
+function ckoPayments(c){
+  const d = (c && c.data) || {};
+  const list = (Array.isArray(d.payments) ? d.payments : []).filter(x => ckoObj(x)).map(p => ({
+    kind: p.kind === 'top_up' ? 'top_up' : 'refund', amount: ckoAmt(p.amount), sent_on: ckoIsDate(p.sent_on) ? p.sent_on : '',
+    reference: String(p.reference == null ? '' : p.reference), method: String(p.method || ''), shareable: p.shareable === true,
+    by: String(p.by || '').toLowerCase(), at: String(p.at || '') }));
+  // As _checkout_paid: the 2a data.payment is the refund whenever no refund
+  // row was recorded, for the v1 (legacy) snapshot's refund; it came first.
+  const old = ckoObj(d.payment);
+  if (old && !list.some(p => p.kind === 'refund')) {
+    const s = ckoChargesSnapshots(c);
+    list.unshift({ kind: 'refund', amount: s.length ? s[0].refund : null, sent_on: ckoIsDate(old.sent_on) ? old.sent_on : '',
+      reference: String(old.reference == null ? '' : old.reference), method: '', shareable: false, by: '', at: '' });
+  }
+  return list;
+}
+function ckoRefundSent(c){ return ckoPayments(c).find(p => p.kind === 'refund') || null; }
+function ckoTopUpDue(c){ const n = ckoAmt(((c && c.data) || {}).top_up_due); return n && n > 0 ? n : 0; }
+function ckoChargesSubmitted(c){ const r = ckoObj(((c && c.data) || {}).charges_review); return !!(r && r.submitted_at); }
+function ckoPayMethodLabel(m){ return m ? ckoOptionLabel(CKO_METHOD_OPTIONS, m) : ''; }
+// Who may change lines now, as _checkout_lines_editable: at Charges Review
+// the owner (or an admin) and finance until the charges are submitted, then
+// finance only; at Deposit Processing / Deposit Sent finance only, and only
+// while the resident_dispute flag is set. b (optional): the checkout_lines
+// bundle; its server-computed editable wins when present.
+function ckoLinesEditable(c, me, b){
+  if (!c || !ckoIsOpen(c)) return false;
+  // A Phase 2a (legacy) case gets lines only in a dispute, and only on the
+  // server's word (re-approving it needs the carried-over charges as lines).
+  if (ckoChargesModel(c) !== 'lines') return (c.flags || []).indexOf('resident_dispute') !== -1 && !!b && b.editable === true;
+  if (b && typeof b.editable === 'boolean') return b.editable;
+  if (c.status === 'Charges Review') return ckoIsFinance(me) || (!ckoChargesSubmitted(c) && ckoCanManage(c, me));
+  if ((c.status === 'Deposit Processing' || c.status === 'Deposit Sent') && (c.flags || []).indexOf('resident_dispute') !== -1) return ckoIsFinance(me);
+  return false;
+}
+// The Charges block's buttons, in display order (the per-line Edit / Remove
+// buttons follow ckoLinesEditable). b is ckoLinesBundle(...) or null while
+// it has not loaded. act is what the DOM dispatches on. A legacy (2a) case
+// is never at Charges Review: it gets Mark refund sent, and in a dispute
+// the server-allowed line edits and Re-approve.
+function ckoChargesActions(c, me, b){
+  const m = ckoMeOf(me), fin = ckoIsFinance(m), f = (c && c.flags) || [], out = [];
+  if (!c || !b || !ckoIsOpen(c)) return out;
+  const edit = ckoLinesEditable(c, m, b), sub = ckoChargesSubmitted(c), t = b.totals || {};
+  const infoMissing = f.indexOf('missing_refund_info') !== -1, dispute = f.indexOf('resident_dispute') !== -1;
+  // Deposit held is settable whenever lines are (a dispute re-approval,
+  // legacy cases included, needs it as much as a first approval).
+  if (edit) out.push({ act: 'line_add', label: 'Add charge' }, { act: 'deposit_held', label: b.depositHeld ? 'Change deposit held' : 'Set deposit held' });
+  if (c.status === 'Charges Review') {
+    if (!sub && (ckoCanManage(c, m) || fin)) {
+      const why = !b.depositHeld ? ckoErrorText('missing:deposit_held') : t.unpriced > 0 ? CKO_ERROR_TEXT.unpriced_lines : infoMissing ? CKO_ERROR_TEXT.refund_info_missing : '';
+      out.push({ act: 'submit_charges', label: 'Submit for approval', primary: !fin, disabled: !!why, title: why });
+    }
+    if (fin) {
+      if (sub) out.push({ act: 'send_back', label: 'Send back' });
+      const why = !sub ? CKO_ERROR_TEXT.not_submitted : infoMissing ? CKO_ERROR_TEXT.refund_info_missing : '';
+      out.push({ act: 'approve', label: 'Approve refund', primary: true, disabled: !!why, title: why });
+    }
+  }
+  const paidStage = c.status === 'Deposit Processing' || c.status === 'Deposit Sent';
+  if (fin && dispute && paidStage) out.push({ act: 'reapprove', label: 'Re-approve', primary: true });
+  if (fin && c.status === 'Deposit Processing' && !ckoRefundSent(c)) out.push({ act: 'mark_sent', label: 'Mark refund sent', primary: !dispute });
+  if (fin && c.status === 'Deposit Sent' && ckoTopUpDue(c) > 0) out.push({ act: 'mark_top_up', label: 'Mark top-up sent', primary: !dispute });
+  return out;
+}
+// Calendar helpers for YYYY-MM-DD strings (no zone: the caller picks the day).
+function ckoWeekday(ymd){ return new Date(ymd + 'T00:00:00Z').getUTCDay(); }
+function ckoDaysBetween(a, b){ return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000); }
+// n business days after ymd, skipping Saturday and Sunday (0 -> ymd), as
+// _checkout_add_bdays counts them. Statutory holidays are not skipped.
+function ckoAddBizDays(ymd, n){
+  let d = ymd, left = Math.max(0, Math.floor(Number(n) || 0));
+  while (left > 0) { d = ckoAddDays(d, 1); const w = ckoWeekday(d); if (w !== 0 && w !== 6) left--; }
+  return d;
+}
+// The case's clocks from data.sla, judged at now in the property's zone.
+// review / payment: { due (ISO) , state 'ok'|'soon'|'overdue'|null, done };
+// soon = due within one business day. Clocks follow the stage, not leftover
+// data.sla keys (a case overridden back keeps them): review runs only at
+// Charges Review (done anywhere else), payment only at Deposit Processing
+// (done once the refund is paid; blank at every other unpaid stage). A
+// paused payment clock (resident dispute) reads state 'paused'.
+// deadline: { date, daysLeft, state } from sla.deadline (calendar days), null
+// state once the refund is paid or the case is closed.
+function ckoSla(c, now){
+  const d = (c && c.data) || {}, s = ckoObj(d.sla) || {}, city = c && c.city, nowMs = ckoNowMs(now), st = c && c.status;
+  const today = ckoToday(city, nowMs), wd = ckoWeekday(today);
+  const soonMs = (wd === 5 ? 3 : wd === 6 ? 2 : 1) * 86400000;
+  const clock = (due, done) => {
+    const t = Date.parse(due || '');
+    if (isNaN(t)) return { due: '', state: null, done };
+    return { due: new Date(t).toISOString(), state: done ? null : t < nowMs ? 'overdue' : t - nowMs <= soonMs ? 'soon' : 'ok', done };
+  };
+  const reviewDone = st !== 'Charges Review';
+  const paid = !!ckoRefundSent(c) || st === 'Deposit Sent' || st === 'Closed';
+  const review = clock(s.review_due, reviewDone);
+  const payment = st === 'Deposit Processing' || paid ? clock(s.payment_due, paid) : { due: '', state: null, done: false };
+  payment.paused = !!s.paused_at && !paid && !!payment.due;
+  if (payment.paused && payment.due) payment.state = 'paused';
+  const date = ckoIsDate(s.deadline) ? s.deadline : s.deadline ? ckoLocal(s.deadline, city).date : '';
+  const left = date ? ckoDaysBetween(today, date) : null;
+  return { review, payment, deadline: { date, daysLeft: left, state: !date || paid || st === 'Closed' ? null : left < 0 ? 'overdue' : left <= 1 ? 'soon' : 'ok' } };
+}
+// The Case block's Deadlines line: one { key, state, text } per open clock.
+function ckoSlaParts(sla, city){
+  const z = ckoZoneLabel(city), at = (iso) => { const t = ckoLocal(iso, city); return t.date + ' ' + t.time + ' ' + z; };
+  const out = [];
+  if (sla.review.due && !sla.review.done) out.push({ key: 'review', state: sla.review.state, text: 'Review due ' + at(sla.review.due) + (sla.review.state === 'overdue' ? ' · overdue' : '') });
+  if (sla.payment.due && !sla.payment.done) out.push({ key: 'payment', state: sla.payment.state,
+    text: sla.payment.paused ? 'Payment clock paused (dispute) · was due ' + at(sla.payment.due) : 'Payment due ' + at(sla.payment.due) + (sla.payment.state === 'overdue' ? ' · overdue' : '') });
+  const dl = sla.deadline;
+  if (dl.date && dl.state) out.push({ key: 'deadline', state: dl.state, text: 'Final deadline ' + dl.date + ' · ' +
+    (dl.daysLeft === 0 ? 'today' : dl.daysLeft > 0 ? dl.daysLeft + (dl.daysLeft === 1 ? ' day left' : ' days left') : -dl.daysLeft + (dl.daysLeft === -1 ? ' day overdue' : ' days overdue')) });
+  return out;
+}
+// Cases the Finance view lists: open, at Charges Review or Deposit
+// Processing, or at Deposit Sent with a top-up still due.
+function ckoInFinance(c){ return !!c && ckoIsOpen(c) && (c.status === 'Charges Review' || c.status === 'Deposit Processing' || (c.status === 'Deposit Sent' && ckoTopUpDue(c) > 0)); }
+// Finance view rows: overdue first (the finance_overdue flag or a passed
+// clock), then the nearest due time (none last), then longest at the stage,
+// then case id.
+function ckoFinanceRows(cases, now){
+  const nowMs = ckoNowMs(now);
+  return (cases || []).filter(ckoInFinance).map(c => {
+    const sla = ckoSla(c, nowMs), snaps = ckoChargesSnapshots(c), last = snaps.length ? snaps[snaps.length - 1] : null;
+    const stage = c.status === 'Charges Review' ? 'review' : c.status === 'Deposit Processing' ? 'payment' : 'top_up';
+    const clock = stage === 'review' ? sla.review : stage === 'payment' ? sla.payment : { due: '', state: null };
+    const sub = ckoChargesSubmitted(c);
+    return { c, id: c.id, stage, stageLabel: stage === 'review' ? (sub ? 'Review · submitted' : 'Review · draft') : stage === 'payment' ? 'Payment' : 'Top-up due',
+      due: clock.due, dueState: clock.state, overdue: (c.flags || []).indexOf('finance_overdue') !== -1 || clock.state === 'overdue', submitted: sub,
+      daysSinceMoveOut: ckoIsDate(c.moveOut) ? ckoDaysBetween(c.moveOut, ckoToday(c.city, nowMs)) : null, stageDays: ckoDaysWaiting(c, nowMs),
+      refund: last ? last.refund : null, owedByResident: last ? last.owed_by_resident : null, topUpDue: ckoTopUpDue(c),
+      owner: c.owner, approver: last ? last.approved_by : '' };
+  }).sort((a, b) => (b.overdue - a.overdue)
+    || ((a.due ? Date.parse(a.due) : Infinity) - (b.due ? Date.parse(b.due) : Infinity))
+    || ((b.stageDays == null ? -1 : b.stageDays) - (a.stageDays == null ? -1 : a.stageDays))
+    || String(a.id).localeCompare(String(b.id)));
+}
+// Finance header: open and overdue rows, and the median whole days from
+// move-out to the refund's sent date over refunds sent in the last 30 days
+// (each case's own calendar), null when none.
+function ckoFinanceStats(cases, now){
+  const nowMs = ckoNowMs(now), rows = ckoFinanceRows(cases, nowMs), days = [];
+  (cases || []).forEach(c => {
+    const p = ckoRefundSent(c);
+    if (!p || !p.sent_on || !ckoIsDate(c.moveOut)) return;
+    const today = ckoToday(c.city, nowMs);
+    if (p.sent_on < ckoAddDays(today, -30) || p.sent_on > today) return;
+    // A refund dated before the move-out is a data error, not a fast payout.
+    if (p.sent_on < c.moveOut) return;
+    days.push(ckoDaysBetween(c.moveOut, p.sent_on));
+  });
+  days.sort((x, y) => x - y);
+  const n = days.length;
+  const median = !n ? null : n % 2 ? days[(n - 1) / 2] : Math.round((days[n / 2 - 1] + days[n / 2]) / 2 * 10) / 10;
+  return { open: rows.length, overdue: rows.filter(r => r.overdue).length, medianDaysToSent: median, sentCount: n };
+}
+// One evidence entry: { url, thumb } for an https link (a Drive link gets a
+// thumbnail), { path } for a stored file of this case, else null (never
+// drawn, never sent). At most 2000 characters (as _checkout_evidence_ok).
+// Stored files: checkout-evidence/<case>/<file> (<file> as the SQL's
+// ^[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$, no ".."); for display only (input:
+// false) also the cleaning report's checkout-reports/<case>/ photos, which
+// pre-filled report lines carry.
+function ckoEvidenceItem(x, caseId, input){
+  const s = String(x == null ? '' : x).trim();
+  if (!s || s.length > 2000) return null;
+  if (/^https:\/\/[^\s"'`<>]+$/.test(s)) return { url: s, thumb: ckoDriveThumb(s) };
+  const m = (input ? /^checkout-evidence\/([^/]+)\/[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$/ : /^checkout-(?:reports|evidence)\/([^/]+)\/[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$/).exec(s);
+  if (m && caseId && m[1] === String(caseId) && s.indexOf('..') === -1) return { path: s };
+  return null;
+}
+function ckoEvidence(list, caseId){ return (Array.isArray(list) ? list : []).map(x => ckoEvidenceItem(x, caseId)).filter(Boolean); }
+// Evidence as typed (one per line) or a list -> the list to send, or null
+// when an entry is not a link / stored file of this case, or there are too many.
+function ckoEvidenceIn(v, caseId){
+  const list = (Array.isArray(v) ? v : String(v == null ? '' : v).split(/\r?\n/)).map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+  if (list.length > CKO_MAX_EVIDENCE || list.some(x => !ckoEvidenceItem(x, caseId, true))) return null;
+  return list;
+}
+// Money as typed: { blank } | { bad } | { n } (dollars and at most cents,
+// below 10^8 so it fits numeric(10,2), as _checkout_amount).
+function ckoMoneyIn(v){
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return { blank: true };
+  if (!/^\d+(\.\d{1,2})?$/.test(t) || Number(t) >= 1e8) return { bad: true };
+  return { n: Number(t) };
+}
+function ckoVersionOk(v){ return Number.isInteger(v) && v >= 0; }
+const ckoRefuse = (code) => ({ ok: false, error: ckoErrorText(code) });
+// No lines_version: the Charges block has not loaded (never sent as 0 blindly).
+const ckoNoVersion = () => ({ ok: false, error: 'Reload the case and try again.' });
+function ckoLineDesc(v){
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return { error: ckoErrorText('missing:description') };
+  if (ckoLen(t) > CKO_MAX_LINE) return { error: ckoErrorText('invalid:description') };
+  return { text: t };
+}
+// RPC arguments for the Charges block, { ok, args } or { ok: false, error }.
+// version is the lines_version the drawer loaded: a line changed elsewhere
+// since then comes back checkout:stale instead of being overwritten.
+function ckoLineArgs(c, line, version){
+  line = line || {};
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const type = String(line.type == null ? '' : line.type).trim();
+  if (!type) return ckoRefuse('missing:type');
+  if (!CKO_LINE_TYPES.some(o => o[0] === type)) return ckoRefuse('invalid:type');
+  const a = ckoMoneyIn(line.amount);
+  if (a.blank) return ckoRefuse('missing:amount');
+  if (a.bad) return ckoRefuse('invalid:amount');
+  const d = ckoLineDesc(line.description);
+  if (d.error) return { ok: false, error: d.error };
+  const ev = ckoEvidenceIn(line.evidence, c.id);
+  if (!ev) return ckoRefuse('invalid:evidence');
+  return { ok: true, args: { p_case: c.id, p_line: { type, amount: a.n, description: d.text, evidence: ev }, p_version: version } };
+}
+// line: the line as loaded (ckoLine); v: the form's values. A blank amount
+// is only allowed on a line that is still unpriced. A reason is required
+// when the amount moves off its pre-filled original, or when it changes
+// after the charges were submitted or past Charges Review (a dispute).
+// Evidence is sent only when it changed (a report line may carry
+// checkout-reports/ photos the input rules would refuse).
+function ckoLineUpdateArgs(c, line, v, version){
+  v = v || {};
+  if (!line || !line.id) return { ok: false, error: CKO_ERROR_TEXT.line_gone };
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const a = ckoMoneyIn(v.amount);
+  if (a.bad) return ckoRefuse('invalid:amount');
+  if (a.blank && line.amount != null) return ckoRefuse('missing:amount');
+  const amount = a.blank ? null : a.n;
+  const d = ckoLineDesc(v.description);
+  if (d.error) return { ok: false, error: d.error };
+  const typed = (Array.isArray(v.evidence) ? v.evidence : String(v.evidence == null ? '' : v.evidence).split(/\r?\n/)).map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+  const was = Array.isArray(line.evidence) ? line.evidence : [];
+  const evSame = typed.length === was.length && typed.every((x, i) => x === was[i]);
+  const ev = evSame ? null : ckoEvidenceIn(typed, c.id);
+  if (!evSame && !ev) return ckoRefuse('invalid:evidence');
+  const reason = String(v.override_reason == null ? '' : v.override_reason).trim();
+  if (ckoLen(reason) > CKO_MAX_LINE) return ckoRefuse('invalid:override_reason');
+  const differs = (x, y) => (x == null) !== (y == null) || (x != null && Math.abs(x - y) > 0.005);
+  const need = (line.original != null && amount != null && differs(amount, line.original)) || ((ckoChargesSubmitted(c) || c.status !== 'Charges Review') && differs(amount, line.amount));
+  if (need && !reason) return { ok: false, error: CKO_ERROR_TEXT.reason_required };
+  const fields = { amount, description: d.text };
+  if (!evSame) fields.evidence = ev;
+  fields.override_reason = reason || null;
+  return { ok: true, args: { p_case: c.id, p_id: line.id, p_fields: fields, p_version: version } };
+}
+// reason (p_reason): required once the charges were submitted or past
+// Charges Review (a dispute), as checkout_deduction_remove; max 4000. It is
+// stored on the line and shown in the deduction_removed timeline entry.
+function ckoLineRemoveArgs(c, line, version, reason){
+  if (!line || !line.id) return { ok: false, error: CKO_ERROR_TEXT.line_gone };
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const r = String(reason == null ? '' : reason).trim();
+  if (ckoLen(r) > CKO_MAX_TEXT) return ckoRefuse('invalid:reason');
+  if (!r && ckoRemoveNeedsReason(c)) return { ok: false, error: CKO_ERROR_TEXT.remove_reason_required };
+  const args = { p_case: c.id, p_id: line.id, p_version: version };
+  if (r) args.p_reason = r;
+  return { ok: true, args };
+}
+function ckoRemoveNeedsReason(c){ return !!c && (c.status !== 'Charges Review' || ckoChargesSubmitted(c)); }
+// data.deposit_held.source: roster (an estimate from the roster, to confirm),
+// form (the resident's checkout form) or staff (typed in the drawer).
+const CKO_DEPOSIT_SOURCES = { roster: 'estimate — confirm', form: 'from the resident form', staff: '' };
+function ckoDepositSourceLabel(s){ return CKO_DEPOSIT_SOURCES[s] || ''; }
+// note: where the figure came from (required).
+function ckoDepositHeldArgs(c, amount, note, version){
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const a = ckoMoneyIn(amount);
+  if (a.blank) return ckoRefuse('missing:deposit_held');
+  if (a.bad) return ckoRefuse('invalid:deposit_held');
+  const n = String(note == null ? '' : note).trim();
+  if (!n) return ckoRefuse('missing:note');
+  if (ckoLen(n) > CKO_MAX_LINE) return ckoRefuse('invalid:note');
+  return { ok: true, args: { p_case: c.id, p_amount: a.n, p_note: n, p_version: version } };
+}
+// checkout_advance steps run from the Charges block. p_from is the status
+// the drawer showed; the steps that stay put (submit_charges, send_back,
+// reapprove, a top-up mark_sent) still send it, so a moved case is stale.
+function ckoAdvanceArgs(c, step, fields){ return { p_case: c.id, p_from: c.status, p_step: step, p_fields: fields }; }
+function ckoSubmitChargesArgs(c, version){
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  return { ok: true, args: ckoAdvanceArgs(c, 'submit_charges', { lines_version: version }) };
+}
+function ckoSendBackArgs(c, note, version){
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const r = ckoReqText(note, 'note');
+  return r.error ? { ok: false, error: r.error } : { ok: true, args: ckoAdvanceArgs(c, 'send_back', { note: r.text, lines_version: version }) };
+}
+// expected_payment_date: today-30 .. today+365 in the property's zone (as 2a).
+function ckoPayDateCheck(v, c, now){
+  const d = String(v == null ? '' : v).trim(), today = ckoToday(c.city, now);
+  if (!d) return { error: ckoErrorText('missing:expected_payment_date') };
+  if (!ckoIsDate(d) || d < ckoAddDays(today, -30) || d > ckoAddDays(today, 365)) return { error: ckoErrorText('invalid:expected_payment_date') };
+  return { date: d };
+}
+function ckoApproveArgs(c, v, version, now){
+  v = v || {};
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const d = ckoPayDateCheck(v.expected_payment_date, c, now);
+  if (d.error) return { ok: false, error: d.error };
+  return { ok: true, args: ckoAdvanceArgs(c, 'approve_refund', { expected_payment_date: d.date, lines_version: version }) };
+}
+function ckoReapproveArgs(c, v, version, now){
+  v = v || {};
+  if (!ckoVersionOk(version)) return ckoNoVersion();
+  const r = ckoReqText(v.reason, 'reason');
+  if (r.error) return { ok: false, error: r.error };
+  const d = ckoPayDateCheck(v.expected_payment_date, c, now);
+  if (d.error) return { ok: false, error: d.error };
+  return { ok: true, args: ckoAdvanceArgs(c, 'reapprove', { reason: r.text, expected_payment_date: d.date, lines_version: version }) };
+}
+// fields = { kind: 'refund'|'top_up', sent_on, reference, method, shareable }.
+// A refund is marked at Deposit Processing, a top-up at Deposit Sent while
+// one is due. The amount is the server's (latest snapshot / top_up_due).
+function ckoMarkSentArgs(c, fields, now){
+  const v = fields || {}, kind = String(v.kind == null || v.kind === '' ? 'refund' : v.kind);
+  if (!CKO_PAY_KINDS.some(o => o[0] === kind)) return ckoRefuse('invalid:kind');
+  if (kind === 'refund' && c.status !== 'Deposit Processing') return ckoRefuse('bad_step');
+  if (kind === 'refund' && ckoRefundSent(c)) return ckoRefuse('already_sent');
+  if (kind === 'top_up' && (c.status !== 'Deposit Sent' || ckoTopUpDue(c) <= 0)) return ckoRefuse('bad_step');
+  const today = ckoToday(c.city, now), d = String(v.sent_on == null ? '' : v.sent_on).trim();
+  if (!d) return ckoRefuse('missing:sent_on');
+  if (!ckoIsDate(d) || d > today || d < ckoAddDays(today, -365)) return ckoRefuse('invalid:sent_on');
+  const ref = ckoReqText(v.reference, 'reference');
+  if (ref.error) return { ok: false, error: ref.error };
+  const method = String(v.method == null ? '' : v.method).trim();
+  if (!method) return ckoRefuse('missing:method');
+  if (!CKO_METHOD_OPTIONS.some(o => o[0] === method)) return ckoRefuse('invalid:method');
+  const shareable = v.shareable === true || v.shareable === 'on' || v.shareable === 'true';
+  return { ok: true, args: ckoAdvanceArgs(c, 'mark_sent', { kind, sent_on: d, reference: ref.text, method, shareable }) };
+}
+// Admin fee rules. A house override needs the exact house name as cases
+// carry it (data.house). Blank fees are null (no pre-fill); review and
+// payment days are required whole numbers 0..30; the final deadline is
+// optional, 1..365 calendar days.
+function ckoFeeRuleArgs(v){
+  v = v || {};
+  const t = (k) => String(v[k] == null ? '' : v[k]).trim();
+  if (!t('city')) return ckoRefuse('missing:city');
+  const city = ckoCityOf(t('city'));
+  if (!city) return ckoRefuse('invalid:city');
+  const house = t('house');
+  // A house that normalises to nothing (only punctuation) is refused, as the
+  // SQL's _checkout_norm(house) = '' check.
+  if (ckoLen(house) > CKO_MAX_SHORT || (house && !ckoCityKey(house))) return ckoRefuse('invalid:house');
+  const p = { city, house: house || null };
+  for (const k of ['cleaning_fee', 'key_fee']) {
+    const a = ckoMoneyIn(v[k]);
+    if (a.bad) return ckoRefuse('invalid:' + k);
+    p[k] = a.blank ? null : a.n;
+  }
+  for (const [k, lo, hi, req] of [['review_days', 0, 30, true], ['payment_days', 0, 30, true], ['deadline_days', 1, 365, false]]) {
+    const s = t(k);
+    if (!s) { if (req) return ckoRefuse('missing:' + k); p[k] = null; continue; }
+    if (!/^\d+$/.test(s) || Number(s) < lo || Number(s) > hi) return ckoRefuse('invalid:' + k);
+    p[k] = Number(s);
+  }
+  return { ok: true, args: { p } };
+}
+// checkout_fee_rules rows for the editor: city order, the city default
+// first, then houses A-Z.
+function ckoFeeRuleRows(rows){
+  const ci = (c) => { const i = CKO_CITIES.indexOf(c); return i === -1 ? 99 : i; };
+  return (rows || []).filter(r => ckoObj(r)).map(r => ({ id: String(r.id || ''), city: String(r.city || ''), house: String(r.house == null ? '' : r.house).trim(),
+    cleaning_fee: ckoAmt(r.cleaning_fee), key_fee: ckoAmt(r.key_fee),
+    review_days: Number.isInteger(r.review_days) ? r.review_days : null, payment_days: Number.isInteger(r.payment_days) ? r.payment_days : null,
+    deadline_days: Number.isInteger(r.deadline_days) ? r.deadline_days : null, updated_by: String(r.updated_by || '').toLowerCase(), updated_at: String(r.updated_at || '') }))
+    .sort((a, b) => (ci(a.city) - ci(b.city)) || ((a.house ? 1 : 0) - (b.house ? 1 : 0)) || a.house.localeCompare(b.house));
+}
+// Timeline details for the Phase 3a events. Shapes (SQL contract, exact):
+// deduction_added after {id, type, amount, description};
+// deduction_changed before {amount, description, evidence, override_reason},
+// after {id, type, amount, description, evidence, override_reason};
+// deduction_removed after {id, type, amount, description, override_reason}
+// (the reason given on removal); deposit_held_set before (the previous
+// data.deposit_held, or null), after {amount, note}; charges_submitted after
+// {lines_version, refund, owed_by_resident}; charges_sent_back after {note,
+// lines_version}; refund_approved after {version}; refund_reapproved after
+// {version, reason}; refund_sent after {kind, amount}; finance_overdue after
+// {stage, due}. The approval events' figures come from the snapshot of that
+// version when the caller passes the snapshots. Every key is optional: a
+// missing one is left out, never printed as "?".
+function ckoDeductionText(type, before, after){
+  const a = ckoObj(after) || {}, b = ckoObj(before) || {};
+  const x = type === 'deduction_removed' && !a.type ? b : a, parts = [];
+  const t = x.type || b.type;
+  if (t) parts.push(ckoLineTypeLabel(t));
+  if (type === 'deduction_changed' && Object.prototype.hasOwnProperty.call(b, 'amount') && ckoAmt(b.amount) !== ckoAmt(a.amount)) {
+    parts.push((b.amount == null ? 'not priced' : ckoMoneyText(b.amount)) + ' → ' + (a.amount == null ? 'not priced' : ckoMoneyText(a.amount)));
+  } else if (Object.prototype.hasOwnProperty.call(x, 'amount')) parts.push(x.amount == null ? 'not priced' : ckoMoneyText(x.amount));
+  if (x.description) parts.push(String(x.description));
+  if (a.override_reason) parts.push('reason: ' + a.override_reason);
+  return parts.join(' · ');
+}
+function ckoApprovalText(a, snapshots){
+  a = a || {};
+  const parts = [];
+  if (a.version != null) parts.push('v' + a.version);
+  const snap = (Array.isArray(snapshots) ? snapshots : []).find(x => x && x.version === Number(a.version));
+  const src = snap || a;
+  const refund = ckoAmt(src.refund), owed = ckoAmt(src.owed_by_resident);
+  if (refund != null) parts.push(refund === 0 && owed > 0 ? 'no refund, owed by resident ' + ckoMoneyText(owed) : 'refund ' + ckoMoneyText(refund));
+  if (src.expected_payment_date) parts.push('pay by ' + src.expected_payment_date);
+  if (ckoAmt(a.top_up_due) > 0) parts.push('top-up due ' + ckoMoneyText(a.top_up_due));
+  if (a.reason) parts.push(String(a.reason));
+  return parts.join(' · ');
+}
+function ckoPaymentText(a){
+  a = a || {};
+  const parts = [(a.kind === 'top_up' ? 'top-up ' : 'refund ') + ckoMoneyText(a.amount)];
+  if (a.sent_on) parts.push('sent ' + a.sent_on);
+  if (a.method) parts.push(ckoPayMethodLabel(a.method));
+  return parts.join(' · ');
+}
+function ckoOverdueText(a, city){
+  a = a || {};
+  const t = ckoLocal(a.due, city);
+  return (a.stage === 'payment' ? 'payment' : 'review') + ' overdue' + (t.date ? ' (due ' + t.date + ' ' + t.time + ' ' + ckoZoneLabel(city) + ')' : '');
+}
 /* CHECKOUT-CORE-END */
 /* ---- Checkouts (DOM side of CHECKOUT-CORE) -------------------------------
    Read when the page is opened, not hydrated: cases are few, and bank
@@ -20704,7 +21309,7 @@ function ckoZonedIso(v, city){
    the checkout_* RPCs through vmDb.checkoutRpc; after each one the list and
    the open case are read again. */
 const CKO_STATE = { q: '', flag: '', city: '', status: '', owner: '', tab: 'action' };
-const CKO_TABS = [['action', 'Needs action'], ['mine', 'Mine'], ['unassigned', 'Unassigned'], ['open', 'All open'], ['closed', 'Closed']];
+const CKO_TABS = [['action', 'Needs action'], ['mine', 'Mine'], ['unassigned', 'Unassigned'], ['finance', 'Finance'], ['open', 'All open'], ['closed', 'Closed']];
 const CKO_COLS = 9;
 let ckoCases = null, ckoLoading = null;
 // Drawer token: every open (and every close) bumps it, so a response that
@@ -20811,6 +21416,11 @@ function renderCheckouts(){
   empty.innerHTML = 'No checkouts match.' + (ckoFiltersActive() ? ' <button type="button" class="btn btn-ghost" data-cko-clear style="margin-left:8px">Clear filters</button>' : '');
   const badge = document.querySelector('.nav-item[data-view="checkouts"] .nav-count');
   if (badge) badge.textContent = String(ckoTab(ckoCases, 'action', me, now).length);
+  // The Finance tab has its own table and header stats (Phase 3a).
+  const fin = CKO_STATE.tab === 'finance', listCard = document.getElementById('cko-list-card'), finCard = document.getElementById('cko-fin-card');
+  if (listCard) listCard.hidden = fin;
+  if (finCard) finCard.hidden = !fin;
+  if (fin) { ckoRenderFinance(me, now); return; }
   body.innerHTML = rows.map(c => {
     const act = ckoNeedsAction(c, me, now);
     const ago = closed ? ckoClosedDaysAgo(c, now) : null, days = closed ? null : ckoDaysWaiting(c, now);
@@ -20879,6 +21489,146 @@ function ckoCleaningReportHtml(c, cl, kv){
       : '<span class="name-sub">PDF not stored</span>')}
   </div>`;
 }
+// Phase 3a: the charge lines are read (checkout_lines) for open cases from
+// Charges Review to Deposit Sent, Phase 2a (legacy) cases included: they
+// still get Mark refund sent, and in a dispute lines and Re-approve. Closed
+// cases show their stored snapshots and payments only.
+function ckoWantsLines(c){ return !!c && ckoIsOpen(c) && ['Charges Review', 'Deposit Processing', 'Deposit Sent'].indexOf(c.status) !== -1; }
+// The Charges block's forms (opened by ckoAct into #cko-charges-form).
+const CKO_CHARGE_FORMS = {
+  line_add: { title: 'Add a charge', submit: 'Add charge', fields: [
+    { name: 'type', label: 'Type', type: 'select', required: true, options: CKO_LINE_TYPES },
+    { name: 'amount', label: 'Amount ($)', type: 'money', required: true },
+    { name: 'description', label: 'Description', type: 'textarea', required: true },
+    { name: 'evidence', label: 'Evidence links, one per line (Drive or other https links)', type: 'textarea', required: false },
+    { name: 'files', label: 'Or attach photos / PDFs', type: 'files', required: false },
+  ] },
+  line_edit: { title: 'Change this charge', submit: 'Save charge', fields: [
+    { name: 'amount', label: 'Amount ($)', type: 'money', required: false },
+    { name: 'description', label: 'Description', type: 'textarea', required: true },
+    { name: 'evidence', label: 'Evidence links, one per line', type: 'textarea', required: false },
+    { name: 'files', label: 'Attach more photos / PDFs', type: 'files', required: false },
+    { name: 'override_reason', label: 'Reason for the change (needed when the amount differs from the standard fee, or after submission)', type: 'textarea', required: false },
+  ] },
+  // Removing after submission or in a dispute needs a reason (p_reason).
+  line_remove: { title: 'Remove this charge', submit: 'Remove charge', fields: [
+    { name: 'charge', label: 'Charge', type: 'computed', required: false },
+    { name: 'reason', label: 'Reason for removing it', type: 'textarea', required: true },
+  ] },
+  deposit_held: { title: 'Deposit held', submit: 'Save deposit held', fields: [
+    { name: 'amount', label: 'Deposit held ($)', type: 'money', required: true },
+    { name: 'note', label: 'Where the figure comes from', type: 'textarea', required: true },
+  ] },
+  send_back: { title: 'Send the charges back to the owner', submit: 'Send back', fields: [
+    { name: 'note', label: 'What needs changing', type: 'textarea', required: true },
+  ] },
+  approve: { title: 'Approve the refund', submit: 'Approve refund', fields: [
+    { name: 'refund', label: 'Refund to send', type: 'computed', required: false },
+    { name: 'expected_payment_date', label: 'Expected payment date', type: 'date', required: true },
+  ] },
+  reapprove: { title: 'Re-approve after the dispute', submit: 'Re-approve', fields: [
+    { name: 'refund', label: 'New refund', type: 'computed', required: false },
+    { name: 'reason', label: 'What changed and why (the resident is emailed this)', type: 'textarea', required: true },
+    { name: 'expected_payment_date', label: 'Expected payment date', type: 'date', required: true },
+  ] },
+  mark_sent: { title: 'Mark the refund sent', submit: 'Mark sent', fields: [
+    { name: 'amount', label: 'Amount', type: 'computed', required: false },
+    { name: 'sent_on', label: 'Sent on', type: 'date', required: true },
+    { name: 'method', label: 'Method', type: 'select', required: true, options: CKO_METHOD_OPTIONS },
+    { name: 'reference', label: 'Payment reference', type: 'text', required: true },
+    { name: 'shareable', label: 'Show the reference to the resident', type: 'checkbox', required: false },
+  ] },
+};
+CKO_CHARGE_FORMS.mark_top_up = Object.assign({}, CKO_CHARGE_FORMS.mark_sent, { title: 'Mark the top-up sent', submit: 'Mark top-up sent' });
+// "refund $X" or "$0.00 · owed by resident $Y" from a totals / snapshot shape.
+function ckoRefundLine(t){
+  if (!t || t.deposit == null) return 'not known yet (set the deposit held)';
+  return t.owed_by_resident > 0 ? ckoMoneyText(0) + ' · owed by resident ' + ckoMoneyText(t.owed_by_resident) : ckoMoneyText(t.refund);
+}
+// The drawer's Charges block (Phase 3a). b: ckoLinesBundle(...), { error }
+// when checkout_lines refused, or null (not read: closed, or before Charges
+// Review). Live lines with evidence, totals, this person's buttons for this
+// stage, the approved snapshots (newest open) and the payments. A Phase 2a
+// (legacy) case shows its one approval read-only as v1 and, in a dispute
+// only, the live lines it is re-approved from. Every stored value goes
+// through esc(); only https links and this case's stored files are drawn
+// (stored files open through data-cko-pdf).
+function ckoChargesHtml(c, b, kv, h){
+  const d = c.data || {}, snaps = ckoChargesSnapshots(c), pays = ckoPayments(c), due = ckoTopUpDue(c);
+  const legacy = ckoChargesModel(c) === 'legacy', dispute = (c.flags || []).indexOf('resident_dispute') !== -1;
+  const live = ckoWantsLines(c);
+  if (!live && !snaps.length && !pays.length) return '';
+  const me = ckoMe(), zone = ckoZoneLabel(c.city), m = (v) => esc(ckoMoneyText(v));
+  const when = (ts) => { const t = ckoLocal(ts, c.city); return t.date ? esc(fmtDate(t.date)) + ' ' + esc(t.time) + ' ' + esc(zone) : '—'; };
+  const who = (e) => esc(String(e || '').indexOf('@') !== -1 ? ckoName(e) : String(e || ''));
+  const th = 'text-align:left;padding:6px 8px 6px 0;border-bottom:1px solid var(--line,#eee);font-size:12px';
+  const td = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--line,#eee);vertical-align:top;overflow-wrap:anywhere';
+  const evidence = (list) => {
+    const items = ckoEvidence(list, c.id);
+    if (!items.length) return '';
+    return `<div data-cko-evidence style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${items.map((it, n) => it.url
+      ? `<a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer" title="Evidence ${n + 1}" data-cko-photo>${it.thumb
+        ? `<img src="${esc(it.thumb)}" alt="Evidence ${n + 1}" loading="lazy" referrerpolicy="no-referrer" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line,#eee)">`
+        : 'Photo ' + (n + 1)}</a>`
+      : `<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-pdf="${esc(it.path)}" data-cko-pdf-kind="file">File ${n + 1}</button>`).join('')}</div>`;
+  };
+  const amount = (l) => {
+    if (l.amount == null) return '<b style="color:var(--red-dark)">Not priced</b>';
+    const orig = l.changed ? `<s class="name-sub" data-cko-original title="${esc('Standard fee ' + ckoMoneyText(l.original) + (l.reason ? ' · changed: ' + l.reason : ''))}">${m(l.original)}</s> ` : '';
+    return orig + m(l.amount) + (l.reason ? `<div class="name-sub" style="font-size:11px">${esc(l.reason)}</div>` : '');
+  };
+  // A Phase 2a approval had deposit, cleaning and "other" charges only.
+  const totals = (t, old) => `<div data-cko-totals style="margin:8px 0;font-size:13px;overflow-wrap:anywhere">Deposit held ${m(t.deposit)} − cleaning ${m(t.cleaning)} − ${old
+    ? 'other charges ' + m(t.deductions) : 'deductions ' + m(t.deductions) + ' − unpaid balance ' + m(t.outstanding)} = <b>refund ${esc(ckoRefundLine(t))}</b></div>`;
+  const table = (rows, edit) => `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:6px 0;table-layout:fixed">
+      <thead><tr><th scope="col" style="${th};width:24%">Type</th><th scope="col" style="${th}">Description</th><th scope="col" style="${th};width:24%;text-align:right">Amount</th>${edit ? `<th scope="col" style="${th};width:92px"><span class="name-sub">Change</span></th>` : ''}</tr></thead>
+      <tbody>${rows || `<tr><td colspan="${edit ? 4 : 3}" class="name-sub" style="${td}">No charges.</td></tr>`}</tbody></table></div>`;
+  let out = `<div id="cko-charges" data-cko-charges tabindex="-1">` + h('Charges');
+  if (live) {
+    const cr = ckoObj(d.charges_review) || {};
+    if (c.status === 'Charges Review') out += kv('Review', ckoChargesSubmitted(c)
+      ? `<b>Submitted for approval</b> <span class="name-sub">by ${who(cr.submitted_by)} · ${when(cr.submitted_at)}</span>`
+      : cr.sent_back_at ? `<b style="color:var(--red-dark)">Sent back</b> <span class="name-sub">by ${who(cr.sent_back_by)} · ${when(cr.sent_back_at)}</span>${cr.note ? `<div>${esc(cr.note)}</div>` : ''}`
+      : '<span class="name-sub">Draft: add the charges, set the deposit held, then submit for approval.</span>');
+    if (!b) out += '<div class="name-sub">Charges not loaded.</div>';
+    else if (b.error) out += `<div class="card-sub" role="alert" data-cko-lines-error style="color:var(--red-dark)">Could not load the charges: ${esc(b.error.code ? ckoErrorText(b.error.code) : b.error.message || 'unknown error')}</div>`;
+    else {
+      const dh = b.depositHeld, edit = ckoLinesEditable(c, me, b);
+      // A legacy case's live lines only matter in a dispute (re-approval).
+      if (!legacy || dispute) {
+        const src = dh && dh.source === 'roster' ? `from the tenant roster <b style="color:var(--red-dark)" data-cko-estimate>${esc(ckoDepositSourceLabel('roster'))}</b>`
+          : dh && ckoDepositSourceLabel(dh.source) ? esc(ckoDepositSourceLabel(dh.source)) : dh ? 'entered by ' + who(dh.by) : '';
+        out += kv('Deposit held', dh
+          ? `${m(dh.amount)} <span class="name-sub">· ${src}${dh.note ? ' · ' + esc(dh.note) : ''}</span>`
+          : '<b style="color:var(--red-dark)">Not set</b>');
+        if (b.rule) out += kv('Standard fees', `cleaning ${b.rule.cleaning_fee == null ? 'none' : m(b.rule.cleaning_fee)} · per key ${b.rule.key_fee == null ? 'none' : m(b.rule.key_fee)} <span class="name-sub">(${esc(b.rule.city)}${b.rule.house ? ' · ' + esc(b.rule.house) : ' default'})</span>`);
+        out += table(b.lines.map(l => `<tr data-cko-line-row="${esc(l.id)}"${l.amount == null ? ' data-unpriced="1"' : ''}>
+        <td style="${td}">${esc(l.typeLabel)}${l.sourceLabel ? `<div class="name-sub" style="font-size:11px">${esc(l.sourceLabel)}</div>` : ''}</td>
+        <td style="${td}">${esc(l.description)}${l.owner ? `<div class="name-sub" style="font-size:11px">${who(l.owner)}</div>` : ''}${evidence(l.evidence)}</td>
+        <td style="${td};text-align:right">${amount(l)}</td>
+        ${edit ? `<td style="${td}"><button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="line_edit" data-cko-line="${esc(l.id)}" aria-label="${esc('Edit ' + l.typeLabel + ': ' + l.description)}">Edit</button> <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="line_remove" data-cko-line="${esc(l.id)}" aria-label="${esc('Remove ' + l.typeLabel + ': ' + l.description)}">Remove</button></td>` : ''}
+      </tr>`).join(''), edit);
+        out += totals(b.totals);
+      }
+      const acts = ckoChargesActions(c, me, b), why = acts.filter(a => a.disabled && a.title);
+      out += `<div id="cko-charges-actions" role="group" aria-label="Charges actions" style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 0 4px">${acts.map(a =>
+        `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`).join('')}</div>`
+        + (why.length ? `<div class="name-sub" data-cko-charges-why style="font-size:12px">${why.map(a => esc(a.label + ': ' + a.title)).join('<br>')}</div>` : '')
+        + (legacy && !b.lines.length && acts.some(a => a.act === 'reapprove') ? `<div class="name-sub" data-cko-legacy-hint style="font-size:12px">${esc(CKO_ERROR_TEXT.legacy_lines_required)}</div>` : '')
+        + '<div id="cko-charges-form"></div>';
+    }
+  }
+  if (snaps.length) out += `<div data-cko-snapshots style="margin-top:10px"><div class="name-sub" style="font-size:12px">Approved (${snaps.length})</div>${snaps.slice().reverse().map((s, i) => `<details data-cko-snapshot="${esc(s.version)}"${i === 0 ? ' open' : ''} style="margin:6px 0;border:1px solid var(--line,#eee);border-radius:8px;padding:6px 10px">
+      <summary style="cursor:pointer"><b>v${esc(s.version)}</b> · refund ${esc(ckoRefundLine(s))}${s.legacy ? ' <span class="name-sub">(Phase 2a approval)</span>' : ''} <span class="name-sub">${s.approved_by ? '· ' + who(s.approved_by) + ' ' : ''}${s.approved_at ? '· ' + when(s.approved_at) + ' ' : ''}${s.expected_payment_date ? '· pay by ' + esc(fmtDate(s.expected_payment_date)) : ''}${s.paid > 0 ? ' · ' + m(s.paid) + ' already paid' : ''}</span></summary>
+      ${s.reason ? `<div style="margin-top:4px">Reason: ${esc(s.reason)}</div>` : ''}
+      ${s.lines.length ? table(s.lines.map(l => `<tr><td style="${td}">${esc(l.typeLabel)}</td><td style="${td}">${esc(l.description)}${evidence(l.evidence)}</td><td style="${td};text-align:right">${l.amount == null ? '—' : m(l.amount)}</td></tr>`).join(''), false) : ''}
+      ${totals(s, s.legacy)}
+    </details>`).join('')}</div>`;
+  if (pays.length || due > 0) out += `<div data-cko-payments style="margin-top:10px">${pays.map(p => kv(p.kind === 'top_up' ? 'Top-up sent' : 'Refund sent',
+      `${m(p.amount)} · ${esc(fmtDate(p.sent_on))}${p.method ? ' · ' + esc(ckoPayMethodLabel(p.method)) : ''}${p.reference ? ' · ' + esc(p.reference) : ''} <span class="name-sub">(${p.shareable ? 'reference shown to the resident' : 'reference kept internal'})</span>`)).join('')}${due > 0
+      ? kv('Top-up due', `<b style="color:var(--red-dark)" data-cko-top-up>${m(due)}</b> <span class="name-sub">· mark it sent before closing</span>`) : ''}</div>`;
+  return out + '</div>';
+}
 // banner: a refusal to show above the action bar once the case is re-read.
 // refocus: after a write, move focus to the banner (when shown) or the actions.
 async function openCheckout(id, banner, refocus){
@@ -20900,17 +21650,27 @@ async function openCheckout(id, banner, refocus){
   document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
   document.getElementById('panel-backdrop').classList.add('open');
   document.body.style.overflow = 'hidden';
-  let events = [];
-  try {
-    const { data, error } = await window.vmDb.sb.from('checkout_events').select('at,actor,type,before,after').eq('case_id', id).order('at', { ascending: true });
-    if (error) throw error;
-    events = data || [];
-  } catch (e) { console.error('[checkouts] events failed', e); }
+  // The events and (from Charges Review to Deposit Sent) the charge lines, read together.
+  const wantLines = ckoWantsLines(c) && window.vmDb && typeof window.vmDb.checkoutRpc === 'function';
+  const [events, linesRes] = await Promise.all([
+    (async () => {
+      try {
+        const { data, error } = await window.vmDb.sb.from('checkout_events').select('at,actor,type,before,after').eq('case_id', id).order('at', { ascending: true });
+        if (error) throw error;
+        return data || [];
+      } catch (e) { console.error('[checkouts] events failed', e); return []; }
+    })(),
+    wantLines ? Promise.resolve(window.vmDb.checkoutRpc('checkout_lines', { p_case: id })).catch(e => ({ data: null, error: { code: '', message: String((e && e.message) || e) } })) : Promise.resolve(null),
+  ]);
+  const lines = !linesRes ? null : linesRes.error ? { error: linesRes.error } : ckoLinesBundle(linesRes.data);
   // Still ours? Another checkout, a close, or another feature's drawer may
   // have taken the shared panel while we waited.
   if (tok !== ckoOpenSeq || !document.querySelector(`#panel-body [data-cko-tok="${tok}"]`)) return false;
   const d = c.data || {}, acks = d.acks || {}, dep = acks.deposit || {}, sn = acks.short_notice, n = d.notice || {}, k = d.keys || {}, x = d.exception;
-  const sch = d.schedule || {}, mo = d.moved_out || {}, ins = d.inspection || {}, ch = d.charges || {}, pay = d.payment || {}, sno = d.staff_notice, dec = x && x.decision;
+  // The approval(s) and payments (Phase 2a ones included) are drawn by the
+  // Charges block (ckoChargesHtml), not here.
+  const sch = d.schedule || {}, mo = d.moved_out || {}, ins = d.inspection || {}, sno = d.staff_notice, dec = x && x.decision;
+  const slaParts = ckoSlaParts(ckoSla(c, Date.now()), c.city);
   const cln = ckoCleaning(c);
   const kv = (label, value) => `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${esc(label)}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
   const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${esc(t)}</h4>`;
@@ -20923,20 +21683,21 @@ async function openCheckout(id, banner, refocus){
   // The case as drawn: every action works from this, not from ckoCases, which
   // a list refresh may have moved on since (p_from must be what staff saw).
   CKO_SHOWN = Object.assign({}, c, { flags: c.flags.slice() });
+  CKO_LINES = lines && !lines.error ? { caseId: c.id, bundle: lines } : null;
   document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}">
     ${ckoActionBarHtml(c)}
     ${h('Case')}
     ${kv('Status', esc(c.status) + (c.outcome ? ` <span class="name-sub">(${esc(c.outcome)})</span>` : ''))}
     ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
     ${kv('At this status', waited == null ? '—' : esc(waited) + (waited === 1 ? ' day' : ' days'))}
+    ${slaParts.length ? kv('Deadlines', `<span data-cko-sla>${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</span>`) : ''}
     ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
     ${sch.inspection_at ? kv('Inspection booked', `${when(sch.inspection_at)} · ${esc(ckoName(sch.inspector_email))}`) : ''}
     ${kv('Move-out clean', `<span data-cko-cleaning="${esc(cln.status)}">${esc(ckoCleaningLine(cln))}</span>${cln.status === 'booked' && cln.bookedAt ? ` <span class="name-sub">since ${esc(day(cln.bookedAt))}</span>` : ''}`)}
     ${mo.keys ? kv('Moved out', `${esc(day(mo.at))} · keys ${esc(ckoOptionLabel(CKO_KEYS_OPTIONS, mo.keys).toLowerCase())} (${esc(mo.count)})${mo.source === 'limpio' ? ' <span class="name-sub">· from the cleaning report</span>' : ''}`) : ''}
     ${ins.result ? kv('Inspection result', `${esc(ckoOptionLabel(CKO_RESULT_OPTIONS, ins.result))}${ins.source === 'limpio' ? ` <span class="name-sub">· by ${esc(ins.by || 'the cleaner')}, from the Limpio cleaning report</span>` : ''}${ins.notes && ins.source !== 'limpio' ? `<div class="name-sub">${esc(ins.notes)}</div>` : ''}`) : ''}
-    ${ch.total_refund != null ? kv('Refund approved', `<b>${money(ch.total_refund)}</b> <span class="name-sub">= deposit ${money(ch.deposit)} − cleaning ${money(ch.cleaning)} − other ${money(ch.extra)} · pay by ${esc(fmtDate(ch.expected_payment_date))}</span>`) : ''}
-    ${pay.sent_on ? kv('Refund sent', `${esc(fmtDate(pay.sent_on))} · ${esc(pay.reference || '')}`) : ''}
     ${cln.report ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}
+    ${ckoChargesHtml(c, lines, kv, h)}
     ${h('Move-out')}
     ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
     ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
@@ -20959,7 +21720,7 @@ async function openCheckout(id, banner, refocus){
     ${h('Links')}
     ${kv('Asana', c.asanaGid ? `<a href="${esc(ckoAsanaUrl(c.asanaGid))}" target="_blank" rel="noopener">Open task</a>` : '<span class="name-sub">Not mirrored yet</span>')}
     ${h('Timeline (' + zone + ')')}
-    ${ckoTimeline(events, ckoName, c.city).map(e => { const t = ckoLocal(e.at, c.city); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>'}
+    ${ckoTimeline(events, ckoName, c.city, ckoChargesSnapshots(c)).map(e => { const t = ckoLocal(e.at, c.city); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>'}
   </div>`;
   if (banner || refocus) {
     const raf = window.requestAnimationFrame ? (f) => window.requestAnimationFrame(f) : (f) => setTimeout(f, 16);
@@ -20986,6 +21747,7 @@ let CKO_FORM = null; // { act, caseId, from, step? } while a form is open
 // (notes are not idempotent, and each one is mirrored to Asana).
 let ckoBusy = false;
 let CKO_SHOWN = null; // snapshot of the case the drawer last drew
+let CKO_LINES = null; // { caseId, bundle } the Charges block last drew (bundle.version = lines_version)
 function ckoBusyToast(){ showToast('Still saving the last change…'); }
 function ckoActionBarHtml(c){
   const next = ckoNextStep(c, ckoMe());
@@ -21006,6 +21768,8 @@ function ckoFieldHtml(fd, value){
   const req = fd.required ? '<span class="req" aria-hidden="true">*</span>' : '';
   const aria = fd.required ? ' aria-required="true"' : '';
   let input;
+  if (fd.type === 'files') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}">${esc(fd.label)}</label><input class="form-input" id="${id}" name="${esc(fd.name)}" type="file" multiple accept="image/*,application/pdf" /></div>`;
+  if (fd.type === 'checkbox') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="${id}" name="${esc(fd.name)}"${v === 'true' || v === 'on' ? ' checked' : ''} /> ${esc(fd.label)}</label></div>`;
   if (fd.type === 'select') input = `<select class="form-input" id="${id}" name="${esc(fd.name)}"${aria}><option value="">Choose…</option>${fd.options.map(o => `<option value="${esc(o[0])}"${o[0] === v ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
   else if (fd.type === 'team') input = `<select class="form-input" id="${id}" name="${esc(fd.name)}"${aria}>${ckoTeamOptions(v)}</select>`;
   else if (fd.type === 'textarea') input = `<textarea class="form-input" id="${id}" name="${esc(fd.name)}" rows="3"${aria}>${esc(v)}</textarea>`;
@@ -21033,17 +21797,7 @@ function ckoFormHtml(title, fields, values, submitLabel, zone){
 }
 // What each step's form starts with, from what the case already knows.
 function ckoStepDefaults(step, c){
-  const dep = ((c.data || {}).acks || {}).deposit || {};
   if (step === 'schedule') return { inspector_email: c.owner };
-  if (step === 'approve_refund') {
-    // The acknowledgement stored what the resident was shown; "$1,000" or
-    // junk must not reach a number input. Not a clean amount: leave it empty.
-    const amt = (x) => { const t = String(x == null ? '' : x).replace(/[$,\s]/g, ''); return /^\d+(\.\d{1,2})?$/.test(t) ? t : ''; };
-    const v = { deposit: amt(dep.deposit_shown), cleaning: amt(dep.cleaning_fee), extra: 0 };
-    v.total_refund = v.deposit === '' || v.cleaning === '' ? '' : '$' + ckoRefundTotal(v);
-    return v;
-  }
-  if (step === 'mark_sent') return { sent_on: ckoToday(c.city, Date.now()) };
   return {};
 }
 const CKO_ACT_FORMS = {
@@ -21070,7 +21824,17 @@ function ckoPanelCase(){
 // The open drawer still shows this case (it may have been closed or switched).
 function ckoShowing(id){ const p = document.getElementById('detail-panel'); return !!(p && p.classList.contains('open') && document.querySelector(`#panel-body [data-cko-panel="${String(id).replace(/["\\]/g, "\\$&")}"]`)); }
 function ckoRefusalText(err){ return err.code ? ckoErrorText(err.code) : 'Could not save: ' + (err.message || 'unknown error'); }
-function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button').forEach(b => { b.disabled = disabled; }); }
+function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button, #cko-charges button, #cko-charges-form button').forEach(b => { b.disabled = disabled; }); }
+// Buttons back on after a refusal that keeps the form open, with the action
+// bar's and the Charges block's own rules (a disabled Submit stays disabled).
+function ckoRestoreButtons(){
+  ckoSetButtons(false);
+  const c = ckoPanelCase();
+  if (!c) return;
+  const off = (acts, sel) => { const x = acts.filter(a => a.disabled).map(a => a.act); document.querySelectorAll(sel).forEach(b => { if (x.indexOf(b.dataset.ckoAct) !== -1) b.disabled = true; }); };
+  off(ckoActions(c, ckoMe()), '#cko-actions [data-cko-act]');
+  if (CKO_LINES && CKO_LINES.caseId === c.id) off(ckoChargesActions(c, ckoMe(), CKO_LINES.bundle), '#cko-charges-actions [data-cko-act]');
+}
 // One RPC, then re-read the list and (if the drawer is still on this case)
 // the case. Returns true when the server accepted it.
 async function ckoCall(id, name, args, done){
@@ -21082,11 +21846,13 @@ async function ckoCall(id, name, args, done){
   try {
     r = await window.vmDb.checkoutRpc(name, args);
   } finally { ckoBusy = false; }
-  if (r.error && /^(missing|invalid):/.test(r.error.code)) {
-    ckoSetButtons(false);
-    // The action bar's own rules still apply once the buttons come back.
-    const c = ckoPanelCase();
-    if (c) { const disabledActs = ckoActions(c, ckoMe()).filter(a => a.disabled).map(a => a.act); document.querySelectorAll('#cko-actions [data-cko-act]').forEach(b => { if (disabledActs.indexOf(b.dataset.ckoAct) !== -1) b.disabled = true; }); }
+  // A removal's reason_required means the removal reason, not an amount's.
+  // Likewise a re-approval's: its reason is what the resident is emailed.
+  if (r.error && name === 'checkout_deduction_remove' && /^(remove_)?reason_required$/.test(r.error.code)) r.error = Object.assign({}, r.error, { code: 'remove_reason_required' });
+  if (r.error && name === 'checkout_advance' && args && args.p_step === 'reapprove' && r.error.code === 'reason_required') r.error = Object.assign({}, r.error, { code: 'reapprove_reason_required' });
+  if (r.error && /^(missing|invalid):|^(remove_|reapprove_)?reason_required$/.test(r.error.code)) {
+    // The action bar's and Charges block's own rules still apply once the buttons come back.
+    ckoRestoreButtons();
     const fe = document.getElementById('cko-form-error');
     if (fe && ckoShowing(id)) fe.textContent = ckoRefusalText(r.error); else showToast(ckoRefusalText(r.error));
     return false;
@@ -21096,24 +21862,34 @@ async function ckoCall(id, name, args, done){
   // reopen mid-flight); never pull it back once the user moved on.
   const reopen = ckoShowing(id) && ckoCases && ckoCases.some(c => c.id === id);
   if (reopen) await openCheckout(id, r.error ? ckoRefusalText(r.error) : '', true);
+  // The drawer moved on: whatever it shows now gets its buttons back.
+  else ckoRestoreButtons();
   if (!r.error) showToast(done || 'Saved');
   else if (!reopen) showToast(ckoRefusalText(r.error));
   return !r.error;
 }
-function ckoAct(act){
+// lineId: the charge a line's Edit / Remove button belongs to.
+function ckoAct(act, lineId){
   const c = ckoPanelCase(), host = document.getElementById('cko-form');
   if (!c || !host) return;
   if (ckoBusy) { if (act !== 'form_back') ckoBusyToast(); return; }
   const id = c.id;
-  const show = (spec, values, state) => {
+  // where: 'cko-charges-form' for the Charges block's forms. One form at a
+  // time: opening one clears the other host.
+  const show = (spec, values, state, where) => {
+    const h = (where && document.getElementById(where)) || host;
+    ['cko-form', 'cko-charges-form'].forEach(x => { const el = document.getElementById(x); if (el && el !== h) el.innerHTML = ''; });
     CKO_FORM = Object.assign({ caseId: id, from: c.status }, state);
-    host.innerHTML = ckoFormHtml(spec.title, spec.fields, values, spec.submit, ckoZoneLabel(c.city));
-    const f = host.querySelector('input,select,textarea');
+    h.innerHTML = ckoFormHtml(spec.title, spec.fields, values, spec.submit, ckoZoneLabel(c.city));
+    const f = h.querySelector('input,select,textarea');
     if (f) f.focus();
   };
+  const bundle = CKO_LINES && CKO_LINES.caseId === id ? CKO_LINES.bundle : null;
+  const line = bundle && lineId ? bundle.lines.find(l => l.id === lineId) : null;
+  const charges = (key, values, extra) => show(CKO_CHARGE_FORMS[key], values, Object.assign({ act: key }, extra || {}), 'cko-charges-form');
   const flag = (f, on, done) => ckoCall(id, 'checkout_set_flag', { p_case: id, p_flag: f, p_on: on }, done);
   switch (act) {
-    case 'form_back': CKO_FORM = null; host.innerHTML = ''; return;
+    case 'form_back': { CKO_FORM = null; host.innerHTML = ''; const cf = document.getElementById('cko-charges-form'); if (cf) cf.innerHTML = ''; return; }
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
       if (!confirm('Release this case? It goes back to Unassigned.')) return;
@@ -21126,6 +21902,12 @@ function ckoAct(act){
       const n = ckoNextStep(c, ckoMe());
       if (!n || !n.step || !n.allowed) return;
       const s = CKO_STEPS[n.step];
+      // Approve and Mark sent live in the Charges block (Phase 3a): go there.
+      if (s.block) {
+        const blk = document.getElementById('cko-charges');
+        if (blk) { if (typeof blk.scrollIntoView === 'function') blk.scrollIntoView({ block: 'start', behavior: 'smooth' }); blk.focus(); }
+        return;
+      }
       if (!n.fields.length) {
         if (!confirm(`${n.label}? The case moves to ${s.to}.`)) return;
         const p = ckoStepPayload(n.step, {}, { city: c.city, now: Date.now() });
@@ -21141,6 +21923,47 @@ function ckoAct(act){
       return show(spec, {}, { act });
     }
     case 'decide': case 'note': case 'cancel': return show(CKO_ACT_FORMS[act], {}, { act });
+    // ---- Phase 3a: the Charges block ----
+    case 'line_add': return charges('line_add', { type: '', evidence: '' });
+    case 'line_edit':
+      if (!line) { showToast(CKO_ERROR_TEXT.line_gone); return; }
+      // After submission or outside Charges Review a change needs a new
+      // reason: the old one is not offered again.
+      return charges('line_edit', { amount: line.amount == null ? '' : line.amount.toFixed(2), description: line.description, evidence: line.evidence.join('\n'), override_reason: ckoRemoveNeedsReason(c) ? '' : line.reason }, { lineId: line.id });
+    case 'line_remove': {
+      if (!line) { showToast(CKO_ERROR_TEXT.line_gone); return; }
+      // After submission or in a dispute the removal needs a reason: a form.
+      if (ckoRemoveNeedsReason(c)) return charges('line_remove', { charge: line.typeLabel + ': ' + line.description, reason: '' }, { lineId: line.id });
+      const b = ckoLineRemoveArgs(c, line, bundle ? bundle.version : undefined);
+      if (!b.ok) { showToast(b.error); return; }
+      if (!confirm(`Remove this charge? ${line.typeLabel}: ${line.description}`)) return;
+      return ckoCall(id, 'checkout_deduction_remove', b.args, 'Charge removed');
+    }
+    case 'deposit_held': {
+      // Not set yet on a Phase 2a case: start from its approved deposit.
+      const dh = bundle && bundle.depositHeld, s0 = ckoChargesModel(c) === 'legacy' ? ckoChargesSnapshots(c)[0] : null;
+      return charges('deposit_held', { amount: dh ? dh.amount.toFixed(2) : s0 && s0.deposit != null ? s0.deposit.toFixed(2) : '', note: dh ? dh.note : '' });
+    }
+    case 'submit_charges': {
+      const b = ckoSubmitChargesArgs(c, bundle ? bundle.version : undefined);
+      if (!b.ok) { showToast(b.error); return; }
+      if (!confirm('Submit these charges for approval? Finance can then approve or send them back.')) return;
+      return ckoCall(id, 'checkout_advance', b.args, 'Submitted for approval');
+    }
+    case 'send_back': return charges('send_back', {});
+    case 'approve': case 'reapprove': {
+      const t = bundle ? bundle.totals : null, today = ckoToday(c.city, Date.now());
+      const rule = ckoObj(ckoObj((c.data || {}).sla) && c.data.sla.rule) || (bundle && bundle.rule) || {};
+      const days = Number.isInteger(rule.payment_days) ? rule.payment_days : 3;
+      return charges(act, { refund: ckoRefundLine(t), expected_payment_date: ckoAddBizDays(today, days) });
+    }
+    case 'mark_sent': case 'mark_top_up': {
+      const snaps = ckoChargesSnapshots(c), last = snaps.length ? snaps[snaps.length - 1] : null;
+      const amount = act === 'mark_top_up' ? ckoTopUpDue(c) : last ? last.refund : null;
+      const method = CKO_METHOD_OPTIONS.some(o => o[0] === (c.data || {}).refund_method) ? c.data.refund_method : '';
+      // A zero refund still needs a reference (the SQL requires one).
+      return charges(act, { amount: ckoMoneyText(amount), sent_on: ckoToday(c.city, Date.now()), method, reference: amount === 0 ? 'no payment due' : '', shareable: '' });
+    }
   }
 }
 async function ckoSubmitForm(form){
@@ -21153,7 +21976,7 @@ async function ckoSubmitForm(form){
   // a case someone else moved meanwhile comes back stale, not overwritten.
   const c = Object.assign({}, shown, { status: st.from });
   const id = c.id;
-  const val = (n) => { const el = form.querySelector(`[name="${n}"]`); return el ? String(el.value || '').trim() : ''; };
+  const val = (n) => { const el = form.querySelector(`[name="${n}"]`); return !el ? '' : el.type === 'checkbox' ? (el.checked ? 'on' : '') : String(el.value || '').trim(); };
   const err = (t) => { const e = document.getElementById('cko-form-error'); if (e) e.textContent = t; };
   // A client-side refusal from a core builder: say why, keep the form open.
   const send = (b, name, done) => (b.ok ? ckoCall(id, name, b.args, done) : err(b.error));
@@ -21183,13 +22006,60 @@ async function ckoSubmitForm(form){
     if (!val('to')) return err(ckoErrorText('missing:to'));
     return send(ckoOverrideArgs(c, val('to'), val('reason')), 'checkout_override', 'Status changed to ' + val('to'));
   }
-}
-// Approve refund: keep "Refund to send" in step with the three amounts.
-function ckoFormInput(){
-  if (!CKO_FORM || CKO_FORM.step !== 'approve_refund') return;
-  const g = (n) => { const el = document.getElementById('cko-f-' + n); return el ? el.value : ''; };
-  const out = document.getElementById('cko-f-total_refund');
-  if (out) out.textContent = g('deposit') === '' ? '—' : '$' + ckoRefundTotal({ deposit: g('deposit'), cleaning: g('cleaning'), extra: g('extra') });
+  // ---- Phase 3a: the Charges block's forms. version: the lines_version the
+  // block was drawn with (a change made elsewhere since comes back stale).
+  const bundle = CKO_LINES && CKO_LINES.caseId === id ? CKO_LINES.bundle : null, ver = bundle ? bundle.version : undefined;
+  if (st.act === 'line_add' || st.act === 'line_edit') {
+    const line = st.act === 'line_edit' ? bundle && bundle.lines.find(l => l.id === st.lineId) : null;
+    const b = st.act === 'line_add'
+      ? ckoLineArgs(c, { type: val('type'), amount: val('amount'), description: val('description'), evidence: val('evidence') }, ver)
+      : ckoLineUpdateArgs(c, line, { amount: val('amount'), description: val('description'), evidence: val('evidence'), override_reason: val('override_reason') }, ver);
+    if (!b.ok) return err(b.error);
+    // Attached files go to lease-docs under checkout-evidence/<case id>/ first
+    // (vmDb.uploadFile); their storage paths join the typed links.
+    const input = form.querySelector('[name="files"]'), files = input && input.files ? Array.from(input.files) : [];
+    const was = b.args.p_line ? b.args.p_line.evidence : b.args.p_fields.evidence;
+    if (files.length) {
+      // An edit that left the links alone sends no evidence: start from the line's.
+      const ev = (was || (line ? line.evidence : [])).slice();
+      if (ev.length + files.length > CKO_MAX_EVIDENCE) return err(ckoErrorText('invalid:evidence'));
+      if (typeof window.vmDb.uploadFile !== 'function') return err('Uploads are not available. Add a link instead.');
+      ckoBusy = true; ckoSetButtons(true); err('Uploading ' + files.length + (files.length === 1 ? ' file…' : ' files…'));
+      let failed = false;
+      try {
+        for (const f of files) {
+          const up = await window.vmDb.uploadFile(f, 'checkout-evidence/' + id);
+          if (!up || !ckoEvidenceItem(up.path, id, true)) { failed = true; break; }
+          ev.push(up.path);
+        }
+      } catch (e) { console.error('[checkouts] evidence upload', e); failed = true; }
+      finally { ckoBusy = false; }
+      // The drawer moved to another case (or the form closed) while the files
+      // uploaded: never save the charge onto whatever is shown now.
+      if (CKO_FORM !== st || !ckoShowing(id)) { showToast('Upload finished but the form was closed; the charge was not saved.'); return; }
+      if (failed) { ckoRestoreButtons(); return err('A file did not upload. Try again, or add a link instead.'); }
+      err('');
+      if (b.args.p_line) b.args.p_line.evidence = ev; else b.args.p_fields.evidence = ev;
+    }
+    return ckoCall(id, st.act === 'line_add' ? 'checkout_deduction_add' : 'checkout_deduction_update', b.args, st.act === 'line_add' ? 'Charge added' : 'Charge saved');
+  }
+  if (st.act === 'line_remove') {
+    const line = bundle && bundle.lines.find(l => l.id === st.lineId);
+    return send(ckoLineRemoveArgs(c, line, ver, val('reason')), 'checkout_deduction_remove', 'Charge removed');
+  }
+  if (st.act === 'deposit_held') return send(ckoDepositHeldArgs(c, val('amount'), val('note'), ver), 'checkout_set_deposit_held', 'Deposit held saved');
+  if (st.act === 'send_back') return send(ckoSendBackArgs(c, val('note'), ver), 'checkout_advance', 'Sent back to the owner');
+  if (st.act === 'approve' || st.act === 'reapprove') {
+    const v = { reason: val('reason'), expected_payment_date: val('expected_payment_date') };
+    const b = st.act === 'approve' ? ckoApproveArgs(c, v, ver, Date.now()) : ckoReapproveArgs(c, v, ver, Date.now());
+    if (!b.ok) return err(b.error);
+    if (!confirm(`${st.act === 'approve' ? 'Approve' : 'Re-approve'} a refund of ${ckoRefundLine(bundle && bundle.totals)}? The resident is emailed the breakdown.`)) return;
+    return ckoCall(id, 'checkout_advance', b.args, (st.act === 'approve' ? 'Refund approved' : 'Refund re-approved') + '; the resident will be emailed');
+  }
+  if (st.act === 'mark_sent' || st.act === 'mark_top_up') {
+    return send(ckoMarkSentArgs(c, { kind: st.act === 'mark_top_up' ? 'top_up' : 'refund', sent_on: val('sent_on'), reference: val('reference'), method: val('method'), shareable: val('shareable') }, Date.now()),
+      'checkout_advance', (st.act === 'mark_top_up' ? 'Top-up' : 'Refund') + ' marked sent; the resident will be emailed');
+  }
 }
 window.loadCheckouts = loadCheckouts;
 window.renderCheckouts = renderCheckouts;
@@ -21230,9 +22100,8 @@ window.openCheckout = openCheckout;
   });
   // Drawer actions. panel-body is shared with other features; only checkout
   // markup carries data-cko-act / data-cko-form.
-  on('panel-body', 'click', e => { const b = e.target.closest('[data-cko-act]'); if (b && !b.disabled) { e.preventDefault(); ckoAct(b.dataset.ckoAct); } });
+  on('panel-body', 'click', e => { const b = e.target.closest('[data-cko-act]'); if (b && !b.disabled) { e.preventDefault(); ckoAct(b.dataset.ckoAct, b.dataset.ckoLine || ''); } });
   on('panel-body', 'submit', e => { if (!e.target.matches('[data-cko-form]')) return; e.preventDefault(); ckoSubmitForm(e.target); });
-  on('panel-body', 'input', ckoFormInput);
   // Cleaning report "Open PDF": a fresh 1-hour signed URL from the private
   // lease-docs bucket on every click (signed URLs expire, so none is stored).
   // The tab is opened synchronously inside the click (Safari blocks a
@@ -21256,20 +22125,199 @@ window.openCheckout = openCheckout;
     url = /^https:\/\//i.test(String(url || '')) ? String(url) : null;
     if (url && tab) { tab.location = url; return; }
     if (tab) { try { tab.close(); } catch (err) { /* already gone */ } }
-    if (!url) { if (typeof showToast === 'function') showToast('Could not open the PDF. Try again in a moment.'); return; }
+    if (!url) { if (typeof showToast === 'function') showToast(b.dataset.ckoPdfKind === 'file' ? 'Could not open the file. Try again in a moment.' : 'Could not open the PDF. Try again in a moment.'); return; }
     if (!b.isConnected || !wrap) return;
     const a = document.createElement('a');
     a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.setAttribute('data-cko-pdf-link', ''); a.style.marginLeft = '8px';
-    a.textContent = 'Open PDF';
+    a.textContent = b.dataset.ckoPdfKind === 'file' ? 'Open ' + label : 'Open PDF';
     b.after(a);
   });
   // The shared drawer's close paths (button, backdrop, Escape): invalidate any
   // checkout open still in flight. Extra listeners, closeProperty is untouched.
-  const ckoCancel = () => { ckoOpenSeq++; CKO_FORM = null; const f = document.getElementById('cko-form'); if (f) f.innerHTML = ''; };
+  const ckoCancel = () => { ckoOpenSeq++; CKO_FORM = null; ['cko-form', 'cko-charges-form'].forEach(x => { const f = document.getElementById(x); if (f) f.innerHTML = ''; }); };
   on('panel-close', 'click', ckoCancel);
   on('panel-backdrop', 'click', ckoCancel);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') ckoCancel(); });
+})();
+
+/* ---- Checkouts → Finance (Phase 3a) ---------------------------------------
+   The cases waiting on finance (Charges Review, Deposit Processing, Deposit
+   Sent with a top-up due), overdue first, with the queue's header stats. The
+   list filters apply to the rows; the stats are over every case. */
+function ckoRenderFinance(me, now){
+  const body = document.getElementById('cko-fin-body');
+  if (!body || !ckoCases) return;
+  const rows = ckoFinanceRows(ckoFilter(ckoTab(ckoCases, 'finance', me, now), CKO_STATE, me, now), now), st = ckoFinanceStats(ckoCases, now);
+  const stats = document.getElementById('cko-fin-stats');
+  if (stats) stats.innerHTML = [
+    ['open', 'Open', String(st.open), 'blue'],
+    ['overdue', 'Overdue', String(st.overdue), st.overdue ? 'red' : 'green'],
+    ['median', 'Median move-out → sent (30 days)', st.medianDaysToSent == null ? '—' : st.medianDaysToSent + (st.medianDaysToSent === 1 ? ' day' : ' days'), 'blue'],
+  ].map(([k, label, v, cls]) => `<span class="tag-pill ${cls}" data-cko-fin-stat="${k}" style="font-size:12px">${esc(label)}: <b>${esc(v)}</b></span>`).join('');
+  const empty = document.getElementById('cko-fin-empty');
+  if (empty) empty.style.display = rows.length ? 'none' : '';
+  body.innerHTML = rows.map(r => {
+    const c = r.c, t = ckoLocal(r.due, c.city);
+    const pill = r.overdue ? 'red' : r.dueState === 'soon' ? 'amber' : r.dueState === 'paused' ? 'blue' : 'green';
+    const due = r.stage === 'top_up' ? esc(ckoMoneyText(r.topUpDue)) + ' to send'
+      : t.date ? `<span class="tag-pill ${pill}" style="font-size:11px">due ${esc(fmtDate(t.date))} ${esc(t.time)} ${esc(ckoZoneLabel(c.city))}${r.dueState === 'paused' ? ' · paused' : ''}</span>` : 'no due date yet';
+    return `<tr data-cko-id="${esc(c.id)}" data-cko-fin-row="${esc(r.stage)}" style="cursor:pointer">
+      <td>${r.overdue ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Overdue">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
+      <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
+      <td>${esc(r.stageLabel)}<div class="name-sub">${due}</div></td>
+      <td>${r.daysSinceMoveOut == null ? '—' : esc(r.daysSinceMoveOut) + ' d'}</td>
+      <td>${r.stageDays == null ? '—' : esc(r.stageDays) + ' d'}</td>
+      <td>${r.refund == null ? '<span class="name-sub">not approved</span>' : esc(ckoMoneyText(r.refund))}${r.owedByResident > 0 ? `<div class="name-sub">owed by resident ${esc(ckoMoneyText(r.owedByResident))}</div>` : ''}</td>
+      <td>${c.owner ? esc(ckoName(c.owner)) : '<span class="tag-pill red" style="font-size:11px">Unassigned</span>'}</td>
+      <td>${r.approver ? esc(ckoName(r.approver)) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+// The Deposits banner (and anything else) opens Checkouts on the Finance tab.
+function ckoOpenFinance(){
+  CKO_STATE.tab = 'finance';
+  if (typeof goToView === 'function') goToView('checkouts'); else loadCheckouts();
+}
+window.ckoOpenFinance = ckoOpenFinance;
+/* ---- Checkouts: Settings → Checkout fees (admins, Phase 3a) ---------------
+   checkout_fee_rules is read with a plain select (RLS: active team members)
+   and written only through checkout_fee_rule_save / checkout_fee_rule_delete,
+   which refuse anyone but an admin. The Settings entry shows for admins only
+   (ckoMe(): the real user, as the RPCs act). A rule's city and house are
+   fixed once saved (the save upserts on them); to move one, delete it. */
+let ckoFeeRows = null, ckoFeeBusy = false;
+function ckoFeeRulesNav(){
+  const b = document.getElementById('set-nav-cko-fees'), admin = ckoMe().role === 'admin';
+  if (b) b.hidden = !admin;
+  const sec = document.querySelector('.settings-section[data-sec="checkout-fees"]');
+  if (!admin && sec && sec.classList.contains('active')) { const g = document.querySelector('#settings-nav button[data-sec="general"]'); if (g) g.click(); }
+  else if (admin && sec && sec.classList.contains('active')) loadFeeRules();
+}
+window.ckoFeeRulesNav = ckoFeeRulesNav;
+async function loadFeeRules(){
+  const body = document.getElementById('cko-fee-body'), sb = window.vmDb && window.vmDb.sb;
+  if (!body) return;
+  if (!sb) { body.innerHTML = '<tr><td colspan="9" class="name-sub">Not connected to the database.</td></tr>'; return; }
+  if (!ckoFeeRows) body.innerHTML = '<tr><td colspan="9" class="name-sub">Loading…</td></tr>';
+  // Three cities plus house overrides: one bounded read is the whole table.
+  const { data, error } = await sb.from('checkout_fee_rules')
+    .select('id,city,house,cleaning_fee,key_fee,review_days,payment_days,deadline_days,updated_by,updated_at').range(0, 999);
+  if (error) { body.innerHTML = `<tr><td colspan="9" class="name-sub">Could not load the fee rules: ${esc(error.message || error)}</td></tr>`; return; }
+  ckoFeeRows = ckoFeeRuleRows(data || []);
+  renderFeeRules();
+}
+function renderFeeRules(){
+  const body = document.getElementById('cko-fee-body');
+  if (!body || !ckoFeeRows) return;
+  const fee = (v) => (v == null ? '<span class="name-sub">none</span>' : esc(ckoMoneyText(v)));
+  const bd = (n) => (n == null ? '—' : esc(n) + ' business ' + (n === 1 ? 'day' : 'days'));
+  body.innerHTML = ckoFeeRows.map(r => `<tr data-cko-fee-row="${esc(r.id)}">
+      <td>${esc(r.city)}</td>
+      <td>${r.house ? esc(r.house) : '<span class="name-sub">City default</span>'}</td>
+      <td class="right">${fee(r.cleaning_fee)}</td>
+      <td class="right">${fee(r.key_fee)}</td>
+      <td>${bd(r.review_days)}</td>
+      <td>${bd(r.payment_days)}</td>
+      <td>${r.deadline_days == null ? '<span class="name-sub">none</span>' : esc(r.deadline_days) + ' days after move-out'}</td>
+      <td>${r.updated_by ? esc(ckoName(r.updated_by)) : '—'}${r.updated_at ? `<div class="name-sub">${esc(fmtDate(ckoLocal(r.updated_at, r.city).date))}</div>` : ''}</td>
+      <td style="white-space:nowrap"><button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px" data-cko-fee-edit="${esc(r.id)}">Edit</button> <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px" data-cko-fee-del="${esc(r.id)}">Delete</button></td>
+    </tr>`).join('') || '<tr><td colspan="9" class="name-sub">No rules yet: charges are entered by hand and the deadlines use 2 and 3 business days.</td></tr>';
+}
+// r: the rule being edited (city and house locked), or null for a new one.
+function ckoFeeFormHtml(r){
+  const v = r || { city: '', house: '', cleaning_fee: null, key_fee: null, review_days: 2, payment_days: 3, deadline_days: null };
+  const money = (x) => (x == null ? '' : x.toFixed(2)), n = (x) => (x == null ? '' : String(x));
+  const lock = r ? ' disabled' : '';
+  const field = (id, label, input) => `<div class="form-field"><label for="${id}">${label}</label>${input}</div>`;
+  return `<form data-cko-fee-form${r ? ` data-cko-fee-id="${esc(r.id)}"` : ''} aria-label="${r ? 'Edit fee rule' : 'New fee rule'}" novalidate style="margin:8px 0 12px;padding:12px 14px;border:1px solid var(--line,#E4DBC9);border-radius:10px;background:var(--cream-2)">
+    <div class="form-row">
+      ${field('cko-fee-city', 'City<span class="req" aria-hidden="true">*</span>', `<select class="form-input" id="cko-fee-city" name="city"${lock}><option value="">—</option>${CKO_CITIES.map(c => `<option${c === v.city ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>`)}
+      ${field('cko-fee-house', 'House (blank = the whole city)', `<input class="form-input" id="cko-fee-house" name="house" maxlength="200" value="${esc(v.house || '')}"${lock} />`)}
+    </div>
+    <div class="form-row">
+      ${field('cko-fee-cleaning', 'Cleaning fee ($, blank = no pre-fill)', `<input class="form-input" id="cko-fee-cleaning" name="cleaning_fee" type="number" min="0" step="0.01" value="${esc(money(v.cleaning_fee))}" />`)}
+      ${field('cko-fee-key', 'Per missing key / fob ($)', `<input class="form-input" id="cko-fee-key" name="key_fee" type="number" min="0" step="0.01" value="${esc(money(v.key_fee))}" />`)}
+    </div>
+    <div class="form-row">
+      ${field('cko-fee-review', 'Review target (business days)<span class="req" aria-hidden="true">*</span>', `<input class="form-input" id="cko-fee-review" name="review_days" type="number" min="0" max="30" step="1" value="${esc(n(v.review_days))}" />`)}
+      ${field('cko-fee-payment', 'Payment target (business days)<span class="req" aria-hidden="true">*</span>', `<input class="form-input" id="cko-fee-payment" name="payment_days" type="number" min="0" max="30" step="1" value="${esc(n(v.payment_days))}" />`)}
+      ${field('cko-fee-deadline', 'Final deadline (days after move-out, optional)', `<input class="form-input" id="cko-fee-deadline" name="deadline_days" type="number" min="1" max="365" step="1" value="${esc(n(v.deadline_days))}" />`)}
+    </div>
+    <div class="card-sub" id="cko-fee-error" role="alert" style="color:var(--red-dark);min-height:18px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <button type="button" class="btn btn-ghost" data-cko-fee-cancel>Cancel</button>
+      <button type="submit" class="btn btn-primary">${r ? 'Save rule' : 'Add rule'}</button>
+    </div>
+  </form>`;
+}
+function ckoFeeOpenForm(r){
+  const host = document.getElementById('cko-fee-form');
+  if (!host) return;
+  host.innerHTML = ckoFeeFormHtml(r);
+  const f = host.querySelector('input:not([disabled]),select:not([disabled])');
+  if (f) f.focus();
+}
+async function ckoFeeSave(form){
+  if (ckoFeeBusy) return;
+  const val = (n) => { const el = form.querySelector(`[name="${n}"]`); return el ? String(el.value || '').trim() : ''; };
+  // Errors go to this form only while it is still the one on screen.
+  const host = document.getElementById('cko-fee-form'), live = () => !!host && host.contains(form);
+  const err = (t) => { if (!live()) return; const e = form.querySelector('#cko-fee-error'); if (e) e.textContent = t; };
+  const b = ckoFeeRuleArgs({ city: val('city'), house: val('house'), cleaning_fee: val('cleaning_fee'), key_fee: val('key_fee'),
+    review_days: val('review_days'), payment_days: val('payment_days'), deadline_days: val('deadline_days') });
+  if (!b.ok) return err(b.error);
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') return err('Not connected to the database.');
+  ckoFeeBusy = true;
+  const btns = [...form.querySelectorAll('button'), ...document.querySelectorAll('#cko-fee-body button, #cko-fee-add')];
+  btns.forEach(x => { x.disabled = true; });
+  err('');
+  let r;
+  try { r = await window.vmDb.checkoutRpc('checkout_fee_rule_save', b.args); }
+  catch (e) { r = { data: null, error: { code: '', message: (e && e.message) || String(e) } }; }
+  finally { ckoFeeBusy = false; btns.forEach(x => { x.disabled = false; }); }
+  // stale: another admin saved the same city/house a moment ago.
+  if (r.error && r.error.code === 'stale') { err('Another admin just saved this rule. The table has been reloaded; try again.'); await loadFeeRules(); return; }
+  if (r.error) return err(ckoRefusalText(r.error));
+  if (live()) host.innerHTML = '';
+  showToast('Fee rule saved');
+  await loadFeeRules();
+}
+async function ckoFeeDelete(id){
+  if (ckoFeeBusy) return;
+  const r = (ckoFeeRows || []).find(x => x.id === id);
+  if (!r) return;
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { showToast('Not connected to the database'); return; }
+  if (!confirm(`Delete the ${r.city}${r.house ? ' · ' + r.house : ' default'} rule? New cases there get no pre-filled fees${r.house ? ' from it (the city default still applies)' : ''}, and the deadlines fall back to 2 and 3 business days where no rule is left.`)) return;
+  ckoFeeBusy = true;
+  const btns = document.querySelectorAll('#cko-fee-body button, #cko-fee-add');
+  btns.forEach(x => { x.disabled = true; });
+  let res;
+  try { res = await window.vmDb.checkoutRpc('checkout_fee_rule_delete', { p_id: id }); }
+  catch (e) { res = { data: null, error: { code: '', message: (e && e.message) || String(e) } }; }
+  finally { ckoFeeBusy = false; btns.forEach(x => { x.disabled = false; }); }
+  const msg = document.getElementById('cko-fee-msg');
+  if (res.error) { const t = res.error.code ? ckoErrorText(res.error.code) : 'Could not delete: ' + (res.error.message || 'unknown error'); if (msg) msg.textContent = t; else showToast(t); return; }
+  if (msg) msg.textContent = '';
+  // An edit form open on the rule just deleted has nothing left to save.
+  const fh = document.getElementById('cko-fee-form'), ff = fh && fh.querySelector('[data-cko-fee-form]');
+  if (ff && ff.dataset.ckoFeeId === id) fh.innerHTML = '';
+  showToast('Fee rule deleted');
+  await loadFeeRules();
+}
+(function wireFinanceAndFees(){
+  const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+  on('cko-fin-body', 'click', e => { const tr = e.target.closest('[data-cko-id]'); if (tr) openCheckout(tr.dataset.ckoId); });
+  document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-cko-open-finance]'); if (b) { e.preventDefault(); ckoOpenFinance(); } });
+  on('set-nav-cko-fees', 'click', () => { if (ckoMe().role === 'admin') loadFeeRules(); });
+  on('cko-fee-add', 'click', () => ckoFeeOpenForm(null));
+  on('cko-fee-body', 'click', e => {
+    const ed = e.target.closest('[data-cko-fee-edit]'), del = e.target.closest('[data-cko-fee-del]');
+    if (ed) ckoFeeOpenForm((ckoFeeRows || []).find(x => x.id === ed.dataset.ckoFeeEdit) || null);
+    else if (del) ckoFeeDelete(del.dataset.ckoFeeDel);
+  });
+  on('cko-fee-form', 'submit', e => { if (!e.target.matches('[data-cko-fee-form]')) return; e.preventDefault(); ckoFeeSave(e.target); });
+  on('cko-fee-form', 'click', e => { if (e.target.closest('[data-cko-fee-cancel]')) { e.preventDefault(); document.getElementById('cko-fee-form').innerHTML = ''; } });
 })();
 
 /* Deep link from the Asana task: portal.vanmates.com/#checkout=<id>. Runs after
