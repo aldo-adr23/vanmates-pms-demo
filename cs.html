@@ -276,6 +276,21 @@ select.act { width: auto; max-width: 190px; padding: 0 26px 0 12px; border-radiu
 .cmodes .intro { flex: 1 1 auto; min-width: 0; text-align: right; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmodes .win { flex: none; margin-left: auto; color: var(--green); font-weight: 600; white-space: nowrap; } .cmodes .win.closed { color: var(--red); }
 .cmodes .intro + .win { margin-left: 0; }
+/* LINE: English-mode toggle + monthly push meter, in the same composer mode row */
+.cmodes .engmode { flex: none; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
+.cmodes .quota { flex: none; margin-left: auto; font-size: 11.5px; font-weight: 600; white-space: nowrap; color: var(--muted); }
+.cmodes .quota.warn { color: var(--amber); } .cmodes .quota.full { color: var(--red); }
+/* translate-then-send preview (LINE, English mode): "Will send (Japanese): …" + back-translation */
+.trprev { margin: 0 12px 8px; padding: 8px 10px; border: 1px solid var(--blue-soft); background: var(--blue-soft); border-radius: 8px; font-size: 12.5px; }
+.trprev .ph { font-size: 11px; color: var(--muted); }
+.trprev .pj { margin: 2px 0; }
+.trprev .pb { color: var(--muted); font-size: 12px; }
+.trfail { margin: 0 12px 8px; padding: 8px 10px; border: 1px solid var(--red-soft); background: var(--red-soft); color: var(--red-dark); border-radius: 8px; font-size: 12.5px; }
+:root[data-theme="dark"] .trfail { color: var(--ink); }
+.trfail .linkbtn { color: inherit; text-decoration: underline; font-weight: 700; padding: 0 2px; min-height: 0; }
+.quotafull { margin: 0 12px 8px; font-size: 12px; color: var(--red); font-weight: 600; }
+/* translated bubble: English on top, the original Japanese underneath, small and muted */
+.b .orig { margin-top: 4px; padding-top: 4px; border-top: 1px dashed color-mix(in srgb, currentColor 25%, transparent); font-size: 12px; opacity: .75; }
 .crow { display: flex; gap: 8px; align-items: flex-end; }
 .crow textarea { display: block; flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); border-radius: 20px; padding: 9px 14px; line-height: 1.4; max-height: 140px; min-height: 40px;
   background: var(--surface); color: var(--ink); outline: 0; transition: border-color .12s ease, box-shadow .12s ease; }
@@ -395,6 +410,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
   .cmodes { flex-wrap: wrap; row-gap: 4px; }
   .cmodes .intro { order: 3; flex-basis: 100%; text-align: left; }
   .cmodes .intro + .win { margin-left: auto; }
+  .cmodes .quota { order: 4; flex-basis: 100%; text-align: left; margin-left: 0; }
   .info { width: 100%; border-radius: 0; border-left: 0; }
   .filters { grid-template-columns: 1fr; }
   .history { padding: 0 12px 12px; }
@@ -461,13 +477,19 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="cs-core.js?v=2026-09-25g"></script>
+<script src="cs-core.js?v=2026-09-26q"></script>
 <script>
 (function () {
   'use strict';
   var C = window.CSCore;
   var esc = C.csEsc;
   var CS_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/cs-send';
+  // LINE English mode (VM - Translate, the same door JLeads uses): customer/Maya messages show in
+  // English with the Japanese underneath; the composer translates on the first Enter, sends on the
+  // second (text unchanged). Notes are never translated. Cached per text in this browser.
+  var CS_TR_URL = 'https://adr23.app.n8n.cloud/webhook/jleads-translate';
+  var CS_TR_CACHE_MAX = 400;
+  var CS_TR_RETRY_MS = 2 * 60000;
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
     { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
   var NARROW = window.matchMedia('(max-width: 759px)');
@@ -476,7 +498,12 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
   var S = { me: null, team: [], convs: {}, reads: {}, tab: 'needs_reply', f: { chip: 'all' }, openId: null, msgs: [], cases: [],
     events: [], showEarlier: false, mode: 'reply', sending: false, rtOk: false, everSubscribed: false, urls: new Map(), pend: new Set(),
     revealPhone: false, drafts: {}, loading: false, composerSig: '', listRaf: 0, threadSeq: 0, hSeq: 0, convSeq: 0,
-    threadLoading: false, msgBuf: {} };
+    threadLoading: false, msgBuf: {}, quota: null };
+  // LINE translate state: the reply draft awaiting a second Enter, whether a thread-translate call is
+  // in flight (per conversation id — switching conversations must never wait on the old one), the
+  // cache (localStorage-backed) and texts that failed recently (skip them for a while).
+  var _trDraft = null, _trBusy = {}, _trReplyBusy = false, _trCache = null, _trFailed = {};
+  var CS_TR_LIMIT = 2000;
 
   function $(id) { return document.getElementById(id); }
   function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
@@ -592,6 +619,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
         if (i === -1) S.msgs.push(m); else S.msgs[i] = Object.assign({}, S.msgs[i], m);
         renderMessages(true);
         if (m.author_kind === 'customer') markRead(S.openId);
+        translateThread(S.openId);
       })
       .subscribe(function (status) {
         if (status === 'SUBSCRIBED') {
@@ -605,6 +633,9 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
       if (document.visibilityState === 'visible') refreshAll().then(function () { if (S.openId) markRead(S.openId); });
     });
     setInterval(function () { if (!S.rtOk && document.visibilityState === 'visible') refreshAll(); }, 60000);
+    // A translate call that came back with a null (still processing) is retried on the next message
+    // event or this periodic sweep — never a tight loop, and only while a LINE thread is open.
+    setInterval(function () { if (S.openId && document.visibilityState === 'visible') translateThread(S.openId); }, 30000);
   }
 
   async function refreshAll() {
@@ -682,7 +713,8 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
   // how: 'push' (row tap on a phone, so Back returns to the list) | 'replace' | 'pop' (history already moved)
   async function openConv(id, how) {
     S.openId = id; S.showEarlier = false; S.mode = 'reply'; S.revealPhone = false; S.sumOpen = false;
-    S.msgs = []; S.cases = []; S.events = []; S.loading = true; S.composerSig = ''; S.msgBuf = {};
+    S.msgs = []; S.cases = []; S.events = []; S.loading = true; S.composerSig = ''; S.msgBuf = {}; S.quota = null;
+    _trDraft = null;
     if (how === 'push') history.pushState({ c: id }, '', '#c=' + id);
     else if (how !== 'pop') history.replaceState(null, '', '#c=' + id);
     document.body.dataset.pane = 'chat';
@@ -695,6 +727,10 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     }
     if (!S.convs[id]) { toast('Conversation not found.'); closeChat(); return; }
     scheduleList();
+    // The push meter is per-conversation (LINE only). Kicked off in parallel with the thread load —
+    // never blocks it — and patches just the meter into the composer when it resolves (guarded
+    // against the conversation having changed meanwhile inside loadQuota itself).
+    if (S.convs[id].channel === 'line') loadQuota(id);
     await loadThread(id);
     markRead(id);
   }
@@ -764,6 +800,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     renderChat();
     if (!wasLoading) renderMessages(true);
     renderInfo();
+    translateThread(id);
   }
 
   async function markRead(id) {
@@ -773,8 +810,11 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
   }
 
   // The first staff reply of a case gets an intro prepended by the send service (VM - CS Send); say so, so agents don't introduce themselves twice.
+  // Both channels get an intro on the case's first staff reply (VM - CS Send prepends it); say so,
+  // so agents don't introduce themselves twice. WhatsApp keeps its exact original wording; LINE uses
+  // C.csIntroHint's Japanese handoff phrase (Maya's own wording, not a translation of the English one).
   function introPending(c) {
-    if (!c || c.channel !== 'whatsapp' || !c.current_case_id) return false;
+    if (!c || !c.current_case_id) return false;
     var k = S.cases.filter(function (x) { return x.id === c.current_case_id; })[0];
     return !!(k && !k.first_reply_at);
   }
@@ -782,10 +822,14 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     var first = String((S.me && (S.me.name || S.me.email)) || '').trim().split(/[\s@._-]+/)[0];
     return first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : 'you';
   }
-  function introLine() {
+  function introLine(channel) {
+    if (channel === 'line') return 'Your first reply is sent as “' + C.csIntroHint('line', introFirst()) + '” + your message. No need to introduce yourself.';
     return 'Your first reply is sent as “Hi, this is ' + introFirst() + ' from the Vanmates team — I\u2019m picking up from Maya.” + your message. No need to introduce yourself.';
   }
-  function introShort() { return 'First reply starts with “Hi, this is ' + introFirst() + ' from Vanmates…”'; }
+  function introShort(channel) {
+    if (channel === 'line') return 'First reply starts with “' + C.csIntroHint('line', introFirst()) + '”';
+    return 'First reply starts with “Hi, this is ' + introFirst() + ' from Vanmates…”';
+  }
 
   function buildComposer(c, mode, now) {
     if (mode === 'take_back') {
@@ -797,11 +841,27 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
         '<button class="wide" data-act="template"' + (S.sending ? ' disabled' : '') + '>Send follow-up template</button></div>';
     }
     var win = c.channel === 'whatsapp' && S.mode === 'reply' ? '<span class="win" id="win"></span>' : '';
+    var isLine = c.channel === 'line', eng = isLine && csEnglishMode();
+    var lineRow = '', quotaFull = false;
+    if (isLine && S.mode === 'reply') {
+      var qd = quotaDisplay();
+      quotaFull = qd.full;
+      // Stable ids: a later loadQuota() resolution patches these two nodes in place (renderQuotaMeter)
+      // instead of forcing a full composer rebuild, so the box's focus/caret is never disturbed just
+      // because the push meter came back.
+      lineRow = '<label class="engmode"><input type="checkbox" id="engMode"' + (eng ? ' checked' : '') + '> English mode</label>' +
+        '<span class="quota' + (qd.text ? ' ' + qd.lvl : '') + '" id="quotaMeter">' + esc(qd.text) + '</span>';
+    }
+    var trBlocks = (isLine && S.mode === 'reply')
+      ? '<div class="trprev" id="trPrev" hidden></div><div class="trfail" id="trFail" hidden></div>' : '';
+    var quotaNote = (isLine && S.mode === 'reply')
+      ? '<div class="quotafull" id="quotaFull"' + (quotaFull ? '' : ' hidden') + '>LINE monthly message limit reached — sending is disabled until it resets.</div>' : '';
     return '<div class="composer' + (S.mode === 'note' ? ' note' : '') + '"><div class="cmodes"><span class="seg"><button class="' + (S.mode === 'reply' ? 'on' : '') + '" data-mode="reply">Reply</button>' +
       '<button class="' + (S.mode === 'note' ? 'on' : '') + '" data-mode="note">Internal note</button></span>' +
-      (S.mode === 'reply' && introPending(c) ? '<span class="intro" title="' + esc(introLine()) + '">' + esc(introShort()) + '</span>' : '') + win + '</div>' +
-      '<div class="crow"><textarea id="box" rows="1" placeholder="' + (S.mode === 'note' ? 'Internal note — the customer never sees this' : (isCoarse() ? 'Reply…' : 'Reply… (Enter sends, Shift+Enter new line)')) + '"></textarea>' +
-      '<button class="send" id="sendBtn" aria-label="Send"' + (S.sending ? ' disabled' : '') + '>➤</button></div></div>';
+      (S.mode === 'reply' && introPending(c) ? '<span class="intro" title="' + esc(introLine(c.channel)) + '">' + esc(introShort(c.channel)) + '</span>' : '') + lineRow + win + '</div>' +
+      trBlocks + quotaNote +
+      '<div class="crow"><textarea id="box" rows="1" placeholder="' + (S.mode === 'note' ? 'Internal note — the customer never sees this' : eng ? 'Write in English. Enter shows the Japanese, Enter again sends it.' : (isCoarse() ? 'Reply…' : 'Reply… (Enter sends, Shift+Enter new line)')) + '"></textarea>' +
+      '<button class="send" id="sendBtn" aria-label="Send"' + (S.sending || quotaFull ? ' disabled' : '') + '>➤</button></div></div>';
   }
 
   // Soft render: header, summary and actions are rebuilt; the composer (focus, IME state, draft) is kept unless its mode changed.
@@ -856,10 +916,16 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
       (S.sumOpen ? '▴' : '▾') + '</span></button>' : '';
     $('cacts').innerHTML = actions && !inHead ? '<div class="actions">' + actions + '</div>' : '';
 
-    var sig = mode + '|' + S.mode + '|' + c.channel + '|' + introPending(c);
+    // Quota is deliberately not part of this signature: it patches the composer in place
+    // (renderQuotaMeter) instead of forcing a rebuild here — see buildComposer/loadQuota.
+    var sig = mode + '|' + S.mode + '|' + c.channel + '|' + introPending(c) +
+      (c.channel === 'line' ? '|' + csEnglishMode() : '');
     if (sig !== S.composerSig) {
       $('ccomp').innerHTML = buildComposer(c, mode, now);
       S.composerSig = sig;
+      // The composer just got rebuilt from scratch — any pending translate-preview draft belonged to
+      // the old markup (its #trPrev is gone); drop it so a stray Enter can't silently send stale text.
+      clearTrDraft();
       var box = $('box');
       if (box) { box.value = S.drafts[S.openId] || ''; autosize(box); }
     }
@@ -905,7 +971,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
         return '<a class="file" target="_blank" rel="noopener" data-path="' + esc(a.path) + '" href="' + esc(u || '#') + '">📎 ' + esc(a.name || 'file') + '</a>';
       }).join('');
       var fail = m.delivery === 'failed' ? '<span class="by">Not delivered: ' + esc(m.delivery_error || 'error') + ' · <button class="linkbtn" data-act="retry" data-body="' + esc(m.body) + '">Retry</button></span>' : '';
-      return '<div class="' + cls + '">' + (by ? '<span class="by">' + esc(by) + '</span>' : '') + esc(m.body) + atts + fail + '<span class="at">' + esc(clock(m.created_at)) + '</span></div>';
+      return '<div class="' + cls + '">' + (by ? '<span class="by">' + esc(by) + '</span>' : '') + bodyHtml(c, m) + atts + fail + '<span class="at">' + esc(clock(m.created_at)) + '</span></div>';
     }).join('');
     box.innerHTML = html || '<div class="empty">No messages yet.</div>';
     resolveMedia(box);
@@ -961,12 +1027,21 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     var kv = function (k, v) { return v ? '<div class="kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>' : ''; };
     var open = S.cases.filter(function (k) { return k.id === c.current_case_id; })[0];
     var html = '<button class="iconbtn close" data-act="info" aria-label="Close">✕</button>';
-    html += '<h4>Customer</h4>' + kv('Name', c.customer_name) +
-      '<div class="kv"><span>Phone</span><span>' + esc(S.revealPhone ? c.customer_phone : C.csMaskPhone(c.customer_phone)) +
-      (S.revealPhone ? '' : ' <button class="linkbtn" data-act="reveal">show</button>') + '</span></div>' +
-      kv('Channel', C.CS_ACCOUNT_LABEL[c.channel_account] || c.channel) + kv('Email', p.email || c.customer_email) + kv('Language', p.language);
-    var bk = kv('House', p.house) + kv('Room', p.room) + kv('City', p.city) + kv('Open tickets', p.open_tickets);
-    html += '<h4>Tenant (from Maya)</h4>' + (bk || '<div style="color:var(--muted)">Not a known tenant.</div>');
+    html += '<h4>Customer</h4>' + kv('Name', c.customer_name);
+    // LINE has no phone number — WhatsApp's phone row (with the reveal toggle) stays exactly as is.
+    if (c.channel !== 'line') {
+      html += '<div class="kv"><span>Phone</span><span>' + esc(S.revealPhone ? c.customer_phone : C.csMaskPhone(c.customer_phone)) +
+        (S.revealPhone ? '' : ' <button class="linkbtn" data-act="reveal">show</button>') + '</span></div>';
+    }
+    html += kv('Channel', C.CS_ACCOUNT_LABEL[c.channel_account] || c.channel) + kv('Email', p.email || c.customer_email) + kv('Language', p.language);
+    if (c.channel === 'line') {
+      html += '<h4>JLeads profile</h4>' + kv('Tier', p.tier) + kv('Owner', p.owner ? nameOf(p.owner) : '') + kv('Move-in', p.move_in) + kv('Budget', p.budget) + kv('City', p.city);
+      if (!p.tier && !p.owner && !p.move_in && !p.budget && !p.city) html += '<div style="color:var(--muted)">No JLeads profile yet.</div>';
+      if (c.lead_ref) html += '<div class="kv"><span></span><a class="linkbtn" style="padding:0" href="index.html#lead=' + encodeURIComponent(c.lead_ref) + '" target="_blank" rel="noopener">Open in JLeads →</a></div>';
+    } else {
+      var bk = kv('House', p.house) + kv('Room', p.room) + kv('City', p.city) + kv('Open tickets', p.open_tickets);
+      html += '<h4>Tenant (from Maya)</h4>' + (bk || '<div style="color:var(--muted)">Not a known tenant.</div>');
+    }
     if (open) {
       html += '<h4>Transfer</h4>' + kv('Source', C.CS_SOURCE_LABEL[open.source] || open.source) + kv('By', open.transferred_by === 'maya' ? 'Maya' : nameOf(open.transferred_by)) +
         kv('When', clock(open.opened_at)) + kv('Topic', open.topic) + kv('Note', open.transfer_note) +
@@ -1007,6 +1082,130 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     Array.prototype.forEach.call(document.querySelectorAll('#sendBtn, #ccomp [data-act="template"], [data-act="retry"]'), function (b) { b.disabled = on; });
   }
 
+  // ───────── LINE: English mode + push meter (VM - Translate, cs-send action:'quota') ─────────
+  function csEnglishMode() { try { return localStorage.getItem('cs.english') !== '0'; } catch (e) { return true; } }
+  function trCache() {
+    if (_trCache) return _trCache;
+    try { _trCache = JSON.parse(localStorage.getItem('cs.tr') || '{}') || {}; } catch (e) { _trCache = {}; }
+    return _trCache;
+  }
+  function trSave() {
+    var c = trCache(), k = Object.keys(c);
+    if (k.length > CS_TR_CACHE_MAX) k.slice(0, k.length - CS_TR_CACHE_MAX).forEach(function (x) { delete c[x]; });
+    try { localStorage.setItem('cs.tr', JSON.stringify(c)); } catch (e) {}
+  }
+  async function trCall(body) {
+    try {
+      var res = await fetch(CS_TR_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await token()) }, body: JSON.stringify(body) });
+      var j = {}; try { j = await res.json(); } catch (e) { j = {}; }
+      return Object.assign({ http: res.status }, j);
+    } catch (e) { return { ok: false, error: 'Translator unreachable. Check your connection.' }; }
+  }
+  // Texts still needing translation: customer/Maya bubbles only (never notes/staff/system), each once,
+  // skipping anything already cached or that failed within the retry window.
+  function untranslated(msgs, cache, skip) {
+    var seen = {}, out = [];
+    (msgs || []).forEach(function (m) {
+      var t = String((m && m.body) || '');
+      if (!t || (m.author_kind !== 'customer' && m.author_kind !== 'maya') || !C.csHasJapanese(t) || seen[t] ||
+        (cache && Object.prototype.hasOwnProperty.call(cache, t)) || (skip && skip[t])) return;
+      seen[t] = 1; out.push(t);
+    });
+    return out.slice(-40);
+  }
+  async function translateThread(convId) {
+    // Keyed by conversation id: a slow batch for the conversation the agent just left must never
+    // delay translating the one they switched to.
+    if (_trBusy[convId] || !csEnglishMode()) return;
+    var conv = S.convs[convId];
+    if (!conv || conv.channel !== 'line') return;
+    var now = Date.now(), skip = {};
+    Object.keys(_trFailed).forEach(function (t) { if (now - _trFailed[t] < CS_TR_RETRY_MS) skip[t] = 1; });
+    var todo = untranslated(S.msgs, trCache(), skip);
+    if (!todo.length) return;
+    _trBusy[convId] = true;
+    var res = await trCall({ mode: 'in', texts: todo });
+    _trBusy[convId] = false;
+    if (!res.ok || !Array.isArray(res.t)) {
+      todo.forEach(function (t) { _trFailed[t] = Date.now(); });
+      if (S.openId === convId) renderMessages(false);
+      return;
+    }
+    var c = trCache();
+    todo.forEach(function (t, i) { if (typeof res.t[i] === 'string') { c[t] = res.t[i]; delete _trFailed[t]; } else _trFailed[t] = Date.now(); });
+    trSave();
+    if (S.openId === convId) renderMessages(false);
+  }
+  // Last 8 non-empty turns, roles the translator expects (its own reply becomes "vanmates").
+  function replyContext(msgs) {
+    return (msgs || []).filter(function (m) { return m && String(m.body || '').trim() && (m.author_kind === 'customer' || m.author_kind === 'staff'); })
+      .slice(-8).map(function (m) { return { from: m.author_kind === 'customer' ? 'customer' : 'vanmates', text: String(m.body) }; });
+  }
+  function clearTrDraft() {
+    _trDraft = null;
+    var p = $('trPrev'); if (p) { p.hidden = true; p.innerHTML = ''; }
+  }
+  function clearTrFail() {
+    var f = $('trFail'); if (f) { f.hidden = true; f.innerHTML = ''; }
+  }
+  function showTrPreview(src, ja, back) {
+    _trDraft = { src: src, ja: ja };
+    var p = $('trPrev');
+    if (p) {
+      p.hidden = false;
+      p.innerHTML = '<div class="ph">Will send (Japanese):</div><div class="pj">' + esc(ja).replace(/\n/g, '<br>') + '</div>' +
+        (back ? '<div class="pb">Means: ' + esc(back) + '</div>' : '') + '<div class="ph">Enter to send · edit your text to redo it</div>';
+    }
+  }
+  function showTrFail(msg) {
+    var f = $('trFail');
+    if (f) { f.hidden = false; f.innerHTML = esc(msg || 'Translation unavailable') + ' — <button type="button" class="linkbtn" data-act="send_typed">Send as typed?</button>'; }
+  }
+  // Composer body text, with the English translation on top and the Japanese original underneath
+  // when this is a LINE customer/Maya message in English mode.
+  function bodyHtml(conv, m) {
+    var txt = String(m.body || '');
+    if (conv.channel === 'line' && csEnglishMode() && (m.author_kind === 'customer' || m.author_kind === 'maya') && C.csHasJapanese(txt)) {
+      var c = trCache();
+      var tr = Object.prototype.hasOwnProperty.call(c, txt) ? c[txt] : null;
+      return (tr != null ? esc(tr) : '<i>' + (_trFailed[txt] ? 'Not translated yet, retrying shortly' : 'Translating…') + '</i>') +
+        '<div class="orig">' + esc(txt) + '</div>';
+    }
+    return esc(txt);
+  }
+  // Text + level for the composer's LINE push meter, derived from S.quota.
+  function quotaDisplay() {
+    var q = S.quota || {};
+    var lvl = C.csQuotaLevel(q.used, q.limit);
+    var text = q.limit ? (q.used + ' / ' + q.limit + ' LINE pushes used this month') : (q.used != null ? q.used + ' sent this month' : '');
+    return { lvl: lvl, text: text, full: lvl === 'full' };
+  }
+  // Patches the meter/limit-note/send-button in place — no composer rebuild, so it never steals
+  // focus or the caret out from under whatever the agent is typing.
+  function renderQuotaMeter(id) {
+    if (id !== S.openId) return;
+    var c = S.convs[id];
+    if (!c || c.channel !== 'line' || S.mode !== 'reply') return;
+    var meter = $('quotaMeter'); if (!meter) return;   // composer isn't showing the LINE reply row right now
+    var qd = quotaDisplay();
+    meter.className = 'quota' + (qd.text ? ' ' + qd.lvl : '');
+    meter.textContent = qd.text;
+    var full = $('quotaFull'); if (full) full.hidden = !qd.full;
+    var send = $('sendBtn'); if (send) send.disabled = S.sending || qd.full;
+  }
+  async function loadQuota(id) {
+    var q = null;
+    try {
+      var res = await fetch(CS_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await token()) },
+        body: JSON.stringify({ action: 'quota', conversation_id: id }) });
+      var j = {}; try { j = await res.json(); } catch (e) { j = {}; }
+      q = (j && j.ok) ? { used: j.used, limit: j.limit } : null;
+    } catch (e) { q = null; }
+    if (id !== S.openId) return;   // switched conversations while the quota call was in flight
+    S.quota = q;
+    renderQuotaMeter(id);
+  }
+
   // The n8n webhook writes the message to the DB (realtime delivers it) and only then answers {ok}.
   // alreadyBusy: the caller (submitBox) owns S.sending.
   async function sendToCustomer(kind, text, alreadyBusy) {
@@ -1020,6 +1219,9 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
         body: JSON.stringify({ conversation_id: conv, kind: kind, text: text }) });
       var j = {}; try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service.' }; }
       if (!j.ok) { toast(j.error || 'Not sent.'); return false; }
+      // LINE pushes count against the monthly quota — refresh the meter after every successful send
+      // (every send funnels through here: the translated reply, the English-off reply, retry, template).
+      if ((S.convs[conv] || {}).channel === 'line') loadQuota(conv);
       return true;
     } catch (e) {
       toast('Send service unreachable — check your connection and try again.');
@@ -1033,7 +1235,10 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     if (S.sending) return;
     var box = $('box'); if (!box) return;
     var text = box.value.trim(); if (!text) return;
-    var conv = S.openId, mode = S.mode;
+    var conv = S.openId, mode = S.mode, c = S.convs[conv] || {};
+    // LINE, English mode, replying (never notes): first Enter translates and previews, the second
+    // (text unchanged) sends the Japanese. Same shape as the JLeads LINE chat composer.
+    if (mode === 'reply' && c.channel === 'line' && csEnglishMode()) return lineSubmit(conv, text);
     S.sending = true; setBusy(true);
     var ok = false;
     try {
@@ -1046,6 +1251,34 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     var now = $('box');   // re-query: the chat may have re-rendered or switched while we waited
     if (S.openId === conv && now && now.value.trim() === text) { now.value = ''; autosize(now); }
     if (mode === 'note' && S.openId === conv) loadThread(conv);
+  }
+
+  async function lineSubmit(conv, text) {
+    if (_trDraft && _trDraft.src === text) return lineSend(conv, _trDraft.ja, text);
+    if (_trReplyBusy) return;
+    if (text.length > CS_TR_LIMIT) {
+      showTrFail('Too long to translate (' + CS_TR_LIMIT + ' character limit).');
+      return;
+    }
+    _trReplyBusy = true; setBusy(true); clearTrFail();
+    var res = await trCall({ mode: 'out', text: text, context: replyContext(S.msgs) });
+    _trReplyBusy = false; setBusy(false);
+    if (S.openId !== conv) return;
+    var box = $('box');
+    if (!box || box.value.trim() !== text) return;   // edited (or sent) meanwhile
+    if (!res.ok || !res.ja) { showTrFail(res.error || 'Translation failed. Try again.'); return; }
+    showTrPreview(text, res.ja, res.back);
+  }
+
+  async function lineSend(conv, japaneseText, typedText) {
+    clearTrDraft();
+    S.sending = true; setBusy(true);
+    var ok = false;
+    try { ok = await sendToCustomer('text', japaneseText, true); } finally { S.sending = false; setBusy(false); }
+    if (!ok) return;
+    if (String(S.drafts[conv] || '').trim() === typedText) delete S.drafts[conv];
+    var box = $('box');
+    if (S.openId === conv && box && box.value.trim() === typedText) { box.value = ''; autosize(box); }
   }
 
   function autosize(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px'; }
@@ -1091,6 +1324,20 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
       return;
     }
     if (act === 'reload') { loadThread(S.openId); return; }
+    if (act === 'send_typed') {
+      if (S.sending) return;
+      var box = $('box'); var t = box ? box.value.trim() : '';
+      if (!t) return;
+      clearTrFail();
+      S.sending = true; setBusy(true);
+      var ok = false;
+      try { ok = await sendToCustomer('text', t, true); } finally { S.sending = false; setBusy(false); }
+      if (ok) {
+        if (String(S.drafts[id] || '').trim() === t) delete S.drafts[id];
+        if (box && box.value.trim() === t) { box.value = ''; autosize(box); }
+      }
+      return;
+    }
   }
 
   async function onSelect(act, value) {
@@ -1178,7 +1425,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     });
     var onClick = function (e) {
       var m = e.target.closest('[data-mode]');
-      if (m) { S.mode = m.dataset.mode; renderChat(); if ($('box')) $('box').focus(); return; }
+      if (m) { _trDraft = null; S.mode = m.dataset.mode; renderChat(); if ($('box')) $('box').focus(); return; }
       if (e.target.closest('#sendBtn')) { submitBox(); return; }
       var f = e.target.closest('a.file');
       if (f && f.getAttribute('href') === '#') { e.preventDefault(); toast('Still loading the file — try again in a moment.'); return; }
@@ -1187,12 +1434,23 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     };
     $('chat').addEventListener('click', onClick);
     $('info').addEventListener('click', onClick);
-    $('chat').addEventListener('change', function (e) { var s = e.target.closest('select[data-act]'); if (s) { fitSelects($('chat')); onSelect(s.dataset.act, s.value); } });
+    $('chat').addEventListener('change', function (e) {
+      var s = e.target.closest('select[data-act]'); if (s) { fitSelects($('chat')); onSelect(s.dataset.act, s.value); return; }
+      if (e.target.id === 'engMode') {
+        try { localStorage.setItem('cs.english', e.target.checked ? '1' : '0'); } catch (err) {}
+        clearTrDraft(); clearTrFail();
+        renderChat(); renderMessages(false);
+        if (e.target.checked) translateThread(S.openId);
+      }
+    });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { fitSelects($('chat')); });
     $('chat').addEventListener('input', function (e) {
       if (e.target.id !== 'box') return;
       autosize(e.target);
       if (S.openId) S.drafts[S.openId] = e.target.value;
+      // Editing the reply after a Japanese preview was shown clears it — the next Enter re-translates.
+      if (_trDraft && _trDraft.src !== e.target.value.trim()) clearTrDraft();
+      var f = $('trFail'); if (f && !f.hidden) clearTrFail();
     });
     $('chat').addEventListener('keydown', function (e) {
       if (e.target.id !== 'box' || e.key !== 'Enter') return;
