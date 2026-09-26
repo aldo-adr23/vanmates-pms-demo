@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-26p"></script>
+<script src="pms-supabase.js?v=2026-09-26q"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24256,6 +24256,31 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     return String(b.created_at || '').localeCompare(String(a.created_at || ''));
   });
 }
+// The banner shown above the LINE thread when Customer Service holds the conversation (slice 2).
+// cs: what the JLeads 'thread' call returns under res.cs — { owned, open, assignee, assignee_name,
+// since, conversation_id }. open = there is an open CS case on this conversation (transferred, not
+// yet resolved); owned = open AND claimed by an agent. Gate strictly on open/owned, never on
+// conversation_id alone — a resolved case can leave conversation_id/assignee_name behind with both
+// open and owned false, and that must show no banner and lock nothing.
+// A tiny self-contained escaper: this core has no DOM and isn't guaranteed the portal's `esc`.
+function jleadCsEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function jleadCsBanner(cs) {
+  if (!cs) return { html: '', lockSend: false, lockTransfer: false };
+  if (cs.owned) {
+    const href = 'cs.html#c=' + encodeURIComponent(cs.conversation_id);
+    let since = '';
+    const t = cs.since ? new Date(cs.since) : null;
+    if (t && !isNaN(t)) since = t.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const name = jleadCsEsc(cs.assignee_name || 'Customer Service');
+    const html = 'With Customer Service · ' + name + (since ? ' (since ' + jleadCsEsc(since) + ')' : '') +
+      ' · <a href="' + href + '" target="_blank" rel="noopener">Open in CS inbox</a>';
+    return { html, lockSend: true, lockTransfer: true };
+  }
+  if (cs.open) return { html: 'Transferred to Customer Service — waiting for an agent', lockSend: false, lockTransfer: true };
+  return { html: '', lockSend: false, lockTransfer: false };
+}
 /* JLEADS-CORE-END */
 
 function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s || 'Lead'); }
@@ -24688,6 +24713,10 @@ const JLEAD_CHAT_POLL_MS = 20000, JLEAD_CHAT_IDLE_MS = 15 * 60000, JLEAD_CHAT_FU
 var _jleadChatCustAt;
 // var, not let: renderJLeads (defined earlier) reads these and may run first.
 var _jleadChatTimer = null, _jleadChatLead = null, _jleadChatBusy = false, _jleadChatTick = 0, _jleadChatActiveAt = 0;
+// Remembered from the last full refresh (light refreshes don't recompute quota) and from the last
+// jleadCsApply call, so a light refresh — and re-enabling Send after a submit/send — never lifts a
+// lock that's still in force. Reset per drawer open (renderJLeadChat).
+var _jleadQuotaFull = false, _jleadCsLock = { lockSend: false, lockTransfer: false };
 async function jleadChatToken(refresh){
   const sb = window.vmDb && window.vmDb.sb; if(!sb) return '';
   if(refresh){ try { await sb.auth.refreshSession(); } catch(_){} }
@@ -24721,14 +24750,25 @@ function renderJLeadChat(l){
           <div id="jlead-chat-quota" class="name-sub"></div>
         </div>
       </div>
+      <div id="jlead-cs-banner" class="name-sub" style="display:none;padding:8px 12px;background:#FBEFD2;border-bottom:1px solid var(--line, #E4DBC9)"></div>
       <div id="jlead-chat-thread" style="max-height:340px;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px"><div class="name-sub">Loading…</div></div>
       <div style="padding:10px 12px;border-top:1px solid var(--line, #E4DBC9)">
         <div id="jlead-chat-tpl" style="display:none;margin-bottom:8px;border:1px solid var(--line, #E4DBC9);border-radius:8px;background:#fff;font-size:13px"></div>
         <div id="jlead-chat-preview" style="display:none;margin-bottom:8px;padding:8px 10px;border:1px solid #2563eb33;background:#2563eb0d;border-radius:8px;font-size:13px"></div>
+        <div id="jlead-transfer-panel" style="display:none;margin-bottom:8px;padding:10px;border:1px solid var(--line, #E4DBC9);border-radius:8px;background:#fff">
+          <textarea id="jlead-transfer-note" class="form-input" rows="2" maxlength="500" placeholder="What should Customer Service know? (optional)" style="display:block;width:100%;box-sizing:border-box;resize:vertical"></textarea>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+            <button class="btn btn-ghost btn-mini" id="jlead-transfer-cancel" type="button">Cancel</button>
+            <button class="btn btn-primary btn-mini" id="jlead-transfer-confirm" type="button">Transfer</button>
+          </div>
+        </div>
         <textarea id="jlead-chat-input" class="form-input" rows="3" maxlength="2000" placeholder="Reply on LINE as Vanmates…" style="display:block;width:100%;box-sizing:border-box;min-height:76px;resize:vertical"></textarea>
         <div class="name-sub" id="jlead-chat-hint" style="font-size:11px;margin-top:3px">Enter to send · Shift+Enter for a new line</div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px">
-          <button class="btn btn-ghost btn-mini" id="jlead-chat-release" type="button">Hand back to Maya</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <span style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-mini" id="jlead-chat-release" type="button">Hand back to Maya</button>
+            <button class="btn btn-ghost btn-mini" id="jlead-chat-transfer" type="button">Transfer to Customer Service</button>
+          </span>
           <button class="btn btn-ghost btn-mini" id="jlead-chat-tpl-btn" type="button">Templates</button>
           <span id="jlead-chat-note" class="name-sub" style="flex:1;text-align:right"></span>
           <button class="btn btn-primary" id="jlead-chat-send" type="button">Send on LINE</button>
@@ -24736,6 +24776,7 @@ function renderJLeadChat(l){
       </div>
     </div>`;
   _jleadChatLead = l.id; _jleadChatMsgs = []; _jleadTrDraft = null; _jleadChatCustAt = l.lastCustomerAt || '';
+  _jleadQuotaFull = false; _jleadCsLock = { lockSend: false, lockTransfer: false };
   const en = document.getElementById('jlead-chat-en');
   en.checked = jleadEnglishMode();
   en.addEventListener('change', () => {
@@ -24748,6 +24789,9 @@ function renderJLeadChat(l){
   document.getElementById('jlead-chat-send').addEventListener('click', () => jleadChatSubmit(l.id));
   document.getElementById('jlead-chat-tpl-btn').addEventListener('click', () => jleadTplToggle(l));
   document.getElementById('jlead-chat-release').addEventListener('click', () => jleadChatRelease(l.id));
+  document.getElementById('jlead-chat-transfer').addEventListener('click', () => jleadTransferToggle());
+  document.getElementById('jlead-transfer-cancel').addEventListener('click', () => jleadTransferToggle(false));
+  document.getElementById('jlead-transfer-confirm').addEventListener('click', () => jleadTransferSend(l.id));
   // Enter sends, Shift+Enter is a new line. While a Japanese IME is composing,
   // Enter only confirms the conversion (isComposing / keyCode 229) — never send then.
   document.getElementById('jlead-chat-input').addEventListener('keydown', e => {
@@ -24782,14 +24826,80 @@ async function jleadChatLoad(leadId, scroll, light){
   jleadMarkSeen(leadId);
   if(before === 'unread' || beforeMaya === 'unread') renderJLeads();
   if(jleadEnglishMode()) jleadTranslateThread(leadId);
+  // Customer Service state (slice 2): banner + locking input/send/release/transfer. Applied on every
+  // call, light or full, so the drawer reacts as soon as CS claims or releases the conversation.
+  const csLock = jleadCsApply(res.cs);
   if(res.staffMode === null || res.staffMode === undefined) return;   // light refresh: keep mode + quota as shown
   const mode = document.getElementById('jlead-chat-mode');
   if(mode) mode.textContent = res.staffMode ? '· staff is handling (Maya paused)' : '· Maya is answering';
   const q = jleadQuotaState(res.quota); const qe = document.getElementById('jlead-chat-quota');
   if(qe){ qe.textContent = q.text; qe.style.color = q.level === 'ok' ? '' : '#B94A3F'; }
-  const send = document.getElementById('jlead-chat-send'); if(send && !_jleadChatBusy) send.disabled = q.level === 'full';
+  // Remembered so a later light refresh (which never recomputes quota) still keeps Send disabled.
+  _jleadQuotaFull = q.level === 'full';
+  const send = document.getElementById('jlead-chat-send'); if(send && !_jleadChatBusy) send.disabled = _jleadQuotaFull || csLock.lockSend;
   const note = document.getElementById('jlead-chat-note');
-  if(note && !_jleadChatBusy) note.textContent = q.level === 'full' ? 'Monthly LINE quota used up — reply from the LINE console.' : q.level === 'warn' ? 'LINE quota nearly used up this month.' : '';
+  if(note && !_jleadChatBusy) note.textContent = csLock.lockSend ? '' : q.level === 'full' ? 'Monthly LINE quota used up — reply from the LINE console.' : q.level === 'warn' ? 'LINE quota nearly used up this month.' : '';
+}
+// Renders the "With Customer Service …" / "Transferred … waiting for an agent" banner (jleadCsBanner,
+// JLEADS-CORE) and locks/unlocks the reply box, Send, Hand back to Maya and Transfer to match.
+// send.disabled also carries _jleadQuotaFull (remembered from the last full refresh): a light
+// refresh only recomputes the CS lock, so a quota-full lock must never be lost here.
+function jleadCsApply(cs){
+  const b = jleadCsBanner(cs);
+  _jleadCsLock = b;
+  const banner = document.getElementById('jlead-cs-banner');
+  if(banner){ banner.style.display = b.html ? 'block' : 'none'; banner.innerHTML = b.html; }
+  const input = document.getElementById('jlead-chat-input');
+  const send = document.getElementById('jlead-chat-send');
+  const release = document.getElementById('jlead-chat-release');
+  const transfer = document.getElementById('jlead-chat-transfer');
+  if(input) input.disabled = b.lockSend;
+  if(send && !_jleadChatBusy) send.disabled = b.lockSend || _jleadQuotaFull;
+  if(release) release.disabled = b.lockSend;
+  if(transfer) transfer.disabled = b.lockTransfer;
+  // Once CS has a case on this conversation (claimed or not), the banner carries the status —
+  // the inline Transfer panel (including a just-shown "Transferred…" message) resets.
+  if(b.lockTransfer) jleadTransferToggle(false);
+  return b;
+}
+// Re-applies the current CS lock (and the remembered quota-full state) to Send. Used after
+// jleadChatSubmit/jleadChatSend re-enable it — a plain `disabled = false` there would lift a lock
+// that's still in force (CS owns the chat, or the monthly quota is still full).
+function jleadApplySendLock(){
+  const send = document.getElementById('jlead-chat-send');
+  if(send) send.disabled = _jleadCsLock.lockSend || _jleadQuotaFull;
+}
+// Transfer to Customer Service: an inline panel (optional note) next to Hand back to Maya.
+const JLEAD_CS_TRANSFER_URL = 'https://adr23.app.n8n.cloud/webhook/cs-line-transfer';
+function jleadTransferToggle(show){
+  const p = document.getElementById('jlead-transfer-panel'); if(!p) return;
+  const on = show === undefined ? p.style.display === 'none' : show;
+  p.style.display = on ? 'block' : 'none';
+  if(on){ const ta = document.getElementById('jlead-transfer-note'); if(ta){ ta.value = ''; ta.focus(); } }
+}
+async function jleadTransferSend(leadId){
+  const btn = document.getElementById('jlead-transfer-confirm');
+  if(btn && btn.disabled) return;
+  if(btn) btn.disabled = true;
+  const note = document.getElementById('jlead-transfer-note');
+  const body = { lead_id: leadId, note: (note && note.value.trim()) || '' };
+  const go = async (tok) => fetch(JLEAD_CS_TRANSFER_URL, { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + tok }, body: JSON.stringify(body) });
+  let j = {};
+  try {
+    let r = await go(await jleadChatToken(false));
+    if(r.status === 401) r = await go(await jleadChatToken(true));
+    try { j = await r.json(); } catch(_){}
+  } catch(_){ j = { ok:false, error:'Transfer service unreachable — check your connection.' }; }
+  if(_jleadChatLead !== leadId) return;   // drawer moved on meanwhile
+  if(btn) btn.disabled = false;           // always restore — the panel's own textarea/buttons must survive to be reused
+  if(j && j.ok){
+    jleadTransferToggle(false);           // reset/hide the panel rather than overwriting its markup
+    const note = document.getElementById('jlead-chat-note');
+    if(note) note.textContent = 'Transferred — Customer Service will reply from the CS inbox';
+    jleadChatLoad(leadId, false, false);
+  } else {
+    if(typeof showToast === 'function') showToast(j.error || 'Could not transfer.');
+  }
 }
 /* ---- English mode (VM - JLeads Translate) --------------------------------
    Customer and Maya messages show in English with the Japanese below; the rep
@@ -24885,7 +24995,7 @@ async function jleadChatSubmit(leadId){
   if(_jleadReplyBusy) return;
   _jleadReplyBusy = true; _jleadChatActiveAt = Date.now(); if(btn) btn.disabled = true; if(note) note.textContent = 'Translating your reply…';
   const res = await jleadTrCall({ mode:'out', text, context: jleadReplyContext(_jleadChatMsgs) });
-  _jleadReplyBusy = false; if(btn) btn.disabled = false;
+  _jleadReplyBusy = false; jleadApplySendLock();
   if(_jleadChatLead !== leadId) return;
   if(!res.ok || !res.ja){ if(note) note.textContent = res.error || 'Translation failed. Try again.'; return; }
   if(String((input && input.value) || '').trim() !== text){ if(note) note.textContent = ''; return; }   // edited meanwhile
@@ -25047,7 +25157,7 @@ async function jleadChatSend(leadId, override){
   if(input) input.value = '';
   if(override) jleadTrClearDraft();
   const res = await jleadChatCall('send', leadId, text);
-  _jleadChatBusy = false; if(btn) btn.disabled = false; jleadChatModeUi();
+  _jleadChatBusy = false; jleadApplySendLock(); jleadChatModeUi();
   if(!res.ok){
     pending.style.opacity = '1'; pending.style.background = '#FBE3E0';
     pending.firstElementChild.textContent = 'Not sent';
