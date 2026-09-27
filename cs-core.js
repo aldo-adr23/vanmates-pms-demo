@@ -236,6 +236,95 @@ function csEsc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
 }
+
+// ── slice 3: outbound attachments ──
+// Same numbers as send.js's CS_MEDIA_LIMITS (rina n8n/cs-inbox); kept in sync by hand.
+// Documents and LINE video are capped at 50 MB: the Supabase Storage upload limit on this project.
+var CS_MEDIA_LIMITS = { whatsapp: { image: 5e6, video: 16e6, document: 50e6 }, line: { image: 10e6, video: 50e6, document: 50e6 } };
+// Caption length the channel accepts alongside media (WhatsApp media caption 1024; LINE text message cap kept
+// well under its 5000 so the Japanese translation of an English caption still fits).
+var CS_CAPTION_LIMITS = { whatsapp: 1024, line: 3500 };
+// LINE images above this also get a small -preview.jpg (LINE's previewImageUrl should be light).
+var CS_LINE_PREVIEW_OVER = 1e6;
+var CS_EXT_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', mp4: 'video/mp4', pdf: 'application/pdf' };
+
+function csMediaKind(mime) {
+  var m = String(mime || '').toLowerCase();
+  if (m === 'image/jpeg' || m === 'image/png') return 'image';
+  if (m === 'video/mp4') return 'video';
+  if (m === 'application/pdf') return 'document';
+  return null;
+}
+
+function csMediaLimit(channel, kind) {
+  var c = CS_MEDIA_LIMITS[channel];
+  return (c && kind && c[kind]) || 0;
+}
+
+// '4.2 MB' / '512 KB' / '900 B' — decimal units, matching the decimal byte limits above.
+function csSizeText(bytes) {
+  var n = Number(bytes) || 0;
+  if (n < 1000) return n + ' B';
+  if (n < 1e6) return Math.round(n / 1000) + ' KB';
+  return (n / 1e6).toFixed(1) + ' MB';
+}
+
+// Keeps the extension when cutting a name down to max characters ('long….pdf' -> 'lo….pdf').
+function csTrimName(name, max) {
+  var s = String(name || '');
+  max = max || 200;
+  if (s.length <= max) return s;
+  var dot = s.lastIndexOf('.');
+  var ext = dot > 0 && s.length - dot <= 10 ? s.slice(dot) : '';
+  return s.slice(0, max - ext.length) + ext;
+}
+
+// lowercased, [^a-z0-9._-] -> '-', runs of dots collapsed to one (a name must never contain '..' -- the storage
+// policy refuses it too), max 200 chars by default with the extension kept (storage-path rule in CONTRACT.md;
+// the storage policy allows a 201-char file segment, so the upload path passes a smaller max to leave room for
+// the '<ms>-' prefix and a '-preview.jpg' suffix).
+function csSafeName(name, max) {
+  var s = csTrimName(String(name || '').toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/\.{2,}/g, '.'), max || 200);
+  return s || 'file';
+}
+
+// The mime to use for a picked file: its own type, or (iOS/Android sometimes report '') the extension's.
+function csInferMime(name, type) {
+  var t = String(type || '').toLowerCase();
+  if (t) return t;
+  var m = /\.([a-z0-9]+)$/i.exec(String(name || ''));
+  return (m && CS_EXT_MIME[m[1].toLowerCase()]) || '';
+}
+
+// iPhone photo formats (and an unknown type) that should go through the browser's JPEG conversion first.
+function csIsHeic(name, type) {
+  var t = String(type || '').toLowerCase();
+  return t === 'image/heic' || t === 'image/heif' || /\.hei[cf]$/i.test(String(name || ''));
+}
+
+// The body n8n stores for a media message with no caption (send.js csMediaStoredText).
+function csIsMediaPlaceholder(body) {
+  var b = String(body || '');
+  return b === '[photo]' || b === '[video]' || b.indexOf('[PDF] ') === 0;
+}
+
+function csCaptionLimit(channel) { return CS_CAPTION_LIMITS[channel] || CS_CAPTION_LIMITS.whatsapp; }
+
+// Supabase Storage upload error -> the message staff see.
+function csUploadErrorText(err) {
+  if (!err) return 'Upload failed.';
+  var status = String(err.statusCode || err.status || '');
+  var msg = String(err.message || err.error || '');
+  if (status === '413' || /exceeded|too large/i.test(msg)) return 'File is over the 50 MB upload limit.';
+  return msg || 'Upload failed.';
+}
+
+// Only an oversized image can be downscaled in the browser; oversized video/PDF are refused instead.
+function csNeedsDownscale(file, channel) {
+  if (!file || csMediaKind(file.type) !== 'image') return false;
+  var limit = csMediaLimit(channel, 'image');
+  return !!(limit && (Number(file.size) || 0) > limit);
+}
 /* CS-CORE-END */
 
 if (typeof window !== 'undefined') {
@@ -244,6 +333,9 @@ if (typeof window !== 'undefined') {
     csAgo: csAgo, csFirstName: csFirstName, csPreview: csPreview, csMaskPhone: csMaskPhone, csComposerMode: csComposerMode,
     csIsMember: csIsMember, csSummaryCard: csSummaryCard, csEsc: csEsc,
     csHasJapanese: csHasJapanese, csQuotaLevel: csQuotaLevel, csIntroHint: csIntroHint,
+    csMediaKind: csMediaKind, csMediaLimit: csMediaLimit, csSizeText: csSizeText, csSafeName: csSafeName, csNeedsDownscale: csNeedsDownscale,
+    csTrimName: csTrimName, csInferMime: csInferMime, csIsHeic: csIsHeic, csIsMediaPlaceholder: csIsMediaPlaceholder,
+    csCaptionLimit: csCaptionLimit, csUploadErrorText: csUploadErrorText, CS_LINE_PREVIEW_OVER: CS_LINE_PREVIEW_OVER,
     CS_PRIORITY_RANK: CS_PRIORITY_RANK, CS_SOURCE_LABEL: CS_SOURCE_LABEL, CS_STATUS_LABEL: CS_STATUS_LABEL,
-    CS_OUTCOME_LABEL: CS_OUTCOME_LABEL, CS_ACCOUNT_LABEL: CS_ACCOUNT_LABEL };
+    CS_OUTCOME_LABEL: CS_OUTCOME_LABEL, CS_ACCOUNT_LABEL: CS_ACCOUNT_LABEL, CS_MEDIA_LIMITS: CS_MEDIA_LIMITS };
 }
