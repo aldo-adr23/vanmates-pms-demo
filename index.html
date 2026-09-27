@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-27a"></script>
+<script src="pms-supabase.js?v=2026-09-27b"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21135,7 +21135,7 @@ function ckoActions(c, me){
   if (next && next.step) a.push({ act: 'next', label: next.label, primary: true, disabled: !next.allowed, title: next.reason });
   if (open && !c.owner) a.push({ act: 'take', label: 'Take' });
   if (open && admin) a.push({ act: 'assign', label: c.owner ? 'Reassign' : 'Assign' });
-  if (open && c.owner && manage) a.push({ act: 'release', label: 'Release' });
+  if (open && c.owner && manage) a.push({ act: 'release', label: 'Unassign' });
   if (open && admin && f.indexOf('short_notice_review_required') !== -1) a.push({ act: 'decide', label: 'Decide review' });
   // Finance may flag / clear a dispute too (Phase 3a: it unlocks the charges).
   if (open && (manage || ckoIsFinance(m))) a.push(f.indexOf('resident_dispute') === -1 ? { act: 'flag_dispute', label: 'Flag dispute' } : { act: 'clear_dispute', label: 'Clear dispute' });
@@ -21495,7 +21495,7 @@ function ckoTimeline(events, nameOf, city, snapshots){
     if (e.type === 'created') detail = `move-out ${q(after.move_out_date)}, notice ${q(after.notice_days)} days`;
     else if (e.type === 'resubmitted') detail = `move-out ${q(before.move_out_date)} → ${q(after.move_out_date)}, notice ${q(before.notice_days)} → ${q(after.notice_days)} days`;
     else if (e.type === 'owner_changed') detail = after.how === 'took' ? `${nameOf(after.to)} took it`
-      : after.how === 'released' ? `${nameOf(after.from)} released it`
+      : after.how === 'released' ? `${nameOf(after.from)} unassigned it`
       : `${after.from ? nameOf(after.from) : 'nobody'} → ${nameOf(after.to)}`;
     else if (e.type === 'status_changed') { const ft = ckoFieldsText(after.fields, nameOf, city); detail = `${q(after.from)} → ${q(after.to)}${ft ? ' · ' + ft : ''}`; }
     else if (e.type === 'status_override') detail = `${q(after.from)} → ${q(after.to)} · ${after.reason || ''}`;
@@ -22633,7 +22633,7 @@ async function openCheckout(id, banner, refocus){
 }
 /* ---- Checkouts: drawer actions ---------------------------------------------
    One button per action from ckoActions(); each opens a small form (or acts
-   at once for Take, Release and flags) and calls one checkout_* RPC. RPC
+   at once for Take, Unassign and flags) and calls one checkout_* RPC. RPC
    arguments come from the core (ckoStepPayload and the ck*Args builders).
    A missing/invalid field keeps the form open with the reason; any other
    refusal (stale, already_owned, …) re-reads the case and shows the reason
@@ -22815,8 +22815,8 @@ function ckoAct(act, lineId){
     case 'clear_not_responding': return flag('resident_not_responding', false, 'Not-responding flag cleared');
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
-      if (!confirm('Release this case? It goes back to Unassigned.')) return;
-      return ckoCall(id, 'checkout_release', { p_case: id }, 'Released');
+      if (!confirm('Unassign this case? It goes back to Unassigned for anyone to take.')) return;
+      return ckoCall(id, 'checkout_release', { p_case: id }, 'Unassigned');
     case 'flag_dispute': return flag('resident_dispute', true, 'Dispute flagged');
     case 'clear_dispute': return flag('resident_dispute', false, 'Dispute cleared');
     case 'clear_missing_keys': return flag('missing_keys', false, 'Keys flag cleared');
