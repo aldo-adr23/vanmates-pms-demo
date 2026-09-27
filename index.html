@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-27b"></script>
+<script src="pms-supabase.js?v=2026-09-27p"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3831,6 +3831,16 @@ hello@vanmates.com · vanmates.com</textarea>
 </div>
 
 <!-- ============ DEAL MODAL (qualified / won / lost) ============ -->
+<div class="modal-backdrop" id="rcv-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="rcv-modal-title" style="max-width:560px">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 10v4M18 10v4"/></svg></div>
+      <div><div class="modal-title" id="rcv-modal-title">Receivables</div><div class="modal-sub" id="rcv-modal-sub"></div></div>
+      <button class="modal-close" id="rcv-modal-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <form class="modal-body" id="rcv-modal-form" autocomplete="off" novalidate></form>
+  </div>
+</div>
 <div class="modal-backdrop" id="deal-backdrop" aria-hidden="true">
   <div class="modal-dialog" role="dialog" aria-labelledby="deal-title" style="max-width:520px">
     <div class="modal-head">
@@ -20654,7 +20664,11 @@ async function loadPartners(force){
   })();
   return ptnLoading;
 }
-async function ptnReload(){ if (ptnLoading) { try { await ptnLoading; } catch (e) {} } return loadPartners(true); }
+async function ptnReload(){
+  if (ptnLoading) { try { await ptnLoading; } catch (e) {} }
+  // Receivables reads the same agencies, so a reload refreshes it too once it has been opened.
+  await Promise.all([loadPartners(true), rcvData ? rcvAfterWrite() : null]);
+}
 function ptnPill(p){ return `<span class="tag-pill ${esc(p.tone)}">${esc(p.label)}</span>`; }
 function ptnAgencyTone(s){ return ({ active: 'green', pending: 'gold', suspended: 'red' })[s] || ''; }
 function ptnOptions(list, selected){
@@ -20664,8 +20678,9 @@ function renderPartners(){
   const root = document.getElementById('ptn-root');
   if (!root || !ptnData) return;
   const scrollY = window.scrollY;
-  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`]];
-  const body = PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml() : ptnAgenciesHtml();
+  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`], ['receivables', 'Receivables']];
+  const body = PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml()
+    : PTN_STATE.tab === 'receivables' ? rcvHtml() : ptnAgenciesHtml();
   root.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <div class="tabs" role="tablist">${tabs.map(([k, l]) =>
@@ -20683,6 +20698,12 @@ function ptnSelectField(name, label, list, value){
   return `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${esc(label)}<select class="form-input" name="${name}">${ptnOptions(list, value)}</select></label>`;
 }
 const PTN_LANG_OPTS = [['en', 'English'], ['es', 'Español'], ['ja', '日本語']];
+// The billing columns exist once the partner billing SQL is applied (every agency row has payment_terms).
+function ptnBillingOn(){ return !ptnData || !ptnData.agencies.length || ptnData.agencies.some(a => 'payment_terms' in a); }
+function ptnBillingLine(a){
+  if (!('payment_terms' in a)) return '—';
+  return `${esc(rcvTermsLabel(a.payment_terms))}<br><span class="name-sub">${a.credit_limit_cents == null ? 'no limit' : 'limit ' + esc(rcvMoney(a.credit_limit_cents))}${a.payment_ref ? ' · ref ' + esc(a.payment_ref) : ''}</span>`;
+}
 function ptnAgencyFormHtml(a){
   a = a || {};
   return `<form class="card" data-ptn-agency-form style="padding:16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
@@ -20698,6 +20719,10 @@ function ptnAgencyFormHtml(a){
     ${ptnSelectField('language', 'Language', PTN_LANG_OPTS, a.language || 'en')}
     ${ptnField('currency', 'Currency', a.currency || 'CAD')}
     ${ptnSelectField('status', 'Status', PTN_AGENCY_STATUSES.map(s => [s, s[0].toUpperCase() + s.slice(1)]), a.status || 'pending')}
+    ${ptnBillingOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Billing</strong>
+    ${ptnSelectField('payment_terms', 'Payment terms', RCV_TERMS, a.payment_terms || 'net15')}
+    ${ptnField('credit_limit', 'Credit limit (CAD, blank = none)', a.credit_limit_cents == null ? '' : rcvDollars(a.credit_limit_cents), ' inputmode="decimal"')}
+    ${ptnField('payment_ref', 'Payment reference (A–Z, 0–9)', a.payment_ref, ` maxlength="20" style="text-transform:uppercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}` : ''}
     <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save agency</button>
       <button class="btn btn-ghost" type="button" data-ptn-agency-cancel>Close</button> <span class="name-sub" data-ptn-msg></span></div>
   </form>`;
@@ -20709,13 +20734,14 @@ function ptnAgenciesHtml(){
   return `<div style="margin-bottom:12px"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button></div>
     ${edit ? ptnAgencyFormHtml(edit) : ''}
     ${d.agencies.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th><th>Users</th><th>Bookings</th><th></th></tr></thead>
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th><th>Billing</th><th>Users</th><th>Bookings</th><th></th></tr></thead>
       <tbody>${d.agencies.map(a => `<tr style="border-top:1px solid var(--line)">
         <td style="padding:8px"><strong>${esc(a.name)}</strong>${a.legal_name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}</td>
         <td>${esc(a.country || '—')}</td>
         <td>${esc(a.contact_name || '')}${a.contact_email ? `<br><span class="name-sub">${esc(a.contact_email)}</span>` : ''}</td>
         <td>${esc(a.billing_email || '—')}</td><td>${esc(a.language)}</td>
         <td>${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}</td>
+        <td style="white-space:nowrap">${ptnBillingLine(a)}</td>
         <td>${count(d.users, a.id)}</td><td>${count(d.bookings, a.id)}</td>
         <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
           <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button></td>
@@ -20829,6 +20855,7 @@ function ptnWire(root){
   });
   on('[data-ptn-cancel-close]', 'click', () => { PTN_STATE.cancelId = null; renderPartners(); });
   on('[data-ptn-cancel-form]', 'submit', (f, e) => { e.preventDefault(); ptnCancelBooking(f); });
+  rcvWire(root);
 }
 // A write that returns no row was refused by RLS (or the row is gone).
 async function ptnWrite(query){
@@ -20847,18 +20874,39 @@ async function ptnSaveAgency(form){
   ['name', 'legal_name', 'country', 'billing_address', 'contact_name', 'contact_email', 'contact_phone', 'billing_email', 'language', 'currency', 'status']
     .forEach(k => { v[k] = el[k].value; });
   const r = ptnValidateAgency(v);
-  if (!r.ok) { msg.textContent = r.errors.join('. '); return; }
-  if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
   const id = PTN_STATE.editAgency === 'new' ? null : PTN_STATE.editAgency;
+  // Payment terms, credit limit and reference are not written here: the partner app's
+  // staff endpoint validates and audits them (PATCH /api/staff/billing/agencies/:id).
+  const current = (id && ptnData.agencies.find(a => a.id === id)) || { payment_terms: 'net15', credit_limit_cents: null, payment_ref: null };
+  const bill = el.payment_terms
+    ? rcvAgencyBillingPatch(current, { payment_terms: el.payment_terms.value, credit_limit: el.credit_limit.value, payment_ref: el.payment_ref.value })
+    : { ok: true, errors: [], patch: {} };
+  if (!r.ok || !bill.ok) { msg.textContent = r.errors.concat(bill.errors).join('. '); return; }
+  if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
   const row = Object.assign({}, r.row, { updated_at: new Date().toISOString(), updated_by: ptnActor() });
   msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
+  let newId;
   try {
-    const newId = await ptnWrite(id ? sb.from('partner_agencies').update(row).eq('id', id) : sb.from('partner_agencies').insert(row));
-    showToast(id ? 'Agency saved' : 'Agency created');
-    PTN_STATE.editAgency = null;
-    if (!id) PTN_STATE.agencyId = newId;
-    await ptnReload();
-  } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
+    newId = await ptnWrite(id ? sb.from('partner_agencies').update(row).eq('id', id) : sb.from('partner_agencies').insert(row));
+  } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; return; }
+  if (!id) { PTN_STATE.agencyId = newId; PTN_STATE.editAgency = newId; }
+  if (Object.keys(bill.patch).length) {
+    try {
+      await rcvJson('PATCH', '/api/staff/billing/agencies/' + encodeURIComponent(newId), bill.patch);
+    } catch (e) {
+      // The agency row is saved; keep the form open on it so the billing fields can be retried
+      // (an existing agency keeps what was typed; a new one reopens as an edit of the new row).
+      const m = `Agency saved, but not its billing terms: ${e.message || e}`;
+      showToast(m);
+      if (id) { msg.textContent = m; if (btn) btn.disabled = false; return; }
+      await ptnReload();
+      const f = document.querySelector('[data-ptn-agency-form] [data-ptn-msg]'); if (f) f.textContent = m;
+      return;
+    }
+  }
+  showToast(id ? 'Agency saved' : 'Agency created');
+  PTN_STATE.editAgency = null;
+  await ptnReload();
 }
 async function ptnSaveUser(form){
   const sb = window.vmDb && window.vmDb.sb;
@@ -20925,6 +20973,690 @@ async function ptnCancelBooking(form){
     PTN_STATE.cancelId = null;
     await ptnReload();
   } catch (e) { msg.textContent = 'Could not cancel: ' + (e.message || e); if (btn) btn.disabled = false; }
+}
+/* RECEIVABLES-CORE-START */
+/* Partners > Receivables (admin only): partner invoices with their derived
+   payment status, bank transfers, re-allocations, voids, credit and CSV export.
+   Pure: rows in, display shapes and validated request bodies out. Money is
+   integer cents throughout; dollars are parsed as text, never through floats.
+   Reads mirror the partner_invoice_status / partner_agency_balance views;
+   writes go through the partner app's /api/staff/billing/* endpoints.
+   Spec: rina docs/superpowers/specs/2026-09-27-partner-portal-phase-b-payments-design.md */
+const RCV_TERMS = [['prepaid', 'Prepaid'], ['net7', 'Net 7'], ['net15', 'Net 15'], ['net30', 'Net 30']];
+const RCV_MAX_CENTS = 2147483647;
+function rcvTermsLabel(t){
+  if (!t) return '—';
+  const hit = RCV_TERMS.find(x => x[0] === t);
+  return hit ? hit[1] : String(t);
+}
+function rcvStatus(s){
+  const map = {
+    open: ['Open', 'blue'], partially_paid: ['Partially paid', 'gold'], overdue: ['Overdue', 'red'],
+    paid: ['Paid', 'green'], void: ['Void', ''],
+  };
+  if (!s) return { label: '—', tone: '' };
+  const hit = map[s] || [String(s), ''];
+  return { label: hit[0], tone: hit[1] };
+}
+function rcvMoney(cents){
+  if (cents == null || cents === '') return '—';
+  const c = Math.round(Number(cents));
+  if (!isFinite(c)) return '—';
+  const abs = Math.abs(c);
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${c < 0 ? '-' : ''}$${whole}.${String(abs % 100).padStart(2, '0')}`;
+}
+// "1,500.25" / "$12" / ".5" -> cents. opts.blank: blank is null; opts.zero: 0 allowed.
+function rcvParseCents(s, opts){
+  opts = opts || {};
+  const t = String(s == null ? '' : s).trim().replace(/^\$/, '').replace(/[,\s]/g, '');
+  if (t === '') return opts.blank ? { ok: true, cents: null } : { ok: false, error: 'required' };
+  const m = /^(\d*)(?:\.(\d{0,2}))?$/.exec(t);
+  if (!m || (m[1] === '' && !m[2])) return { ok: false, error: 'not a dollar amount' };
+  const whole = m[1] === '' ? 0 : Number(m[1]);
+  const cents = whole * 100 + Number(((m[2] || '') + '00').slice(0, 2));
+  if (!Number.isSafeInteger(cents) || cents > RCV_MAX_CENTS) return { ok: false, error: 'too large' };
+  if (cents === 0 && !opts.zero) return { ok: false, error: 'must be more than $0' };
+  return { ok: true, cents };
+}
+const rcvCentsOrNull = v => (v == null || v === '' ? null : Number(v));
+// Only the fields that changed, shaped for PATCH /api/staff/billing/agencies/:id.
+function rcvAgencyBillingPatch(current, form){
+  current = current || {}; form = form || {};
+  const errors = [], patch = {};
+  const terms = String(form.payment_terms || '');
+  if (!RCV_TERMS.some(x => x[0] === terms)) errors.push('Payment terms must be Prepaid, Net 7, Net 15 or Net 30');
+  else if (terms !== (current.payment_terms || 'net15')) patch.payment_terms = terms;
+  const limit = rcvParseCents(form.credit_limit, { blank: true, zero: true });
+  if (!limit.ok) errors.push('Credit limit: ' + limit.error);
+  else if (limit.cents !== rcvCentsOrNull(current.credit_limit_cents)) patch.credit_limit_cents = limit.cents;
+  const ref = String(form.payment_ref == null ? '' : form.payment_ref).trim().toUpperCase();
+  const curRef = String(current.payment_ref || '').toUpperCase();
+  if (!ref) { if (curRef) errors.push('Payment reference cannot be removed once set'); }
+  else if (!/^[A-Z0-9]{2,20}$/.test(ref)) errors.push('Payment reference must be 2–20 letters A–Z or digits 0–9');
+  else if (ref !== curRef) patch.payment_ref = ref;
+  return errors.length ? { ok: false, errors, patch: {} } : { ok: true, errors, patch };
+}
+function rcvVancouverDate(ms){
+  const p = {};
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date(ms)).forEach(x => { p[x.type] = x.value; });
+  return `${p.year}-${p.month}-${p.day}`;
+}
+function rcvValidDate(s){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+}
+// New row objects with agency_name, student_name, move_in (the view rows stay as read).
+function rcvJoinInvoices(invoices, agencies, bookings, students){
+  const ag = new Map((agencies || []).map(a => [a.id, a]));
+  const bk = new Map((bookings || []).map(b => [b.id, b]));
+  const st = new Map((students || []).map(s => [s.id, s]));
+  return (invoices || []).map(r => {
+    const a = ag.get(r.agency_id), b = bk.get(r.booking_id), s = b && st.get(b.student_id);
+    return Object.assign({}, r, {
+      agency_name: a ? a.name : '',
+      student_name: s ? `${s.given_name || ''} ${s.family_name || ''}`.trim() : '',
+      move_in: b ? b.move_in || null : null,
+    });
+  });
+}
+const rcvUnpaid = r => r.status !== 'void' && Number(r.balance_cents) > 0;
+// f: { agency, status ('' any, 'unpaid', or a payment_status), overdue, q }.
+function rcvFilterInvoices(list, f){
+  f = f || {};
+  const q = String(f.q || '').trim().toLowerCase();
+  return (list || []).filter(r =>
+    (!f.agency || r.agency_id === f.agency)
+    && (!f.status || (f.status === 'unpaid' ? rcvUnpaid(r) : r.payment_status === f.status))
+    && (!f.overdue || r.payment_status === 'overdue')
+    && (!q || [r.number, r.booking_id, r.student_name, r.agency_name].some(v => String(v || '').toLowerCase().includes(q))));
+}
+const rcvNum = n => { const m = /(\d+)$/.exec(String(n || '')); return m ? Number(m[1]) : 0; };
+// Unpaid first by due date (then number); paid and void after, newest issued first.
+function rcvSortInvoices(list){
+  return (list || []).slice().sort((a, b) => {
+    const ua = rcvUnpaid(a), ub = rcvUnpaid(b);
+    if (ua !== ub) return ua ? -1 : 1;
+    if (ua) return String(a.due_on).localeCompare(String(b.due_on)) || rcvNum(a.number) - rcvNum(b.number);
+    return String(b.issued_on).localeCompare(String(a.issued_on)) || rcvNum(b.number) - rcvNum(a.number);
+  });
+}
+// Void invoices count as rows but not as money billed.
+function rcvTotals(list){
+  const t = { count: 0, total_cents: 0, paid_cents: 0, balance_cents: 0 };
+  (list || []).forEach(r => {
+    t.count++;
+    if (r.status !== 'void') { t.total_cents += Number(r.total_cents) || 0; t.paid_cents += Number(r.paid_cents) || 0; }
+    t.balance_cents += Number(r.balance_cents) || 0;
+  });
+  return t;
+}
+function rcvOpenInvoices(list, agencyId){
+  return rcvSortInvoices((list || []).filter(r => r.agency_id === agencyId && rcvUnpaid(r)));
+}
+function rcvAgencyBalance(balances, agencyId){
+  const b = (balances || []).find(x => x.agency_id === agencyId) || {};
+  const n = v => Number(v) || 0;
+  return {
+    agency_id: agencyId, credit_cents: n(b.credit_cents), outstanding_cents: n(b.outstanding_cents),
+    due_7d_cents: n(b.due_7d_cents), overdue_cents: n(b.overdue_cents), next_due_on: b.next_due_on || null,
+  };
+}
+// f: { agency_id, amount, received_on, reference, invoice_numbers[], notes } -> POST /payments body.
+function rcvValidateTransfer(f, today){
+  f = f || {};
+  const errors = [];
+  if (!f.agency_id) errors.push('Pick an agency');
+  const amt = rcvParseCents(f.amount);
+  if (!amt.ok) errors.push('Amount: ' + amt.error);
+  const on = String(f.received_on || '');
+  if (!rcvValidDate(on)) errors.push('Received on is not a valid date');
+  else if (on > today) errors.push('Received on cannot be in the future');
+  const reference = String(f.reference || '').trim();
+  if (!reference) errors.push('A bank reference is required');
+  else if (reference.length > 200) errors.push('The reference is too long (200 characters max)');
+  const notes = String(f.notes || '').trim();
+  if (notes.length > 1000) errors.push('Notes are too long (1000 characters max)');
+  if (errors.length) return { ok: false, errors, body: null };
+  const body = { agency_id: f.agency_id, amount_cents: amt.cents, received_on: on, reference };
+  const nums = [...new Set((f.invoice_numbers || []).filter(Boolean))];
+  if (nums.length) body.invoice_numbers = nums;
+  if (notes) body.notes = notes;
+  return { ok: true, errors, body };
+}
+// allocated: what the payment has on from_invoice_number right now (cents).
+function rcvValidateMove(f, allocated){
+  f = f || {};
+  const errors = [];
+  if (!f.to_invoice_number) errors.push('Pick the invoice to move to');
+  else if (f.to_invoice_number === f.from_invoice_number) errors.push('Pick a different invoice to move to');
+  const amt = rcvParseCents(f.amount);
+  if (!amt.ok) errors.push('Amount: ' + amt.error);
+  else if (amt.cents > Number(allocated)) errors.push(`Amount: at most ${rcvMoney(allocated)} is on ${f.from_invoice_number} from this payment`);
+  const reason = String(f.reason || '').trim();
+  if (!reason) errors.push('A reason is required');
+  if (errors.length) return { ok: false, errors, body: null };
+  return { ok: true, errors, body: {
+    payment_id: f.payment_id, from_invoice_number: f.from_invoice_number, to_invoice_number: f.to_invoice_number,
+    amount_cents: amt.cents, reason,
+  } };
+}
+// A refund staff already paid out by hand (Stripe or bank): at most the agency's credit.
+function rcvValidateRefund(f, creditCents){
+  f = f || {};
+  const errors = [];
+  const amt = rcvParseCents(f.amount);
+  if (!amt.ok) errors.push('Amount: ' + amt.error);
+  else if (amt.cents > Number(creditCents)) errors.push(`Amount: the agency has only ${rcvMoney(creditCents)} of credit`);
+  const reason = String(f.reason || '').trim();
+  if (!reason) errors.push('A reason is required');
+  else if (reason.length > 500) errors.push('The reason is too long (500 characters max)');
+  if (errors.length) return { ok: false, errors, body: null };
+  return { ok: true, errors, body: { agency_id: f.agency_id, amount_cents: amt.cents, reason } };
+}
+function rcvRefundResultMsg(amountCents, res){
+  const left = res && res.credit_cents != null ? `; ${rcvMoney(res.credit_cents)} of credit left` : '';
+  return `Refund of ${rcvMoney(amountCents)} recorded${left}`;
+}
+function rcvValidateVoid(reason){
+  const r = String(reason || '').trim();
+  return r ? { ok: true, errors: [], body: { reason: r } } : { ok: false, errors: ['A reason is required'], body: null };
+}
+// {allocations:[{invoice_number, amount_cents}], credit_cents} -> one line for staff.
+function rcvPaymentResultMsg(res){
+  if (!res) return 'Recorded';
+  const parts = (res.allocations || []).filter(a => Number(a.amount_cents) > 0)
+    .map(a => `${rcvMoney(a.amount_cents)} to ${a.invoice_number}`);
+  const credit = Number(res.credit_cents) || 0;
+  if (!parts.length) return credit > 0 ? `Nothing was open to apply it to; ${rcvMoney(credit)} kept as credit` : 'Recorded';
+  return 'Applied ' + parts.join(', ') + (credit > 0 ? `; ${rcvMoney(credit)} kept as credit` : '');
+}
+const RCV_ERRORS = {
+  REASON_REQUIRED: 'a reason is required',
+  OVER_ALLOCATION: 'that is more than this payment has on the invoice',
+  ALREADY_VOID: 'that invoice is already void',
+  INVOICE_VOID: 'that invoice is void, so money cannot go to it',
+  PAYMENT_REF_TAKEN: 'another agency already uses that payment reference',
+  INVOICE_NOT_FOUND: 'that invoice was not found for this agency',
+  PAYMENT_NOT_FOUND: 'that payment was not found',
+  AGENCY_NOT_FOUND: 'that agency was not found',
+  SAME_INVOICE: 'pick two different invoices',
+  INSUFFICIENT_CREDIT: 'that is more than the credit the agency has (it may have been used on an invoice meanwhile; refresh and check)',
+  BAD_AMOUNT: 'the amount is not valid',
+  SERVER_ERROR: 'the partner app hit an error; nothing was changed — try again, and tell Aldo if it keeps happening',
+};
+// An endpoint's refusal (HTTP status + JSON body) in plain English.
+function rcvErrorMessage(status, body){
+  body = body || {};
+  const code = body.code || '';
+  if (code === 'INVOICE_NOT_FOUND' && Array.isArray(body.invoice_numbers) && body.invoice_numbers.length) {
+    return 'invoice not found for this agency: ' + body.invoice_numbers.join(', ');
+  }
+  if (code === 'INVALID') {
+    const e = body.errors && typeof body.errors === 'object' ? Object.entries(body.errors) : [];
+    return e.length ? 'check the form: ' + e.map(([k, v]) => `${k.replace(/_/g, ' ')} (${v})`).join(', ') : 'check the form';
+  }
+  if (RCV_ERRORS[code]) return RCV_ERRORS[code];
+  if (status === 401) return 'your session was not accepted; reload the portal and sign in again';
+  if (status === 403) return 'only portal admins can do this';
+  return code || body.error || `HTTP ${status}`;
+}
+// One write at a time per dialog: a second submit while the first is in flight is dropped
+// (no double-recorded transfer). The button is disabled while fn runs and comes back when
+// fn does not report success (a validation message, a refusal, a thrown error); after a
+// successful write it stays disabled, since the dialog is closed or replaced.
+async function rcvRunOnce(state, setDisabled, fn){
+  if (state.busy) return false;
+  state.busy = true; setDisabled(true);
+  let ok = false;
+  try { ok = (await fn()) === true; }
+  finally { state.busy = false; if (!ok) setDisabled(false); }
+  return ok;
+}
+const RCV_EXPORTS = ['invoices', 'payments', 'allocations'];
+function rcvExportPath(type, from, to){
+  if (!RCV_EXPORTS.includes(type)) return { ok: false, error: 'Unknown export' };
+  if (from && !rcvValidDate(from)) return { ok: false, error: 'From is not a valid date' };
+  if (to && !rcvValidDate(to)) return { ok: false, error: 'To is not a valid date' };
+  if (from && to && from > to) return { ok: false, error: 'From must be on or before To' };
+  let path = '/api/staff/billing/export.csv?type=' + type;
+  if (from) path += '&from=' + from;
+  if (to) path += '&to=' + to;
+  return { ok: true, path };
+}
+// The Content-Disposition filename (plain or RFC 5987), path parts stripped.
+function rcvFilename(cd, fallback){
+  const s = String(cd || '');
+  let name = '';
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(s);
+  if (star) { try { name = decodeURIComponent(star[1].trim()); } catch (_) { name = ''; } }
+  if (!name) { const m = /filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;\s]+)/.exec(s); if (m) name = m[1] || m[2] || ''; }
+  name = name.split(/[\\/]/).pop().trim();
+  return name || fallback;
+}
+/* RECEIVABLES-CORE-END */
+/* ---- Receivables (DOM side of RECEIVABLES-CORE) -----------------------------
+   A sub-tab of Partners, admin only. Reads the billing views with the signed-in
+   admin's session (vm_is_admin() select policies); every write goes to the
+   partner app's /api/staff/billing/* endpoints with the staff JWT, exactly like
+   "Send sign-in link", and the receivables data is read again afterwards. */
+const RCV_STATE = {
+  filters: { agency: '', status: 'unpaid', overdue: false, q: '' },
+  exportFrom: '', exportTo: '',
+  pay: { agencyId: '', list: null, error: '', loading: false, seq: 0 },
+};
+const RCV_METHODS = { card: 'Card', bank_transfer: 'Bank transfer', stripe_bank_transfer: 'Stripe bank transfer', credit: 'Credit applied' };
+let rcvData = null, rcvLoading = null;
+function rcvToday(){ return rcvVancouverDate(Date.now()); }
+function rcvRows(){ return rcvJoinInvoices(rcvData ? rcvData.invoices : [], ptnData.agencies, ptnData.bookings, ptnData.students); }
+async function rcvLoad(force){
+  if (rcvLoading) return rcvLoading;
+  if (rcvData && !rcvData.error && !force && Date.now() - rcvData.loadedAt < 60000) return;
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) { rcvData = { invoices: [], balances: [], loadedAt: Date.now(), error: 'Not connected to the database.' }; return; }
+  rcvLoading = (async () => {
+    try {
+      const [invoices, balances] = await Promise.all([
+        ptnSelectAll(sb, 'partner_invoice_status', '*', q => q.order('issued_on', { ascending: false }).order('id')),
+        ptnSelectAll(sb, 'partner_agency_balance', '*', q => q.order('agency_id')),
+      ]);
+      rcvData = { invoices, balances, loadedAt: Date.now(), error: '' };
+    } catch (e) {
+      console.error('[receivables] load failed', e);
+      const hint = /partner_/.test(String(e.message || '')) ? ' (has the partner billing SQL been applied?)' : '';
+      rcvData = { invoices: [], balances: [], loadedAt: Date.now(), error: String(e.message || e) + hint };
+    } finally { rcvLoading = null; }
+    if (PTN_STATE.tab === 'receivables') renderPartners();
+  })();
+  return rcvLoading;
+}
+async function rcvLoadPayments(agencyId){
+  const pay = RCV_STATE.pay, my = ++pay.seq;
+  Object.assign(pay, { agencyId, list: null, error: '', loading: !!agencyId });
+  if (!agencyId) return;
+  try {
+    const data = await rcvJson('GET', '/api/staff/billing/payments?agency_id=' + encodeURIComponent(agencyId));
+    if (my !== pay.seq) return;
+    pay.list = data.payments || [];
+  } catch (e) {
+    if (my !== pay.seq) return;
+    pay.error = String(e.message || e);
+  }
+  pay.loading = false;
+  if (PTN_STATE.tab === 'receivables') renderPartners();
+}
+// After any billing write: the views again, and the open agency's payments.
+async function rcvAfterWrite(){
+  if (rcvLoading) { try { await rcvLoading; } catch (_) {} }
+  await Promise.all([rcvLoad(true), RCV_STATE.pay.agencyId ? rcvLoadPayments(RCV_STATE.pay.agencyId) : null]);
+}
+// fetch to the partner app with the staff JWT; one retry on 401 after a session refresh.
+async function rcvApi(method, path, body){
+  const call = tok => fetch(PARTNERS_APP + path, {
+    method,
+    headers: Object.assign({ Authorization: 'Bearer ' + tok }, body ? { 'Content-Type': 'application/json' } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let tok = await ptnToken(false);
+  if (!tok) throw new Error('you are not signed in to the database; reload the portal');
+  try {
+    let res = await call(tok);
+    if (res.status === 401) { tok = await ptnToken(true); if (tok) res = await call(tok); }
+    return res;
+  } catch (e) { throw new Error('could not reach the partner app (' + (e.message || e) + ')'); }
+}
+async function rcvJson(method, path, body){
+  const res = await rcvApi(method, path, body);
+  let data = null; try { data = await res.json(); } catch (_) {}
+  if (!res.ok || !data || data.ok === false) throw new Error(rcvErrorMessage(res.status, data));
+  return data;
+}
+function rcvHtml(){
+  if (!rcvData) { rcvLoad(); if (!rcvData) return '<p class="name-sub">Loading receivables…</p>'; }
+  if (rcvData.error) return `<p class="name-sub">Could not load receivables: ${esc(rcvData.error)}</p>`;
+  const d = ptnData, f = RCV_STATE.filters;
+  const rows = rcvRows();
+  const list = rcvSortInvoices(rcvFilterInvoices(rows, f));
+  const t = rcvTotals(list);
+  const agency = f.agency ? d.agencies.find(a => a.id === f.agency) : null;
+  const statusOpts = [['', 'All statuses'], ['unpaid', 'Balance due'],
+    ...['open', 'partially_paid', 'overdue', 'paid', 'void'].map(s => [s, rcvStatus(s).label])];
+  const td = 'style="padding:8px;white-space:nowrap"', num = 'style="text-align:right;white-space:nowrap;padding:8px"';
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <select class="form-input" data-rcv-filter="agency" style="max-width:260px">${ptnOptions([['', 'All agencies'], ...d.agencies.map(a => [a.id, a.name])], f.agency)}</select>
+      <select class="form-input" data-rcv-filter="status" style="max-width:200px">${ptnOptions(statusOpts, f.status)}</select>
+      <label class="name-sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-rcv-overdue${f.overdue ? ' checked' : ''}> Overdue only</label>
+      <input class="form-input" data-rcv-search placeholder="Invoice, booking or student" value="${esc(f.q)}" style="max-width:220px">
+      <span class="name-sub">${list.length} of ${rows.length}</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary" type="button" data-rcv-transfer>Record bank transfer</button>
+    </div>
+    ${agency ? rcvAgencySummaryHtml(agency) : rcvCreditListHtml()}
+    ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th ${td}>Invoice</th><th>Agency</th><th>Student / booking</th><th>Due</th>
+        <th ${num}>Total</th><th ${num}>Paid</th><th ${num}>Balance</th><th style="padding:8px">Status</th><th></th></tr></thead>
+      <tbody>${list.map(r => `<tr style="border-top:1px solid var(--line)">
+        <td ${td}><strong>${esc(r.number)}</strong><br><span class="name-sub">issued ${esc(ptnDay(r.issued_on))}</span></td>
+        <td>${esc(r.agency_name || '—')}</td>
+        <td>${esc(r.student_name || '—')}<br><span class="name-sub">${esc(r.booking_id || '')}${r.move_in ? ' · in ' + esc(ptnDay(r.move_in)) : ''}</span></td>
+        <td style="white-space:nowrap">${esc(ptnDay(r.due_on))}</td>
+        <td ${num}>${esc(rcvMoney(r.total_cents))}</td><td ${num}>${esc(rcvMoney(r.paid_cents))}</td>
+        <td ${num}><strong>${esc(rcvMoney(r.balance_cents))}</strong></td>
+        <td style="padding:8px">${ptnPill(rcvStatus(r.payment_status))}${r.void_reason ? `<br><span class="name-sub">${esc(r.void_reason)}</span>` : ''}</td>
+        <td style="padding:8px">${r.status === 'void' ? '' : `<button class="btn btn-ghost btn-mini" type="button" data-rcv-void="${esc(r.number)}">Void…</button>`}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr style="border-top:2px solid var(--line)"><td ${td} colspan="4"><strong>Total</strong> <span class="name-sub">(${t.count} invoice${t.count === 1 ? '' : 's'}, void not counted)</span></td>
+        <td ${num}><strong>${esc(rcvMoney(t.total_cents))}</strong></td><td ${num}><strong>${esc(rcvMoney(t.paid_cents))}</strong></td>
+        <td ${num}><strong>${esc(rcvMoney(t.balance_cents))}</strong></td><td colspan="2"></td></tr></tfoot>
+      </table></div>` : `<p class="name-sub">${rows.length ? 'No invoices match.' : 'No partner invoices yet.'}</p>`}
+    ${agency ? rcvPaymentsHtml(agency) : '<p class="name-sub" style="margin-top:14px">Pick an agency to see its payments and move money between its invoices.</p>'}
+    ${rcvExportHtml()}`;
+}
+function rcvAgencySummaryHtml(a){
+  const b = rcvAgencyBalance(rcvData.balances, a.id);
+  const cell = (label, value, red) => `<div><div class="name-sub">${esc(label)}</div><strong${red ? ' style="color:var(--red-dark)"' : ''}>${esc(value)}</strong></div>`;
+  return `<div class="card" style="padding:12px 16px;margin-bottom:12px;display:flex;gap:22px;flex-wrap:wrap;align-items:center">
+    ${cell('Outstanding', rcvMoney(b.outstanding_cents))}
+    ${cell('Due in 7 days', rcvMoney(b.due_7d_cents))}
+    ${cell('Overdue', rcvMoney(b.overdue_cents), b.overdue_cents > 0)}
+    ${cell('Credit', rcvMoney(b.credit_cents))}
+    ${cell('Next due', b.next_due_on ? ptnDay(b.next_due_on) : '—')}
+    ${cell('Terms', rcvTermsLabel(a.payment_terms))}
+    ${cell('Credit limit', a.credit_limit_cents == null ? 'None' : rcvMoney(a.credit_limit_cents))}
+    ${cell('Transfer reference', a.payment_ref || '—')}
+    ${b.credit_cents > 0 ? `<span style="display:inline-flex;gap:8px"><button class="btn btn-ghost" type="button" data-rcv-credit="${esc(a.id)}">Apply credit</button>
+      <button class="btn btn-ghost" type="button" data-rcv-refund="${esc(a.id)}">Record refund</button></span>` : ''}
+  </div>`;
+}
+// With no agency picked: every agency holding credit, each with Apply credit.
+function rcvCreditListHtml(){
+  const name = new Map(ptnData.agencies.map(a => [a.id, a.name]));
+  const withCredit = rcvData.balances.filter(b => Number(b.credit_cents) > 0);
+  if (!withCredit.length) return '';
+  return `<div class="card" style="padding:10px 16px;margin-bottom:12px;display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+    <span class="name-sub">Credit on account:</span>
+    ${withCredit.map(b => `<span style="display:inline-flex;gap:6px;align-items:center"><strong>${esc(name.get(b.agency_id) || b.name || '—')}</strong> ${esc(rcvMoney(b.credit_cents))}
+      <button class="btn btn-ghost btn-mini" type="button" data-rcv-credit="${esc(b.agency_id)}">Apply credit</button></span>`).join('')}
+  </div>`;
+}
+function rcvPaymentsHtml(a){
+  const pay = RCV_STATE.pay;
+  if (pay.agencyId !== a.id) { if (!pay.loading) setTimeout(() => rcvLoadPayments(a.id), 0); }
+  const head = `<div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><strong>Payments from ${esc(a.name)}</strong></div>`;
+  if (pay.agencyId !== a.id || pay.loading) return head + '<p class="name-sub">Loading payments…</p>';
+  if (pay.error) return head + `<p class="name-sub">Could not load payments: ${esc(pay.error)}</p>`;
+  if (!pay.list || !pay.list.length) return head + '<p class="name-sub">No payments recorded yet.</p>';
+  return head + `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+    <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Received</th><th>Method</th><th>Reference</th>
+      <th style="text-align:right;padding:8px">Amount</th><th style="padding:8px">Applied to</th></tr></thead>
+    <tbody>${pay.list.map(p => `<tr style="border-top:1px solid var(--line);vertical-align:top">
+      <td style="padding:8px;white-space:nowrap">${esc(ptnDay(p.received_on))}<br><span class="name-sub">${esc(p.recorded_by || '')}</span></td>
+      <td style="padding:8px">${esc(RCV_METHODS[p.method] || p.method || '—')}</td>
+      <td style="padding:8px">${esc(p.reference || '—')}${p.notes ? `<br><span class="name-sub">${esc(p.notes)}</span>` : ''}</td>
+      <td style="text-align:right;padding:8px;white-space:nowrap"><strong>${esc(rcvMoney(p.amount_cents))}</strong></td>
+      <td style="padding:8px">${(p.allocations || []).map(al => `<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+          <span><strong>${esc(al.invoice_number)}</strong> ${esc(rcvMoney(al.amount_cents))}</span>
+          ${Number(al.amount_cents) > 0 ? `<button class="btn btn-ghost btn-mini" type="button" data-rcv-move="${esc(p.id)}" data-rcv-from="${esc(al.invoice_number)}" data-rcv-amt="${esc(al.amount_cents)}">Move…</button>` : ''}
+        </div>`).join('') || '<span class="name-sub">Nothing applied</span>'}
+        ${Number(p.unallocated_cents) > 0 ? `<div class="name-sub">${esc(rcvMoney(p.unallocated_cents))} not on an invoice (credit)</div>` : ''}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+function rcvExportHtml(){
+  return `<div class="card" style="padding:12px 16px;margin-top:18px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+    <strong style="width:100%">Export CSV</strong>
+    <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">From<input class="form-input" type="date" data-rcv-export-date="exportFrom" value="${esc(RCV_STATE.exportFrom)}"></label>
+    <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">To<input class="form-input" type="date" data-rcv-export-date="exportTo" value="${esc(RCV_STATE.exportTo)}"></label>
+    <button class="btn btn-ghost" type="button" data-rcv-export="invoices">Invoices</button>
+    <button class="btn btn-ghost" type="button" data-rcv-export="payments">Payments</button>
+    <button class="btn btn-ghost" type="button" data-rcv-export="allocations">Allocations</button>
+    <span class="name-sub" style="width:100%">Invoices by issue date, payments by the day received, allocations by the day they were made. Leave both dates blank for everything.</span>
+  </div>`;
+}
+function rcvWire(root){
+  const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => fn(el, e)));
+  on('[data-rcv-filter]', 'change', s => {
+    RCV_STATE.filters[s.dataset.rcvFilter] = s.value;
+    if (s.dataset.rcvFilter === 'agency') rcvLoadPayments(s.value);
+    renderPartners();
+  });
+  on('[data-rcv-overdue]', 'change', c => { RCV_STATE.filters.overdue = c.checked; renderPartners(); });
+  on('[data-rcv-search]', 'change', i => { RCV_STATE.filters.q = i.value; renderPartners(); });
+  on('[data-rcv-transfer]', 'click', () => rcvOpenTransfer());
+  on('[data-rcv-void]', 'click', b => rcvOpenVoid(b.dataset.rcvVoid));
+  on('[data-rcv-credit]', 'click', b => rcvOpenCredit(b.dataset.rcvCredit));
+  on('[data-rcv-refund]', 'click', b => rcvOpenRefund(b.dataset.rcvRefund));
+  on('[data-rcv-move]', 'click', b => rcvOpenMove(b.dataset.rcvMove, b.dataset.rcvFrom, Number(b.dataset.rcvAmt)));
+  on('[data-rcv-export-date]', 'change', i => { RCV_STATE[i.dataset.rcvExportDate] = i.value; });
+  on('[data-rcv-export]', 'click', b => rcvExport(b, b.dataset.rcvExport));
+}
+// ---- the Receivables dialog (one modal, filled per action)
+const RCV_MODAL = { onSubmit: null, busy: false, wired: false };
+const rcvEl = id => document.getElementById(id);
+function rcvModalWire(){
+  if (RCV_MODAL.wired) return;
+  RCV_MODAL.wired = true;
+  const bd = rcvEl('rcv-backdrop'), form = rcvEl('rcv-modal-form');
+  bd.addEventListener('click', e => { if (e.target === bd && !RCV_MODAL.busy) rcvModalClose(); });
+  rcvEl('rcv-modal-close').addEventListener('click', () => { if (!RCV_MODAL.busy) rcvModalClose(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && bd.classList.contains('open') && !RCV_MODAL.busy) rcvModalClose(); });
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const submit = RCV_MODAL.onSubmit;
+    if (!submit) return;
+    const err = form.querySelector('[data-rcv-err]'), btn = form.querySelector('button[type="submit"]');
+    await rcvRunOnce(RCV_MODAL, d => { if (btn) btn.disabled = d; }, () => {
+      if (err) err.textContent = '';
+      return submit(form, err);
+    });
+  });
+}
+// o: { title (trusted HTML), sub, body (HTML), submit, wire(form), onSubmit(form, errEl) }
+function rcvModalOpen(o){
+  if (!rcvEl('rcv-backdrop')) return;
+  rcvModalWire();
+  rcvEl('rcv-modal-title').innerHTML = o.title;
+  rcvEl('rcv-modal-sub').textContent = o.sub || '';
+  const form = rcvEl('rcv-modal-form');
+  form.innerHTML = `${o.body}
+    <div class="card-sub" data-rcv-err style="color:var(--red-dark);min-height:18px;margin-top:4px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-ghost" type="button" data-rcv-close>Cancel</button>
+      <button class="btn btn-primary" type="submit">${esc(o.submit)}</button>
+    </div>`;
+  form.querySelectorAll('[data-rcv-close]').forEach(b => b.addEventListener('click', () => { if (!RCV_MODAL.busy) rcvModalClose(); }));
+  RCV_MODAL.onSubmit = o.onSubmit; RCV_MODAL.busy = false;
+  if (o.wire) o.wire(form);
+  rcvEl('rcv-backdrop').classList.add('open'); rcvEl('rcv-backdrop').setAttribute('aria-hidden', 'false');
+  setTimeout(() => { const f = form.querySelector('select, input:not([type=checkbox]), textarea'); if (f) f.focus(); }, 50);
+}
+function rcvModalClose(){
+  const bd = rcvEl('rcv-backdrop'); if (!bd) return;
+  bd.classList.remove('open'); bd.setAttribute('aria-hidden', 'true');
+  RCV_MODAL.onSubmit = null;
+}
+// Swap the form for the outcome, so a long result stays readable (a toast is gone in 3 s).
+function rcvModalDone(message){
+  const form = rcvEl('rcv-modal-form');
+  form.innerHTML = `<p style="margin:4px 0 0;line-height:1.5">${esc(message)}</p>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-primary" type="button" data-rcv-close>Done</button></div>`;
+  form.querySelector('[data-rcv-close]').addEventListener('click', rcvModalClose);
+  RCV_MODAL.onSubmit = null;
+}
+// true when the write went through (the submit button then stays disabled), false on error.
+async function rcvSubmit(err, label, fn){
+  try { await fn(); return true; }
+  catch (e) {
+    const m = `Could not ${label}: ${e.message || e}`;
+    if (err && err.isConnected) err.textContent = m;
+    showToast(m);
+    return false;
+  }
+}
+const rcvFormField = (label, input) => `<div class="form-row single"><div class="form-field"><label>${esc(label)}</label>${input}</div></div>`;
+const rcvDollars = cents => rcvMoney(cents).replace('$', '');
+function rcvDrawInvoicePick(form, agencyId){
+  const box = form.querySelector('[data-rcv-inv-pick]');
+  const open = agencyId ? rcvOpenInvoices(rcvRows(), agencyId) : [];
+  box.innerHTML = !agencyId ? '<span class="name-sub">Pick an agency first.</span>'
+    : !open.length ? '<span class="name-sub">No open invoices: the whole amount becomes credit.</span>'
+    : '<span class="name-sub">Tick none to apply it oldest due first.</span>' + open.map(r => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-top:4px">
+        <input type="checkbox" name="inv" value="${esc(r.number)}"> <span><strong>${esc(r.number)}</strong> ${esc(r.student_name || r.booking_id || '')} · due ${esc(ptnDay(r.due_on))} · balance ${esc(rcvMoney(r.balance_cents))}</span></label>`).join('');
+}
+function rcvOpenTransfer(){
+  if (!rcvData || rcvData.error) return;
+  const today = rcvToday();
+  rcvModalOpen({
+    title: 'Record <em>bank transfer</em>',
+    sub: 'Applied to the invoices you tick, else oldest due first; anything left becomes credit',
+    body: `${rcvFormField('Agency', `<select class="form-input" name="agency_id">${ptnOptions([['', 'Pick an agency'],
+        ...ptnData.agencies.map(a => [a.id, a.name + (a.payment_ref ? ` (${a.payment_ref})` : '')])], RCV_STATE.filters.agency)}</select>`)}
+      <div class="form-row">
+        <div class="form-field"><label>Amount received (CAD)</label><input class="form-input" name="amount" inputmode="decimal" placeholder="1500.00"></div>
+        <div class="form-field"><label>Received on</label><input class="form-input" name="received_on" type="date" value="${today}" max="${today}"></div>
+      </div>
+      ${rcvFormField('Bank reference *', '<input class="form-input" name="reference" maxlength="200" placeholder="Wire reference or memo">')}
+      <div class="form-field" style="margin-bottom:12px"><label>Apply to (optional)</label><div data-rcv-inv-pick></div></div>
+      ${rcvFormField('Notes (optional)', '<textarea class="form-input" name="notes" rows="2" maxlength="1000"></textarea>')}`,
+    submit: 'Record transfer',
+    wire: form => {
+      const sel = form.elements.agency_id;
+      sel.addEventListener('change', () => rcvDrawInvoicePick(form, sel.value));
+      rcvDrawInvoicePick(form, sel.value);
+    },
+    onSubmit: async (form, err) => {
+      const el = form.elements;
+      const v = rcvValidateTransfer({
+        agency_id: el.agency_id.value, amount: el.amount.value, received_on: el.received_on.value,
+        reference: el.reference.value, notes: el.notes.value,
+        invoice_numbers: [...form.querySelectorAll('input[name="inv"]:checked')].map(x => x.value),
+      }, rcvToday());
+      if (!v.ok) { err.textContent = v.errors.join('. '); return; }
+      return rcvSubmit(err, 'record the transfer', async () => {
+        const res = await rcvJson('POST', '/api/staff/billing/payments', v.body);
+        rcvModalDone(rcvPaymentResultMsg(res));
+        showToast('Transfer recorded');
+        await rcvAfterWrite();
+      });
+    },
+  });
+}
+function rcvOpenMove(paymentId, from, allocated){
+  const p = (RCV_STATE.pay.list || []).find(x => x.id === paymentId);
+  if (!p || !rcvData) return;
+  const targets = rcvOpenInvoices(rcvRows(), p.agency_id).filter(r => r.number !== from);
+  if (!targets.length) { showToast('This agency has no other open invoice to move it to'); return; }
+  rcvModalOpen({
+    title: `Move money off <em>${esc(from)}</em>`,
+    sub: `${rcvMoney(allocated)} of the ${rcvMoney(p.amount_cents)} payment received ${ptnDay(p.received_on)} (${p.reference || 'no reference'}) is on ${from}`,
+    body: `${rcvFormField('Move to', `<select class="form-input" name="to">${ptnOptions([['', 'Pick an invoice'],
+        ...targets.map(r => [r.number, `${r.number} · ${r.student_name || r.booking_id || ''} · balance ${rcvMoney(r.balance_cents)}`])], '')}</select>`)}
+      ${rcvFormField('Amount (CAD)', `<input class="form-input" name="amount" inputmode="decimal" value="${esc(rcvDollars(allocated))}">`)}
+      ${rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="2" maxlength="500" placeholder="Why it moves (kept in the audit trail)"></textarea>')}`,
+    submit: 'Move',
+    onSubmit: async (form, err) => {
+      const el = form.elements;
+      const v = rcvValidateMove({ payment_id: paymentId, from_invoice_number: from, to_invoice_number: el.to.value, amount: el.amount.value, reason: el.reason.value }, allocated);
+      if (!v.ok) { err.textContent = v.errors.join('. '); return; }
+      return rcvSubmit(err, 'move it', async () => {
+        await rcvJson('POST', '/api/staff/billing/reallocate', v.body);
+        rcvModalClose();
+        showToast(`Moved ${rcvMoney(v.body.amount_cents)} from ${from} to ${v.body.to_invoice_number}`);
+        await rcvAfterWrite();
+      });
+    },
+  });
+}
+function rcvOpenVoid(number){
+  const r = rcvData && rcvData.invoices.find(x => x.number === number);
+  if (!r) return;
+  const paid = Number(r.paid_cents) || 0;
+  rcvModalOpen({
+    title: `Void <em>${esc(number)}</em>`,
+    sub: `${rcvMoney(r.total_cents)} invoice for booking ${r.booking_id || '—'}`,
+    body: `<p style="margin:0 0 12px;line-height:1.5">${paid > 0 ? `${esc(rcvMoney(paid))} has been paid on it; that becomes the agency's credit. ` : ''}A void invoice cannot be reopened.</p>
+      ${rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="2" maxlength="500" placeholder="Why it is voided (kept on the invoice)"></textarea>')}`,
+    submit: 'Void invoice',
+    onSubmit: async (form, err) => {
+      const v = rcvValidateVoid(form.elements.reason.value);
+      if (!v.ok) { err.textContent = v.errors.join('. '); return; }
+      return rcvSubmit(err, 'void it', async () => {
+        const res = await rcvJson('POST', `/api/staff/billing/invoices/${encodeURIComponent(number)}/void`, v.body);
+        rcvModalClose();
+        const credit = Number(res.credit_cents) || 0;
+        showToast(`${number} voided` + (credit > 0 ? `; ${rcvMoney(credit)} moved to credit` : ''));
+        await rcvAfterWrite();
+      });
+    },
+  });
+}
+function rcvOpenCredit(agencyId){
+  const a = ptnData.agencies.find(x => x.id === agencyId);
+  if (!a || !rcvData) return;
+  const b = rcvAgencyBalance(rcvData.balances, agencyId);
+  const open = rcvOpenInvoices(rcvRows(), agencyId);
+  rcvModalOpen({
+    title: 'Apply <em>credit</em>',
+    sub: `${a.name} has ${rcvMoney(b.credit_cents)} of credit`,
+    body: open.length
+      ? rcvFormField('Apply to', `<select class="form-input" name="invoice">${ptnOptions([['', 'Oldest due first'],
+          ...open.map(r => [r.number, `${r.number} · due ${ptnDay(r.due_on)} · balance ${rcvMoney(r.balance_cents)}`])], '')}</select>`)
+      : '<p class="name-sub" style="margin:0">This agency has no open invoice right now, so there is nothing to apply it to.</p>',
+    submit: 'Apply credit',
+    onSubmit: async (form, err) => {
+      const el = form.elements;
+      const body = { agency_id: agencyId };
+      if (el.invoice && el.invoice.value) body.invoice_number = el.invoice.value;
+      return rcvSubmit(err, 'apply the credit', async () => {
+        const res = await rcvJson('POST', '/api/staff/billing/credits/apply', body);
+        const applied = Number(res.applied_cents) || 0;
+        rcvModalDone(applied > 0 ? `Applied ${rcvMoney(applied)} of credit` : 'Nothing was applied (no open balance to apply it to)');
+        await rcvAfterWrite();
+      });
+    },
+  });
+}
+function rcvOpenRefund(agencyId){
+  const a = ptnData.agencies.find(x => x.id === agencyId);
+  if (!a || !rcvData) return;
+  const credit = rcvAgencyBalance(rcvData.balances, agencyId).credit_cents;
+  if (credit <= 0) { showToast(`${a.name} has no credit to refund`); return; }
+  rcvModalOpen({
+    title: 'Record <em>refund</em>',
+    sub: `${a.name} has ${rcvMoney(credit)} of credit`,
+    body: `<p style="margin:0 0 12px;line-height:1.5">Use this after refunding the agency in Stripe or by bank, so the credit isn't applied to a later invoice.</p>
+      ${rcvFormField('Amount refunded (CAD)', `<input class="form-input" name="amount" inputmode="decimal" value="${esc(rcvDollars(credit))}">`)}
+      ${rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="2" maxlength="500" placeholder="e.g. Stripe refund re_… for the cancelled booking"></textarea>')}`,
+    submit: 'Record refund',
+    onSubmit: async (form, err) => {
+      const v = rcvValidateRefund({ agency_id: agencyId, amount: form.elements.amount.value, reason: form.elements.reason.value }, credit);
+      if (!v.ok) { err.textContent = v.errors.join('. '); return; }
+      return rcvSubmit(err, 'record the refund', async () => {
+        const res = await rcvJson('POST', '/api/staff/billing/credits/refund', v.body);
+        rcvModalDone(rcvRefundResultMsg(v.body.amount_cents, res));
+        showToast('Refund recorded');
+        await rcvAfterWrite();
+      });
+    },
+  });
+}
+async function rcvExport(btn, type){
+  const p = rcvExportPath(type, RCV_STATE.exportFrom, RCV_STATE.exportTo);
+  if (!p.ok) { showToast(p.error); return; }
+  btn.disabled = true;
+  try {
+    const res = await rcvApi('GET', p.path);
+    if (!res.ok) { let data = null; try { data = await res.json(); } catch (_) {} throw new Error(rcvErrorMessage(res.status, data)); }
+    const blob = await res.blob();
+    const name = rcvFilename(res.headers.get('Content-Disposition'), `vanmates-${type}.csv`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { showToast('Could not export: ' + (e.message || e)); }
+  finally { btn.disabled = false; }
 }
 /* CHECKOUT-CORE-START */
 /* Checkouts page. Phase 1 stored every value the resident's form computed
