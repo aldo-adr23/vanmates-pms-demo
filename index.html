@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-26r"></script>
+<script src="pms-supabase.js?v=2026-09-26s"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20178,12 +20178,13 @@ function invMonths(input){
   if (!/^\d{1,2}$/.test(s) || Number(s) < 1) return { ok: false, value: null };
   return { ok: true, value: Number(s) };
 }
+// Blank building terms are valid: the database view fills them with the website
+// terms (deposit half a month's rent, cleaning included, 3-month minimum).
 function invReadiness(p){
-  const missing = [];
-  if (!p || p.deposit_cents == null) missing.push('deposit');
-  if (!p || p.cleaning_fee_cents == null) missing.push('cleaning fee');
-  if (!p || p.min_stay_months == null) missing.push('minimum stay');
-  return { ready: missing.length === 0, missing };
+  const custom = [], blank = [];
+  [['deposit_cents', 'deposit'], ['cleaning_fee_cents', 'cleaning fee'], ['min_stay_months', 'minimum stay']]
+    .forEach(([k, label]) => (p && p[k] != null ? custom : blank).push(label));
+  return { website: custom.length === 0, custom, blank };
 }
 function invDay(iso){
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
@@ -20353,22 +20354,23 @@ function invUnlinkedHtml(list){
 }
 function invCardHtml(g, today){
   const p = g.prop, rd = invReadiness(p), am = Array.isArray(p.amenities) ? p.amenities : [];
-  const pill = rd.ready ? '<span class="tag-pill green">Ready for partners</span>'
-    : `<span class="tag-pill gold">Missing: ${esc(rd.missing.join(', '))}</span>`;
-  const field = (name, label, value, mode) =>
-    `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${label}<input class="form-input" name="${name}" value="${esc(value)}"${mode ? ` inputmode="${mode}"` : ''}></label>`;
+  const pill = rd.website ? '<span class="tag-pill">Website terms</span>'
+    : `<span class="tag-pill blue"${rd.blank.length ? ` title="Website terms for: ${esc(rd.blank.join(', '))}"` : ''}>Custom terms</span>`;
+  const field = (name, label, value, mode, ph) =>
+    `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px">${label}<input class="form-input" name="${name}" value="${esc(value)}"${mode ? ` inputmode="${mode}"` : ''}${ph ? ` placeholder="${esc(ph)}"` : ''}></label>`;
   const hidden = g.rooms.length - g.visible;
   const q = esc([p.name, ...g.rooms.map(r => r.task_name)].join(' ').toLowerCase());
   return `<div class="card" style="padding:16px;margin-bottom:14px" data-inv-prop="${esc(p.id)}" data-inv-q="${q}">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
       <div><strong>${esc(p.name)}</strong> <span class="name-sub">${esc(p.address || '')}</span><br>
         <span class="name-sub">${g.visible} rooms${hidden > 0 ? ` (${hidden} hidden)` : ''} · ${g.ready} partner-ready</span> ${pill}</div>
-      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-inv-bookable${p.partner_bookable ? ' checked' : ''}${rd.ready || p.partner_bookable ? '' : ' disabled'}> Partner bookable</label>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-inv-bookable${p.partner_bookable ? ' checked' : ''}> Partner bookable</label>
     </div>
     <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px">
-      ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal')}
-      ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal')}
-      ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric')}
+      ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal', "Blank = half a month's rent")}
+      ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal', 'Blank = included')}
+      ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric', 'Blank = 3 months')}
+      <div class="name-sub" style="grid-column:1/-1">Blank uses the website terms: deposit half a month's rent, cleaning included, 3-month minimum, $295 membership.</div>
       ${field('utilities', 'Utilities', p.utilities_note || '')}
       ${field('wifi', 'Wi-Fi', p.wifi_note || '')}
       ${field('laundry', 'Laundry', p.laundry_note || '')}
@@ -20432,14 +20434,11 @@ async function invSaveTerms(form){
     utilities_note: el.utilities.value.trim() || null, wifi_note: el.wifi.value.trim() || null, laundry_note: el.laundry.value.trim() || null,
     amenities: [...form.querySelectorAll('input[name=am]:checked')].map(x => x.value),
   }, invStamp());
-  const p = invData.props.find(x => x.id === id);
-  let unbooked = false;
-  if (!invReadiness(patch).ready) { patch.partner_bookable = false; unbooked = !!(p && p.partner_bookable); }
   msg.textContent = 'Saving…';
   if (btn) btn.disabled = true;
   try {
     await invUpdate('inventory_properties', id, patch);
-    showToast(unbooked ? 'Saved, and hidden from partners until the terms are complete' : 'Terms saved');
+    showToast('Terms saved');
     await invReload();
   } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
 }
