@@ -287,6 +287,32 @@
   .cko-open{border:0;background:none;padding:0;font:inherit;font-weight:700;color:inherit;cursor:pointer;text-align:left}
   .cko-open:hover{text-decoration:underline}
 
+  /* Checkouts → Reports (Phase 4b). Bars reuse the Sales dashboard's .bar-* rules. */
+  .cko-rpt-period{margin:4px 0 12px}
+  .cko-rpt-head{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}
+  .cko-rpt-head .kpi{padding:14px 16px}
+  .cko-rpt-head .kpi-value{font-size:24px}
+  .cko-rpt-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:18px}
+  .cko-rpt-card{display:flex;flex-direction:column;gap:4px}
+  .cko-rpt-card.thin{background:var(--cream)}
+  .cko-rpt-card.thin .cko-rpt-val{color:var(--muted)}
+  .cko-rpt-main{display:flex;align-items:baseline;gap:8px;margin-top:4px}
+  .cko-rpt-val,.cko-rpt-link,.cko-rpt-sort{border:0;background:none;padding:0;color:inherit;text-align:left}
+  .cko-rpt-link,.cko-rpt-sort{font:inherit}
+  .cko-rpt-val{font-family:var(--serif);font-size:26px;font-weight:700;color:var(--ink)}
+  button.cko-rpt-val,.cko-rpt-link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:4px}
+  .cko-rpt-sort{font-size:inherit;font-weight:inherit;letter-spacing:inherit;text-transform:inherit;cursor:pointer}
+  .cko-rpt-delta{font-size:13px;font-weight:700}
+  .cko-rpt-delta.good{color:var(--green)}
+  .cko-rpt-delta.bad{color:var(--red)}
+  .cko-rpt-trend{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-bottom:18px}
+  .cko-rpt-chart{height:150px;gap:4px;overflow-x:auto}
+  .cko-rpt-chart .bar-col{height:100%;min-width:28px}
+  .cko-rpt-chart .bar-pair{flex:1;min-height:0}
+  .cko-rpt-chart .bar-pair .bar{width:100%}
+  .cko-rpt-chart .bar-label{font-size:10px;white-space:nowrap}
+  @media (max-width:700px){ .cko-rpt-head{grid-template-columns:repeat(2,minmax(0,1fr))} .cko-rpt-trend{grid-template-columns:1fr} }
+
   /* ---------- Section visibility ---------- */
   .view{display:none}
   .view.active{display:block;animation:fade .25s ease}
@@ -1267,7 +1293,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-27q"></script>
+<script src="pms-supabase.js?v=2026-09-27r"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2669,7 +2695,20 @@
         <div class="tabs" id="cko-tabs" role="tablist" style="flex-wrap:wrap"></div>
       </div>
       <div id="cko-strip" style="display:flex;gap:8px;overflow-x:auto;margin-bottom:14px;padding-bottom:2px"></div>
-      <div class="filter-bar">
+      <div id="cko-report" hidden>
+        <div class="filter-bar" id="cko-rpt-filters">
+          <select id="cko-rpt-period" class="form-input" style="max-width:190px" aria-label="Period"></select>
+          <input id="cko-rpt-from" type="date" class="form-input" style="max-width:170px" aria-label="From" hidden />
+          <input id="cko-rpt-to" type="date" class="form-input" style="max-width:170px" aria-label="To" hidden />
+          <select id="cko-rpt-city" class="form-input" style="max-width:170px" aria-label="City">
+            <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
+          </select>
+          <select id="cko-rpt-house" class="form-input" style="max-width:230px" aria-label="House"><option value="">All houses</option></select>
+          <button class="btn btn-ghost" id="cko-rpt-csv" type="button">Download CSV</button>
+        </div>
+        <div id="cko-rpt-body" aria-live="polite"><p class="name-sub">Loading…</p></div>
+      </div>
+      <div class="filter-bar" id="cko-filter-bar">
         <div class="filter-search">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input id="cko-search" placeholder="Search by resident, email, house, room or checkout ID…" autocomplete="off" />
@@ -2704,6 +2743,7 @@
         <button class="btn btn-ghost" id="cko-refresh" type="button">Refresh</button>
         <button class="btn btn-primary" id="cko-new" type="button">New checkout</button>
       </div>
+      <div id="cko-drill" hidden style="margin-bottom:12px"></div>
       <div class="card" id="cko-fin-card" hidden>
         <div class="card-head" style="justify-content:space-between;flex-wrap:wrap;gap:10px;padding:14px 18px">
           <div class="card-title">Finance <em>queue</em></div>
@@ -21773,6 +21813,9 @@ const CKO_ERROR_TEXT = {
   legacy_lines_required: 'Add the carried-over charges as lines before re-approving.',
   remove_reason_required: 'Give a reason for removing this charge.',
   reapprove_reason_required: 'Give a reason for the re-approval.',
+  // Phase 4b: checkout_report's own refusals (forbidden reuses the entry above).
+  bad_period: 'Pick a period of 3 years or less, with the start before the end.',
+  bad_city: 'That city is not one of ours.',
   // A full code wins over the generic "Missing: <field>." wording.
   'missing:lines_version': 'Reload the case and try again.',
   'invalid:lines': 'A case can have at most 50 charges.',
@@ -21881,11 +21924,14 @@ function ckoActions(c, me){
   if (admin) a.push({ act: 'override', label: 'Override status' });
   return a;
 }
-// f = { q, flag: '' | 'action' | <flag>, city, status, owner: '' | 'none' | <email> }
+// f = { q, flag: '' | 'action' | <flag>, city, status, owner: '' | 'none' | <email>,
+//       ids: null | [case ids] (Phase 4b drill-down from Reports) }
 function ckoFilter(cases, f, me, now){
   f = f || {};
   const q = String(f.q || '').trim().toLowerCase();
+  const ids = Array.isArray(f.ids) ? new Set(f.ids.map(String)) : null;
   return (cases || []).filter(c => {
+    if (ids && !ids.has(c.id)) return false;
     if (f.city && c.city !== f.city) return false;
     if (f.status && c.status !== f.status) return false;
     if (f.owner === 'none' && c.owner) return false;
@@ -21940,7 +21986,7 @@ function ckoClosedDaysAgo(c, now){
 // A status filter that cannot match the tab (an open status on Closed, or
 // Closed on an open tab) is dropped; across open tabs it is kept.
 function ckoStatusFitsTab(status, tab){
-  if (!status) return true;
+  if (!status || tab === 'drill') return true;   // the Reports drill-down shows open and closed alike
   return tab === 'closed' ? status === 'Closed' : status !== 'Closed';
 }
 // One entry per status, in workflow order: how many cases and their average
@@ -22902,6 +22948,252 @@ function ckoRemindersToggleArgs(c, on){
   if (typeof on !== 'boolean') return { ok: false, error: 'Choose reminders on or off.' };
   return { ok: true, args: { p_case: id, p_flag: 'reminders_off', p_on: !on } };
 }
+/* ---- Phase 4b: management reports (Reports tab, admins only) -------------
+   checkout_report(p_from, p_to, p_city, p_house) computes every number (one
+   read-only security-definer call); these helpers only format, compare and
+   shape what it returns. Percentages arrive 0-100 rounded to 1 decimal, days
+   to 1 decimal, money to cents; null means "no cases to measure". Spec: rina
+   docs/superpowers/specs/2026-09-27-checkout-phase4b-design.md */
+const CKO_RPT_MAX_DAYS = 1096;
+// A finite number, or null (null, blank, boolean, junk).
+function ckoRptNum(v){ if (v == null || v === '' || typeof v === 'boolean') return null; const n = Number(v); return isFinite(n) ? n : null; }
+function ckoRptPct(v){ const n = ckoRptNum(v); return n == null ? '—' : (Math.round(n * 10) / 10) + '%'; }
+function ckoRptMoney(v){
+  const n = ckoRptNum(v);
+  if (n == null) return '—';
+  const r = Math.round(Math.abs(n));
+  return (n < 0 && r ? '-' : '') + '$' + String(r).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function ckoRptDays(v){ const n = ckoRptNum(v); if (n == null) return '—'; const r = Math.round(n * 10) / 10; return r + (r === 1 ? ' day' : ' days'); }
+function ckoRptCount(v){ const n = ckoRptNum(v); return n == null ? '—' : String(Math.round(n)); }
+// betterWhen: 'up' (higher is better), 'down' (lower is better), '' (neutral).
+// format (optional): compare at the precision the card actually shows, so two
+// values that render the same card text never show an arrow — 'money' rounds
+// to whole dollars, 'pct'/'days' to 1 decimal; anything else compares raw.
+function ckoRptDelta(value, prev, betterWhen, format){
+  let a = ckoRptNum(value), b = ckoRptNum(prev);
+  if (a == null || b == null) return { arrow: '', cls: '' };
+  if (format === 'money') { a = Math.round(a); b = Math.round(b); }
+  else if (format === 'pct' || format === 'days' || format === 'reviews') { a = Math.round(a * 10) / 10; b = Math.round(b * 10) / 10; }
+  if (a === b) return { arrow: '', cls: '' };
+  const up = a > b;
+  const cls = betterWhen === 'up' ? (up ? 'good' : 'bad') : betterWhen === 'down' ? (up ? 'bad' : 'good') : '';
+  return { arrow: up ? '▲' : '▼', cls };
+}
+// Too few cases to read much into.
+function ckoRptThin(n){ const x = ckoRptNum(n); return x == null || x < 5; }
+// First day of the month `back` months before ymd's month (Date.UTC rolls years).
+function ckoRptMonthStart(ymd, back){ return new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1 - back, 1)).toISOString().slice(0, 10); }
+// key -> { from, to } ending today (calendar months, the current one included), or null.
+function ckoRptPeriod(key, today){
+  if (!ckoIsDate(today)) return null;
+  if (key === 'this_month') return { from: ckoRptMonthStart(today, 0), to: today };
+  if (key === 'last_month') return { from: ckoRptMonthStart(today, 1), to: ckoAddDays(ckoRptMonthStart(today, 0), -1) };
+  if (key === 'last_3') return { from: ckoRptMonthStart(today, 2), to: today };
+  if (key === 'last_12') return { from: ckoRptMonthStart(today, 11), to: today };
+  return null;
+}
+// A custom period, checked as checkout_report checks it (checkout:bad_period).
+function ckoRptRange(from, to){
+  if (!ckoIsDate(from) || !ckoIsDate(to)) return { ok: false, error: 'Pick a start and an end date.' };
+  if (from > to) return { ok: false, error: 'The start date is after the end date.' };
+  if (ckoDaysBetween(from, to) > CKO_RPT_MAX_DAYS) return { ok: false, error: 'Pick a period of 3 years or less.' };
+  return { ok: true, from, to };
+}
+// f = { period, from, to, city, house } -> { ok, args } for checkout_report, or { ok: false, error }.
+// The house goes as shown; the DB compares it normalised (_checkout_norm).
+function ckoRptArgs(f, today){
+  f = f || {};
+  const p = f.period === 'custom' ? ckoRptRange(f.from, f.to) : ckoRptPeriod(f.period || 'last_3', today);
+  if (!p) return { ok: false, error: 'Pick a period.' };
+  if (p.ok === false) return p;
+  const cityIn = String(f.city || '').trim(), city = ckoCityOf(cityIn), house = String(f.house || '').trim();
+  if (cityIn && !city) return { ok: false, error: ckoErrorText('bad_city') };
+  return { ok: true, args: { p_from: p.from, p_to: p.to, p_city: city || null, p_house: house || null } };
+}
+const CKO_RPT_CSV_HEAD = ['Group', 'Cases', '30+ days notice %', 'Avg days to refund', 'Over deadline %', 'Disputes', 'Exceptional deductions $'];
+function ckoRptCsvCell(v){
+  if (v == null) return '';
+  if (typeof v === 'number') return isFinite(v) ? String(v) : '';
+  let s = String(v);
+  // A spreadsheet must never run a house name as a formula.
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+// The by-group table as CSV, rows in the order given (the page passes its current sort).
+function ckoRptCsv(byGroup){
+  const rows = (Array.isArray(byGroup) ? byGroup : []).map(r => {
+    r = ckoObj(r) || {};
+    return [r.group, r.cases, r.notice_ok_pct, r.avg_days_to_refund, r.overdue_pct, r.disputes, r.exceptional_amount].map(ckoRptCsvCell).join(',');
+  });
+  return [CKO_RPT_CSV_HEAD.join(',')].concat(rows).join('\n');
+}
+// The ten metric cards, in the spec's order. format: pct | days | count | money |
+// reviews (value = % approved; the split is the card's second line).
+const CKO_RPT_CARDS = [
+  { key: 'auto_intake', label: 'Automatic intake', format: 'pct', betterWhen: 'up' },
+  { key: 'notice_ok', label: "Gave 30+ days' notice", format: 'pct', betterWhen: 'up' },
+  { key: 'complete_first', label: 'Complete first time', format: 'pct', betterWhen: 'up' },
+  { key: 'terms_ack', label: 'Accepted the deposit terms', format: 'pct', betterWhen: 'up' },
+  { key: 'days_to_refund', label: 'Days from move-out to refund', format: 'days', betterWhen: 'down' },
+  { key: 'overdue', label: 'Over the deposit deadline', format: 'pct', betterWhen: 'down' },
+  { key: 'disputes', label: 'Disputes', format: 'count', betterWhen: 'down' },
+  { key: 'review_outcomes', label: 'Short-notice reviews', format: 'reviews', betterWhen: '' },
+  { key: 'exceptional', label: 'Exceptional deductions', format: 'money', betterWhen: 'down' },
+  { key: 'completion', label: 'Completion', format: 'pct', betterWhen: 'up' },
+];
+const CKO_RPT_TAB = ['reports', 'Reports'];
+const CKO_RPT_PERIODS = [['this_month', 'This month'], ['last_month', 'Last month'], ['last_3', 'Last 3 months'], ['last_12', 'Last 12 months'], ['custom', 'Custom dates']];
+// The five 12-month charts, in the spec's order (keys are checkout_report's trend fields).
+const CKO_RPT_TREND = [
+  { key: 'requests', label: 'Requests received', format: 'count' },
+  { key: 'notice_ok_pct', label: "Gave 30+ days' notice", format: 'pct' },
+  { key: 'avg_days_to_refund', label: 'Average days to refund', format: 'days' },
+  { key: 'overdue_pct', label: 'Over the deposit deadline', format: 'pct' },
+  { key: 'exceptional_amount', label: 'Exceptional deductions', format: 'money' },
+];
+// The by-group table: [field, header, format].
+const CKO_RPT_COLS = [['group', 'Group', 'text'], ['cases', 'Cases', 'count'], ['notice_ok_pct', "30+ days' notice", 'pct'], ['avg_days_to_refund', 'Avg days to refund', 'days'], ['overdue_pct', 'Over deadline', 'pct'], ['disputes', 'Disputes', 'count'], ['exceptional_amount', 'Exceptional deductions', 'money']];
+const CKO_RPT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Reports is the admins' tab (checkout_report refuses anyone else anyway).
+function ckoTabsFor(tabs, me){ const t = (tabs || []).slice(); if (ckoIsAdmin(me)) t.push(CKO_RPT_TAB); return t; }
+function ckoRptFormat(format, v){
+  if (format === 'pct') return ckoRptPct(v);
+  if (format === 'days') return ckoRptDays(v);
+  if (format === 'money') return ckoRptMoney(v);
+  if (format === 'reviews') { const t = ckoRptPct(v); return t === '—' ? t : t + ' approved'; }
+  return ckoRptCount(v);
+}
+// The value printed over a bar: short enough for 12 columns.
+function ckoRptShort(format, v){
+  const n = ckoRptNum(v);
+  if (n == null) return '—';
+  if (format === 'pct') return Math.round(n) + '%';
+  if (format === 'days') return (Math.round(n * 10) / 10) + 'd';
+  if (format === 'money') return n >= 1000 ? '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : '$' + Math.round(n);
+  return String(Math.round(n));
+}
+// 'YYYY-MM' -> 'Sep'; January carries the year ('Jan 26') so the chart shows where it turns.
+function ckoRptMonthLabel(ym){
+  const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return String(ym || '');
+  return CKO_RPT_MONTHS[Number(m[2]) - 1] + (m[2] === '01' ? ' ' + m[1].slice(2) : '');
+}
+// A card's second line, from the metric's extra fields.
+function ckoRptExtra(key, m){
+  m = m || {};
+  const n = ckoRptNum(m.n) || 0;
+  if (key === 'auto_intake') return m.errors_excluded ? 'Intake errors left out (city or house filter)' : '';
+  if (key === 'days_to_refund') return ckoRptNum(m.median) == null ? '' : 'median ' + ckoRptDays(m.median);
+  if (key === 'disputes') { const c = ckoRptNum(m.on_cleaning); return c == null ? '' : c + ' on cases with a cleaning charge'; }
+  if (key === 'review_outcomes') return n ? ckoRptPct(m.partial) + ' partly waived · ' + ckoRptPct(m.denied) + ' denied' : '';
+  if (key === 'exceptional') { const c = ckoRptNum(m.count); return c == null ? '' : c + (c === 1 ? ' deduction' : ' deductions'); }
+  if (key === 'completion') { const o = Array.isArray(m.open_ids) ? m.open_ids.length : 0; return o ? o + ' still open' : ''; }
+  return '';
+}
+const ckoRptIds = (a) => (Array.isArray(a) ? a.map(String).filter(Boolean) : []);
+// checkout_report's JSON -> everything the Reports page prints. Tolerates a
+// missing or partial report (dashes, no ids), so a half-deployed DB never breaks the page.
+function ckoRptView(r){
+  r = ckoObj(r) || {};
+  const p = ckoObj(r.period) || {}, h = ckoObj(r.headline) || {}, ms = ckoObj(r.metrics) || {};
+  const rows = Array.isArray(r.trend) ? r.trend.map(x => ckoObj(x) || {}) : [];
+  return {
+    period: { from: String(p.from || ''), to: String(p.to || ''), prevFrom: String(p.prev_from || ''), prevTo: String(p.prev_to || '') },
+    headline: [
+      { key: 'requests', label: 'Requests received', text: ckoRptCount(h.requests) },
+      { key: 'cancelled', label: 'Cancelled', text: ckoRptCount(h.cancelled) },
+      { key: 'open', label: 'Still open', text: ckoRptCount(h.open) },
+      { key: 'closed', label: 'Closed', text: ckoRptCount(h.closed) },
+      { key: 'refunded_amount', label: 'Deposits refunded', text: ckoRptMoney(h.refunded_amount) },
+    ],
+    cards: CKO_RPT_CARDS.map(d => {
+      const m = ckoObj(ms[d.key]) || {}, n = Math.max(0, Math.round(ckoRptNum(m.n) || 0)), thin = ckoRptThin(n), delta = ckoRptDelta(m.value, m.prev, d.betterWhen, d.format);
+      return {
+        key: d.key, label: d.label, format: d.format, text: ckoRptFormat(d.format, m.value), prevText: ckoRptFormat(d.format, m.prev),
+        arrow: delta.arrow, cls: delta.cls, n, nText: 'based on ' + n + (n === 1 ? ' case' : ' cases'),
+        thin, thinText: thin ? 'too few cases to read much into' : '', extra: ckoRptExtra(d.key, m),
+        ids: ckoRptIds(m.ids), openIds: ckoRptIds(m.open_ids),
+      };
+    }),
+    trend: CKO_RPT_TREND.map(t => {
+      const vals = rows.map(x => ckoRptNum(x[t.key]));
+      const max = Math.max(0, ...vals.filter(x => x != null));
+      return { key: t.key, label: t.label, bars: rows.map((x, i) => ({
+        month: String(x.month || ''), label: ckoRptMonthLabel(x.month), value: vals[i],
+        text: ckoRptShort(t.format, vals[i]), title: ckoRptMonthLabel(x.month) + ': ' + ckoRptFormat(t.format, vals[i]),
+        pct: vals[i] == null || max <= 0 ? 0 : Math.round(Math.max(0, vals[i]) / max * 100),
+      })) };
+    }),
+    groups: (Array.isArray(r.by_group) ? r.by_group : []).map((g, i) => {
+      g = ckoObj(g) || {};
+      const name = String(g.group || '—'), ci = ckoObj(g.col_ids) || {};
+      const colIds = {}; CKO_RPT_COL_IDS_KEYS.forEach(k => { colIds[k] = ckoRptIds(ci[k]); });
+      return Object.assign({}, g, { i, group: name, ids: ckoRptIds(g.ids), colIds, cells: CKO_RPT_COLS.map(([k, , f]) => (f === 'text' ? name : ckoRptFormat(f, g[k]))) });
+    }),
+  };
+}
+// A sorted copy: 'group' by name, anything else by number; blanks always last; ties by name.
+function ckoRptSortGroups(rows, key, dir){
+  const s = dir === 'asc' ? 1 : -1, name = (g) => String(g.group || '');
+  return (rows || []).slice().sort((a, b) => {
+    if (key === 'group') return s * name(a).localeCompare(name(b));
+    const x = ckoRptNum(a[key]), y = ckoRptNum(b[key]);
+    if (x == null || y == null) return (x == null) - (y == null) || name(a).localeCompare(name(b));
+    return s * (x - y) || name(a).localeCompare(name(b));
+  });
+}
+// JS twin of _checkout_norm: accents folded, lower case, non-alphanumerics -> one space.
+function ckoRptNorm(s){ return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+// The house filter's choices, from the loaded cases: one per normalised name
+// (shown as its most common spelling), test data left out, only the city's when one is picked.
+function ckoRptHouses(cases, city){
+  const want = ckoCityOf(city), by = {};
+  (cases || []).forEach(c => {
+    const k = ckoRptNorm(c.house);
+    if (!k || k === 'test house' || (want && ckoCityOf(c.city) !== want)) return;
+    const sp = String(c.house).trim(), e = by[k] || (by[k] = {});
+    e[sp] = (e[sp] || 0) + 1;
+  });
+  return Object.keys(by).map(k => Object.keys(by[k]).sort((a, b) => (by[k][b] - by[k][a]) || a.localeCompare(b))[0])
+    .sort((a, b) => a.localeCompare(b));
+}
+// The list's cases for a CKO_STATE-shaped state. A Reports drill-down
+// (state.ids) shows exactly those cases, open or closed, whatever the tab;
+// the other list filters still narrow it.
+function ckoListCases(cases, state, me, now){
+  state = state || {};
+  return ckoFilter(Array.isArray(state.ids) ? (cases || []) : ckoTab(cases, state.tab, me, now), state, me, now);
+}
+// shown = how many of ids are actually in the rendered list (after the other
+// list filters); missing = how many of ids still match no case after a
+// reload (e.g. deleted). Both default to "all of them, none missing", so a
+// bare ckoDrillText(ids) still reads as it did before shown/missing existed.
+function ckoDrillText(ids, shown, missing){
+  if (!Array.isArray(ids)) return '';
+  const total = ids.length, s = shown == null ? total : shown, word = total === 1 ? ' case' : ' cases';
+  let t = 'Showing ' + (s === total ? String(total) : s + ' of ' + total) + word + ' from Reports';
+  if (missing) t += ' (' + missing + ' not found)';
+  return t;
+}
+// The by_group[].col_ids keys, one per drillable numeric column (the group
+// name / Cases cell use the whole group's ids via 'group:<i>' instead).
+const CKO_RPT_COL_IDS_KEYS = ['notice_ok', 'days_to_refund', 'overdue', 'disputes', 'exceptional'];
+// A clicked report ref -> case ids: 'card:<metric>' (the metric's cases),
+// 'open:<metric>' (completion's still-open cases), 'group:<index>' (a by-group
+// row's cases), 'cell:<index>:<col>' (that row's column, from its col_ids).
+function ckoRptDrillIds(view, ref){
+  const m = /^(card|open|group|cell):(.+)$/.exec(String(ref || ''));
+  if (!view || !m) return [];
+  if (m[1] === 'group') { const g = (view.groups || []).find(x => String(x.i) === m[2]); return g ? g.ids.slice() : []; }
+  if (m[1] === 'cell') {
+    const cm = /^(\d+):([a-z_]+)$/.exec(m[2]);
+    const g = cm && (view.groups || []).find(x => String(x.i) === cm[1]);
+    return g && g.colIds && Array.isArray(g.colIds[cm[2]]) ? g.colIds[cm[2]].slice() : [];
+  }
+  const c = (view.cards || []).find(x => x.key === m[2]);
+  return c ? (m[1] === 'open' ? c.openIds : c.ids).slice() : [];
+}
 /* CHECKOUT-CORE-END */
 /* ---- Checkouts (DOM side of CHECKOUT-CORE) -------------------------------
    Read when the page is opened, not hydrated: cases are few, and bank
@@ -22909,7 +23201,8 @@ function ckoRemindersToggleArgs(c, on){
    same way as selectAll() because PostgREST stops at 1,000 rows. Writes are
    the checkout_* RPCs through vmDb.checkoutRpc; after each one the list and
    the open case are read again. */
-const CKO_STATE = { q: '', flag: '', city: '', status: '', owner: '', tab: 'action' };
+// ids: a Reports drill-down (Phase 4b) — the list shows exactly these cases; null = off.
+const CKO_STATE = { q: '', flag: '', city: '', status: '', owner: '', tab: 'action', ids: null };
 const CKO_TABS = [['action', 'Needs action'], ['mine', 'Mine'], ['unassigned', 'Unassigned'], ['finance', 'Finance'], ['open', 'All open'], ['closed', 'Closed']];
 const CKO_COLS = 9;
 let ckoCases = null, ckoLoading = null;
@@ -23002,10 +23295,13 @@ function renderCheckouts(){
   // Rebuilding the tabs and tiles drops focus; put it back on the same one.
   const fa = document.activeElement, fd = fa && fa.dataset ? fa.dataset : {};
   const refocus = fd.ckoTab ? `[data-cko-tab="${fd.ckoTab}"]` : fd.ckoStatus ? `[data-cko-status="${fd.ckoStatus}"]` : '';
+  // Reports is admins' only (Phase 4b); anyone else left on it goes back to Needs action.
+  if (CKO_STATE.tab === 'reports' && !ckoIsAdmin(me)) CKO_STATE.tab = 'action';
   const tabs = document.getElementById('cko-tabs');
-  if (tabs) tabs.innerHTML = CKO_TABS.map(([k, label]) => {
+  if (tabs) tabs.innerHTML = ckoTabsFor(CKO_TABS, me).map(([k, label]) => {
     const on = CKO_STATE.tab === k;
-    return `<button type="button" class="tab${on ? ' active' : ''}" role="tab" aria-selected="${on}" data-cko-tab="${k}">${esc(label)} <span class="name-sub">${ckoTab(ckoCases, k, me, now).length}</span></button>`;
+    const count = k === 'reports' ? '' : ` <span class="name-sub">${ckoTab(ckoCases, k, me, now).length}</span>`;
+    return `<button type="button" class="tab${on ? ' active' : ''}" role="tab" aria-selected="${on}" data-cko-tab="${k}">${esc(label)}${count}</button>`;
   }).join('');
   const strip = document.getElementById('cko-strip');
   if (strip) strip.innerHTML = ckoStatusCounts(ckoCases.filter(ckoIsOpen), now).filter(s => s.status !== 'Closed').map(s => {
@@ -23017,8 +23313,33 @@ function renderCheckouts(){
     </button>`;
   }).join('');
   if (refocus) { const el = document.querySelector('#cko-tabs ' + refocus + ', #cko-strip ' + refocus); if (el) el.focus(); }
+  // Reports replaces the strip, the list filters and both lists; the nav badge still counts.
+  const rpt = CKO_STATE.tab === 'reports';
+  const stripEl = document.getElementById('cko-strip'), fbar = document.getElementById('cko-filter-bar'), rep = document.getElementById('cko-report');
+  if (stripEl) stripEl.style.display = rpt ? 'none' : 'flex';
+  if (fbar) fbar.style.display = rpt ? 'none' : '';
+  if (rep) rep.hidden = !rpt;
+  // .btn{display:inline-flex} beats [hidden], so this one is toggled by style, not the attribute.
+  const refresh = document.getElementById('cko-refresh'); if (refresh) refresh.style.display = rpt ? 'none' : '';
+  if (rpt) {
+    ['cko-list-card', 'cko-fin-card', 'cko-drill'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+    const badge = document.querySelector('.nav-item[data-view="checkouts"] .nav-count');
+    if (badge) badge.textContent = String(ckoTab(ckoCases, 'action', me, now).length);
+    ckoRenderReport();
+    return;
+  }
   const closed = CKO_STATE.tab === 'closed';
-  const picked = ckoFilter(ckoTab(ckoCases, CKO_STATE.tab, me, now), CKO_STATE, me, now);
+  const picked = ckoListCases(ckoCases, CKO_STATE, me, now);
+  // Reports drill-down chip; ✕ goes back to Reports (wireCheckouts). shown is
+  // after the other list filters narrow it; missing is ids that (still, after
+  // ckoRptDrill's reload) match no case in ckoCases at all.
+  const drill = document.getElementById('cko-drill');
+  const drillMissing = Array.isArray(CKO_STATE.ids) ? CKO_STATE.ids.filter(id => !ckoCases.some(c => c.id === id)).length : 0;
+  const dt = ckoDrillText(CKO_STATE.ids, picked.length, drillMissing);
+  if (drill) {
+    drill.hidden = !dt;
+    drill.innerHTML = dt ? `<span class="tag-pill blue" style="font-size:12px;text-transform:none;letter-spacing:0;padding:5px 6px 5px 12px">${esc(dt)}<button type="button" data-cko-drill-clear aria-label="Clear the Reports filter and go back to Reports" title="Back to Reports" style="border:0;background:none;cursor:pointer;font:inherit;color:inherit;padding:0 6px;margin-left:4px">✕</button></span>` : '';
+  }
   const rows = closed ? ckoSortClosed(picked) : ckoSort(picked, me, now);
   document.getElementById('cko-count').textContent = rows.length;
   const empty = document.getElementById('cko-empty');
@@ -23033,8 +23354,11 @@ function renderCheckouts(){
   if (fin) { ckoRenderFinance(me, now); return; }
   body.innerHTML = rows.map(c => {
     const act = ckoNeedsAction(c, me, now);
-    const ago = closed ? ckoClosedDaysAgo(c, now) : null, days = closed ? null : ckoDaysWaiting(c, now);
-    const wait = closed ? (ago == null ? '—' : `closed ${esc(ago)} d ago`) : (days == null ? '—' : esc(days));
+    // On the closed tab every row is closed; on a drill-down (open cases mixed
+    // with closed ones) each row decides for itself.
+    const cl = closed || !ckoIsOpen(c);
+    const ago = cl ? ckoClosedDaysAgo(c, now) : null, days = cl ? null : ckoDaysWaiting(c, now);
+    const wait = cl ? (ago == null ? '—' : `closed ${esc(ago)} d ago`) : (days == null ? '—' : esc(days));
     return `<tr data-cko-id="${esc(c.id)}" style="cursor:pointer">
       <td>${act ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Needs action">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)} · ${esc(c.email)}</div></td>
       <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
@@ -23047,6 +23371,144 @@ function renderCheckouts(){
       <td>${esc(fmtDate(ckoLocal(c.createdAt, c.city).date))}</td>
     </tr>`;
   }).join('');
+}
+/* ---- Checkouts → Reports (Phase 4b, admins only) -------------------------
+   One checkout_report call per filter change; nothing here writes, so it does
+   not take the drawer's busy lock (ckoCall) or reload the list. An answer for
+   an older filter (seq) is dropped. The house list is built from the loaded
+   cases (ckoRptHouses). A failure stays inside #cko-rpt-body with Retry. */
+const CKO_RPT = { period: 'last_3', from: '', to: '', city: '', house: '', view: null, key: '', failed: null, loading: false, seq: 0, sort: { key: 'cases', dir: 'desc' } };
+// "Today" in the picked city's zone (Pacific when all cities), as the DB dates cases.
+function ckoRptToday(){ return ckoToday(CKO_RPT.city || 'Vancouver', Date.now()); }
+function ckoRptFill(){
+  const per = document.getElementById('cko-rpt-period');
+  if (per && !per.options.length) per.innerHTML = CKO_RPT_PERIODS.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join('');
+  if (per) per.value = CKO_RPT.period;
+  const custom = CKO_RPT.period === 'custom';
+  [['cko-rpt-from', 'from'], ['cko-rpt-to', 'to']].forEach(([id, k]) => { const el = document.getElementById(id); if (el) { el.hidden = !custom; el.value = CKO_RPT[k]; } });
+  const city = document.getElementById('cko-rpt-city');
+  if (city) city.value = CKO_RPT.city;
+  const hs = document.getElementById('cko-rpt-house');
+  if (hs) {
+    const list = ckoRptHouses(ckoCases || [], CKO_RPT.city), key = JSON.stringify(list);
+    // Rebuild the options only when the house list actually changed, so an
+    // open dropdown is not disturbed on every re-render.
+    if (key !== CKO_RPT._houseKey) {
+      CKO_RPT._houseKey = key;
+      hs.innerHTML = '<option value="">All houses</option>' + list.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('');
+    }
+    if (CKO_RPT.house && list.indexOf(CKO_RPT.house) === -1) {
+      // The chosen house is gone (e.g. the city changed under it) - fall
+      // back to All houses and refetch so the painted report matches the filter.
+      CKO_RPT.house = '';
+      hs.value = '';
+      ckoLoadReport();
+    } else if (hs.value !== CKO_RPT.house) {
+      hs.value = CKO_RPT.house;
+    }
+  }
+}
+// Called by renderCheckouts on the Reports tab: paint what we have for these
+// filters, or fetch it once.
+function ckoRenderReport(){
+  ckoRptFill();
+  const a = ckoRptArgs(CKO_RPT, ckoRptToday());
+  if (CKO_RPT.loading || (a.ok && CKO_RPT.view && CKO_RPT.key === JSON.stringify(a.args))) { ckoPaintReport(); return; }
+  ckoLoadReport();
+}
+async function ckoLoadReport(){
+  const a = ckoRptArgs(CKO_RPT, ckoRptToday());
+  const seq = ++CKO_RPT.seq;
+  if (!a.ok) { Object.assign(CKO_RPT, { loading: false, view: null, key: '', failed: { text: a.error, retry: false } }); ckoPaintReport(); return; }
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { Object.assign(CKO_RPT, { loading: false, failed: { text: 'Not connected to the database.', retry: true } }); ckoPaintReport(); return; }
+  Object.assign(CKO_RPT, { loading: true, failed: null });
+  ckoPaintReport();
+  const r = await window.vmDb.checkoutRpc('checkout_report', a.args);
+  if (seq !== CKO_RPT.seq) return;
+  CKO_RPT.loading = false;
+  if (r.error) {
+    console.warn('[checkouts] report failed', r.error);
+    Object.assign(CKO_RPT, { view: null, key: '', failed: { text: r.error.code ? ckoErrorText(r.error.code) : '', retry: true } });
+  } else {
+    Object.assign(CKO_RPT, { view: ckoRptView(r.data), key: JSON.stringify(a.args), failed: null });
+  }
+  ckoPaintReport();
+}
+function ckoPaintReport(){
+  const body = document.getElementById('cko-rpt-body');
+  if (!body) return;
+  const csv = document.getElementById('cko-rpt-csv'), v = CKO_RPT.view;
+  if (csv) csv.disabled = CKO_RPT.loading || !v || !v.groups.length;
+  if (CKO_RPT.loading) { body.innerHTML = '<p class="name-sub" style="padding:18px 0">Loading the report…</p>'; return; }
+  const f = CKO_RPT.failed;
+  if (f) {
+    body.innerHTML = f.retry
+      ? `<div class="card card-pad" role="alert" id="cko-rpt-error"><b>Couldn't load the report</b>${f.text ? `<div class="name-sub" style="margin-top:4px">${esc(f.text)}</div>` : ''}<div style="margin-top:10px"><button type="button" class="btn btn-ghost" data-cko-rpt-retry>Retry</button></div></div>`
+      : `<div class="card card-pad" role="alert" id="cko-rpt-error"><b>${esc(f.text)}</b></div>`;
+    return;
+  }
+  if (!v) { body.innerHTML = ''; return; }
+  const p = v.period;
+  const period = `<div class="name-sub cko-rpt-period">${esc(fmtDate(p.from))} – ${esc(fmtDate(p.to))}${p.prevFrom ? ` · compared with ${esc(fmtDate(p.prevFrom))} – ${esc(fmtDate(p.prevTo))}` : ''}</div>`;
+  const head = `<div class="cko-rpt-head">${v.headline.map(h => `<div class="kpi" data-cko-rpt-head="${esc(h.key)}"><div class="kpi-label">${esc(h.label)}</div><div class="kpi-value">${esc(h.text)}</div></div>`).join('')}</div>`;
+  const cards = `<div class="cko-rpt-cards">${v.cards.map(c => {
+    const val = c.ids.length
+      ? `<button type="button" class="cko-rpt-val" data-cko-rpt-drill="card:${esc(c.key)}" title="Show ${c.ids.length === 1 ? 'this case' : 'these ' + c.ids.length + ' cases'} in the list">${esc(c.text)}</button>`
+      : `<span class="cko-rpt-val">${esc(c.text)}</span>`;
+    const extra = !c.extra ? '' : c.openIds.length
+      ? `<div class="name-sub"><button type="button" class="cko-rpt-link" data-cko-rpt-drill="open:${esc(c.key)}">${esc(c.extra)}</button></div>`
+      : `<div class="name-sub">${esc(c.extra)}</div>`;
+    const pctTitle = c.format === 'pct' ? ` title="All ${c.n} cases this figure is based on"` : '';
+    return `<div class="card card-pad cko-rpt-card${c.thin ? ' thin' : ''}" data-cko-rpt-card="${esc(c.key)}"${pctTitle}>
+      <div class="kpi-label">${esc(c.label)}</div>
+      <div class="cko-rpt-main">${val}${c.arrow ? `<span class="cko-rpt-delta ${esc(c.cls)}" aria-label="${c.arrow === '▲' ? 'up' : 'down'} on the previous period">${c.arrow}</span>` : ''}</div>
+      <div class="name-sub">Previous period: ${esc(c.prevText)}</div>
+      ${extra}
+      <div class="name-sub">${esc(c.nText)}${c.thin ? ' · ' + esc(c.thinText) : ''}</div>
+    </div>`;
+  }).join('')}</div>`;
+  const trend = `<div class="cko-rpt-trend">${v.trend.map(t => `<div class="card card-pad">
+      <div class="card-head"><div><div class="card-title">${esc(t.label)}</div><div class="card-sub">Last 12 months</div></div></div>
+      <div class="bar-chart cko-rpt-chart" data-cko-rpt-chart="${esc(t.key)}">${t.bars.map(b => `<div class="bar-col"><span class="bar-val">${esc(b.text)}</span><div class="bar-pair"><div class="bar${b.value == null ? ' faint' : ''}" style="height:${b.pct}%" title="${esc(b.title)}"></div></div><span class="bar-label">${esc(b.label)}</span></div>`).join('')}</div>
+    </div>`).join('')}</div>`;
+  const s = CKO_RPT.sort, rows = ckoRptSortGroups(v.groups, s.key, s.dir);
+  const by = CKO_RPT.house ? 'This house' : CKO_RPT.city ? 'By house' : 'By city';
+  const th = CKO_RPT_COLS.map(([k, l]) => {
+    const on = s.key === k;
+    return `<th scope="col" aria-sort="${on ? (s.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="cko-rpt-sort" data-cko-rpt-sort="${esc(k)}">${esc(l)}${on ? (s.dir === 'asc' ? ' ▲' : ' ▼') : ''}</button></th>`;
+  }).join('');
+  const tb = rows.length ? rows.map(g => `<tr data-cko-rpt-group="${g.i}">${g.cells.map((cell, n) => {
+    // The group name and its Cases cell open the whole group; the other numeric
+    // columns open just that column's cases (by_group[i].col_ids).
+    const key = n >= 2 ? CKO_RPT_COL_IDS_KEYS[n - 2] : '';
+    const ids = n <= 1 ? g.ids : (key && g.colIds ? g.colIds[key] : []) || [];
+    const ref = n <= 1 ? `group:${g.i}` : `cell:${g.i}:${key}`;
+    const inner = ids.length ? `<button type="button" class="cko-rpt-link" data-cko-rpt-drill="${esc(ref)}">${esc(cell)}</button>` : esc(cell);
+    const pctTitle = CKO_RPT_COLS[n][2] === 'pct' ? ` title="All ${g.cases} cases this figure is based on"` : '';
+    return n === 0 ? `<th scope="row" style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">${inner}</th>` : `<td class="num"${pctTitle}>${inner}</td>`;
+  }).join('')}</tr>`).join('') : `<tr><td colspan="${CKO_RPT_COLS.length}" class="name-sub">No cases in this period.</td></tr>`;
+  const table = `<div class="card" data-cko-rpt-table><div class="card-head" style="padding:14px 18px"><div class="card-title">${esc(by)}</div></div><div style="overflow-x:auto"><table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div></div>`;
+  body.innerHTML = period + head + cards + trend + table;
+}
+function ckoRptDownload(){
+  const v = CKO_RPT.view;
+  if (!v || !v.groups.length) { showToast('Nothing to export'); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\uFEFF' + ckoRptCsv(ckoRptSortGroups(v.groups, CKO_RPT.sort.key, CKO_RPT.sort.dir))], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'vanmates-checkout-report-' + (CKO_RPT.city || 'all').toLowerCase() + '-' + v.period.from + '-to-' + v.period.to + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+// Open the Checkouts list on exactly these cases (from a report card or table cell).
+function ckoRptDrill(ids){
+  if (!ids || !ids.length) { showToast('No cases to show'); return; }
+  Object.assign(CKO_STATE, { ids: ids.slice(), tab: 'drill', q: '', status: '', owner: '', flag: '', city: '' });
+  ['cko-search', 'cko-filter-status', 'cko-filter-owner', 'cko-filter-flag', 'cko-filter-city'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  // The report can name a case the list hasn't loaded yet (or that changed
+  // since); reload once so the chip's "not found" count is accurate.
+  if (ids.some(id => !(ckoCases || []).some(c => c.id === id))) loadCheckouts(true); else renderCheckouts();
+  const chip = document.getElementById('cko-drill');
+  if (chip && chip.scrollIntoView) chip.scrollIntoView({ block: 'nearest' });
 }
 // The drawer's Cleaning report block (Phase 2b), from ckoCleaning(c). kv is
 // openCheckout's row helper. Damage/Missing rows are highlighted, Shared and
@@ -23736,13 +24198,42 @@ window.openCheckout = openCheckout;
   on('cko-filter-flag', 'change', e => { CKO_STATE.flag = e.target.value; renderCheckouts(); });
   on('cko-filter-city', 'change', e => { CKO_STATE.city = e.target.value; renderCheckouts(); });
   on('cko-refresh', 'click', () => loadCheckouts(true));
-  on('cko-tabs', 'click', e => { const t = e.target.closest('[data-cko-tab]'); if (!t) return; CKO_STATE.tab = t.dataset.ckoTab; renderCheckouts(); });
+  on('cko-tabs', 'click', e => { const t = e.target.closest('[data-cko-tab]'); if (!t) return; CKO_STATE.tab = t.dataset.ckoTab; CKO_STATE.ids = null; renderCheckouts(); });
+  on('cko-drill', 'click', e => {
+    if (!e.target.closest('[data-cko-drill-clear]')) return;
+    CKO_STATE.ids = null; CKO_STATE.tab = 'reports'; renderCheckouts();
+    const t = document.querySelector('#cko-tabs [data-cko-tab="reports"]'); if (t) t.focus();
+  });
+  // Reports (Phase 4b). Every filter change is a fresh checkout_report call.
+  on('cko-rpt-period', 'change', e => {
+    CKO_RPT.period = e.target.value;
+    if (CKO_RPT.period === 'custom' && !CKO_RPT.from) { const p = ckoRptPeriod('last_3', ckoRptToday()); CKO_RPT.from = p.from; CKO_RPT.to = p.to; }
+    ckoRptFill(); ckoLoadReport();
+  });
+  on('cko-rpt-from', 'change', e => { CKO_RPT.from = e.target.value; ckoLoadReport(); });
+  on('cko-rpt-to', 'change', e => { CKO_RPT.to = e.target.value; ckoLoadReport(); });
+  on('cko-rpt-city', 'change', e => { CKO_RPT.city = e.target.value; CKO_RPT.house = ''; ckoRptFill(); ckoLoadReport(); });
+  on('cko-rpt-house', 'change', e => { CKO_RPT.house = e.target.value; ckoLoadReport(); });
+  on('cko-rpt-csv', 'click', ckoRptDownload);
+  on('cko-rpt-body', 'click', e => {
+    if (e.target.closest('[data-cko-rpt-retry]')) { ckoLoadReport(); return; }
+    const s = e.target.closest('[data-cko-rpt-sort]');
+    if (s) {
+      const k = s.dataset.ckoRptSort, cur = CKO_RPT.sort;
+      CKO_RPT.sort = { key: k, dir: cur.key === k ? (cur.dir === 'asc' ? 'desc' : 'asc') : (k === 'group' ? 'asc' : 'desc') };
+      ckoPaintReport();
+      const again = document.querySelector(`#cko-rpt-body [data-cko-rpt-sort="${k}"]`); if (again) again.focus();
+      return;
+    }
+    const d = e.target.closest('[data-cko-rpt-drill]');
+    if (d) ckoRptDrill(ckoRptDrillIds(CKO_RPT.view, d.dataset.ckoRptDrill));
+  });
   // A status tile filters to that status across all open cases (click again to clear).
   on('cko-strip', 'click', e => {
     const b = e.target.closest('[data-cko-status]');
     if (!b) return;
     CKO_STATE.status = CKO_STATE.status === b.dataset.ckoStatus ? '' : b.dataset.ckoStatus;
-    if (CKO_STATE.status) CKO_STATE.tab = 'open';
+    if (CKO_STATE.status && !CKO_STATE.ids) CKO_STATE.tab = 'open';
     if (st) st.value = CKO_STATE.status;
     renderCheckouts();
   });
@@ -23831,7 +24322,7 @@ function ckoRenderFinance(me, now){
 }
 // The Deposits banner (and anything else) opens Checkouts on the Finance tab.
 function ckoOpenFinance(){
-  CKO_STATE.tab = 'finance';
+  CKO_STATE.tab = 'finance'; CKO_STATE.ids = null;
   if (typeof goToView === 'function') goToView('checkouts'); else loadCheckouts();
 }
 window.ckoOpenFinance = ckoOpenFinance;
