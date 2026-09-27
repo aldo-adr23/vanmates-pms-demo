@@ -1267,7 +1267,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-26s"></script>
+<script src="pms-supabase.js?v=2026-09-27a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2695,6 +2695,8 @@
           <option value="resident_dispute">Resident dispute</option>
           <option value="date_changed">Move-out date changed</option>
           <option value="finance_overdue">Finance overdue</option>
+          <option value="resident_not_responding">Resident not responding</option>
+          <option value="reminders_off">Reminders off</option>
         </select>
         <select id="cko-filter-city" class="form-input" style="max-width:170px">
           <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
@@ -20953,11 +20955,15 @@ const CKO_FLAG_LABELS = {
   resident_dispute: 'Resident dispute',
   date_changed: 'Move-out date changed',
   finance_overdue: 'Finance overdue',
+  // Phase 4a: reminders_off = owner/admin stopped the automatic resident emails;
+  // resident_not_responding = the sweep sent the third missing-info request.
+  reminders_off: 'Reminders off',
+  resident_not_responding: 'Resident not responding',
 };
 // Flags that mean somebody has to do something, for everyone. Plain short
 // notice is information. short_notice_review_required needs action for admins
 // only (only they can decide it), so it is checked in ckoNeedsAction instead.
-const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed', 'finance_overdue'];
+const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed', 'finance_overdue', 'resident_not_responding'];
 // Flags drawn red on the chip (the rest are blue).
 const CKO_RED_FLAGS = CKO_ACTION_FLAGS.concat(['short_notice_review_required', 'missing_keys', 'damage_review', 'missing_refund_info', 'unverified']);
 const CKO_EVENT_LABELS = {
@@ -20974,6 +20980,11 @@ const CKO_EVENT_LABELS = {
   deduction_added: 'Charge added', deduction_changed: 'Charge changed', deduction_removed: 'Charge removed',
   deposit_held_set: 'Deposit held recorded', charges_submitted: 'Charges submitted for approval', charges_sent_back: 'Charges sent back',
   refund_approved: 'Refund approved', refund_reapproved: 'Refund re-approved', refund_sent: 'Refund sent', finance_overdue: 'Finance overdue',
+  // Phase 4a: logged by checkout_reminder_sweep; staff-events sends the email
+  // (an email_failed row follows when it could not).
+  reminder_week: '7-day reminder to the resident', reminder_day: 'Day-before reminder to the resident',
+  inspection_review: 'Inspection-done email to the resident', info_request: 'Missing-info request to the resident',
+  info_request_logged: 'Missing-info request (no email)',
 };
 const CKO_KEYS_OPTIONS = [['returned', 'All returned'], ['partial', 'Some returned'], ['missing', 'None returned']];
 const CKO_RESULT_OPTIONS = [['good', 'Good'], ['cleaning_required', 'Cleaning required'], ['damage', 'Damage']];
@@ -21129,6 +21140,9 @@ function ckoActions(c, me){
   // Finance may flag / clear a dispute too (Phase 3a: it unlocks the charges).
   if (open && (manage || ckoIsFinance(m))) a.push(f.indexOf('resident_dispute') === -1 ? { act: 'flag_dispute', label: 'Flag dispute' } : { act: 'clear_dispute', label: 'Clear dispute' });
   if (open && manage && f.indexOf('missing_keys') !== -1) a.push({ act: 'clear_missing_keys', label: 'Keys sorted' });
+  // Phase 4a: the sweep sets it on the third missing-info request and clears it once
+  // nothing is missing; the owner or an admin may clear it after reaching the resident.
+  if (open && manage && f.indexOf('resident_not_responding') !== -1) a.push({ act: 'clear_not_responding', label: 'Clear not responding' });
   if (open && manage && f.indexOf('date_changed') !== -1) a.push({ act: 'clear_date_changed', label: 'Date change seen' });
   a.push({ act: 'note', label: 'Add note' });
   if (open && manage) a.push({ act: 'cancel', label: 'Cancel checkout' });
@@ -21502,10 +21516,13 @@ function ckoTimeline(events, nameOf, city, snapshots){
     else if (e.type === 'refund_approved' || e.type === 'refund_reapproved') detail = ckoApprovalText(after, snapshots);
     else if (e.type === 'refund_sent') detail = ckoPaymentText(after);
     else if (e.type === 'finance_overdue') detail = ckoOverdueText(after, city);
+    else if (e.type === 'reminder_week' || e.type === 'reminder_day') detail = `move-out ${q(after.move_out_date)}`;
+    else if (e.type === 'info_request' || e.type === 'info_request_logged') detail = ckoInfoRequestText(after, e.type === 'info_request_logged');
     else if (after.message) detail = String(after.message);
     else if (after.step) detail = 'at ' + after.step;
     const actor = String(e.actor || '');
-    const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor.replace(/^resident:/, '');
+    // 'system' = the database's own jobs (sweeps, mirrors, cleaning reports).
+    const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor === 'system' ? 'Vanmates (automatic)' : actor.replace(/^resident:/, '');
     const what = e.type === 'cleaning_report' && after.outcome === 'updated' ? 'Cleaning report updated'
       : e.type === 'refund_sent' && after.kind === 'top_up' ? 'Top-up sent'
       : CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' ');
@@ -22120,6 +22137,39 @@ function ckoMissingTokenColumn(err){
   if (!err) return false;
   return String(err.code || '') === '42703' || /status_token/.test(String(err.message || '') + ' ' + String(err.details || '') + ' ' + String(err.hint || ''));
 }
+// ---- Phase 4a: automatic resident reminders ----
+// info_request / info_request_logged after = {attempt: 1|2|3, series, fields: [...]}; the
+// field keys are the sweep's stable keys (spec 2026-09-26-checkout-phase4a-design.md).
+const CKO_INFO_FIELD_LABELS = { refund_method: 'refund method', refund_details: 'refund details', complete_form: 'the completed checkout form' };
+// logged: the silent attempt 1 of a staff-created case (its "complete your request"
+// email already asked, so no reminder email went out).
+function ckoInfoRequestText(a, logged){
+  a = a || {};
+  const n = Number(a.attempt);
+  const parts = ['request ' + (n === 1 || n === 2 || n === 3 ? n : '?') + ' of 3'];
+  const fields = (Array.isArray(a.fields) ? a.fields : []).map(k => CKO_INFO_FIELD_LABELS[k] || String(k || '').replace(/_/g, ' ')).filter(Boolean);
+  if (fields.length) parts.push('missing: ' + fields.join(', '));
+  if (logged) parts.push('the "complete your request" email already asked');
+  return parts.join(' · ');
+}
+// The Case block's "Reminders" row: open cases only; the toggle is the owner's or an
+// admin's (checkout_set_flag refuses anyone else). action: what the button does.
+function ckoReminders(c, me){
+  const open = !!c && ckoIsOpen(c), off = !!c && (c.flags || []).indexOf('reminders_off') !== -1;
+  const can = open && ckoCanManage(c, me);
+  return {
+    show: open, off,
+    text: off ? 'Off — no automatic emails to the resident' : 'On',
+    action: can ? (off ? { act: 'reminders_on', label: 'Reminders on' } : { act: 'reminders_off', label: 'Reminders off' }) : null,
+  };
+}
+// on = true turns the reminders ON (clears the reminders_off flag); false turns them off.
+function ckoRemindersToggleArgs(c, on){
+  const id = String((c && c.id) || '');
+  if (!id) return { ok: false, error: 'No case selected.' };
+  if (typeof on !== 'boolean') return { ok: false, error: 'Choose reminders on or off.' };
+  return { ok: true, args: { p_case: id, p_flag: 'reminders_off', p_on: !on } };
+}
 /* CHECKOUT-CORE-END */
 /* ---- Checkouts (DOM side of CHECKOUT-CORE) -------------------------------
    Read when the page is opened, not hydrated: cases are few, and bank
@@ -22467,6 +22517,14 @@ function ckoResidentLinkRow(c, kv){
   if (r.canReset) parts.push(btn('reset_link', 'Reset link', 'Make a new link; the old one stops working'));
   return kv('Resident link', `<span id="cko-link" style="display:inline-flex;flex-wrap:wrap;gap:6px">${parts.join('')}</span>`);
 }
+// Phase 4a: the Case block's "Reminders" row (ckoReminders decides what shows).
+function ckoRemindersRow(c, kv){
+  const r = ckoReminders(c, ckoMe());
+  if (!r.show) return '';
+  const title = r.action && r.action.act === 'reminders_off' ? 'Stop the automatic reminder and missing-info emails to this resident' : 'Send the automatic reminder and missing-info emails again';
+  const b = r.action ? ` <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="${r.action.act}" title="${esc(title)}">${esc(r.action.label)}</button>` : '';
+  return kv('Reminders', `<span id="cko-reminders" style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px"><span data-cko-reminders="${r.off ? 'off' : 'on'}">${esc(r.text)}</span>${b}</span>`);
+}
 async function openCheckout(id, banner, refocus){
   const tok = ++ckoOpenSeq;
   CKO_FORM = null;
@@ -22526,6 +22584,7 @@ async function openCheckout(id, banner, refocus){
     ${kv('Status', esc(c.status) + (c.outcome ? ` <span class="name-sub">(${esc(c.outcome)})</span>` : ''))}
     ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
     ${ckoResidentLinkRow(c, kv)}
+    ${ckoRemindersRow(c, kv)}
     ${kv('At this status', waited == null ? '—' : esc(waited) + (waited === 1 ? ' day' : ' days'))}
     ${slaParts.length ? kv('Deadlines', `<span data-cko-sla>${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</span>`) : ''}
     ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
@@ -22661,7 +22720,7 @@ function ckoPanelCase(){
 // The open drawer still shows this case (it may have been closed or switched).
 function ckoShowing(id){ const p = document.getElementById('detail-panel'); return !!(p && p.classList.contains('open') && document.querySelector(`#panel-body [data-cko-panel="${String(id).replace(/["\\]/g, "\\$&")}"]`)); }
 function ckoRefusalText(err){ return err.code ? ckoErrorText(err.code) : 'Could not save: ' + (err.message || 'unknown error'); }
-function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button, #cko-charges button, #cko-charges-form button, #cko-link button').forEach(b => { b.disabled = disabled; }); }
+function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button, #cko-charges button, #cko-charges-form button, #cko-link button, #cko-reminders button').forEach(b => { b.disabled = disabled; }); }
 // Buttons back on after a refusal that keeps the form open, with the action
 // bar's and the Charges block's own rules (a disabled Submit stays disabled).
 function ckoRestoreButtons(){
@@ -22745,6 +22804,15 @@ function ckoAct(act, lineId){
       if (!confirm('Reset the resident link? The link in the emails already sent stops working at once. Copy the new link afterwards to send it to the resident.')) return;
       return ckoCall(id, 'checkout_rotate_status_token', b.args, 'New link created — the old one no longer works');
     }
+    // ---- Phase 4a: automatic reminders ----
+    case 'reminders_off':
+    case 'reminders_on': {
+      if (!ckoCanManage(c, ckoMe())) return;
+      const b = ckoRemindersToggleArgs(c, act === 'reminders_on');
+      if (!b.ok) { showToast(b.error); return; }
+      return ckoCall(id, 'checkout_set_flag', b.args, act === 'reminders_on' ? 'Reminders on' : 'Reminders off — no automatic emails for this case');
+    }
+    case 'clear_not_responding': return flag('resident_not_responding', false, 'Not-responding flag cleared');
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
       if (!confirm('Release this case? It goes back to Unassigned.')) return;
