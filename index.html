@@ -1293,7 +1293,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28p"></script>
+<script src="pms-supabase.js?v=2026-09-28q"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20378,6 +20378,57 @@ function hmSameRequirements(a, b){
   const canon = r => { r = r || {}; return JSON.stringify([[...new Set(r.mandatory || [])].sort(), [...new Set(r.preferred || [])].sort()]); };
   return canon(a) === canon(b);
 }
+// Stage 2 (invitations). Keep HM_RESPONDABLE in step with the Worker's RESPONDABLE.
+const HM_RESPONDABLE = ["SHORTLISTING", "INVITING", "HOST_VERIFICATION", "OFFER_REVIEW", "MANUAL_REVIEW"];
+const HM_INVITE_CHIP = {
+  available: ["Can host", "green"], unavailable: ["Can't host", "grey"],
+  failed: ["Email failed", "red"], email_sent: ["Emailed", "blue"], sending: ["Sending", "grey"],
+  queued: ["Queued", "grey"], none: ["Phone", "grey"],
+};
+function hmInviteChip(inv){
+  const key = inv.response || inv.send_state;
+  return HM_INVITE_CHIP[key] || [String(key || "?"), "grey"];
+}
+function hmInviteRows(invs){
+  return (invs || []).slice()
+    .sort((a, b) => (a.wave || 0) - (b.wave || 0) || (a.rank || 999) - (b.rank || 999) || a.id - b.id)
+    .map(i => ({ id: i.id, host_id: i.host_id, wave: i.wave || 0, chip: hmInviteChip(i),
+      room: (i.verified && i.verified.room_label) || "", reminded: !!i.reminded_at,
+      reason: i.response_reason || "", error: i.send_error || "", withdrew: !!i.withdrawn_at }));
+}
+// An invitation counts as actively sending only while it's "queued", or it's
+// "sending" and started under 15 minutes ago. A row stuck in "sending" (by
+// design it's never resent) must not jam the queue or next-wave view forever.
+const HM_SENDING_STALE_MS = 15 * 60 * 1000;
+function hmActiveSends(invs, nowMs){
+  return (invs || []).filter(i => i.send_state === "queued"
+    || (i.send_state === "sending" && (nowMs - Date.parse(i.created_at)) < HM_SENDING_STALE_MS));
+}
+// invs (optional): the case's current hm_invitations rows. While any of them are
+// still actively sending, that beats the time-based text below — the next wave is
+// already going out or about to, so a countdown to it would be misleading.
+function hmNextAction(c, nowMs, invs){
+  if (!c || c.status !== "INVITING") return "";
+  if (c.paused) return "Paused";
+  const active = hmActiveSends(invs, nowMs);
+  if (active.length) return `Sending wave ${Math.max(...active.map(i => i.wave || 0))}…`;
+  if (!c.next_action_at) return "Working…";
+  // Any next_action other than "reminder" — "next_wave", "next_wave_now", or
+  // anything else the Worker might send — reads as "Next wave".
+  const what = c.next_action === "reminder" ? "Reminder" : "Next wave";
+  const ms = Date.parse(c.next_action_at) - nowMs;
+  return ms <= 0 ? `${what} due now` : `${what} in ${hmElapsed(new Date(nowMs - ms).toISOString(), nowMs)}`;
+}
+function hmCanInvite(c){
+  return ["SHORTLISTING", "MANUAL_REVIEW", "OFFER_REVIEW"].includes(c.status) && !!c.consent_to_share
+    && hmOrderedShortlist(c.shortlist, c.shortlist_override).length > 0;
+}
+// Shortlist host ids (in order) that have no invitation row yet. Used to hide
+// "Send next wave now" once every eligible host has already been invited.
+function hmUninvited(orderedHostIds, invs){
+  const invited = new Set((invs || []).map(i => i.host_id));
+  return (orderedHostIds || []).filter(id => !invited.has(id));
+}
 /* HM-MATCH-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
    Read when the page is opened. Writes go through the signed-in admin's
@@ -29208,7 +29259,9 @@ function ahsPayerLines(s, plan, fmt){
 /* Homestay matching page. Reads hm_* with the staff Supabase session; status
    changes go through the matching Worker. */
 const HM_WORKER = "https://vanmates-homestay-matching.talatcan.workers.dev";
-const HM = { cases: [], events: [], profiles: [], hosts: [], selected: null, filter: "open", openCount: 0, loading: false, flash: null };
+// rooms is loaded lazily (n8n executions are precious) — see hmEnsureRoomsLoaded.
+const HM = { cases: [], events: [], profiles: [], hosts: [], rooms: [], roomsLoaded: false, roomsLoading: null,
+  selected: null, filter: "open", openCount: 0, loading: false, flash: null };
 const hmEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // Staff moves the Worker allows (canTransition + STAFF_TARGETS); keep in step with it.
@@ -29241,13 +29294,22 @@ function hmWorkerErrorMessage(out, res){
   if (!out || !out.error) return "HTTP " + res.status;
   if (out.error === "reason_required") return "Type a reason first";
   if (out.error === "missing") return "Missing: " + (out.missing || []).map(hmMissingLabel).join(", ");
-  if (out.error === "locked") return `This case is ${out.status}; matching details can't be edited`;
+  if (out.error === "locked") return HM_CLOSED.includes(out.status) ? "This case is closed" : `This case is ${out.status}; matching details can't be edited`;
   if (out.error === "invalid") return "Check " + hmFieldLabel(out.field);
-  if (out.error === "incomplete") return "City, dates and meals are needed before a shortlist can be computed";
+  if (out.error === "incomplete") return "City, dates and meals must be set first";
   if (out.error === "conflict") return "Someone else changed this case just now — refreshed, try again";
   if (out.error === "not_editable") return "These fields can't be edited here: " + (out.fields || []).map(hmFieldLabel).join(", ");
   if (out.error === "not_allowed") return `Can't move from ${out.from} to ${out.to}`;
   if (out.error === "not_shortlisting") return "Only a case in Shortlisting can be recomputed";
+  if (out.error === "no_consent") return "The student has not agreed to share details with hosts";
+  if (out.error === "no_eligible") return "No eligible host on the shortlist";
+  if (out.error === "no_settings") return "This city is not set up for matching";
+  if (out.error === "not_inviting") return "Only a case that is inviting hosts can do that";
+  if (out.error === "unknown_host") return "That host is not in the hosts list";
+  if (out.error === "bad_room") return "Pick one of the host's rooms that offers these meals";
+  if (out.error === "nobody_left") return "Everyone on the shortlist has already been invited. Add hosts to the shortlist or record a phone answer";
+  if (out.error === "not_payable") return "This host can't be paid yet (Stripe payouts not set up). Finish their payout setup first";
+  if (out.error === "mail_not_configured") return "Invitation email isn't set up yet (Worker secrets missing). Ask Aldo";
   return out.error;
 }
 
@@ -29283,6 +29345,8 @@ async function loadHomestayMatching(){
     HM.openCount = hmQueue(HM.cases, "open").length;
     if (typeof updateSidebarCounts === "function") updateSidebarCounts();
     try { const h = await vmN8n.read("hosts-list"); HM.hosts = (h && h.hosts) || []; } catch (e) { HM.hosts = []; }
+    // HM.rooms is loaded lazily — see hmEnsureRoomsLoaded — to save an n8n
+    // execution on every load/refresh when nobody opens the phone-answer form.
   } catch (e) {
     document.getElementById("hm-queue").innerHTML = `<div class="card-sub">Could not load cases: ${hmEsc(e.message || e)}</div>`;
     HM.loading = false; return;
@@ -29291,6 +29355,27 @@ async function loadHomestayMatching(){
   hmRenderQueue();
   if (HM.selected) hmOpenCase(HM.selected);
   hmRenderProfiles();
+}
+
+// Loads hosts' rooms (an n8n execution) on first need only — opening the
+// "Record a phone answer" details, or picking a host in it — and caches the
+// result for the session. A failure leaves roomsLoaded false so the next
+// trigger (reopening the details, or picking a host again) retries.
+function hmEnsureRoomsLoaded(){
+  if (HM.roomsLoaded) return Promise.resolve();
+  if (HM.roomsLoading) return HM.roomsLoading;
+  HM.roomsLoading = (async () => {
+    try {
+      const r = await vmN8n.read("rooms-list");
+      HM.rooms = (r && r.rooms) || [];
+      HM.roomsLoaded = true;
+    } catch (e) {
+      HM.rooms = [];
+    } finally {
+      HM.roomsLoading = null;
+    }
+  })();
+  return HM.roomsLoading;
 }
 
 function hmChip(status){
@@ -29315,7 +29400,10 @@ async function hmOpenCase(id){
   const c = HM.cases.find(x => x.id === id);
   if (!c) return;
   const sb = window.vmDb.sb;
-  const ev = await sb.from("hm_events").select("type,actor,after,created_at").eq("case_id", id).order("created_at", { ascending: false }).range(0, 99);
+  const [ev, iv] = await Promise.all([
+    sb.from("hm_events").select("type,actor,after,created_at").eq("case_id", id).order("created_at", { ascending: false }).range(0, 99),
+    sb.from("hm_invitations").select("*").eq("case_id", id).order("wave").order("rank").range(0, 199),
+  ]);
   if (HM.selected !== id) return; // another case was opened while this one loaded
   const events = ev.data || [];
   const flash = HM.flash && HM.flash.id === id ? HM.flash.text : "";
@@ -29337,6 +29425,43 @@ async function hmOpenCase(id){
       <option value="preferred" ${v === "preferred" ? "selected" : ""}>Nice to have</option></select>`;
   const actBtn = (act, label) => allowedNext.has(act)
     ? `<button class="btn btn-ghost" type="button" data-hm-act="${act}">${label}</button>` : "";
+  const nameOf = hid => ((HM.hosts || []).find(h => h.host_id === hid) || {}).display_name || hid;
+  const invs = iv.data || [];
+  HM.invitations = invs;
+  const invRows = hmInviteRows(invs);
+  const nowMs = Date.now();
+  const sending = hmActiveSends(invs, nowMs).length > 0;
+  const uninvited = hmUninvited(ordered.map(e => e.host_id), invs);
+  // Merge display name + payable across the shortlist snapshot and the live
+  // hosts list; the live list (loaded second) wins when both have a host.
+  const hostMap = new Map();
+  for (const e of ordered) hostMap.set(e.host_id, { name: e.display_name, payable: true });
+  for (const h of (HM.hosts || [])) hostMap.set(h.host_id, { name: h.display_name, payable: h.payable !== false });
+  // Non-payable hosts stay selectable here (unlike elsewhere): the Worker
+  // still accepts a "can't host" phone answer for them, only "can host" is
+  // refused (not_payable). data-payable drives the can-host guard below.
+  const hostOpts = [...hostMap.entries()]
+    .map(([hid, v]) => `<option value="${hmEsc(hid)}" data-payable="${v.payable ? "1" : "0"}">${hmEsc(v.name || hid)}${v.payable ? "" : " (not payable)"}</option>`).join("");
+  const invitations = `
+    <div class="card-title" style="margin-top:16px">Invitations <span class="card-sub">${hmEsc(hmNextAction(c, nowMs, invs))}</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0">
+      ${hmCanInvite(c) ? '<button class="btn" type="button" data-hm-inv="invite">Start inviting</button>' : ""}
+      ${c.status === "INVITING" ? `${(!sending && uninvited.length) ? '<button class="btn btn-ghost" type="button" data-hm-inv="wave">Send next wave now</button>' : ""}
+        <button class="btn btn-ghost" type="button" data-hm-inv="${c.paused ? "resume" : "pause"}">${c.paused ? "Resume" : "Pause"}</button>` : ""}
+    </div>
+    ${iv.error ? `<div class="card-sub">Could not load invitations: ${hmEsc(iv.error.message || iv.error)}</div>`
+      : (invRows.map(r => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(r.host_id))}</div>
+      <div class="list-sub">${r.wave ? "wave " + r.wave : "recorded by staff"}${r.room ? " · " + hmEsc(r.room) : ""}${r.reminded ? " · reminded" : ""}${r.withdrew ? " · withdrew" : ""}${r.reason ? " · " + hmEsc(r.reason) : ""}${r.error ? " · " + hmEsc(r.error) : ""}</div></div>
+      <span class="badge badge-${r.chip[1]}">${hmEsc(r.chip[0])}</span></div>`).join("") || '<div class="card-sub">No invitations yet.</div>')}
+    ${HM_RESPONDABLE.includes(c.status) ? `<details id="hm-phone-details" style="margin-top:8px"><summary class="card-sub">Record a phone answer</summary>
+      <form id="hm-phone" class="hm-grid" style="margin-top:8px">
+        <label>Host <select class="form-input" name="host_id" required><option value="">—</option>${hostOpts}</select></label>
+        <label>Answer <select class="form-input" name="response"><option value="available">Can host</option><option value="unavailable">Can't host</option></select></label>
+        <label>Room (if they can host) <select class="form-input" name="room_id"><option value="">—</option></select></label>
+        <label style="grid-column:1/-1">Note <input class="form-input" name="reason" maxlength="500"></label>
+        <div style="grid-column:1/-1"><button class="btn" type="submit">Save answer</button></div>
+        <div class="card-sub" id="hm-phone-msg" style="grid-column:1/-1"></div>
+      </form></details>` : ""}`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(c.status_reason) : ""}</div></div></div>
@@ -29366,7 +29491,6 @@ async function hmOpenCase(id){
         ${actBtn("SHORTLISTING", "Back to shortlisting")}
         ${actBtn("NO_MATCH", "No match")}
         ${actBtn("CANCELLED", "Cancel case")}
-        <button class="btn btn-ghost" type="button" disabled title="Stage 2: SMS invitations">Start inviting</button>
         <input class="form-input" id="hm-reason-${hmEsc(c.id)}" placeholder="Reason (for status changes)" style="flex:1;min-width:180px">
       </div>
       <div id="hm-msg" class="card-sub" style="grid-column:1/-1">${hmEsc(flash)}</div>
@@ -29379,6 +29503,7 @@ async function hmOpenCase(id){
         <button class="btn btn-ghost" data-hm-remove="${hmEsc(e.host_id)}">Remove</button>`}</div>`).join("") || '<div class="card-sub">No eligible hosts.</div>'}</div>
     <details style="margin-top:8px"><summary class="card-sub">Excluded hosts (${(sl.excluded || []).length})</summary>
       ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>
+    ${invitations}
     <div class="card-title" style="margin-top:16px">Timeline</div>
     ${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
     ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`;
@@ -29433,7 +29558,7 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile]");
+  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
@@ -29448,6 +29573,20 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.dataset.hmSaveProfile) return await hmSaveProfile(t.dataset.hmSaveProfile);
     if (!c) return;
+    if (t.dataset.hmInv) {
+      const a = t.dataset.hmInv;
+      t.disabled = true; // double-click guard; cleared by the re-render below, or in the catch on error
+      msg("Saving…");
+      const path = a === "invite" ? "invite" : a === "wave" ? "wave" : "pause";
+      const r = await hmWorker(`/staff/cases/${c.id}/${path}`, a === "pause" ? { paused: true } : a === "resume" ? { paused: false } : {});
+      const when = r && (r.first_wave_at || r.wave_at);
+      const alreadySending = (HM.invitations || []).some(i => i.send_state === "queued" || i.send_state === "sending");
+      const waveText = when
+        ? `Wave scheduled for ${new Date(when).toLocaleString()} (it goes out within a minute of that).`
+        : "Next wave requested." + (alreadySending ? " It goes out after the current wave finishes." : "");
+      HM.flash = { id: c.id, text: a === "pause" ? "Paused." : a === "resume" ? "Resumed." : waveText };
+      return await loadHomestayMatching();
+    }
     if (t.dataset.hmAct === "shortlist") {
       msg("Recomputing…");
       let r;
@@ -29472,6 +29611,7 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.dataset.hmRemove) return await hmSaveOverride(c, { order: ids.filter(x => x !== t.dataset.hmRemove), removed: [...(ov.removed || []), t.dataset.hmRemove] });
   } catch (e) {
+    if (t.dataset.hmInv) t.disabled = false;
     msg("Error: " + (e.message || e));
     if (c && e.body && e.body.error === "conflict") { HM.flash = { id: c.id, text: "Error: " + e.message }; await loadHomestayMatching(); }
   }
@@ -29504,6 +29644,73 @@ document.addEventListener("change", (ev) => {
   if (ev.target.id !== "hm-filter") return;
   HM.filter = ev.target.value;
   hmRenderQueue();
+});
+
+// The Worker accepts a "can't host" phone answer for a non-payable host, only
+// "can host" is refused (not_payable) — so the select keeps them choosable
+// (see hostOpts above) and this is where "can host" gets blocked client-side.
+function hmPhoneNotPayableMsg(form){
+  const hostSel = form.querySelector('[name="host_id"]');
+  const opt = hostSel && hostSel.selectedOptions && hostSel.selectedOptions[0];
+  if (!opt || !opt.value || opt.dataset.payable !== "0") return "";
+  const response = form.querySelector('[name="response"]').value;
+  return response === "available" ? "This host can't be paid yet — record only a Can't host answer" : "";
+}
+
+// "toggle" does not bubble, so this must be a capturing listener on document.
+document.addEventListener("toggle", (ev) => {
+  if (ev.target.id !== "hm-phone-details" || !ev.target.open) return;
+  hmEnsureRoomsLoaded().then(() => {
+    const hostSel = ev.target.querySelector('#hm-phone [name="host_id"]');
+    if (hostSel && hostSel.value) hostSel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}, true);
+
+document.addEventListener("change", (ev) => {
+  if (ev.target.name !== "host_id" || !ev.target.closest("#hm-phone")) return;
+  const form = ev.target.closest("#hm-phone");
+  const sel = form.querySelector('[name="room_id"]');
+  const value = ev.target.value;
+  const c = HM.cases.find(x => x.id === HM.selected);
+  hmEnsureRoomsLoaded().then(() => {
+    if (form.querySelector('[name="host_id"]').value !== value) return; // host changed again meanwhile
+    // Only list rooms the Worker will actually accept a phone answer for: this
+    // host's, bookable, and priced for the case's meal plan.
+    const rooms = (HM.rooms || []).filter(r => String(r.host_id) === value && r.bookable === true
+      && c && c.meal_plan && hhResolveRoomRates(r, c.meal_plan).ok);
+    sel.innerHTML = rooms.length
+      ? '<option value="">—</option>' + rooms.map(r => `<option value="${hmEsc(r.room_id)}">${hmEsc(r.label || r.room_id)}</option>`).join("")
+      : `<option value="">No room sells ${hmEsc((c && c.meal_plan) || "")} for this host</option>`;
+  });
+  document.getElementById("hm-phone-msg").textContent = hmPhoneNotPayableMsg(form);
+});
+
+document.addEventListener("change", (ev) => {
+  if (ev.target.name !== "response" || !ev.target.closest("#hm-phone")) return;
+  document.getElementById("hm-phone-msg").textContent = hmPhoneNotPayableMsg(ev.target.closest("#hm-phone"));
+});
+
+document.addEventListener("submit", async (ev) => {
+  if (ev.target.id !== "hm-phone") return;
+  ev.preventDefault();
+  const c = HM.cases.find(x => x.id === HM.selected);
+  const el = document.getElementById("hm-phone-msg");
+  if (!c) return;
+  const f = ev.target;
+  const body = { host_id: f.host_id.value, response: f.response.value, room_id: f.room_id.value || null, reason: f.reason.value || null };
+  if (!body.host_id) { el.textContent = "Pick a host"; return; }
+  const notPayableMsg = hmPhoneNotPayableMsg(f);
+  if (notPayableMsg) { el.textContent = notPayableMsg; return; }
+  if (body.response === "available" && !body.room_id) { el.textContent = "Pick the room they can offer"; return; }
+  try {
+    el.textContent = "Saving…";
+    const r = await hmWorker(`/staff/cases/${c.id}/response`, body);
+    HM.flash = { id: c.id, text: r.withdrew ? "Saved. The verified host withdrew; the case moved to Manual review."
+      : r.status === "OFFER_REVIEW" ? "Saved. The case has a verified host." : "Saved." };
+    await loadHomestayMatching();
+  } catch (e) {
+    el.textContent = "Error: " + (e.message || e);
+  }
 });
 
 function hmRenderProfiles(){
