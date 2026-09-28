@@ -1293,7 +1293,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28b"></script>
+<script src="pms-supabase.js?v=2026-09-28p"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20711,6 +20711,14 @@ function ptnStamp(iso){
 }
 // Staff may cancel only before the move-in happens.
 function ptnCanCancel(status){ return status === 'CONFIRMED' || status === 'READY_FOR_MOVE_IN'; }
+// Deep link: #partners -> the Agencies tab, #partners/<tab> -> that tab; null = not ours.
+const PTN_HASH_TABS = ['agencies', 'users', 'bookings', 'receivables'];
+function ptnTabFromHash(hash){
+  const m = /^#partners(?:\/([a-z]*))?$/.exec(String(hash || ''));
+  if (!m) return null;
+  if (!m[1]) return 'agencies';
+  return PTN_HASH_TABS.includes(m[1]) ? m[1] : null;
+}
 /* PARTNERS-CORE-END */
 /* ---- Partners (DOM side of PARTNERS-CORE) ------------------------------------
    Admin only. Reads through the signed-in admin's session; RLS (vm_is_admin())
@@ -20781,6 +20789,25 @@ async function ptnReload(){
   // Receivables reads the same agencies, so a reload refreshes it too once it has been opened.
   await Promise.all([loadPartners(true), rcvData ? rcvAfterWrite() : null]);
 }
+/* Deep link from the rent@ proof email: portal.vanmates.com/#partners/receivables (and
+   #partners). Runs after hydrate (the post-hydrate hook next to openLeadFromHash), so the
+   signed-in user's role is known; the auth gate's stashed vm_next_hash is honoured. Admin
+   only: anyone else is left where they are. The hash is cleared once handled. */
+function openPartnersFromHash(){
+  let hash = location.hash || '';
+  if (!hash) { try { hash = sessionStorage.getItem('vm_next_hash') || ''; } catch (e) {} }
+  const tab = ptnTabFromHash(hash);
+  if (!tab) return false;
+  try { sessionStorage.removeItem('vm_next_hash'); } catch (e) {}
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  if (!ptnIsAdmin()) return false;
+  PTN_STATE.tab = tab;
+  if (typeof goToView === 'function') goToView('partners');
+  if (ptnData) renderPartners();
+  return true;
+}
+window.openPartnersFromHash = openPartnersFromHash;
+window.addEventListener('hashchange', openPartnersFromHash);
 function ptnPill(p){ return `<span class="tag-pill ${esc(p.tone)}">${esc(p.label)}</span>`; }
 function ptnAgencyTone(s){ return ({ active: 'green', pending: 'gold', suspended: 'red' })[s] || ''; }
 function ptnOptions(list, selected){
@@ -21161,17 +21188,31 @@ function rcvValidDate(s){
   const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
   return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
 }
-// New row objects with agency_name, student_name, move_in (the view rows stay as read).
-function rcvJoinInvoices(invoices, agencies, bookings, students){
+// A homestay invoice (booking_id null) names its booking and the 28-day periods it covers.
+function rcvHomestayLabel(r){
+  if (!r || !r.homestay_booking_ref) return '';
+  const a = r.period_from, b = r.period_to;
+  if (a == null || a === '') return String(r.homestay_booking_ref);
+  return String(a) === String(b == null ? a : b) ? `${r.homestay_booking_ref} · period ${a}`
+    : `${r.homestay_booking_ref} · periods ${a}–${b}`;
+}
+// New row objects with agency_name, student_name, move_in, booking_label, proof_pending
+// (the view rows stay as read). homestays: partner_homestay_bookings rows {booking_ref,
+// student_id}, optional. proof_pending is absent until the payment-proofs SQL: false then.
+function rcvJoinInvoices(invoices, agencies, bookings, students, homestays){
   const ag = new Map((agencies || []).map(a => [a.id, a]));
   const bk = new Map((bookings || []).map(b => [b.id, b]));
   const st = new Map((students || []).map(s => [s.id, s]));
+  const hs = new Map((homestays || []).map(h => [h.booking_ref, h]));
   return (invoices || []).map(r => {
-    const a = ag.get(r.agency_id), b = bk.get(r.booking_id), s = b && st.get(b.student_id);
+    const a = ag.get(r.agency_id), b = bk.get(r.booking_id), h = !b && r.homestay_booking_ref ? hs.get(r.homestay_booking_ref) : null;
+    const s = b ? st.get(b.student_id) : h ? st.get(h.student_id) : null;
     return Object.assign({}, r, {
       agency_name: a ? a.name : '',
       student_name: s ? `${s.given_name || ''} ${s.family_name || ''}`.trim() : '',
       move_in: b ? b.move_in || null : null,
+      booking_label: rcvHomestayLabel(r) || r.booking_id || '',
+      proof_pending: r.proof_pending === true,
     });
   });
 }
@@ -21184,7 +21225,7 @@ function rcvFilterInvoices(list, f){
     (!f.agency || r.agency_id === f.agency)
     && (!f.status || (f.status === 'unpaid' ? rcvUnpaid(r) : r.payment_status === f.status))
     && (!f.overdue || r.payment_status === 'overdue')
-    && (!q || [r.number, r.booking_id, r.student_name, r.agency_name].some(v => String(v || '').toLowerCase().includes(q))));
+    && (!q || [r.number, r.booking_id, r.homestay_booking_ref, r.student_name, r.agency_name].some(v => String(v || '').toLowerCase().includes(q))));
 }
 const rcvNum = n => { const m = /(\d+)$/.exec(String(n || '')); return m ? Number(m[1]) : 0; };
 // Unpaid first by due date (then number); paid and void after, newest issued first.
@@ -21299,6 +21340,12 @@ const RCV_ERRORS = {
   INSUFFICIENT_CREDIT: 'that is more than the credit the agency has (it may have been used on an invoice meanwhile; refresh and check)',
   BAD_AMOUNT: 'the amount is not valid',
   SERVER_ERROR: 'the partner app hit an error; nothing was changed — try again, and tell Aldo if it keeps happening',
+  PROOF_NOT_PENDING: 'This proof was already confirmed or rejected — refresh.',
+  PROOF_NOT_FOUND: 'that proof was not found (it may have been removed); refresh',
+  BOOKING_NOT_FOUND: 'that booking was not found in the partner app',
+  NOT_FOUND: 'Not found — refresh and try again.',
+  FILE_NOT_FOUND: 'The file could not be found in storage — ask the agency to upload it again.',
+  ALREADY_CANCELLED: 'that booking is already cancelled',
 };
 // An endpoint's refusal (HTTP status + JSON body) in plain English.
 function rcvErrorMessage(status, body){
@@ -21348,6 +21395,62 @@ function rcvFilename(cd, fallback){
   if (!name) { const m = /filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;\s]+)/.exec(s); if (m) name = m[1] || m[2] || ''; }
   name = name.split(/[\\/]/).pop().trim();
   return name || fallback;
+}
+// The only proof types a tab may render inline; anything else is downloaded, never shown.
+const RCV_PROOF_INLINE = ['application/pdf', 'image/png', 'image/jpeg'];
+function rcvProofInlineType(ct){
+  const t = String(ct || '').split(';')[0].trim().toLowerCase();
+  return RCV_PROOF_INLINE.includes(t) ? t : '';
+}
+// "2 h ago" from an ISO timestamp; '' when unreadable.
+function rcvAgo(iso, now){
+  const t = Date.parse(iso || '');
+  if (!isFinite(t)) return '';
+  const min = Math.max(0, Math.floor((now - t) / 60000));
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  return h < 24 ? `${h} h ago` : `${Math.floor(h / 24)} d ago`;
+}
+// Payment proofs agencies uploaded (GET /api/staff/billing/proofs), display-ready, oldest
+// first. agencies: optional fallback for the name when the endpoint sent none.
+function rcvProofRows(proofs, now, agencies){
+  const ag = new Map((agencies || []).map(a => [a.id, a.name]));
+  return (proofs || []).slice()
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)))
+    .map(p => ({
+      id: p.id, agency_id: p.agency_id,
+      agency: p.agency_name || ag.get(p.agency_id) || '—',
+      invoices: (p.invoice_numbers || []).length ? p.invoice_numbers.join(', ') : '—',
+      amount: rcvMoney(p.amount_cents), sent_on: p.sent_on || '—',
+      reference: p.reference || '—',
+      submitted_by: p.submitted_by_name || p.submitted_by_email || '—',
+      age: rcvAgo(p.created_at, now),
+      file_name: p.file_name || '', proof: p,
+    }));
+}
+// The Record-bank-transfer form prefilled from a proof. Received on is today: the day the
+// agency says it sent the wire is not the day it reached the account.
+function rcvProofToTransfer(proof, today){
+  const p = proof || {};
+  return {
+    agency_id: p.agency_id || '',
+    amount: rcvMoney(p.amount_cents).replace(/[$,]/g, ''),
+    received_on: today,
+    reference: p.reference || '',
+    invoice_numbers: (p.invoice_numbers || []).slice(),
+    notes: 'Proof ' + String(p.id || '').slice(0, 8),
+  };
+}
+// {booking_ref, voided[], kept_paid[], credit_cents} from homestay/:ref/cancel, for staff.
+function rcvHomestayCancelMsg(res){
+  res = res || {};
+  const parts = [`${res.booking_ref || 'The booking'} cancelled.`];
+  const voided = res.voided || [], kept = res.kept_paid || [];
+  parts.push(voided.length ? `Voided ${voided.join(', ')}.` : 'No unpaid invoices to void.');
+  if (kept.length) parts.push(`Kept paid: ${kept.join(', ')} (refund or credit it in Receivables).`);
+  if (Number(res.credit_cents) > 0) parts.push(`Agency credit now ${rcvMoney(res.credit_cents)}.`);
+  return parts.join(' ');
 }
 /* RECEIVABLES-CORE-END */
 /* RBC-IMPORT-CORE-START */
@@ -21603,23 +21706,43 @@ const RCV_STATE = {
   filters: { agency: '', status: 'unpaid', overdue: false, q: '' },
   exportFrom: '', exportTo: '',
   pay: { agencyId: '', list: null, error: '', loading: false, seq: 0 },
+  proofs: { list: null, error: '', loading: false, seq: 0 },
 };
 const RCV_METHODS = { card: 'Card', bank_transfer: 'Bank transfer', stripe_bank_transfer: 'Stripe bank transfer', credit: 'Credit applied' };
 let rcvData = null, rcvLoading = null;
 function rcvToday(){ return rcvVancouverDate(Date.now()); }
-function rcvRows(){ return rcvJoinInvoices(rcvData ? rcvData.invoices : [], ptnData.agencies, ptnData.bookings, ptnData.students); }
+function rcvRows(){
+  return rcvJoinInvoices(rcvData ? rcvData.invoices : [], ptnData.agencies, ptnData.bookings,
+    ptnData.students.concat(rcvData ? rcvData.hsStudents || [] : []), rcvData ? rcvData.homestays : []);
+}
+// Homestay invoices carry homestay_booking_ref, not booking_id: their student comes from
+// partner_homestay_bookings (admin select policy). Optional: a failure only blanks the names.
+async function rcvLoadHomestays(sb){
+  try {
+    const homestays = await ptnSelectAll(sb, 'partner_homestay_bookings', 'id,booking_ref,student_id', q => q.order('id'));
+    const known = new Set((ptnData ? ptnData.students : []).map(x => x.id));
+    const hsStudents = await ptnSelectIn(sb, 'partner_students', 'id,agency_id,given_name,family_name,email', 'id',
+      homestays.map(h => h.student_id).filter(id => !known.has(id)));
+    return { homestays, hsStudents };
+  } catch (e) {
+    console.warn('[receivables] homestay bookings not loaded', e);
+    return { homestays: [], hsStudents: [] };
+  }
+}
 async function rcvLoad(force){
   if (rcvLoading) return rcvLoading;
   if (rcvData && !rcvData.error && !force && Date.now() - rcvData.loadedAt < 60000) return;
+  rcvLoadProofs();
   const sb = window.vmDb && window.vmDb.sb;
   if (!sb) { rcvData = { invoices: [], balances: [], loadedAt: Date.now(), error: 'Not connected to the database.' }; return; }
   rcvLoading = (async () => {
     try {
-      const [invoices, balances] = await Promise.all([
+      const [invoices, balances, hs] = await Promise.all([
         ptnSelectAll(sb, 'partner_invoice_status', '*', q => q.order('issued_on', { ascending: false }).order('id')),
         ptnSelectAll(sb, 'partner_agency_balance', '*', q => q.order('agency_id')),
+        rcvLoadHomestays(sb),
       ]);
-      rcvData = { invoices, balances, loadedAt: Date.now(), error: '' };
+      rcvData = { invoices, balances, homestays: hs.homestays, hsStudents: hs.hsStudents, loadedAt: Date.now(), error: '' };
     } catch (e) {
       console.error('[receivables] load failed', e);
       const hint = /partner_/.test(String(e.message || '')) ? ' (has the partner billing SQL been applied?)' : '';
@@ -21642,6 +21765,22 @@ async function rcvLoadPayments(agencyId){
     pay.error = String(e.message || e);
   }
   pay.loading = false;
+  if (PTN_STATE.tab === 'receivables') renderPartners();
+}
+// Proofs agencies uploaded, waiting for staff. Its own request, so a partner app that is down
+// (or not yet serving /proofs) shows one line in the panel and leaves the tab working.
+async function rcvLoadProofs(){
+  const pr = RCV_STATE.proofs, my = ++pr.seq;
+  pr.loading = true;
+  try {
+    const data = await rcvJson('GET', '/api/staff/billing/proofs?status=submitted');
+    if (my !== pr.seq) return;
+    Object.assign(pr, { list: data.proofs || [], error: '' });
+  } catch (e) {
+    if (my !== pr.seq) return;
+    Object.assign(pr, { list: null, error: String(e.message || e) });
+  }
+  pr.loading = false;
   if (PTN_STATE.tab === 'receivables') renderPartners();
 }
 // After any billing write: the views again, and the open agency's payments.
@@ -21693,6 +21832,7 @@ function rcvHtml(){
       <button class="btn btn-primary" type="button" data-rcv-transfer>Record bank transfer</button>
     </div>
     ${RCV_STATE.imp ? rcvImportHtml() : ''}
+    ${rcvProofsHtml()}
     ${agency ? rcvAgencySummaryHtml(agency) : rcvCreditListHtml()}
     ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
       <thead><tr class="name-sub" style="text-align:left"><th ${td}>Invoice</th><th>Agency</th><th>Student / booking</th><th>Due</th>
@@ -21700,11 +21840,11 @@ function rcvHtml(){
       <tbody>${list.map(r => `<tr style="border-top:1px solid var(--line)">
         <td ${td}><strong>${esc(r.number)}</strong><br><span class="name-sub">issued ${esc(ptnDay(r.issued_on))}</span></td>
         <td>${esc(r.agency_name || '—')}</td>
-        <td>${esc(r.student_name || '—')}<br><span class="name-sub">${esc(r.booking_id || '')}${r.move_in ? ' · in ' + esc(ptnDay(r.move_in)) : ''}</span></td>
+        <td>${esc(r.student_name || '—')}<br><span class="name-sub">${esc(r.booking_label || '')}${r.move_in ? ' · in ' + esc(ptnDay(r.move_in)) : ''}</span></td>
         <td style="white-space:nowrap">${esc(ptnDay(r.due_on))}</td>
         <td ${num}>${esc(rcvMoney(r.total_cents))}</td><td ${num}>${esc(rcvMoney(r.paid_cents))}</td>
         <td ${num}><strong>${esc(rcvMoney(r.balance_cents))}</strong></td>
-        <td style="padding:8px">${ptnPill(rcvStatus(r.payment_status))}${r.void_reason ? `<br><span class="name-sub">${esc(r.void_reason)}</span>` : ''}</td>
+        <td style="padding:8px">${ptnPill(rcvStatus(r.payment_status))}${r.proof_pending ? ' <span class="tag-pill blue" title="The agency uploaded a transfer proof; see Proofs to review">proof received</span>' : ''}${r.void_reason ? `<br><span class="name-sub">${esc(r.void_reason)}</span>` : ''}</td>
         <td style="padding:8px">${r.status === 'void' ? '' : `<button class="btn btn-ghost btn-mini" type="button" data-rcv-void="${esc(r.number)}">Void…</button>`}</td>
       </tr>`).join('')}</tbody>
       <tfoot><tr style="border-top:2px solid var(--line)"><td ${td} colspan="4"><strong>Total</strong> <span class="name-sub">(${t.count} invoice${t.count === 1 ? '' : 's'}, void not counted)</span></td>
@@ -21713,6 +21853,33 @@ function rcvHtml(){
       </table></div>` : `<p class="name-sub">${rows.length ? 'No invoices match.' : 'No partner invoices yet.'}</p>`}
     ${agency ? rcvPaymentsHtml(agency) : '<p class="name-sub" style="margin-top:14px">Pick an agency to see its payments and move money between its invoices.</p>'}
     ${rcvExportHtml()}`;
+}
+// Proofs to review: hidden when there are none; a load error is one line, never the tab.
+function rcvProofsHtml(){
+  const pr = RCV_STATE.proofs;
+  if (pr.error) return `<p class="name-sub" style="margin:0 0 12px">Proofs to review could not be loaded: ${esc(pr.error)}
+    <button class="btn btn-ghost btn-mini" type="button" data-rcv-proofs-reload>Retry</button></p>`;
+  if (!pr.list || !pr.list.length) return '';
+  const rows = rcvProofRows(pr.list, Date.now(), ptnData.agencies);
+  const td = 'style="padding:8px;vertical-align:top"';
+  return `<div class="card" style="padding:0;margin-bottom:12px;overflow-x:auto">
+    <div style="padding:10px 12px 4px"><strong>Proofs to review (${rows.length})</strong>
+      <span class="name-sub"> · transfers agencies say they sent; confirm once the money is in the account</span></div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th ${td}>Agency</th><th ${td}>Invoices</th><th style="text-align:right;padding:8px">Amount</th>
+        <th ${td}>Sent on</th><th ${td}>Reference</th><th ${td}>Submitted</th><th></th></tr></thead>
+      <tbody>${rows.map(r => `<tr style="border-top:1px solid var(--line)">
+        <td ${td}><strong>${esc(r.agency)}</strong></td>
+        <td ${td}>${esc(r.invoices)}</td>
+        <td style="text-align:right;padding:8px;white-space:nowrap;vertical-align:top"><strong>${esc(r.amount)}</strong></td>
+        <td style="padding:8px;vertical-align:top;white-space:nowrap">${esc(r.sent_on)}</td>
+        <td ${td}>${esc(r.reference)}</td>
+        <td ${td}>${esc(r.submitted_by)}<br><span class="name-sub">${esc(r.age)}</span></td>
+        <td style="padding:8px;white-space:nowrap;vertical-align:top">
+          <button class="btn btn-ghost btn-mini" type="button" data-rcv-proof-view="${esc(r.id)}">View</button>
+          <button class="btn btn-primary btn-mini" type="button" data-rcv-proof-confirm="${esc(r.id)}">Confirm…</button>
+          <button class="btn btn-ghost btn-mini" type="button" data-rcv-proof-reject="${esc(r.id)}">Reject…</button>
+        </td></tr>`).join('')}</tbody></table></div>`;
 }
 function rcvAgencySummaryHtml(a){
   const b = rcvAgencyBalance(rcvData.balances, a.id);
@@ -21784,6 +21951,14 @@ function rcvWire(root){
   on('[data-rcv-overdue]', 'change', c => { RCV_STATE.filters.overdue = c.checked; renderPartners(); });
   on('[data-rcv-search]', 'change', i => { RCV_STATE.filters.q = i.value; renderPartners(); });
   on('[data-rcv-transfer]', 'click', () => rcvOpenTransfer());
+  on('[data-rcv-proofs-reload]', 'click', () => rcvLoadProofs());
+  on('[data-rcv-proof-view]', 'click', b => rcvViewProof(b, b.dataset.rcvProofView));
+  on('[data-rcv-proof-confirm]', 'click', b => {
+    const p = rcvProofById(b.dataset.rcvProofConfirm);
+    if (!p) { rcvLoadProofs(); return; }  // gone meanwhile: never fall through to a plain transfer
+    rcvOpenTransfer(p);
+  });
+  on('[data-rcv-proof-reject]', 'click', b => rcvOpenRejectProof(b.dataset.rcvProofReject));
   on('[data-rcv-void]', 'click', b => rcvOpenVoid(b.dataset.rcvVoid));
   on('[data-rcv-credit]', 'click', b => rcvOpenCredit(b.dataset.rcvCredit));
   on('[data-rcv-refund]', 'click', b => rcvOpenRefund(b.dataset.rcvRefund));
@@ -21863,28 +22038,47 @@ function rcvDrawInvoicePick(form, agencyId){
   box.innerHTML = !agencyId ? '<span class="name-sub">Pick an agency first.</span>'
     : !open.length ? '<span class="name-sub">No open invoices: the whole amount becomes credit.</span>'
     : '<span class="name-sub">Tick none to apply it oldest due first.</span>' + open.map(r => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-top:4px">
-        <input type="checkbox" name="inv" value="${esc(r.number)}"> <span><strong>${esc(r.number)}</strong> ${esc(r.student_name || r.booking_id || '')} · due ${esc(ptnDay(r.due_on))} · balance ${esc(rcvMoney(r.balance_cents))}</span></label>`).join('');
+        <input type="checkbox" name="inv" value="${esc(r.number)}"> <span><strong>${esc(r.number)}</strong> ${esc(r.student_name || r.booking_label || '')} · due ${esc(ptnDay(r.due_on))} · balance ${esc(rcvMoney(r.balance_cents))}</span></label>`).join('');
 }
-function rcvOpenTransfer(){
+const rcvProofById = id => ((RCV_STATE.proofs.list || []).find(p => p.id === id)) || null;
+// With a proof: the same dialog, prefilled from it (agency locked, its invoices ticked), and
+// the submit confirms the proof (POST /proofs/:id/confirm) instead of recording a bare transfer.
+function rcvOpenTransfer(proof){
   if (!rcvData || rcvData.error) return;
   const today = rcvToday();
+  const pre = proof ? rcvProofToTransfer(proof, today) : null;
+  const agencyId = pre ? pre.agency_id : RCV_STATE.filters.agency;
+  const known = !pre || ptnData.agencies.some(a => a.id === pre.agency_id);
+  const agencyOpts = [['', 'Pick an agency'], ...ptnData.agencies.map(a => [a.id, a.name + (a.payment_ref ? ` (${a.payment_ref})` : '')])];
+  if (!known) agencyOpts.push([pre.agency_id, proof.agency_name || pre.agency_id]);
   rcvModalOpen({
-    title: 'Record <em>bank transfer</em>',
-    sub: 'Applied to the invoices you tick, else oldest due first; anything left becomes credit',
-    body: `${rcvFormField('Agency', `<select class="form-input" name="agency_id">${ptnOptions([['', 'Pick an agency'],
-        ...ptnData.agencies.map(a => [a.id, a.name + (a.payment_ref ? ` (${a.payment_ref})` : '')])], RCV_STATE.filters.agency)}</select>`)}
+    title: pre ? 'Confirm <em>transfer proof</em>' : 'Record <em>bank transfer</em>',
+    sub: pre ? `${proof.agency_name || ''} says it sent ${rcvMoney(proof.amount_cents)} on ${proof.sent_on || '?'}. Check the account first: confirming records the payment.`
+      : 'Applied to the invoices you tick, else oldest due first; anything left becomes credit',
+    body: `${rcvFormField('Agency', `<select class="form-input" name="agency_id"${pre ? ' disabled' : ''}>${ptnOptions(agencyOpts, agencyId)}</select>`)}
       <div class="form-row">
-        <div class="form-field"><label>Amount received (CAD)</label><input class="form-input" name="amount" inputmode="decimal" placeholder="1500.00"></div>
+        <div class="form-field"><label>Amount received (CAD)</label><input class="form-input" name="amount" inputmode="decimal" placeholder="1500.00" value="${esc(pre ? pre.amount : '')}"></div>
         <div class="form-field"><label>Received on</label><input class="form-input" name="received_on" type="date" value="${today}" max="${today}"></div>
       </div>
-      ${rcvFormField('Bank reference *', '<input class="form-input" name="reference" maxlength="200" placeholder="Wire reference or memo">')}
+      ${rcvFormField('Bank reference *', `<input class="form-input" name="reference" maxlength="200" placeholder="Wire reference or memo" value="${esc(pre ? pre.reference : '')}">`)}
       <div class="form-field" style="margin-bottom:12px"><label>Apply to (optional)</label><div data-rcv-inv-pick></div></div>
-      ${rcvFormField('Notes (optional)', '<textarea class="form-input" name="notes" rows="2" maxlength="1000"></textarea>')}`,
-    submit: 'Record transfer',
+      ${rcvFormField('Notes (optional)', `<textarea class="form-input" name="notes" rows="2" maxlength="1000">${esc(pre ? pre.notes : '')}</textarea>`)}`,
+    submit: pre ? 'Confirm and record' : 'Record transfer',
     wire: form => {
       const sel = form.elements.agency_id;
       sel.addEventListener('change', () => rcvDrawInvoicePick(form, sel.value));
       rcvDrawInvoicePick(form, sel.value);
+      if (pre) {
+        const want = new Set(pre.invoice_numbers);
+        form.querySelectorAll('input[name="inv"]').forEach(c => { c.checked = want.has(c.value); });
+        const gone = pre.invoice_numbers.filter(n => ![...form.querySelectorAll('input[name="inv"]')].some(c => c.value === n));
+        if (gone.length) {
+          const note = document.createElement('div');
+          note.className = 'name-sub'; note.style.marginTop = '4px';
+          note.textContent = 'No longer open (not ticked): ' + gone.join(', ');
+          form.querySelector('[data-rcv-inv-pick]').appendChild(note);
+        }
+      }
     },
     onSubmit: async (form, err) => {
       const el = form.elements;
@@ -21894,6 +22088,15 @@ function rcvOpenTransfer(){
         invoice_numbers: [...form.querySelectorAll('input[name="inv"]:checked')].map(x => x.value),
       }, rcvToday());
       if (!v.ok) { err.textContent = v.errors.join('. '); return; }
+      if (pre) {
+        const body = Object.assign({}, v.body); delete body.agency_id;
+        return rcvSubmit(err, 'confirm the proof', async () => {
+          const res = await rcvJson('POST', '/api/staff/billing/proofs/' + encodeURIComponent(proof.id) + '/confirm', body);
+          rcvModalDone(rcvPaymentResultMsg(res));
+          showToast('Proof confirmed; transfer recorded');
+          await rcvAfterWrite();
+        });
+      }
       return rcvSubmit(err, 'record the transfer', async () => {
         const res = await rcvJson('POST', '/api/staff/billing/payments', v.body);
         rcvModalDone(rcvPaymentResultMsg(res));
@@ -21902,6 +22105,55 @@ function rcvOpenTransfer(){
       });
     },
   });
+}
+function rcvOpenRejectProof(id){
+  const p = rcvProofById(id);
+  if (!p) return;
+  rcvModalOpen({
+    title: 'Reject <em>transfer proof</em>',
+    sub: `${p.agency_name || ''} · ${rcvMoney(p.amount_cents)} sent ${p.sent_on || '?'} · ${(p.invoice_numbers || []).join(', ') || 'no invoices named'}`,
+    body: rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="3" maxlength="500" placeholder="Why it is rejected (the agency sees this)"></textarea>'),
+    submit: 'Reject proof',
+    onSubmit: async (form, err) => {
+      const reason = String(form.elements.reason.value || '').trim();
+      if (!reason) { err.textContent = 'A reason is required'; return; }
+      if (reason.length > 500) { err.textContent = 'The reason is too long (500 characters max)'; return; }
+      return rcvSubmit(err, 'reject the proof', async () => {
+        await rcvJson('POST', '/api/staff/billing/proofs/' + encodeURIComponent(id) + '/reject', { reason });
+        rcvModalClose();
+        showToast('Proof rejected');
+        await rcvAfterWrite();
+      });
+    },
+  });
+}
+// The proof file, fetched with the staff JWT (a plain link cannot carry it). The tab is
+// opened on the click itself so a popup blocker lets it through; blocked anyway -> download.
+async function rcvViewProof(btn, id){
+  const p = rcvProofById(id);
+  let win = null;
+  try { win = window.open('', '_blank'); } catch (_) { win = null; }
+  btn.disabled = true;
+  try {
+    const res = await rcvApi('GET', '/api/staff/billing/proofs/' + encodeURIComponent(id) + '/file');
+    if (!res.ok) { let data = null; try { data = await res.json(); } catch (_) {} throw new Error(rcvErrorMessage(res.status, data)); }
+    // Rebuilt with an allowlisted type: the server's Content-Type is not trusted to decide
+    // what renders in a portal-origin tab (an HTML or SVG blob would run as the portal).
+    const raw = await res.blob();
+    const type = rcvProofInlineType(res.headers.get('Content-Type') || raw.type);
+    const blob = new Blob([raw], { type: type || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (type && win && !win.closed) { try { win.opener = null; } catch (_) {} win.location.href = url; return; }
+    if (win && !win.closed) win.close();
+    const a = document.createElement('a');
+    a.href = url; a.download = rcvFilename(res.headers.get('Content-Disposition'), (p && p.file_name) || 'proof');
+    document.body.appendChild(a); a.click(); a.remove();
+    showToast(type ? 'Popup blocked: the proof was downloaded instead' : 'The proof was downloaded (not a PDF or image, so not opened)');
+  } catch (e) {
+    if (win && !win.closed) win.close();
+    showToast('Could not open the proof: ' + (e.message || e));
+  } finally { btn.disabled = false; }
 }
 function rcvOpenMove(paymentId, from, allocated){
   const p = (RCV_STATE.pay.list || []).find(x => x.id === paymentId);
@@ -21912,7 +22164,7 @@ function rcvOpenMove(paymentId, from, allocated){
     title: `Move money off <em>${esc(from)}</em>`,
     sub: `${rcvMoney(allocated)} of the ${rcvMoney(p.amount_cents)} payment received ${ptnDay(p.received_on)} (${p.reference || 'no reference'}) is on ${from}`,
     body: `${rcvFormField('Move to', `<select class="form-input" name="to">${ptnOptions([['', 'Pick an invoice'],
-        ...targets.map(r => [r.number, `${r.number} · ${r.student_name || r.booking_id || ''} · balance ${rcvMoney(r.balance_cents)}`])], '')}</select>`)}
+        ...targets.map(r => [r.number, `${r.number} · ${r.student_name || r.booking_label || ''} · balance ${rcvMoney(r.balance_cents)}`])], '')}</select>`)}
       ${rcvFormField('Amount (CAD)', `<input class="form-input" name="amount" inputmode="decimal" value="${esc(rcvDollars(allocated))}">`)}
       ${rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="2" maxlength="500" placeholder="Why it moves (kept in the audit trail)"></textarea>')}`,
     submit: 'Move',
@@ -21935,7 +22187,7 @@ function rcvOpenVoid(number){
   const paid = Number(r.paid_cents) || 0;
   rcvModalOpen({
     title: `Void <em>${esc(number)}</em>`,
-    sub: `${rcvMoney(r.total_cents)} invoice for booking ${r.booking_id || '—'}`,
+    sub: `${rcvMoney(r.total_cents)} invoice for booking ${rcvHomestayLabel(r) || r.booking_id || '—'}`,
     body: `<p style="margin:0 0 12px;line-height:1.5">${paid > 0 ? `${esc(rcvMoney(paid))} has been paid on it; that becomes the agency's credit. ` : ''}A void invoice cannot be reopened.</p>
       ${rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="2" maxlength="500" placeholder="Why it is voided (kept on the invoice)"></textarea>')}`,
     submit: 'Void invoice',
@@ -27441,6 +27693,8 @@ renderLeads();
     catch (e) { console.warn('[vmDb] openLeadFromHash failed:', e.message); }
     try { if (typeof window.openCheckoutFromHash === 'function') window.openCheckoutFromHash(); }
     catch (e) { console.warn('[vmDb] openCheckoutFromHash failed:', e.message); }
+    try { if (typeof window.openPartnersFromHash === 'function') window.openPartnersFromHash(); }
+    catch (e) { console.warn('[vmDb] openPartnersFromHash failed:', e.message); }
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
@@ -27597,6 +27851,37 @@ function ahsCreateResult(d){
   else if (known) { message = `Created ${ref}, but no invoice number came back. Check Receivables before retrying.`; bad = true; retry = true; }
   else { message = `Created ${ref}, but the answer carried no agency invoice step — n8n may not have the agency flow live. Check the booking before doing anything else.`; bad = true; }
   return { ref, invoices, error: err, known, message, bad, retry };
+}
+// Cancel agency booking… is offered on agency rows still running: created (awaiting the
+// agency's payment) or paid. Not on completed / ended / refunded / cancelled ones.
+function ahsCanCancelAgency(b){
+  return !!b && b.payer_type === 'agency' && (b.status === 'created' || b.status === 'paid');
+}
+const ahsMoney = cents => {
+  const c = Math.round(Number(cents) || 0), abs = Math.abs(c);
+  return `${c < 0 ? '-' : ''}$${String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${String(abs % 100).padStart(2, '0')}`;
+};
+// The "who pays" lines of the booking-form preview, from computeHomestaySchedule's output.
+// plan: '' for a student booking (Stripe charges, fmt formats money as before), or the
+// agency's billing plan ('upfront' | 'per_period'): the partner app invoices the agency.
+function ahsPayerLines(s, plan, fmt){
+  const charges = (s && s.studentCharges) || [], lines = [];
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+  if (plan === 'upfront') {
+    lines.push('Agency is invoiced ' + ahsMoney(s.totals.studentTotalCents) + ' on the partner portal (upfront)');
+    lines.push('   rent + 4% fee for the whole stay; the matching package and any deposit are added to that invoice');
+    return lines;
+  }
+  if (plan === 'per_period') {
+    lines.push('Agency is invoiced ' + ahsMoney(charges.length ? charges[0].totalCents : 0) + ' on the partner portal (first period, then every 28 days)');
+    charges.forEach((c, k) => lines.push('   period ' + (k + 1) + '   from ' + c.dueDate + '   ' + ahsMoney(c.totalCents) + '   (' + plural(c.days, 'day') + ')'));
+    lines.push('   rent + 4% fee per period; the matching package and any deposit are added to the first invoice');
+    return lines;
+  }
+  fmt = fmt || ahsMoney;
+  lines.push('Student pays ' + fmt(s.totals.studentTotalCents) + ' over ' + plural(charges.length, 'charge') + ':');
+  charges.forEach(c => lines.push('   ' + c.dueDate + '   ' + fmt(c.totalCents) + '   (' + c.kind + ', ' + plural(c.days, 'day') + ')'));
+  return lines;
 }
 /* AGENCY-HS-CORE-END */
 
@@ -28070,14 +28355,48 @@ function ahsCreateResult(d){
   // checkout and stopped; extending it creates a second unpaid booking and two
   // payment links chasing one person. Most rows in this table are in that state.
   function hbExtendCell(b) {
-    if (b.status !== 'paid') return '<td></td>';
+    const cancel = hbAgencyCancelBtn(b);
+    if (b.status !== 'paid') return '<td class="nowrap">' + cancel + '</td>';
     if (!hbCanWrite()) {
-      return '<td><button type="button" class="btn btn-ghost hb-need-token" ' +
+      return '<td class="nowrap"><button type="button" class="btn btn-ghost hb-need-token" ' +
         'title="Creating a booking needs the full staff token — not the view-only one.">' +
-        'Needs full token</button></td>';
+        'Needs full token</button>' + (cancel ? ' ' + cancel : '') + '</td>';
     }
-    return '<td class="hb-ext" data-ref="' + esc(b.booking_ref) + '">' +
-      '<button type="button" class="btn btn-ghost btn-mini hb-ext-start">Extend</button></td>';
+    return '<td class="hb-ext nowrap" data-ref="' + esc(b.booking_ref) + '">' +
+      '<button type="button" class="btn btn-ghost btn-mini hb-ext-start">Extend</button>' + (cancel ? ' ' + cancel : '') + '</td>';
+  }
+
+  // Agency-paid bookings are cancelled in the partner app (it voids the agency's unpaid
+  // invoices and stops host payouts), with the admin's Supabase JWT like Receivables,
+  // not the n8n staff token. Admins only: the endpoint refuses anyone else.
+  function hbAgencyCancelBtn(b) {
+    if (!ahsCanCancelAgency(b)) return '';
+    if (typeof ptnIsAdmin !== 'function' || !ptnIsAdmin()) return '';
+    return '<button type="button" class="btn btn-ghost btn-mini hb-agency-cancel" data-ref="' + esc(b.booking_ref) + '">' +
+      'Cancel agency booking…</button>';
+  }
+  function hbOpenAgencyCancel(ref) {
+    if (!ref || typeof rcvModalOpen !== 'function') return;
+    rcvModalOpen({
+      title: 'Cancel agency booking <em>' + esc(ref) + '</em>',
+      sub: 'Agency-paid homestay',
+      body: '<p style="margin:0 0 12px;line-height:1.5;color:var(--red-dark)">Voids the agency\'s unpaid invoices and stops host payouts. ' +
+        'Paid invoices stay paid (refund/credit in Receivables).</p>' +
+        rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="3" maxlength="500" placeholder="Why the booking is cancelled (kept in the audit trail)"></textarea>'),
+      submit: 'Cancel booking',
+      onSubmit: async (form, err) => {
+        const reason = String(form.elements.reason.value || '').trim();
+        if (!reason) { err.textContent = 'A reason is required'; return; }
+        if (reason.length > 500) { err.textContent = 'The reason is too long (500 characters max)'; return; }
+        return rcvSubmit(err, 'cancel the booking', async () => {
+          const res = await rcvJson('POST', '/api/staff/billing/homestay/' + encodeURIComponent(ref) + '/cancel', { reason });
+          rcvModalDone(rcvHomestayCancelMsg(res));
+          showToast(ref + ' cancelled');
+          if (typeof rcvData !== 'undefined' && rcvData) rcvLoad(true);
+          try { await hbLoadBookings(); } catch (e) { hbStatus(e.message, true); }
+        });
+      },
+    });
   }
 
   // Two-step by design: the button only opens the date field, and nothing is sent
@@ -28468,11 +28787,10 @@ function ahsCreateResult(d){
     }
     if (warn) warn.hidden = true;
     box.hidden = false;
-    const lines = [];
-    lines.push('Student pays ' + cad(s.totals.studentTotalCents) + ' over ' +
-               s.studentCharges.length + ' charge' + (s.studentCharges.length === 1 ? '' : 's') + ':');
-    s.studentCharges.forEach(c => lines.push('   ' + c.dueDate + '   ' + cad(c.totalCents) +
-      '   (' + c.kind + ', ' + c.days + ' day' + (c.days === 1 ? '' : 's') + ')'));
+    // An agency booking (form filled from an agency request) is invoiced to the agency on
+    // the partner portal; the student is never charged. Host and margin lines are the same.
+    const agencyPlan = AHS_FORM.request && AHS_FORM.fields && AHS_FORM.fields.agency ? AHS_FORM.fields.agency.billing_plan : '';
+    const lines = ahsPayerLines(s, agencyPlan, cad);
     lines.push('Host receives ' + cad(s.totals.hostTotalCents) + ' over ' +
                s.hostPayments.length + ' payment' + (s.hostPayments.length === 1 ? '' : 's') + ':');
     // p.days, not the daysHosted/daysInPeriod pair the calendar-month model
@@ -28485,7 +28803,7 @@ function ahsCreateResult(d){
       (p.prorated ? '   (part period, ' + p.days + ' day' + (p.days === 1 ? '' : 's') + ')' : '')));
     lines.push('Tenancy ends ' + s.leaseEndDate + '   (' + hbStayLength(s.leaseDays) + ')');
     lines.push('Vanmates margin ' + cad(s.totals.marginCents) + ' before Stripe fees');
-    if (!s.subscription) lines.push('No subscription — this booking is charged in full upfront.');
+    if (!s.subscription && !agencyPlan) lines.push('No subscription — this booking is charged in full upfront.');
     box.textContent = lines.join('\n');
     if (warn && s.totals.marginCents < 0) {
       warn.hidden = false;
@@ -28748,6 +29066,7 @@ function ahsCreateResult(d){
     ahsSetStudentOnly(false);
     if (!keepStatus) { hbStatus(''); ahsShowRetry(''); }
     ahsRender();
+    hbPreview();
   }
 
   function ahsShowRetry(ref) {
@@ -28804,6 +29123,8 @@ function ahsCreateResult(d){
     // Delegated: the tbody survives every re-render, the rows inside it do not.
     const tbody = $('hb-rows');
     if (tbody) tbody.addEventListener('click', function (e) {
+      const agencyCancel = e.target.closest ? e.target.closest('.hb-agency-cancel') : null;
+      if (agencyCancel) return hbOpenAgencyCancel(agencyCancel.getAttribute('data-ref'));
       // Checked before the .hb-act guard: the read-only cell is deliberately
       // not an action cell, so it carries no data-ref and would fall out here.
       if (e.target.closest && e.target.closest('.hb-need-token')) {
