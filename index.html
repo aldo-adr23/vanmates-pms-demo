@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28u"></script>
+<script src="pms-supabase.js?v=2026-09-28w"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2755,6 +2755,7 @@
     </section>
 
     <section class="view" data-view="partner-inventory">
+      <p class="name-sub" style="margin:0 0 14px;max-width:760px">Rooms and availability come from Asana automatically — partners see every free room. Nothing needs adding here. Only use this page to hide a building from partners, or to set terms that differ from the website (half a month's deposit, cleaning included, 3-month minimum, $295 membership).</p>
       <div id="inv-root"><p class="name-sub">Loading…</p></div>
     </section>
 
@@ -20499,6 +20500,8 @@ function invReadiness(p){
     .forEach(([k, label]) => (p && p[k] != null ? custom : blank).push(label));
   return { website: custom.length === 0, custom, blank };
 }
+// The "different terms" form starts open only when a building already has one.
+function invHasCustomTerms(p){ return !invReadiness(p).website; }
 function invDay(iso){
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
   return m ? `${INV_MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : '';
@@ -20706,7 +20709,7 @@ function hmUninvited(orderedHostIds, invs){
    session; RLS and column grants decide (only property_id and *_override on
    rooms). An update that returns no row was refused, and the page says so.
    After every save the page reads everything again. */
-const INV_STATE = { city: 'vancouver', q: '', open: new Set() };
+const INV_STATE = { city: 'vancouver', q: '', open: new Set(), termsOpen: new Set() };
 let invData = null, invLoading = null;
 function invToday(){ return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }); }
 function invIsAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
@@ -20799,7 +20802,7 @@ function invUnlinkedHtml(list){
   </div>`;
 }
 function invCardHtml(g, today){
-  const p = g.prop, rd = invReadiness(p), am = Array.isArray(p.amenities) ? p.amenities : [];
+  const p = g.prop, rd = invReadiness(p);
   const pill = rd.website ? '<span class="tag-pill">Website terms</span>'
     : `<span class="tag-pill blue"${rd.blank.length ? ` title="Website terms for: ${esc(rd.blank.join(', '))}"` : ''}>Custom terms</span>`;
   const field = (name, label, value, mode, ph) =>
@@ -20812,19 +20815,16 @@ function invCardHtml(g, today){
         <span class="name-sub">${g.visible} rooms${hidden > 0 ? ` (${hidden} hidden)` : ''} · ${g.ready} partner-ready</span> ${pill}</div>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-inv-bookable${p.partner_bookable ? ' checked' : ''}> Partner bookable</label>
     </div>
-    <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px">
+    <details data-inv-terms style="margin-top:10px"${invHasCustomTerms(p) || INV_STATE.termsOpen.has(p.id) ? ' open' : ''}><summary class="name-sub" style="cursor:pointer">This building has different terms…</summary>
+    <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:10px">
       ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal', "Blank = half a month's rent")}
       ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal', 'Blank = included')}
       ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric', 'Blank = 3 months')}
       <div class="name-sub" style="grid-column:1/-1">Blank uses the website terms: deposit half a month's rent, cleaning included, 3-month minimum, $295 membership.</div>
-      ${field('utilities', 'Utilities', p.utilities_note || '')}
-      ${field('wifi', 'Wi-Fi', p.wifi_note || '')}
-      ${field('laundry', 'Laundry', p.laundry_note || '')}
-      <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px">${INV_AMENITIES.map(([k, l]) =>
-        `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="am" value="${k}"${am.includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>
       <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save terms</button> <span class="name-sub" data-inv-msg></span></div>
     </form>
-    <details style="margin-top:10px"${INV_STATE.open.has(p.id) ? ' open' : ''}><summary>Rooms (${g.rooms.length})</summary>
+    </details>
+    <details data-inv-rooms style="margin-top:10px"${INV_STATE.open.has(p.id) ? ' open' : ''}><summary>Rooms (${g.rooms.length})</summary>
       <div style="overflow-x:auto"><table style="width:100%;margin-top:8px;border-collapse:collapse">
         <thead><tr class="name-sub" style="text-align:left"><th>Room</th><th>Type</th><th>Price</th><th>Status</th><th>Partner-ready</th><th title="Saves instantly">Private bath (saves instantly)</th><th>Overrides: deposit · cleaning · min stay</th></tr></thead>
         <tbody>${g.rooms.map(r => invRoomRowHtml(r, today)).join('')}</tbody>
@@ -20849,10 +20849,15 @@ function invWire(root){
   const s = root.querySelector('#inv-search');
   if (s) s.addEventListener('input', () => { INV_STATE.q = s.value; invApplySearch(root); });
   root.querySelectorAll('[data-inv-prop]').forEach(card => {
-    const details = card.querySelector('details');
+    const details = card.querySelector('details[data-inv-rooms]');
     if (details) details.addEventListener('toggle', () => {
       const id = card.dataset.invProp;
       if (details.open) INV_STATE.open.add(id); else INV_STATE.open.delete(id);
+    });
+    const terms = card.querySelector('details[data-inv-terms]');
+    if (terms) terms.addEventListener('toggle', () => {
+      const id = card.dataset.invProp;
+      if (terms.open) INV_STATE.termsOpen.add(id); else INV_STATE.termsOpen.delete(id);
     });
   });
   root.querySelectorAll('[data-inv-form]').forEach(f => f.addEventListener('submit', e => { e.preventDefault(); invSaveTerms(f); }));
@@ -20877,8 +20882,6 @@ async function invSaveTerms(form){
   if (!dep.ok || !cle.ok || !ms.ok) { msg.textContent = 'Amounts must be numbers (e.g. 1000 or 150.50); minimum stay in whole months.'; return; }
   const patch = Object.assign({
     deposit_cents: dep.value, cleaning_fee_cents: cle.value, min_stay_months: ms.value,
-    utilities_note: el.utilities.value.trim() || null, wifi_note: el.wifi.value.trim() || null, laundry_note: el.laundry.value.trim() || null,
-    amenities: [...form.querySelectorAll('input[name=am]:checked')].map(x => x.value),
   }, invStamp());
   msg.textContent = 'Saving…';
   if (btn) btn.disabled = true;
