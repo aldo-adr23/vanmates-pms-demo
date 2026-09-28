@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28t"></script>
+<script src="pms-supabase.js?v=2026-09-28u"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -17714,17 +17714,27 @@ function hbNeedsYou(b){
     if(t && dup.indexOf(t.toLowerCase()) === -1) out.push(t.charAt(0).toUpperCase() + t.slice(1));
   });
   const ls = String(b.letter_status || '');
-  if(ls === 'blocked'){
+  // letter_sig: set on the row by the bookings console from the contracts table
+  // (ahsLetterAwaiting). An agency letter waiting on the student's signature is
+  // not staff's to fix; a signed one that n8n never sent is.
+  const sig = String(b.letter_sig || '');
+  if(sig === 'signed_unsent') out.push('Letter not sent — the student has signed');
+  if(sig === 'awaiting' || sig === 'sending' || ls === 'awaiting_signature'){ /* waits on the student, or n8n is sending */ }
+  else if(ls === 'blocked'){
     const miss = String(b.letter_error || '').replace(/^missing: /, '');
     out.push('Letter blocked' + (miss ? ' — missing ' + miss : ''));
   }
-  if(ls === 'failed') out.push('Letter failed to send');
+  else if(ls === 'failed') out.push('Letter failed to send');
   if(b.host_payout_status === 'failed') out.push('Host payout failed');
   if(b.tail_charge_status === 'failed') out.push('Final charge failed');
   return out;
 }
 function hbLetterWords(b){
   const st = String((b && b.letter_status) || '');
+  const sig = String((b && b.letter_sig) || '');
+  if(sig === 'signed_unsent') return { text: 'Signed — letter not sent', sub: 'send it by hand', need: true };
+  if(sig === 'sending') return { text: 'Signed — letter on its way', sub: 'sent automatically, give it a few minutes', need: false };
+  if(sig === 'awaiting' || st === 'awaiting_signature') return { text: 'Awaiting signature', sub: 'sent automatically once the student signs', need: false };
   if(st === 'sent') return { text: 'Letter sent', sub: String(b.letter_sent_at || '').slice(0, 10), need: false };
   if(st === 'blocked') return { text: 'Letter blocked', sub: String(b.letter_error || '').replace(/^missing: /, ''), need: true };
   if(st === 'failed') return { text: 'Letter failed', sub: String(b.letter_error || ''), need: true };
@@ -17922,6 +17932,11 @@ function computeLetterDecision(input){
     if (!stale) return { action: "skip", reason: "in_progress" };
     if (!force) return { action: "skip", reason: "stuck_needs_force" };
   }
+
+  // An agency-paid student signs the Homestay Agreement before the letter goes
+  // out; the letter then sends itself once they sign. Checked before the
+  // missing-fields gate: the signature is what the letter is waiting on.
+  if (hlStr(b.payer_type) === "agency" && !hlStr(b.agreement_signed_at)) return { action: "awaiting_signature" };
 
   // Check-out is the day they leave: an explicit move-out wins over the lease end.
   var checkOut = hlStr(b.move_out_date) || hlStr(b.lease_end_date);
@@ -28245,6 +28260,56 @@ function ahsCreateResult(d){
 function ahsCanCancelAgency(b){
   return !!b && b.payer_type === 'agency' && (b.status === 'created' || b.status === 'paid');
 }
+// Resend signing link: an agency student who has not signed the Homestay Agreement on a
+// booking still running. `agreementState` is hbAgreementState's answer from the contracts
+// table; the row's own agreement_signed_at counts too when the list carries it.
+function ahsCanResendAgreement(b, agreementState){
+  if (!b || b.payer_type !== 'agency' || !(b.status === 'created' || b.status === 'paid')) return false;
+  if (String(b.agreement_signed_at || '').trim()) return false;
+  const st = agreementState && agreementState.state;
+  return st !== 'signed' && st !== 'stale';
+}
+// How the Letter cell treats the agreement. 'awaiting': show the blue chip, no Send —
+// the letter goes out by itself once the student signs. That covers n8n's own
+// awaiting_signature, and an unsent/blocked/failed agency letter while BOTH the row and
+// the contracts table say unsigned. 'signed_unsent': n8n still says awaiting but the
+// student has signed, so the automatic send did not run — offer the normal Send.
+// 'sending': signed less than AHS_SIG_SEND_GRACE_MS ago (nowMs) while the row still
+// says awaiting — n8n is sending right now, so no Send (a click could duplicate it).
+const AHS_SIG_SEND_GRACE_MS = 10 * 60 * 1000;
+function ahsLetterAwaiting(b, agreementState, nowMs){
+  if (!b) return '';
+  const st = String(b.letter_status || '');
+  const as = agreementState && agreementState.state;
+  const rowAt = String(b.agreement_signed_at || '').trim();
+  const signed = !!rowAt || as === 'signed' || as === 'stale';
+  if (st === 'awaiting_signature') {
+    if (!signed) return 'awaiting';
+    const at = Date.parse(String((agreementState && agreementState.signedAt) || rowAt || ''));
+    const fresh = typeof nowMs === 'number' && isFinite(nowMs) && isFinite(at) && nowMs - at < AHS_SIG_SEND_GRACE_MS;
+    return fresh ? 'sending' : 'signed_unsent';
+  }
+  if (b.payer_type === 'agency' && !signed && b.status === 'paid' && (st === '' || st === 'blocked' || st === 'failed')) return 'awaiting';
+  return '';
+}
+const AHS_AWAITING_SIG_MSG = "Waiting for the student's signature — the letter goes out automatically once they sign.";
+// A manual letter send answered with the awaiting-signature hold, in whichever field
+// n8n put it.
+function ahsLetterSendAwaiting(d){
+  if (!d) return false;
+  return ['letter_status', 'reason', 'action', 'status', 'error'].some(k => String(d[k] || '') === 'awaiting_signature');
+}
+// The homestay-agreement-resend webhook's answer, as the line staff read.
+function ahsResendMessage(status, body){
+  const d = body || {};
+  const code = String(d.error || d.code || d.reason || '');
+  if (d.reason === 'already_signed' || code === 'ALREADY_SIGNED') return { ok: true, message: 'Already signed' };
+  if (status >= 200 && status < 300 && d.sent === true) return { ok: true, message: 'Signing link sent to the student' };
+  if (status === 429 || code === 'TOO_SOON') return { ok: false, message: 'A link was sent less than an hour ago' };
+  if (status === 404) return { ok: false, message: 'Booking not found' };
+  if (status === 409) return { ok: false, message: 'This booking cannot take a signing link' + (code ? ' (' + code + ')' : ' (not an agency booking, or no longer active)') };
+  return { ok: false, message: 'Could not send the signing link (' + (code || ('HTTP ' + status)) + ')' };
+}
 const ahsMoney = cents => {
   const c = Math.round(Number(cents) || 0), abs = Math.abs(c);
   return `${c < 0 ? '-' : ''}$${String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${String(abs % 100).padStart(2, '0')}`;
@@ -28307,7 +28372,7 @@ function ahsPayerLines(s, plan, fmt){
   const HB_RO_TOKEN_KEY = 'vm_staff_token_ro';
   // homestay-agency-invoice-retry: re-runs only the partner-app invoice step of an
   // agency booking Booking Create already committed (n8n side: agency-paid homestays).
-  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-details', 'homestay-letter-resend', 'homestay-agency-invoice-retry'];
+  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-details', 'homestay-letter-resend', 'homestay-agency-invoice-retry', 'homestay-agreement-resend'];
 
   function hbFullToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
   function hbReadToken() { return hbFullToken() || localStorage.getItem(HB_RO_TOKEN_KEY) || ''; }
@@ -28414,7 +28479,9 @@ function ahsPayerLines(s, plan, fmt){
     return parts.join(' ');
   }
 
-  async function hbPost(path, body) {
+  // opts.raw: answer { status, data } for any non-401 response instead of
+  // throwing on a non-2xx, for callers that read the status (agreement resend).
+  async function hbPost(path, body, opts) {
     const isWrite = HB_WRITE_PATHS.indexOf(path) !== -1;
     const full = hbFullToken();
 
@@ -28446,6 +28513,7 @@ function ahsPayerLines(s, plan, fmt){
       throw new Error('Staff token rejected.');
     }
     const data = await resp.json().catch(() => ({}));
+    if (opts && opts.raw) return { status: resp.status, data };
     if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
     return data;
   }
@@ -28692,7 +28760,7 @@ function ahsPayerLines(s, plan, fmt){
       hbSection('Agreement', hbKv('Status', hbWords({ text: agr.text, sub: agr.sub, need: false })) +
         (agr.pdfPath ? '<div class="hb-panel-actions"><button class="btn btn-ghost btn-mini" type="button" data-hb-agreement="' + esc(agr.pdfPath) + '">Download</button></div>' : '')) +
       hbSection('Host payouts', hbKv('Status', hbWords(payout))) +
-      hbSection('Actions', '<div class="hb-panel-actions">' + hbExtendAction(b) + hbMoveOutAction(b) + hbAgencyCancelBtn(b) + '</div>') +
+      hbSection('Actions', '<div class="hb-panel-actions">' + hbExtendAction(b) + hbMoveOutAction(b) + hbResendAgreementBtn(b) + hbAgencyCancelBtn(b) + '</div>') +
       '</div>';
     const st = $('hb-panel-status');
     if (st) { st.textContent = hbLastMsg.msg; st.style.color = hbLastMsg.bad ? '#b4443a' : ''; }
@@ -28753,6 +28821,7 @@ function ahsPayerLines(s, plan, fmt){
   async function hbLoadBookings(ref0) {
     const d = await hbPost('bookings-list');
     hbLastRows = d.bookings || [];
+    hbAnnotateSig();
     hbLoaded = true;
     if (typeof loadHostRooms === 'function') await loadHostRooms();
     // The sidebar count ships as "—" because bookings are not part of the
@@ -28765,6 +28834,23 @@ function ahsPayerLines(s, plan, fmt){
     hbRenderList();
     hbRefreshPanel(!!ref0 && hbPanelRef !== ref0);
     hbApplyWriteAffordances();
+    hbScheduleSigReload();
+  }
+
+  // Agency students sign the Homestay Agreement before their letter goes out.
+  // The bookings list does not carry agreement_signed_at; the contracts table
+  // does. Stamp each row with what that means for the letter (letter_sig, read
+  // by hbLetterWords / hbNeedsYou / hbLetterActions) and the contract's
+  // signed-at, which the letter pre-check needs. Rerun on every load and every
+  // contracts hydrate/realtime (hbRerenderAgreements).
+  function hbAnnotateSig() {
+    const contracts = window.contracts || [];
+    const now = Date.now();
+    (hbLastRows || []).forEach((b) => {
+      const ag = hbAgreementState(b, hbAgreementFor(b, contracts));
+      b.letter_sig = ahsLetterAwaiting(b, ag, now);
+      b.contract_signed_at = ag.signedAt || '';
+    });
   }
 
   // Agreement: hbAgreementWords + the Download button in hbRenderPanel. Download
@@ -28773,9 +28859,26 @@ function ahsPayerLines(s, plan, fmt){
   // agreement touches is rendered from memory, so just redraw it.
   window.hbRerenderAgreements = function () {
     if (!hbLoaded) return;
+    hbAnnotateSig();
     hbRenderList();
     hbRefreshPanel(true);
+    hbScheduleSigReload();
   };
+  // A signature just landed on a booking whose row still says awaiting_signature:
+  // n8n is sending the letter now, and only a reload shows its new letter_status.
+  // One debounced reload at a time; hbLoadBookings calls back here, so it keeps
+  // polling while any row is in the 10-minute 'sending' window and then stops.
+  // Passed a ref that is never the panel's, so the panel redraw is a background
+  // one and a form someone is typing into survives.
+  let hbSigReloadTimer = null;
+  function hbScheduleSigReload() {
+    if (hbSigReloadTimer) return;
+    if (!(hbLastRows || []).some((b) => b.letter_sig === 'sending')) return;
+    hbSigReloadTimer = setTimeout(async () => {
+      hbSigReloadTimer = null;
+      try { await hbLoadBookings('\u0000signature-reload'); } catch (e) { console.warn('[homestay-bookings] signature reload', e); }
+    }, 20000);
+  }
   // The tab is opened synchronously inside the click (Safari blocks a
   // window.open after an await) and pointed at the URL once it arrives — the
   // same pattern as the checkouts [data-cko-pdf] handler.
@@ -28809,22 +28912,32 @@ function ahsPayerLines(s, plan, fmt){
   // The letter buttons for the panel. Same rules as the old Letter column: the
   // pre-check for a never-sent letter runs the HL-LETTER-CORE the n8n workflow
   // mirrors, so a blocked letter offers Details, not a Download that fails.
+  // Agency rows (letter_sig from hbAnnotateSig): 'awaiting' offers neither Send
+  // nor Download — n8n sends the letter itself once the student signs and
+  // answers a manual send with awaiting_signature. 'signed_unsent' (n8n still
+  // says awaiting but the student has signed) gets the normal Send as recovery.
   function hbLetterActions(b) {
     const st = String(b.letter_status || '');
+    const sig = String(b.letter_sig || '');
+    // 'sending': signed minutes ago and n8n is sending it now — a Send here could
+    // go out twice.
+    const awaiting = sig === 'awaiting' || sig === 'sending';
+    const unsent = st === '' || sig === 'signed_unsent';
     let missing = '';
-    if (st === '' && b.status === 'paid') {
+    if (unsent && !awaiting && b.status === 'paid') {
+      const bk = b.contract_signed_at && !b.agreement_signed_at ? Object.assign({}, b, { agreement_signed_at: b.contract_signed_at }) : b;
       const host = hbHosts.find((h) => h.host_id === b.host_id);
       if (host) {
         try {
-          const d = computeLetterDecision({ booking: b, host: { display_name: host.display_name, email: host.email, phone: host.phone, address: host.address }, room: null, force: false, now: new Date().toISOString() });
+          const d = computeLetterDecision({ booking: bk, host: { display_name: host.display_name, email: host.email, phone: host.phone, address: host.address }, room: null, force: false, now: new Date().toISOString() });
           if (d.action === 'blocked') missing = d.missing.join(', ');
         } catch (_) { /* a stale row shape must not break the panel */ }
       }
     }
     const acts = [];
-    const canDownload = b.status === 'paid' && (st === 'sent' || st === 'failed' || (st === '' && !missing));
+    const canDownload = !awaiting && b.status === 'paid' && (st === 'sent' || st === 'failed' || (unsent && !missing));
     if (canDownload) acts.push('<button type="button" class="btn btn-ghost btn-mini hb-letter-download">Download</button>');
-    if (b.status === 'paid' && st !== 'pending') {
+    if (!awaiting && b.status === 'paid' && st !== 'pending') {
       acts.push(hbCanWrite()
         ? '<button type="button" class="btn btn-ghost btn-mini hb-letter-send">' + (st === 'sent' ? 'Resend' : 'Send') + '</button>'
         : '<button type="button" class="btn btn-ghost btn-mini hb-need-token" title="Sending the letter emails the student and host, so it needs the full staff token.">Send — needs full token</button>');
@@ -28904,6 +29017,51 @@ function ahsPayerLines(s, plan, fmt){
     if (typeof ptnIsAdmin !== 'function' || !ptnIsAdmin()) return '';
     return '<button type="button" class="btn btn-ghost btn-mini hb-agency-cancel" data-ref="' + esc(b.booking_ref) + '">' +
       'Cancel agency booking…</button>';
+  }
+  // Agency students sign the Homestay Agreement before their letter goes out. This
+  // re-emails the signing link (n8n allows one an hour). It emails the student, so
+  // it takes the full staff token.
+  function hbResendAgreementBtn(b) {
+    const ag = hbAgreementState(b, hbAgreementFor(b, window.contracts || []));
+    if (!ahsCanResendAgreement(b, ag)) return '';
+    if (!hbCanWrite()) {
+      return '<button type="button" class="btn btn-ghost btn-mini hb-need-token" ' +
+        'title="Resending the signing link emails the student, so it needs the full staff token.">Resend signing link — needs full token</button>';
+    }
+    const busy = hbResendInFlight.has(String(b.booking_ref || ''));
+    return '<button type="button" class="btn btn-ghost btn-mini hb-agreement-resend" data-ref="' + esc(b.booking_ref) + '"' +
+      (busy ? ' disabled' : '') + '>' + (busy ? 'Sending…' : 'Resend signing link') + '</button>';
+  }
+  // Keyed by booking: a panel redraw mid-request rebuilds the button, so the
+  // guard cannot live on the element alone.
+  const hbResendInFlight = new Set();
+  async function hbResendAgreement(btn) {
+    const ref = btn && btn.getAttribute('data-ref');
+    if (!ref || hbResendInFlight.has(ref)) return;
+    hbResendInFlight.add(ref);
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const ref0 = hbPanelRef;
+    const who = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.email) || '';
+    let msg;
+    try {
+      const r = await hbPost('homestay-agreement-resend', { booking_ref: ref, requested_by: who, sent_at: new Date().toISOString() }, { raw: true });
+      msg = ahsResendMessage(r.status, r.data);
+    } catch (e) {
+      msg = { ok: false, message: e.message || 'Could not send the signing link' };
+    } finally {
+      hbResendInFlight.delete(ref);
+    }
+    hbStatusFor(ref0, ref + ': ' + msg.message, !msg.ok);
+    if (typeof showToast === 'function') showToast(ref + ': ' + msg.message);
+    // Swap just this button (the panel may have been rebuilt while in flight),
+    // so it comes back enabled even with an inline form open elsewhere in it.
+    const row = (hbLastRows || []).find((x) => x.booking_ref === ref);
+    document.querySelectorAll('.hb-agreement-resend').forEach((el) => {
+      if (el.getAttribute('data-ref') !== ref) return;
+      if (!row) { el.disabled = false; el.textContent = 'Resend signing link'; return; }
+      const html = hbResendAgreementBtn(row);
+      if (html) el.outerHTML = html; else el.remove();
+    });
   }
   function hbOpenAgencyCancel(ref) {
     if (!ref || typeof rcvModalOpen !== 'function') return;
@@ -29214,12 +29372,14 @@ function ahsPayerLines(s, plan, fmt){
     hbStatus('Sending the confirmation letter for ' + ref + '…');
     try {
       const d = await hbPost('homestay-letter-resend', { booking_ref: ref });
-      if (d.letter_status === 'sent') hbStatusFor(ref0, ref + ': letter sent to the student, the host and the team.');
+      if (ahsLetterSendAwaiting(d)) hbStatusFor(ref0, ref + ': ' + AHS_AWAITING_SIG_MSG);
+      else if (d.letter_status === 'sent') hbStatusFor(ref0, ref + ': letter sent to the student, the host and the team.');
       else if (d.letter_status === 'blocked') hbStatusFor(ref0, ref + ': not sent — ' + (d.letter_error || 'missing fields') + '. Fill them in and try again.', true);
       else if (d.letter_status === 'pending') hbStatusFor(ref0, ref + ': a letter is already being sent for this booking — wait a minute and reload.', true);
       else hbStatusFor(ref0, ref + ': ' + (d.letter_status || 'unknown') + (d.letter_error ? ' — ' + d.letter_error : ''), true);
     } catch (e) {
-      hbStatusFor(ref0, e.message, true);
+      if (ahsLetterSendAwaiting({ error: e.message })) hbStatusFor(ref0, ref + ': ' + AHS_AWAITING_SIG_MSG);
+      else hbStatusFor(ref0, e.message, true);
     }
     try { await hbLoadBookings(ref0); } catch (e) { hbStatus(e.message, true); hbRefreshPanel(); }
   }
@@ -29746,6 +29906,8 @@ function ahsPayerLines(s, plan, fmt){
       if (!e.target.closest || !e.target.closest('.hb-panel')) return;
       const agencyCancel = e.target.closest('.hb-agency-cancel');
       if (agencyCancel) return hbOpenAgencyCancel(agencyCancel.getAttribute('data-ref'));
+      const agResend = e.target.closest('.hb-agreement-resend');
+      if (agResend) return hbResendAgreement(agResend);
       if (e.target.closest('.hb-need-token')) {
         if (typeof closeProperty === 'function') closeProperty();
         return hbAskForToken('This action needs the full staff token, not the view-only one.');
