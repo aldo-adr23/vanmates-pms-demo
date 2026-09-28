@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28s"></script>
+<script src="pms-supabase.js?v=2026-09-28t"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -17704,7 +17704,15 @@ function hbIsStale(b, today){
 function hbNeedsYou(b){
   const out = [];
   if(!b) return out;
-  (Array.isArray(b.needs_attention) ? b.needs_attention : []).forEach(f => { if(f) out.push(String(f)); });
+  // Server flags (VM - Homestay Bookings List) that repeat a tab or a line added
+  // below are dropped: unpaid bookings already have their own tab, and the
+  // letter / payout / final-charge states are named here with more detail.
+  const dup = ['awaiting payment', 'awaiting agency payment', 'card declined, student can retry',
+    'host payout failed', 'final rent not collected', 'confirmation letter blocked', 'confirmation letter failed'];
+  (Array.isArray(b.needs_attention) ? b.needs_attention : []).forEach(f => {
+    const t = String(f || '').trim();
+    if(t && dup.indexOf(t.toLowerCase()) === -1) out.push(t.charAt(0).toUpperCase() + t.slice(1));
+  });
   const ls = String(b.letter_status || '');
   if(ls === 'blocked'){
     const miss = String(b.letter_error || '').replace(/^missing: /, '');
