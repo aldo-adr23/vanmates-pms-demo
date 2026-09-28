@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28r"></script>
+<script src="pms-supabase.js?v=2026-09-28s"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2809,6 +2809,7 @@
           <option value="finance_overdue">Finance overdue</option>
           <option value="resident_not_responding">Resident not responding</option>
           <option value="reminders_off">Reminders off</option>
+          <option value="room_not_released">Room not released</option>
         </select>
         <select id="cko-filter-city" class="form-input" style="max-width:170px">
           <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
@@ -22765,11 +22766,17 @@ const CKO_FLAG_LABELS = {
   // resident_not_responding = the sweep sent the third missing-info request.
   reminders_off: 'Reminders off',
   resident_not_responding: 'Resident not responding',
+  // 2026-09-28: the checkout's room could not be put back on sale automatically —
+  // set by the trigger (no clear match, or several) or by checkout_room_result
+  // (a non-sale Asana section / no month section, i.e. non_sale_section / no_section);
+  // cleared by a later exact match, by a released / already_listed / rebooked result,
+  // or by staff ("Room sorted", once it is sorted in Asana by hand). See ckoRoomRelease.
+  room_not_released: 'Room not released',
 };
 // Flags that mean somebody has to do something, for everyone. Plain short
 // notice is information. short_notice_review_required needs action for admins
 // only (only they can decide it), so it is checked in ckoNeedsAction instead.
-const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed', 'finance_overdue', 'resident_not_responding'];
+const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed', 'finance_overdue', 'resident_not_responding', 'room_not_released'];
 // Flags drawn red on the chip (the rest are blue).
 const CKO_RED_FLAGS = CKO_ACTION_FLAGS.concat(['short_notice_review_required', 'missing_keys', 'damage_review', 'missing_refund_info', 'unverified']);
 const CKO_EVENT_LABELS = {
@@ -22791,6 +22798,9 @@ const CKO_EVENT_LABELS = {
   reminder_week: '7-day reminder to the resident', reminder_day: 'Day-before reminder to the resident',
   inspection_review: 'Inspection-done email to the resident', info_request: 'Missing-info request to the resident',
   info_request_logged: 'Missing-info request (no email)',
+  // 2026-09-28: room release on checkout (trigger + "VM - Checkout Room Release").
+  room_release: 'Room release queued', room_released: 'Room put back on sale', room_release_skipped: 'Room not released',
+  room_release_failed: 'Room release failed', room_cancel_noted: 'Room: cancellation noted in Asana',
 };
 const CKO_KEYS_OPTIONS = [['returned', 'All returned'], ['partial', 'Some returned'], ['missing', 'None returned']];
 const CKO_RESULT_OPTIONS = [['good', 'Good'], ['cleaning_required', 'Cleaning required'], ['damage', 'Damage']];
@@ -22952,6 +22962,8 @@ function ckoActions(c, me){
   // Phase 4a: the sweep sets it on the third missing-info request and clears it once
   // nothing is missing; the owner or an admin may clear it after reaching the resident.
   if (open && manage && f.indexOf('resident_not_responding') !== -1) a.push({ act: 'clear_not_responding', label: 'Clear not responding' });
+  // 2026-09-28: the owner or an admin clears it once the room is sorted in Asana by hand.
+  if (open && manage && f.indexOf('room_not_released') !== -1) a.push({ act: 'room_sorted', label: 'Room sorted' });
   if (open && manage && f.indexOf('date_changed') !== -1) a.push({ act: 'clear_date_changed', label: 'Date change seen' });
   a.push({ act: 'note', label: 'Add note' });
   if (open && manage) a.push({ act: 'cancel', label: 'Cancel checkout' });
@@ -23330,6 +23342,16 @@ function ckoTimeline(events, nameOf, city, snapshots){
     else if (e.type === 'finance_overdue') detail = ckoOverdueText(after, city);
     else if (e.type === 'reminder_week' || e.type === 'reminder_day') detail = `move-out ${q(after.move_out_date)}`;
     else if (e.type === 'info_request' || e.type === 'info_request_logged') detail = ckoInfoRequestText(after, e.type === 'info_request_logged');
+    else if (e.type === 'room_release') detail = after.match === 'exact' ? `${after.task_name || 'room'}, available ${ckoRoomDay(after.target_date)}`
+      : after.match === 'no_inventory' ? 'city not in the inventory'
+      : after.match === 'error' ? String(after.error || '')
+      : ckoRoomRelease([e]).text.replace(/^Not released: /, '');
+    else if (e.type === 'room_released') detail = `${after.task_name || 'room'} → ${after.section || ''}, available ${ckoRoomDay(after.target_date)}${after.superseded ? ' (older request)' : ''}`;
+    else if (e.type === 'room_release_skipped') detail = (after.reason === 'non_sale_section' ? `${after.task_name || ''}: in "${after.section || ''}", not for sale`
+      : after.reason === 'no_section' ? `${after.task_name || ''}: no "${after.missing_section || ''}" section`
+      : `${after.task_name || ''}: ${CKO_ROOM_REASONS[after.reason] || after.reason || ''}`) + (after.superseded ? ' (older request)' : '');
+    else if (e.type === 'room_release_failed') detail = `attempt ${after.attempt || '?'} at ${after.step || '?'}: ${after.error || ''}`;
+    else if (e.type === 'room_cancel_noted') detail = String(after.task_name || '');
     else if (after.message) detail = String(after.message);
     else if (after.step) detail = 'at ' + after.step;
     const actor = String(e.actor || '');
@@ -23337,6 +23359,7 @@ function ckoTimeline(events, nameOf, city, snapshots){
     const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor === 'system' ? 'Vanmates (automatic)' : actor.replace(/^resident:/, '');
     const what = e.type === 'cleaning_report' && after.outcome === 'updated' ? 'Cleaning report updated'
       : e.type === 'refund_sent' && after.kind === 'top_up' ? 'Top-up sent'
+      : e.type === 'room_release' && after.match !== 'exact' ? 'Room not matched'
       : CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' ');
     return { at: e.at, who, what, detail };
   });
@@ -23981,6 +24004,57 @@ function ckoRemindersToggleArgs(c, on){
   if (!id) return { ok: false, error: 'No case selected.' };
   if (typeof on !== 'boolean') return { ok: false, error: 'Choose reminders on or off.' };
   return { ok: true, args: { p_case: id, p_flag: 'reminders_off', p_on: !on } };
+}
+/* ---- Room release on checkout (2026-09-28) --------------------------------
+   The trigger logs room_release (the match); n8n "VM - Checkout Room Release" logs the
+   outcome. ckoRoomRelease reads the case's events and returns the Case block's "Room"
+   line ({ tone, text }) from the latest room event, or null when there is none. */
+const CKO_ROOM_REASONS = { already_listed: 'already on sale with that date', rebooked: 'next tenant already booked',
+  non_sale_section: 'in a section that is not for sale', no_section: 'no month section in Asana' };
+const CKO_ROOM_TYPES = ['room_release', 'room_released', 'room_release_skipped', 'room_release_failed', 'room_cancel_noted'];
+function ckoRoomDay(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1] + ' ' + Number(m[3]) : '?';
+}
+function ckoRoomRelease(events){
+  // A room_released / room_release_skipped marked superseded is the outcome of an
+  // OLDER room match (a newer room_release since replaced it); ignore it here so a
+  // newer, still-pending room_release keeps showing. It still appears in the timeline.
+  // A staff flag_cleared(room_not_released) — checkout_set_flag, not the system's
+  // _checkout_room_flag — means staff sorted the room in Asana by hand; when that is
+  // the latest event (after the latest room event) it wins over the room's own state.
+  const ev = (events || []).slice().sort((a, b) => String(a.at).localeCompare(String(b.at))).filter(e => e && (
+    (CKO_ROOM_TYPES.indexOf(e.type) !== -1 && !((e.type === 'room_released' || e.type === 'room_release_skipped') && e.after && e.after.superseded === true))
+    || (e.type === 'flag_cleared' && e.after && e.after.flag === 'room_not_released' && /^staff:/.test(String(e.actor || '')))
+  ));
+  if (!ev.length) return null;
+  const e = ev[ev.length - 1], a = e.after || {};
+  if (e.type === 'flag_cleared') return { tone: 'green', text: 'Sorted by hand in Asana' };
+  const room = a.task_name || 'the room';
+  if (e.type === 'room_release') {
+    if (a.match === 'exact') return { tone: 'blue', text: `Queued: ${room}, available ${ckoRoomDay(a.target_date)}` };
+    if (a.match === 'ambiguous') return { tone: 'red', text: `Not released: several rooms match (${[].concat(a.candidates || []).join(', ')})` };
+    if (a.match === 'no_inventory') return { tone: 'blue', text: 'Not released automatically: this city has no rooms in the inventory yet' };
+    if (a.match === 'error') return { tone: 'red', text: `Room matching failed: ${a.error || 'unknown error'}. Put the room back on sale in Asana by hand.` };
+    return { tone: 'red', text: 'Not released: no room in the inventory matches this house and room' };
+  }
+  if (e.type === 'room_released') return { tone: 'green', text: `Released: ${room}, available ${ckoRoomDay(a.target_date)}` };
+  if (e.type === 'room_release_failed') {
+    const attempt = Number(a.attempt) || 0, err = a.error || 'unknown error';
+    if (a.step === 'Upsert Vacancy') {
+      return attempt >= 3 ? { tone: 'red', text: `Room moved in Asana, but Vacancies was not updated after 3 tries: ${err}.` }
+        : { tone: 'amber', text: `Room moved in Asana; Vacancies not updated yet (retrying, attempt ${a.attempt || '?'} of 3)` };
+    }
+    if (a.step === 'Post Comment' && attempt >= 3) return { tone: 'red', text: `Could not post the note on the Asana room after 3 tries: ${err}.` };
+    return attempt >= 3 ? { tone: 'red', text: `Failed 3 times: ${err}. Move the room in Asana by hand.` }
+      : { tone: 'amber', text: `Retrying (attempt ${a.attempt || '?'} of 3): ${err}` };
+  }
+  if (e.type === 'room_cancel_noted') return { tone: 'amber', text: `Checkout cancelled: ${room} was released; check in Asana whether it should be Rented again` };
+  if (a.reason === 'already_listed') return { tone: 'green', text: `Already on sale: ${room}, available ${ckoRoomDay(a.target_date)}` };
+  if (a.reason === 'rebooked') return { tone: 'blue', text: `Not released: ${room} already has the next tenant from ${ckoRoomDay(a.lease_start)}` };
+  if (a.reason === 'non_sale_section') return { tone: 'red', text: `Not released: ${room} is in "${a.section || 'no section'}" in Asana` };
+  if (a.reason === 'no_section') return { tone: 'red', text: `Not released: no "${a.missing_section || '?'}" section in Asana` };
+  return { tone: 'red', text: `Not released: ${a.reason || 'unknown reason'}` };
 }
 /* ---- Phase 4b: management reports (Reports tab, admins only) -------------
    checkout_report(p_from, p_to, p_city, p_house) computes every number (one
@@ -24753,6 +24827,12 @@ function ckoRemindersRow(c, kv){
   const b = r.action ? ` <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="${r.action.act}" title="${esc(title)}">${esc(r.action.label)}</button>` : '';
   return kv('Reminders', `<span id="cko-reminders" style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px"><span data-cko-reminders="${r.off ? 'off' : 'on'}">${esc(r.text)}</span>${b}</span>`);
 }
+// 2026-09-28: the Case block's "Room" line (room release on checkout).
+function ckoRoomRow(events, kv){
+  const r = ckoRoomRelease(events);
+  if (!r) return '';
+  return kv('Room', `<span class="tag-pill ${r.tone}" data-cko-room="${esc(r.tone)}">${esc(r.text)}</span>`);
+}
 async function openCheckout(id, banner, refocus){
   const tok = ++ckoOpenSeq;
   CKO_FORM = null;
@@ -24777,7 +24857,7 @@ async function openCheckout(id, banner, refocus){
   const [events, linesRes] = await Promise.all([
     (async () => {
       try {
-        const { data, error } = await window.vmDb.sb.from('checkout_events').select('at,actor,type,before,after').eq('case_id', id).order('at', { ascending: true });
+        const { data, error } = await window.vmDb.sb.from('checkout_events').select('id,at,actor,type,before,after').eq('case_id', id).order('at', { ascending: true }).order('id', { ascending: true });
         if (error) throw error;
         return data || [];
       } catch (e) { console.error('[checkouts] events failed', e); return []; }
@@ -24813,6 +24893,7 @@ async function openCheckout(id, banner, refocus){
     ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
     ${ckoResidentLinkRow(c, kv)}
     ${ckoRemindersRow(c, kv)}
+    ${ckoRoomRow(events, kv)}
     ${kv('At this status', waited == null ? '—' : esc(waited) + (waited === 1 ? ' day' : ' days'))}
     ${slaParts.length ? kv('Deadlines', `<span data-cko-sla>${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</span>`) : ''}
     ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
@@ -25041,6 +25122,7 @@ function ckoAct(act, lineId){
       return ckoCall(id, 'checkout_set_flag', b.args, act === 'reminders_on' ? 'Reminders on' : 'Reminders off — no automatic emails for this case');
     }
     case 'clear_not_responding': return flag('resident_not_responding', false, 'Not-responding flag cleared');
+    case 'room_sorted': return flag('room_not_released', false, 'Room flag cleared');
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
       if (!confirm('Unassign this case? It goes back to Unassigned for anyone to take.')) return;
