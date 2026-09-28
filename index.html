@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28w"></script>
+<script src="pms-supabase.js?v=2026-09-28v"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2755,7 +2755,6 @@
     </section>
 
     <section class="view" data-view="partner-inventory">
-      <p class="name-sub" style="margin:0 0 14px;max-width:760px">Rooms and availability come from Asana automatically — partners see every free room. Nothing needs adding here. Only use this page to hide a building from partners, or to set terms that differ from the website (half a month's deposit, cleaning included, 3-month minimum, $295 membership).</p>
       <div id="inv-root"><p class="name-sub">Loading…</p></div>
     </section>
 
@@ -20500,8 +20499,6 @@ function invReadiness(p){
     .forEach(([k, label]) => (p && p[k] != null ? custom : blank).push(label));
   return { website: custom.length === 0, custom, blank };
 }
-// The "different terms" form starts open only when a building already has one.
-function invHasCustomTerms(p){ return !invReadiness(p).website; }
 function invDay(iso){
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
   return m ? `${INV_MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : '';
@@ -20703,13 +20700,74 @@ function hmUninvited(orderedHostIds, invs){
   const invited = new Set((invs || []).map(i => i.host_id));
   return (orderedHostIds || []).filter(id => !invited.has(id));
 }
+// Stage 3 (offers). Labels mirror the Worker's src/core/offercopy.ts; hmCanRetryBooking mirrors
+// src/accept.ts retryable() and HM_IN_FLIGHT_MS its IN_FLIGHT_MS (3 min). Change them together.
+// The booking is made by the Worker's one-minute cron, not by the accept; Retry only re-arms it.
+const HM_OFFER_STATUS = {
+  draft: ["Draft", "grey"], sent: ["Offer sent", "blue"], accepted: ["Accepted", "green"], declined: ["Declined", "grey"],
+  expired: ["Expired", "grey"], conflict: ["Room taken", "red"], superseded: ["Replaced", "grey"], cancelled: ["Withdrawn", "grey"],
+};
+const HM_IN_FLIGHT_MS = 3 * 60000;
+function hmMoney(cents){
+  const c = Math.round(Number(cents) || 0), a = Math.abs(c);
+  return `${c < 0 ? "-" : ""}$${String(Math.floor(a / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${String(a % 100).padStart(2, "0")}`;
+}
+function hmDaysLabel(n){
+  const w = Math.floor(n / 7), d = n % 7, p = [];
+  if (w) p.push(w + (w === 1 ? " week" : " weeks"));
+  if (d) p.push(d + (d === 1 ? " day" : " days"));
+  return p.join(" and ") || "0 days";
+}
+function hmOfferLineLabel(l, plan){
+  switch (l && l.key) {
+    case "weekly_rate": return "Weekly price";
+    case "first_rent": return `First payment: ${hmDaysLabel(l.days || 28)} of rent`;
+    case "transaction_fee": return "Transaction fee (4% of rent)";
+    case "deposit": return "Refundable damage deposit (first-time students)";
+    case "package_fee": return "Matching package fee";
+    case "rent_with_fee": return plan === "per_period" ? `Rent + 4% fee, first period (${hmDaysLabel(l.days || 28)})`
+      : `Rent + 4% fee, whole stay (${hmDaysLabel(l.days || 0)})`;
+    default: return String((l && l.key) || "?");
+  }
+}
+function hmOfferRows(o){
+  if (!o) return [];
+  const rows = (o.lines || []).map(l => ({ label: hmOfferLineLabel(l, o.billing_plan), amount: hmMoney(l.cents) }));
+  rows.push({ label: o.recipient === "partner" ? "First invoice to the agency" : "Due when the student books",
+    amount: hmMoney(o.total_due_now_cents), total: true });
+  return rows;
+}
+function hmCanRetryBooking(o, nowMs){ // nowMs unused, kept so callers need not change
+  return !!o && o.status === "accepted" && !o.booking_ref && !o.create_sent_at && o.create_state === "failed";
+}
+// The booking box under an accepted offer: {tone, title, text, retry, record} or null.
+function hmCreateBox(o, nowMs){
+  if (!o || o.status !== "accepted") return null;
+  if (o.create_state === "created" && o.booking_ref) {
+    return { tone: "green", title: "Booking " + o.booking_ref, text: o.booking_link || "", retry: false, record: false };
+  }
+  const check = "Check vm_homestay_bookings (Homestay bookings) for this student and host before creating one by hand.";
+  if (o.create_sent_at && o.create_state === "failed") {
+    return { tone: "red", title: "Booking Create failed", text: `${o.create_error || "No booking link came back"}. ${check} Do not retry blindly.`, retry: false, record: true };
+  }
+  if (o.create_sent_at && nowMs - Date.parse(o.create_sent_at) >= HM_IN_FLIGHT_MS) {
+    return { tone: "red", title: "No answer from Booking Create", text: `Sent ${new Date(o.create_sent_at).toLocaleString()} and no answer came back${o.create_error ? ` (${o.create_error})` : ""}. ${check} Do not retry blindly.`, retry: false, record: true };
+  }
+  if (hmCanRetryBooking(o, nowMs)) {
+    return { tone: "red", title: "Booking not created", text: `${o.create_error || "Not sent"}. Nothing reached n8n, so Retry booking is safe (the timer then creates it).`, retry: true, record: true };
+  }
+  return { tone: "amber", title: "Creating the booking…", text: "The timer creates it within a minute or two.", retry: false, record: false };
+}
+function hmCanBuildOffer(c, inv){
+  return !!c && c.status === "OFFER_REVIEW" && !!inv && inv.response === "available" && !inv.closed_at && !!inv.verified;
+}
 /* HM-MATCH-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
    Read when the page is opened. Writes go through the signed-in admin's
    session; RLS and column grants decide (only property_id and *_override on
    rooms). An update that returns no row was refused, and the page says so.
    After every save the page reads everything again. */
-const INV_STATE = { city: 'vancouver', q: '', open: new Set(), termsOpen: new Set() };
+const INV_STATE = { city: 'vancouver', q: '', open: new Set() };
 let invData = null, invLoading = null;
 function invToday(){ return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }); }
 function invIsAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
@@ -20802,7 +20860,7 @@ function invUnlinkedHtml(list){
   </div>`;
 }
 function invCardHtml(g, today){
-  const p = g.prop, rd = invReadiness(p);
+  const p = g.prop, rd = invReadiness(p), am = Array.isArray(p.amenities) ? p.amenities : [];
   const pill = rd.website ? '<span class="tag-pill">Website terms</span>'
     : `<span class="tag-pill blue"${rd.blank.length ? ` title="Website terms for: ${esc(rd.blank.join(', '))}"` : ''}>Custom terms</span>`;
   const field = (name, label, value, mode, ph) =>
@@ -20815,16 +20873,19 @@ function invCardHtml(g, today){
         <span class="name-sub">${g.visible} rooms${hidden > 0 ? ` (${hidden} hidden)` : ''} · ${g.ready} partner-ready</span> ${pill}</div>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-inv-bookable${p.partner_bookable ? ' checked' : ''}> Partner bookable</label>
     </div>
-    <details data-inv-terms style="margin-top:10px"${invHasCustomTerms(p) || INV_STATE.termsOpen.has(p.id) ? ' open' : ''}><summary class="name-sub" style="cursor:pointer">This building has different terms…</summary>
-    <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:10px">
+    <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px">
       ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal', "Blank = half a month's rent")}
       ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal', 'Blank = included')}
       ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric', 'Blank = 3 months')}
       <div class="name-sub" style="grid-column:1/-1">Blank uses the website terms: deposit half a month's rent, cleaning included, 3-month minimum, $295 membership.</div>
+      ${field('utilities', 'Utilities', p.utilities_note || '')}
+      ${field('wifi', 'Wi-Fi', p.wifi_note || '')}
+      ${field('laundry', 'Laundry', p.laundry_note || '')}
+      <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px">${INV_AMENITIES.map(([k, l]) =>
+        `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="am" value="${k}"${am.includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>
       <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save terms</button> <span class="name-sub" data-inv-msg></span></div>
     </form>
-    </details>
-    <details data-inv-rooms style="margin-top:10px"${INV_STATE.open.has(p.id) ? ' open' : ''}><summary>Rooms (${g.rooms.length})</summary>
+    <details style="margin-top:10px"${INV_STATE.open.has(p.id) ? ' open' : ''}><summary>Rooms (${g.rooms.length})</summary>
       <div style="overflow-x:auto"><table style="width:100%;margin-top:8px;border-collapse:collapse">
         <thead><tr class="name-sub" style="text-align:left"><th>Room</th><th>Type</th><th>Price</th><th>Status</th><th>Partner-ready</th><th title="Saves instantly">Private bath (saves instantly)</th><th>Overrides: deposit · cleaning · min stay</th></tr></thead>
         <tbody>${g.rooms.map(r => invRoomRowHtml(r, today)).join('')}</tbody>
@@ -20849,15 +20910,10 @@ function invWire(root){
   const s = root.querySelector('#inv-search');
   if (s) s.addEventListener('input', () => { INV_STATE.q = s.value; invApplySearch(root); });
   root.querySelectorAll('[data-inv-prop]').forEach(card => {
-    const details = card.querySelector('details[data-inv-rooms]');
+    const details = card.querySelector('details');
     if (details) details.addEventListener('toggle', () => {
       const id = card.dataset.invProp;
       if (details.open) INV_STATE.open.add(id); else INV_STATE.open.delete(id);
-    });
-    const terms = card.querySelector('details[data-inv-terms]');
-    if (terms) terms.addEventListener('toggle', () => {
-      const id = card.dataset.invProp;
-      if (terms.open) INV_STATE.termsOpen.add(id); else INV_STATE.termsOpen.delete(id);
     });
   });
   root.querySelectorAll('[data-inv-form]').forEach(f => f.addEventListener('submit', e => { e.preventDefault(); invSaveTerms(f); }));
@@ -20882,6 +20938,8 @@ async function invSaveTerms(form){
   if (!dep.ok || !cle.ok || !ms.ok) { msg.textContent = 'Amounts must be numbers (e.g. 1000 or 150.50); minimum stay in whole months.'; return; }
   const patch = Object.assign({
     deposit_cents: dep.value, cleaning_fee_cents: cle.value, min_stay_months: ms.value,
+    utilities_note: el.utilities.value.trim() || null, wifi_note: el.wifi.value.trim() || null, laundry_note: el.laundry.value.trim() || null,
+    amenities: [...form.querySelectorAll('input[name=am]:checked')].map(x => x.value),
   }, invStamp());
   msg.textContent = 'Saving…';
   if (btn) btn.disabled = true;
@@ -30025,7 +30083,7 @@ function ahsPayerLines(s, plan, fmt){
 const HM_WORKER = "https://vanmates-homestay-matching.talatcan.workers.dev";
 // rooms is loaded lazily (n8n executions are precious) — see hmEnsureRoomsLoaded.
 const HM = { cases: [], events: [], profiles: [], hosts: [], rooms: [], roomsLoaded: false, roomsLoading: null,
-  selected: null, filter: "open", openCount: 0, loading: false, flash: null };
+  selected: null, filter: "open", openCount: 0, loading: false, flash: null, offers: [], offerDraft: null };
 const hmEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // Staff moves the Worker allows (canTransition + STAFF_TARGETS); keep in step with it.
@@ -30056,13 +30114,17 @@ const HM_FIELDS_EDITABLE = ["NEW", "NEEDS_INFO", "SHORTLISTING", "MANUAL_REVIEW"
 
 function hmWorkerErrorMessage(out, res){
   if (!out || !out.error) return "HTTP " + res.status;
+  if (out.error === "bad_request") return "The request was missing or malformed data — refresh and try again";
+  if (out.error === "bad_target") return "That status can't be set here — refresh and try again";
   if (out.error === "reason_required") return "Type a reason first";
   if (out.error === "missing") return "Missing: " + (out.missing || []).map(hmMissingLabel).join(", ");
   if (out.error === "locked") return HM_CLOSED.includes(out.status) ? "This case is closed" : `This case is ${out.status}; matching details can't be edited`;
   if (out.error === "invalid") return "Check " + hmFieldLabel(out.field);
   if (out.error === "incomplete") return "City, dates and meals must be set first";
+  if (out.error === "conflict" && out.with) return `Another booking (${out.with}) already holds this host's room for these dates`;
   if (out.error === "conflict") return "Someone else changed this case just now — refreshed, try again";
   if (out.error === "not_editable") return "These fields can't be edited here: " + (out.fields || []).map(hmFieldLabel).join(", ");
+  if (out.error === "not_allowed" && !out.from) return `A booking can only be recorded on an Accepted or Manual review case (this one is ${out.status || "?"})`;
   if (out.error === "not_allowed") return `Can't move from ${out.from} to ${out.to}`;
   if (out.error === "not_shortlisting") return "Only a case in Shortlisting can be recomputed";
   if (out.error === "no_consent") return "The student has not agreed to share details with hosts";
@@ -30074,6 +30136,34 @@ function hmWorkerErrorMessage(out, res){
   if (out.error === "nobody_left") return "Everyone on the shortlist has already been invited. Add hosts to the shortlist or record a phone answer";
   if (out.error === "not_payable") return "This host can't be paid yet (Stripe payouts not set up). Finish their payout setup first";
   if (out.error === "mail_not_configured") return "Invitation email isn't set up yet (Worker secrets missing). Ask Aldo";
+  // Stage 3 (offers): src/offers.ts, src/accept.ts and the hm_* offer functions.
+  if (out.error === "not_offer_review") return "Only a case with a verified host (Verified match) can get an offer";
+  if (out.error === "invitation_not_available") return "That host's answer changed: refresh and pick a verified host";
+  if (out.error === "verification_stale") return "The host confirmed other dates or meals than the case has now: ask the host again";
+  if (out.error === "stale") return "The case or the host's answer changed since the preview: press Build offer again";
+  if (out.error === "price_changed") return `The price changed since the preview (now ${hmMoney(out.total_due_now_cents)} due): press Update price and check it again`;
+  if (out.error === "offer_open") return "An offer is already out: withdraw it first";
+  if (out.error === "offer_accepted") return "This case already has an accepted offer";
+  if (out.error === "rate_too_high") return `The weekly price can't be above ${hmMoney(out.max_weekly_cents)}`;
+  if (out.error === "below_host_pay") return `The weekly price can't be below the host's pay (${hmMoney(out.host_weekly_cents)})`;
+  if (out.error === "bad_rate") return "Type a weekly price in dollars";
+  if (out.error === "package_fee_missing") return "The agency's matching package or its fee is missing on this case";
+  if (out.error === "partner_request_missing") return "The partner request for this case is missing";
+  if (out.error === "no_recipient_email") return "The student has no email address";
+  if (out.error === "arrival_too_close") return "Arrival is too close for an offer: book it by hand";
+  if (out.error === "bad_dates") return "Check the arrival and departure dates";
+  if (out.error === "no_open_offer") return "There is no open offer to withdraw";
+  if (out.error === "not_open") return "That offer is no longer open: refresh";
+  if (out.error === "not_retryable") return "The booking request may have reached n8n: check Homestay bookings, then record the booking by hand";
+  if (out.error === "in_flight") return "Booking Create was called under 3 minutes ago and may still answer: wait, then refresh";
+  if (out.error === "create_pending") return "The booking is queued — the timer creates it within a minute or two; record by hand only if that fails";
+  if (out.error === "no_accepted_offer") return "This case has no accepted offer";
+  if (out.error === "not_accepted") return "Only an Accepted case can retry the booking";
+  if (out.error === "bad_booking_ref") return "Type the booking ref, e.g. VM-HS-2026-ABC123";
+  if (out.error === "sent") return "The booking was already created by an automatic run just now — refresh to see it";
+  if (out.error === "already_recorded") return "A booking is already recorded on this offer";
+  if (out.error === "not_found") return "Not found: refresh";
+  if (out.error === "no_result") return "The Worker got no answer from the database: refresh and try again";
   return out.error;
 }
 
@@ -30159,14 +30249,33 @@ function hmRenderQueue(){
     </div>`).join("") : `<div class="card-sub">No cases here.</div>`;
 }
 
+// Stage 3: the offer box. Prices come from the Worker (dry_run preview, then hm_offers rows); the
+// portal only formats them (HM-MATCH-CORE hmOfferRows / hmCreateBox).
+function hmOfferRowsHtml(o){
+  return hmOfferRows(o).map(r => `<div class="list-sub" style="display:flex;justify-content:space-between;${r.total ? "font-weight:600" : ""}">
+    <span>${hmEsc(r.label)}</span><span>${hmEsc(r.amount)}</span></div>`).join("");
+}
+function hmOfferPreviewHtml(p){
+  return `<div class="list-row" style="display:block;border:1px dashed var(--line);padding:8px;border-radius:8px">
+    <div class="list-title">Preview: ${hmEsc(p.host_first_name)} · ${hmEsc(p.room_label)}${p.area ? " · " + hmEsc(p.area) : ""}</div>
+    <div class="list-sub">To ${p.recipient === "partner" ? "the agency" : "the student"} (${hmEsc(p.recipient_email || "no email: partner app only")})${p.billing_plan ? " · " + hmEsc(p.billing_plan) : ""}
+      · answer by ${hmEsc(new Date(p.expires_at).toLocaleString())} · host paid ${hmEsc(hmMoney(p.host_weekly_cents))}/wk · margin ${hmEsc(hmMoney(p.margin_cents))}/wk</div>
+    ${hmOfferRowsHtml(p)}
+    <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+      <label class="card-sub">Weekly price $ <input class="form-input" id="hm-offer-rate" inputmode="decimal" style="width:110px" value="${hmEsc((p.weekly_rate_cents / 100).toFixed(2))}"></label>
+      <button class="btn btn-ghost" type="button" data-hm-offer-price>Update price</button>
+      <button class="btn" type="button" data-hm-offer-send>Send offer</button>
+    </div></div>`;
+}
 async function hmOpenCase(id){
   HM.selected = id;
   const c = HM.cases.find(x => x.id === id);
   if (!c) return;
   const sb = window.vmDb.sb;
-  const [ev, iv] = await Promise.all([
+  const [ev, iv, of] = await Promise.all([
     sb.from("hm_events").select("type,actor,after,created_at").eq("case_id", id).order("created_at", { ascending: false }).range(0, 99),
     sb.from("hm_invitations").select("*").eq("case_id", id).order("wave").order("rank").range(0, 199),
+    sb.from("hm_offers").select("*").eq("case_id", id).order("id", { ascending: false }).range(0, 19),
   ]);
   if (HM.selected !== id) return; // another case was opened while this one loaded
   const events = ev.data || [];
@@ -30226,6 +30335,40 @@ async function hmOpenCase(id){
         <div style="grid-column:1/-1"><button class="btn" type="submit">Save answer</button></div>
         <div class="card-sub" id="hm-phone-msg" style="grid-column:1/-1"></div>
       </form></details>` : ""}`;
+  const offers = of.error ? [] : (of.data || []);
+  HM.offers = offers;
+  HM.offerDraft = null; // the preview box is re-rendered empty below
+  const cur = offers[0] || null;
+  const verifiedInvs = cur && ["sent", "accepted"].includes(cur.status) ? [] : invs.filter(i => hmCanBuildOffer(c, i));
+  const box = cur ? hmCreateBox(cur, nowMs) : null;
+  const chipOf = s => HM_OFFER_STATUS[s] || [s, "grey"];
+  const offerSection = `
+    <div class="card-title" style="margin-top:16px">Offer</div>
+    ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
+    ${verifiedInvs.map(i => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
+      <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div></div>
+      <button class="btn" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button></div>`).join("")}
+    <div id="hm-offer-preview"></div>
+    ${cur ? `<div class="list-row" style="display:block">
+      <div class="list-title">${hmEsc(cur.host_first_name || nameOf(cur.host_id))} · ${hmEsc(cur.room_label || "")}
+        <span class="badge badge-${hmEsc(chipOf(cur.status)[1])}">${hmEsc(chipOf(cur.status)[0])}</span></div>
+      <div class="list-sub">To ${cur.recipient === "partner" ? "the agency" : "the student"}${cur.recipient_email ? " (" + hmEsc(cur.recipient_email) + ")" : ""}${cur.billing_plan ? " · " + hmEsc(cur.billing_plan) : ""}
+        · ${hmEsc(hmMoney(cur.weekly_rate_cents))}/wk · answer by ${hmEsc(new Date(cur.expires_at).toLocaleString())}${cur.decided_reason ? " · " + hmEsc(cur.decided_reason) : ""}</div>
+      ${hmOfferRowsHtml(cur)}
+      ${cur.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
+      ${box ? `<div style="margin-top:8px;padding:8px;border-radius:8px;border:1px solid ${box.tone === "red" ? "var(--red)" : "var(--line)"}">
+        <div class="list-title" style="${box.tone === "red" ? "color:var(--red)" : ""}">${hmEsc(box.title)}</div>
+        ${box.text ? `<div class="list-sub">${box.tone === "green" && /^https:\/\//.test(box.text)
+          ? `<a href="${hmEsc(box.text)}" target="_blank" rel="noopener">${hmEsc(box.text)}</a>` : hmEsc(box.text)}</div>` : ""}
+        ${box.retry && c.status === "ACCEPTED" ? '<button class="btn" type="button" data-hm-offer="retry" style="margin-top:6px">Retry booking</button>' : ""}
+        ${box.record && ["ACCEPTED", "MANUAL_REVIEW"].includes(c.status) ? `<form id="hm-record-booking" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <input class="form-input" name="booking_ref" placeholder="VM-HS-2026-XXXXXX" required style="width:200px">
+          <button class="btn btn-ghost" type="submit">Record booking made by hand</button></form>` : ""}
+      </div>` : ""}
+    </div>` : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
+    ${offers.length > 1 ? `<details><summary class="card-sub">Earlier offers (${hmEsc(offers.length - 1)})</summary>
+      ${offers.slice(1).map(o => `<div class="list-sub">#${hmEsc(o.id)} · ${hmEsc(chipOf(o.status)[0])} · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk
+        · ${hmEsc(new Date(o.expires_at).toLocaleString())}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>`).join("")}</details>` : ""}`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(c.status_reason) : ""}</div></div></div>
@@ -30268,6 +30411,7 @@ async function hmOpenCase(id){
     <details style="margin-top:8px"><summary class="card-sub">Excluded hosts (${(sl.excluded || []).length})</summary>
       ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>
     ${invitations}
+    ${offerSection}
     <div class="card-title" style="margin-top:16px">Timeline</div>
     ${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
     ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`;
@@ -30322,7 +30466,7 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv]");
+  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
@@ -30351,6 +30495,52 @@ document.addEventListener("click", async (ev) => {
       HM.flash = { id: c.id, text: a === "pause" ? "Paused." : a === "resume" ? "Resumed." : waveText };
       return await loadHomestayMatching();
     }
+    if (t.dataset.hmOfferBuild || t.dataset.hmOfferPrice !== undefined) {
+      const invId = Number(t.dataset.hmOfferBuild || (HM.offerDraft && HM.offerDraft.case_id === c.id && HM.offerDraft.invitation_id));
+      if (!(invId > 0)) { msg("Press Build offer first"); return; }
+      const input = document.getElementById("hm-offer-rate");
+      const weekly = t.dataset.hmOfferPrice !== undefined && input && input.value.trim() ? Math.round(Number(input.value) * 100) : null;
+      if (weekly !== null && !(weekly > 0)) { msg("Type the weekly price in dollars"); return; }
+      msg("Pricing…");
+      const r = await hmWorker(`/staff/cases/${c.id}/offer`, { invitation_id: invId, dry_run: true, ...(weekly ? { weekly_rate_cents: weekly } : {}) });
+      HM.offerDraft = { case_id: c.id, invitation_id: invId, weekly_rate_cents: r.preview.weekly_rate_cents,
+        total_due_now_cents: r.preview.total_due_now_cents };
+      document.getElementById("hm-offer-preview").innerHTML = hmOfferPreviewHtml(r.preview);
+      msg("");
+      return;
+    }
+    if (t.dataset.hmOfferSend !== undefined) {
+      const dft = HM.offerDraft;
+      if (!dft || dft.case_id !== c.id) { msg("Press Build offer first"); return; }
+      const input = document.getElementById("hm-offer-rate");
+      if (input && Math.round(Number(input.value) * 100) !== dft.weekly_rate_cents) { msg("Press Update price first: the preview is not at that weekly price"); return; }
+      if (!confirm(`Send this offer? The ${c.source === "partner" ? "agency" : "student"} is emailed now.`)) return;
+      t.disabled = true;
+      msg("Sending…");
+      // expected_total_cents: the Worker refuses (price_changed) if its fresh total differs from what staff saw.
+      const r = await hmWorker(`/staff/cases/${c.id}/offer`, { invitation_id: dft.invitation_id,
+        weekly_rate_cents: dft.weekly_rate_cents, expected_total_cents: dft.total_due_now_cents });
+      HM.offerDraft = null;
+      HM.flash = { id: c.id, text: r.emailed ? "Offer sent." : `Offer saved, but the email did not go out. Send this link yourself: ${r.link || "(no link: check the timeline)"}` };
+      return await loadHomestayMatching();
+    }
+    if (t.dataset.hmOffer === "withdraw") {
+      const reason = prompt("Why withdraw this offer? (optional)");
+      if (reason === null) return;
+      t.disabled = true;
+      msg("Withdrawing…");
+      await hmWorker(`/staff/cases/${c.id}/offer-withdraw`, { reason: reason.trim() || null });
+      HM.flash = { id: c.id, text: "Offer withdrawn." };
+      return await loadHomestayMatching();
+    }
+    if (t.dataset.hmOffer === "retry") {
+      if (!confirm("Nothing reached n8n. The timer will create the booking within a minute or two. Continue?")) return;
+      t.disabled = true;
+      msg("Queuing the booking…");
+      await hmWorker(`/staff/cases/${c.id}/booking-retry`, {}); // answers {ok, state: "pending"}: it only re-arms
+      HM.flash = { id: c.id, text: "Retry queued: the timer creates the booking within a minute or two. Refresh to see it." };
+      return await loadHomestayMatching();
+    }
     if (t.dataset.hmAct === "shortlist") {
       msg("Recomputing…");
       let r;
@@ -30375,7 +30565,7 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.dataset.hmRemove) return await hmSaveOverride(c, { order: ids.filter(x => x !== t.dataset.hmRemove), removed: [...(ov.removed || []), t.dataset.hmRemove] });
   } catch (e) {
-    if (t.dataset.hmInv) t.disabled = false;
+    if (t.dataset.hmInv || t.dataset.hmOfferSend !== undefined || t.dataset.hmOffer) t.disabled = false;
     msg("Error: " + (e.message || e));
     if (c && e.body && e.body.error === "conflict") { HM.flash = { id: c.id, text: "Error: " + e.message }; await loadHomestayMatching(); }
   }
@@ -30473,6 +30663,29 @@ document.addEventListener("submit", async (ev) => {
       : r.status === "OFFER_REVIEW" ? "Saved. The case has a verified host." : "Saved." };
     await loadHomestayMatching();
   } catch (e) {
+    el.textContent = "Error: " + (e.message || e);
+  }
+});
+
+// Stage 3: staff made the booking by hand (Booking Create failed or never answered) and record its ref.
+document.addEventListener("submit", async (ev) => {
+  if (ev.target.id !== "hm-record-booking") return;
+  ev.preventDefault();
+  const c = HM.cases.find(x => x.id === HM.selected);
+  const el = document.getElementById("hm-msg");
+  if (!c) return;
+  const ref = ev.target.booking_ref.value.trim().toUpperCase();
+  if (!confirm(`Only record a booking you have found in Homestay bookings. Record ${ref} and confirm the case?`)) return;
+  const btn = ev.target.querySelector("button");
+  if (btn) btn.disabled = true;
+  try {
+    el.textContent = "Saving…";
+    const r = await hmWorker(`/staff/cases/${c.id}/booking`, { booking_ref: ref });
+    HM.flash = { id: c.id, text: r.already ? "That booking was already recorded." : r.status === "CONFIRMED"
+      ? "Booking recorded; the case is confirmed." : `Booking recorded; the case is ${(HM_STATUS[r.status] || [r.status])[0]}.` };
+    await loadHomestayMatching();
+  } catch (e) {
+    if (btn) btn.disabled = false;
     el.textContent = "Error: " + (e.message || e);
   }
 });
