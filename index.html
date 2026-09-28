@@ -1293,7 +1293,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-27r"></script>
+<script src="pms-supabase.js?v=2026-09-28a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3333,14 +3333,48 @@ hello@vanmates.com · vanmates.com</textarea>
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:24px">
+      <!-- Agency requests (partners.vanmates.com). Read with the admin session
+           (partner_homestay_requests admin select policy); "Create booking" fills
+           the New booking form below with the agency as payer. -->
+      <div class="card" id="ahs-card" style="margin-bottom:24px">
+        <div class="card-head" style="flex-wrap:wrap;gap:10px">
+          <div>
+            <div class="card-title">Agency requests</div>
+            <div class="card-sub">Homestay requests agencies made on partners.vanmates.com. Create booking fills the form below; the agency is invoiced on its account and the student is never charged.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="form-input" id="ahs-status" style="max-width:170px">
+              <option value="">Open (all)</option><option value="requested">Requested</option><option value="matched">Matched</option>
+            </select>
+            <input class="form-input" id="ahs-q" placeholder="Ref, agency or student" style="max-width:200px">
+            <button class="btn btn-ghost" id="ahs-refresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="ahs-body" style="overflow-x:auto"><div class="card-pad card-sub">Not loaded yet.</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px" id="hb-new-card">
         <div class="card-head">
           <div>
-            <div class="card-title">New booking</div>
-            <div class="card-sub">The student pays from their own link — nothing is charged here</div>
+            <div class="card-title" id="hb-new-title">New booking</div>
+            <div class="card-sub" id="hb-new-sub">The student pays from their own link — nothing is charged here</div>
           </div>
         </div>
         <div class="card-pad">
+          <div id="hb-agency-panel" hidden style="margin-bottom:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px">
+            <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+              <div style="flex:1;min-width:240px">
+                <strong id="hb-agency-title">Agency booking</strong>
+                <div class="card-sub" id="hb-agency-sub" style="margin-top:4px"></div>
+              </div>
+              <button class="btn btn-ghost btn-mini" id="hb-agency-clear" type="button">Clear — back to a student booking</button>
+            </div>
+            <div class="form-row" style="margin-top:10px">
+              <div class="form-field"><label>Student phone</label><input class="form-input" id="hb-agency-phone" type="text" maxlength="40"></div>
+              <div class="form-field"><label>Student gender</label><input class="form-input" id="hb-agency-gender" type="text" maxlength="40"></div>
+            </div>
+            <div class="card-sub">Billed to the agency: rent at the weekly rate below for the whole stay, the 4% fee, the matching package and any deposit. Choose the host and set both weekly rates as usual.</div>
+          </div>
           <div class="form-row">
             <div class="form-field"><label>Host</label>
               <select class="form-input" id="hb-host"><option value="">Loading hosts…</option></select>
@@ -3401,7 +3435,7 @@ hello@vanmates.com · vanmates.com</textarea>
                paid; a prior paid booking under the email means no new deposit.
                Set them here only to override what the server would find. -->
           <div class="form-row">
-            <div class="form-field"><label>Placement fee</label>
+            <div class="form-field hb-student-only"><label>Placement fee</label>
               <select class="form-input" id="hb-placement-status">
                 <option value="">Auto — look it up (paid on vdhomestay / lead marked received, else due)</option>
                 <option value="due">Due — charge it at checkout</option>
@@ -3410,10 +3444,10 @@ hello@vanmates.com · vanmates.com</textarea>
               </select>
               <div class="card-sub" style="margin-top:6px">When due and blank, the amount is the lead's expected fee or $295.</div>
             </div>
-            <div class="form-field"><label>Placement amount (CAD)</label>
+            <div class="form-field hb-student-only"><label>Placement amount (CAD)</label>
               <input class="form-input" id="hb-placement-amount" type="number" min="0" step="0.01" placeholder="295.00">
             </div>
-            <div class="form-field"><label>Placement reference</label>
+            <div class="form-field hb-student-only"><label>Placement reference</label>
               <input class="form-input" id="hb-placement-ref" type="text" maxlength="120" placeholder="QBO inv 1042 / e-transfer 12 Sep">
             </div>
             <div class="form-field"><label>Deposit ($200, refundable)</label>
@@ -3461,6 +3495,7 @@ hello@vanmates.com · vanmates.com</textarea>
             <button class="btn btn-ghost" id="hb-refresh">Refresh</button>
             <button class="btn btn-ghost" id="hb-token-change">Change staff token</button>
             <span id="hb-status" class="card-sub"></span>
+            <button class="btn btn-ghost" id="hb-agency-retry" type="button" hidden>Retry agency invoices</button>
           </div>
 
           <div id="hb-write-note" class="card-sub" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px" hidden></div>
@@ -21278,6 +21313,250 @@ function rcvFilename(cd, fallback){
   return name || fallback;
 }
 /* RECEIVABLES-CORE-END */
+/* RBC-IMPORT-CORE-START */
+/* Receivables > Import RBC CSV: parse an RBC business-account CSV export, keep
+   the credits, and propose which agency and invoices each one pays. Pure: text
+   and rows in, proposals and request bodies out; the DOM side confirms and posts
+   each accepted row to POST /api/staff/billing/payments like "Record bank
+   transfer". Uses rcvValidDate / rcvValidateTransfer from RECEIVABLES-CORE.
+   Money is integer cents parsed as text, never through floats.
+
+   RBC's business CSV header is usually
+     Account Type, Account Number, Transaction Date, Cheque Number,
+     Description 1, Description 2, CAD$, USD$
+   with M/D/YYYY dates and signed amounts (credits positive). Other layouts go
+   through a manual mapping (date column, description column(s), amount column).
+   Spec: rina docs/superpowers/specs/2026-09-27-agency-paid-homestays-design.md */
+
+// RFC 4180: quoted fields, "" inside quotes, CR/LF/CRLF line ends, a leading BOM.
+// Blank lines are dropped. Returns an array of rows (arrays of strings).
+function rbcParseCsv(text){
+  let s = String(text == null ? '' : text);
+  if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1);
+  const rows = [];
+  let row = [], field = '', q = false, i = 0;
+  const endField = () => { row.push(field); field = ''; };
+  const endRow = () => { endField(); if (row.some(f => f.trim() !== '')) rows.push(row); row = []; };
+  while (i < s.length) {
+    const c = s[i];
+    if (q) {
+      if (c === '"') {
+        if (s[i + 1] === '"') { field += '"'; i += 2; continue; }
+        q = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"') { q = true; i++; continue; }
+    if (c === ',') { endField(); i++; continue; }
+    if (c === '\r') { endRow(); i += s[i + 1] === '\n' ? 2 : 1; continue; }
+    if (c === '\n') { endRow(); i++; continue; }
+    field += c; i++;
+  }
+  if (field !== '' || row.length) endRow();
+  return rows;
+}
+const rbcNorm = h => String(h == null ? '' : h).toLowerCase().replace(/[^a-z0-9$]+/g, ' ').trim();
+// Column indexes from a header row: { ok, date, desc:[...], amount, missing:[...] }.
+// CAD$ wins over a generic "amount"; USD$ is never taken (the RBC account is CAD).
+function rbcDetectColumns(header){
+  const h = (header || []).map(rbcNorm);
+  const find = preds => { for (const p of preds) { const k = h.findIndex(p); if (k !== -1) return k; } return -1; };
+  const date = find([x => x === 'transaction date', x => x === 'date', x => x === 'posted date' || x === 'posting date', x => /\bdate\b/.test(x)]);
+  let desc = h.map((x, k) => (/^description( \d+)?$/.test(x) || x === 'memo' || x === 'details' ? k : -1)).filter(k => k !== -1);
+  const amount = find([x => x === 'cad$' || x === 'cad $' || x === 'cad', x => x === 'amount' || x === 'amount cad' || x === 'cad amount', x => /\bcad\b/.test(x) && !/usd/.test(x)]);
+  const missing = [];
+  if (date === -1) missing.push('date');
+  if (!desc.length) missing.push('description');
+  if (amount === -1) missing.push('amount');
+  return { ok: !missing.length, date, desc, amount, missing };
+}
+// A manual mapping from the column picker: { date, desc: number|number[], amount }.
+function rbcMapping(m, width){
+  m = m || {};
+  const ok = k => Number.isInteger(k) && k >= 0 && k < width;
+  const num = v => (v === '' || v == null ? NaN : Number(v));
+  const desc = (Array.isArray(m.desc) ? m.desc : [m.desc]).map(num).filter(ok);
+  const date = num(m.date), amount = num(m.amount);
+  const missing = [];
+  if (!ok(date)) missing.push('date');
+  if (!desc.length) missing.push('description');
+  if (!ok(amount)) missing.push('amount');
+  return { ok: !missing.length, date, desc, amount, missing };
+}
+// "1,234.56" / "-50" / "(12.00)" / "$1,000" / "1 000,00"? (no: comma is a thousands separator) -> signed cents.
+function rbcParseAmount(s){
+  let t = String(s == null ? '' : s).trim().replace(/\s/g, '');
+  if (!t) return null;
+  let neg = false;
+  if (/^\(.*\)$/.test(t)) { neg = true; t = t.slice(1, -1); }
+  if (t[0] === '-') { neg = !neg; t = t.slice(1); } else if (t[0] === '+') t = t.slice(1);
+  t = t.replace(/^\$/, '').replace(/^CAD/i, '').replace(/,/g, '');
+  if (t.endsWith('-')) { neg = !neg; t = t.slice(0, -1); }
+  const m = /^(\d*)(?:\.(\d{0,2}))?$/.exec(t);
+  if (!m || (m[1] === '' && !m[2])) return null;
+  const cents = (m[1] === '' ? 0 : Number(m[1])) * 100 + Number(((m[2] || '') + '00').slice(0, 2));
+  if (!Number.isSafeInteger(cents)) return null;
+  return neg ? -cents : cents;
+}
+// RBC writes M/D/YYYY. YYYY-MM-DD and YYYY/MM/DD pass through; D/M/YYYY only when the
+// first part cannot be a month. Returns YYYY-MM-DD or null.
+function rbcParseDate(s){
+  const t = String(s == null ? '' : s).trim();
+  let y, mo, d, m;
+  if ((m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(t))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t))) {
+    y = +m[3]; mo = +m[1]; d = +m[2];
+    if (mo > 12 && d <= 12) { const x = mo; mo = d; d = x; }
+  } else return null;
+  const iso = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? iso : null;
+}
+// The payment's bank reference: the description, whitespace collapsed, at most 200 chars.
+function rbcReference(desc){ return String(desc == null ? '' : desc).replace(/\s+/g, ' ').trim().slice(0, 200); }
+// Credits only (amount > 0). rows[0] is the header when opts.header !== false.
+// -> { credits:[{line, date, description, reference, amount_cents}], skipped:{debits, blank}, errors:[{line, error}] }
+function rbcExtractCredits(rows, map, opts){
+  opts = opts || {};
+  const out = { credits: [], skipped: { debits: 0, blank: 0 }, errors: [] };
+  const body = opts.header === false ? (rows || []) : (rows || []).slice(1);
+  const first = opts.header === false ? 1 : 2;
+  body.forEach((r, k) => {
+    const line = k + first;
+    const rawAmt = r[map.amount];
+    if (rawAmt == null || String(rawAmt).trim() === '') { out.skipped.blank++; return; }
+    const cents = rbcParseAmount(rawAmt);
+    if (cents == null) { out.errors.push({ line, error: `amount "${String(rawAmt).trim()}" is not a number` }); return; }
+    if (cents <= 0) { out.skipped.debits++; return; }
+    const date = rbcParseDate(r[map.date]);
+    if (!date) { out.errors.push({ line, error: `date "${String(r[map.date] == null ? '' : r[map.date]).trim()}" is not a date` }); return; }
+    const description = map.desc.map(c => String(r[c] == null ? '' : r[c]).trim()).filter(Boolean).join(' ');
+    out.credits.push({ line, date, description, reference: rbcReference(description), amount_cents: cents });
+  });
+  return out;
+}
+// "INV-1010", "inv 1010", "INV1010" -> ["INV-1010"], in order, unique.
+function rbcInvoiceTokens(desc){
+  const seen = [], re = /(?:^|[^A-Z0-9])INV[\s#:-]*(\d{3,})(?![0-9])/gi;
+  let m;
+  while ((m = re.exec(String(desc || '')))) { const n = 'INV-' + m[1]; if (!seen.includes(n)) seen.push(n); }
+  return seen;
+}
+// Agencies whose payment_ref appears as a whole token (letters/digits bounded) in the description.
+function rbcRefAgencies(desc, agencies){
+  const up = String(desc || '').toUpperCase();
+  return (agencies || []).filter(a => {
+    const ref = String(a.payment_ref || '').toUpperCase();
+    if (!/^[A-Z0-9]{2,20}$/.test(ref)) return false;
+    return new RegExp('(^|[^A-Z0-9])' + ref + '([^A-Z0-9]|$)').test(up);
+  });
+}
+const rbcOpen = inv => inv.status !== 'void' && Number(inv.balance_cents) > 0;
+const rbcByDue = (a, b) => String(a.due_on).localeCompare(String(b.due_on))
+  || (Number((/(\d+)$/.exec(a.number) || [0, 0])[1]) - Number((/(\d+)$/.exec(b.number) || [0, 0])[1]));
+// That agency's open invoices, oldest due first, taken until the amount is covered.
+function rbcOldestDue(invoices, agencyId, amountCents){
+  const out = [];
+  let left = Number(amountCents) || 0;
+  for (const inv of (invoices || []).filter(r => r.agency_id === agencyId && rbcOpen(r)).sort(rbcByDue)) {
+    if (left <= 0) break;
+    out.push(inv.number);
+    left -= Number(inv.balance_cents) || 0;
+  }
+  return out;
+}
+const rbcBalanceOf = (invoices, nums) => nums.reduce((s, n) => {
+  const r = (invoices || []).find(x => x.number === n); return s + (r ? Number(r.balance_cents) || 0 : 0);
+}, 0);
+/* One credit -> { agency_id, invoice_numbers, confidence, reason }.
+   confidence: 'high' (named invoices, or the agency's reference with an exact balance),
+   'medium' (the agency's reference, oldest due first), 'low' (only an exact-amount
+   match, or a conflict between reference and invoice), 'none' (nothing found). */
+function rbcProposeMatch(credit, agencies, invoices){
+  const amount = Number(credit.amount_cents) || 0, desc = credit.description || '';
+  const byRef = rbcRefAgencies(desc, agencies);
+  const named = rbcInvoiceTokens(desc).map(n => (invoices || []).find(r => r.number === n)).filter(Boolean);
+  const namedOpen = named.filter(rbcOpen);
+  if (named.length) {
+    const agencyIds = [...new Set(named.map(r => r.agency_id))];
+    if (agencyIds.length === 1) {
+      const agency_id = agencyIds[0];
+      const conflict = byRef.length && !byRef.some(a => a.id === agency_id);
+      const nums = namedOpen.map(r => r.number);
+      if (!nums.length) {
+        return { agency_id, invoice_numbers: rbcOldestDue(invoices, agency_id, amount), confidence: 'low',
+          reason: `${named.map(r => r.number).join(', ')} already paid or void; oldest due instead` };
+      }
+      return { agency_id, invoice_numbers: nums, confidence: conflict ? 'low' : 'high',
+        reason: conflict ? `invoice ${nums.join(', ')} belongs to another agency than reference ${byRef.map(a => a.payment_ref).join(', ')}`
+          : `invoice number${nums.length > 1 ? 's' : ''} in the description` };
+    }
+    return { agency_id: '', invoice_numbers: [], confidence: 'none', reason: 'the description names invoices of different agencies' };
+  }
+  if (byRef.length === 1) {
+    const agency_id = byRef[0].id;
+    const nums = rbcOldestDue(invoices, agency_id, amount);
+    const exact = nums.length && rbcBalanceOf(invoices, nums) === amount;
+    return { agency_id, invoice_numbers: nums, confidence: exact ? 'high' : 'medium',
+      reason: `reference ${byRef[0].payment_ref}` + (nums.length ? (exact ? ', exact balance' : ', oldest due first') : ', no open invoice (becomes credit)') };
+  }
+  if (byRef.length > 1) {
+    return { agency_id: '', invoice_numbers: [], confidence: 'none', reason: 'several agency references: ' + byRef.map(a => a.payment_ref).join(', ') };
+  }
+  const same = (invoices || []).filter(r => rbcOpen(r) && Number(r.balance_cents) === amount);
+  if (same.length === 1) {
+    return { agency_id: same[0].agency_id, invoice_numbers: [same[0].number], confidence: 'low',
+      reason: `no reference; the amount equals ${same[0].number}'s balance` };
+  }
+  return { agency_id: '', invoice_numbers: [], confidence: 'none',
+    reason: same.length ? `no reference; ${same.length} invoices have this exact balance` : 'no reference or invoice number found' };
+}
+// Already in partner_payments: same agency, amount, day received and reference (trimmed, case-insensitive).
+function rbcAlreadyRecorded(item, payments){
+  const ref = rbcReference(item.reference || item.description).toLowerCase();
+  return (payments || []).some(p => p.agency_id === item.agency_id
+    && Number(p.amount_cents) === Number(item.amount_cents)
+    && String(p.received_on || '').slice(0, 10) === item.date
+    && rbcReference(p.reference).toLowerCase() === ref);
+}
+// Review items: every credit with its proposal, skip on by default when unmatched or a repeat within the file.
+function rbcBuildItems(credits, agencies, invoices){
+  const seen = new Map();
+  return (credits || []).map((c, k) => {
+    const p = rbcProposeMatch(c, agencies, invoices);
+    const key = [c.date, c.amount_cents, c.reference.toLowerCase()].join('|');
+    const dupOf = seen.has(key) ? seen.get(key) : null;
+    if (dupOf == null) seen.set(key, c.line);
+    return Object.assign({ id: k, dup_of: dupOf, recorded: false, status: '', error: '' }, c, p,
+      { skip: p.confidence === 'none' || dupOf != null });
+  });
+}
+// "INV-1010, inv 1011" typed by staff -> ["INV-1010","INV-1011"].
+function rbcParseInvoiceList(s){
+  return [...new Set(String(s || '').split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(Boolean)
+    .map(x => (/^\d+$/.test(x) ? 'INV-' + x : x.replace(/^INV-?/, 'INV-'))))];
+}
+// The POST /api/staff/billing/payments body for an item (validated like the manual dialog).
+function rbcPaymentBody(item, today){
+  return rcvValidateTransfer({
+    agency_id: item.agency_id, amount: (item.amount_cents / 100).toFixed(2), received_on: item.date,
+    reference: item.reference, invoice_numbers: item.invoice_numbers,
+    notes: `RBC CSV import, line ${item.line}`,
+  }, today);
+}
+function rbcSummary(items){
+  const s = { total: 0, to_record: 0, skipped: 0, recorded: 0, already: 0, failed: 0, cents_to_record: 0 };
+  (items || []).forEach(it => {
+    s.total++;
+    if (it.status === 'recorded') s.recorded++;
+    else if (it.status === 'already') s.already++;
+    else if (it.status === 'failed') s.failed++;
+    if (it.skip || it.status === 'recorded' || it.status === 'already') { if (it.skip) s.skipped++; return; }
+    s.to_record++; s.cents_to_record += Number(it.amount_cents) || 0;
+  });
+  return s;
+}
+/* RBC-IMPORT-CORE-END */
 /* ---- Receivables (DOM side of RECEIVABLES-CORE) -----------------------------
    A sub-tab of Partners, admin only. Reads the billing views with the signed-in
    admin's session (vm_is_admin() select policies); every write goes to the
@@ -21372,8 +21651,11 @@ function rcvHtml(){
       <input class="form-input" data-rcv-search placeholder="Invoice, booking or student" value="${esc(f.q)}" style="max-width:220px">
       <span class="name-sub">${list.length} of ${rows.length}</span>
       <span style="flex:1"></span>
+      <button class="btn btn-ghost" type="button" data-rcv-import>Import RBC CSV</button>
+      <input type="file" accept=".csv,text/csv" data-rcv-import-file hidden>
       <button class="btn btn-primary" type="button" data-rcv-transfer>Record bank transfer</button>
     </div>
+    ${RCV_STATE.imp ? rcvImportHtml() : ''}
     ${agency ? rcvAgencySummaryHtml(agency) : rcvCreditListHtml()}
     ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
       <thead><tr class="name-sub" style="text-align:left"><th ${td}>Invoice</th><th>Agency</th><th>Student / booking</th><th>Due</th>
@@ -21471,6 +21753,7 @@ function rcvWire(root){
   on('[data-rcv-move]', 'click', b => rcvOpenMove(b.dataset.rcvMove, b.dataset.rcvFrom, Number(b.dataset.rcvAmt)));
   on('[data-rcv-export-date]', 'change', i => { RCV_STATE[i.dataset.rcvExportDate] = i.value; });
   on('[data-rcv-export]', 'click', b => rcvExport(b, b.dataset.rcvExport));
+  rcvImportWire(root, on);
 }
 // ---- the Receivables dialog (one modal, filled per action)
 const RCV_MODAL = { onSubmit: null, busy: false, wired: false };
@@ -21697,6 +21980,170 @@ async function rcvExport(btn, type){
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (e) { showToast('Could not export: ' + (e.message || e)); }
   finally { btn.disabled = false; }
+}
+// ---- Import RBC CSV (DOM side of RBC-IMPORT-CORE)
+// Read the file, keep the credits, propose an agency and invoices per row, and on
+// confirm record each accepted row through POST /api/staff/billing/payments, one at
+// a time. A row already in partner_payments (same agency, amount, day and reference)
+// is never posted again: the agencies' payments are read fresh right before posting.
+const RCV_CONF_TONE = { high: 'green', medium: 'gold', low: 'red', none: '', manual: 'blue' };
+function rcvImportHtml(){
+  const imp = RCV_STATE.imp;
+  const head = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><strong>Import RBC CSV</strong>
+    <span class="name-sub">${esc(imp.name || '')}</span><span style="flex:1"></span>
+    <button class="btn btn-ghost btn-mini" type="button" data-rcv-imp-close${imp.busy ? ' disabled' : ''}>Close</button></div>`;
+  if (imp.error) return `<div class="card" style="padding:12px 16px;margin-bottom:12px">${head}<p class="name-sub">${esc(imp.error)}</p></div>`;
+  if (imp.step === 'map') {
+    const cols = imp.header.map((h, k) => [String(k), `${k + 1}. ${h || '(blank)'}`]);
+    const pick = (name, sel) => `<select class="form-input" data-rcv-imp-map="${name}" style="max-width:240px">${ptnOptions([['', 'Pick a column'], ...cols], sel == null || sel < 0 ? '' : String(sel))}</select>`;
+    const m = imp.map || {};
+    return `<div class="card" style="padding:12px 16px;margin-bottom:12px">${head}
+      <p class="name-sub" style="margin:0 0 10px">The columns were not recognised (expected Transaction Date, Description 1/2, CAD$). Say which column is which; the first row is read as the header.</p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Date${pick('date', m.date)}</label>
+        <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Description${pick('desc', (m.desc || [])[0])}</label>
+        <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Description 2 (optional)${pick('desc2', (m.desc || [])[1])}</label>
+        <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Amount (CAD, credits positive)${pick('amount', m.amount)}</label>
+        <button class="btn btn-primary" type="button" data-rcv-imp-mapgo>Read credits</button>
+      </div></div>`;
+  }
+  const s = rbcSummary(imp.items), ex = imp.extract || { skipped: {}, errors: [] };
+  const agencyOpts = [['', 'Pick an agency'], ...ptnData.agencies.map(a => [a.id, a.name + (a.payment_ref ? ` (${a.payment_ref})` : '')])];
+  const statusCell = it => it.status === 'recorded' ? `<span style="color:var(--green-dark,#3e6049)">Recorded</span><br><span class="name-sub">${esc(it.result || '')}</span>`
+    : it.status === 'already' ? '<span class="name-sub">Already recorded</span>'
+    : it.status === 'failed' ? `<span style="color:var(--red-dark)">${esc(it.error)}</span>`
+    : it.status === 'posting' ? '<span class="name-sub">Recording…</span>' : '';
+  const locked = it => imp.busy || it.status === 'recorded' || it.status === 'already';
+  return `<div class="card" style="padding:12px 16px;margin-bottom:12px">${head}
+    <p class="name-sub" style="margin:0 0 10px">${s.total} credit${s.total === 1 ? '' : 's'} read${ex.skipped.debits ? ` · ${ex.skipped.debits} debit${ex.skipped.debits === 1 ? '' : 's'} ignored` : ''}${ex.skipped.blank ? ` · ${ex.skipped.blank} row${ex.skipped.blank === 1 ? '' : 's'} with no CAD amount ignored` : ''}${imp.checking ? ' · checking what is already recorded…' : ''}.
+      Invoices left blank are paid oldest due first; anything over the balance becomes the agency's credit. Reference recorded = the bank description.</p>
+    ${ex.errors.length ? `<p class="name-sub" style="color:var(--red-dark);margin:0 0 10px">Not read: ${ex.errors.map(e => `line ${e.line} (${esc(e.error)})`).join(', ')}</p>` : ''}
+    ${imp.items.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:6px">Record</th><th>Date</th><th>Description</th><th style="text-align:right;padding:6px">Amount</th>
+        <th style="padding:6px">Agency</th><th style="padding:6px">Invoices</th><th style="padding:6px">Match</th><th style="padding:6px">Status</th></tr></thead>
+      <tbody>${imp.items.map(it => `<tr style="border-top:1px solid var(--line);vertical-align:top${it.skip ? ';opacity:.6' : ''}">
+        <td style="padding:6px"><input type="checkbox" data-rcv-imp-rec="${it.id}"${it.skip ? '' : ' checked'}${locked(it) ? ' disabled' : ''}></td>
+        <td style="padding:6px;white-space:nowrap">${esc(ptnDay(it.date))}<br><span class="name-sub">line ${it.line}</span></td>
+        <td style="padding:6px;max-width:320px">${esc(it.description)}${it.dup_of != null ? `<br><span class="name-sub">same as line ${it.dup_of}</span>` : ''}</td>
+        <td style="padding:6px;text-align:right;white-space:nowrap"><strong>${esc(rcvMoney(it.amount_cents))}</strong></td>
+        <td style="padding:6px"><select class="form-input" data-rcv-imp-agency="${it.id}" style="min-width:180px"${locked(it) ? ' disabled' : ''}>${ptnOptions(agencyOpts, it.agency_id)}</select></td>
+        <td style="padding:6px"><input class="form-input" data-rcv-imp-inv="${it.id}" value="${esc(it.invoice_numbers.join(', '))}" placeholder="oldest due" style="min-width:150px"${locked(it) ? ' disabled' : ''}></td>
+        <td style="padding:6px">${ptnPill({ label: it.confidence, tone: RCV_CONF_TONE[it.confidence] || '' })}<br><span class="name-sub">${esc(it.reason)}</span></td>
+        <td style="padding:6px">${statusCell(it)}</td>
+      </tr>`).join('')}</tbody></table></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" type="button" data-rcv-imp-go${imp.busy || !s.to_record ? ' disabled' : ''}>Record ${s.to_record} payment${s.to_record === 1 ? '' : 's'} (${esc(rcvMoney(s.cents_to_record))})</button>
+        <span class="name-sub">${s.recorded ? `${s.recorded} recorded · ` : ''}${s.already ? `${s.already} already recorded · ` : ''}${s.failed ? `${s.failed} failed · ` : ''}${s.skipped} skipped</span>
+      </div>` : '<p class="name-sub">No credits in this file.</p>'}
+  </div>`;
+}
+function rcvImportWire(root, on){
+  on('[data-rcv-import]', 'click', () => { const f = root.querySelector('[data-rcv-import-file]'); if (f) { f.value = ''; f.click(); } });
+  on('[data-rcv-import-file]', 'change', f => { if (f.files && f.files[0]) rcvImportFile(f.files[0]); });
+  const imp = RCV_STATE.imp;
+  if (!imp) return;
+  on('[data-rcv-imp-close]', 'click', () => { if (!imp.busy) { RCV_STATE.imp = null; renderPartners(); } });
+  on('[data-rcv-imp-map]', 'change', s => {
+    const m = imp.map = imp.map || { desc: [] };
+    const v = s.value === '' ? -1 : Number(s.value), k = s.dataset.rcvImpMap;
+    if (k === 'desc') m.desc = [v, (m.desc || [])[1]]; else if (k === 'desc2') m.desc = [(m.desc || [])[0], v]; else m[k] = v;
+  });
+  on('[data-rcv-imp-mapgo]', 'click', () => {
+    const m = rbcMapping({ date: imp.map && imp.map.date, desc: ((imp.map && imp.map.desc) || []).filter(x => x != null && x >= 0), amount: imp.map && imp.map.amount }, imp.header.length);
+    if (!m.ok) { showToast('Pick a column for: ' + m.missing.join(', ')); return; }
+    rcvImportBuild(m);
+  });
+  const item = (el, k) => imp.items.find(x => String(x.id) === el.dataset[k]);
+  on('[data-rcv-imp-rec]', 'change', c => { const it = item(c, 'rcvImpRec'); if (it) { it.skip = !c.checked; renderPartners(); } });
+  on('[data-rcv-imp-agency]', 'change', s => {
+    const it = item(s, 'rcvImpAgency'); if (!it) return;
+    it.agency_id = s.value;
+    it.invoice_numbers = s.value ? rbcOldestDue(rcvRows(), s.value, it.amount_cents) : [];
+    Object.assign(it, { confidence: s.value ? 'manual' : 'none', reason: s.value ? 'picked by staff' : 'no agency', skip: !s.value, status: '', error: '' });
+    rcvImportCheckRecorded();
+  });
+  on('[data-rcv-imp-inv]', 'change', i => {
+    const it = item(i, 'rcvImpInv'); if (!it) return;
+    it.invoice_numbers = rbcParseInvoiceList(i.value);
+    Object.assign(it, { confidence: 'manual', reason: it.invoice_numbers.length ? 'invoices typed by staff' : 'oldest due first', status: it.status === 'failed' ? '' : it.status });
+    renderPartners();
+  });
+  on('[data-rcv-imp-go]', 'click', b => rcvImportConfirm(b));
+}
+async function rcvImportFile(file){
+  if (!rcvData || rcvData.error) { showToast('Receivables are not loaded yet'); return; }
+  if (file.size > 5 * 1024 * 1024) { showToast('That file is over 5 MB; export a shorter date range'); return; }
+  let text = '';
+  try { text = await file.text(); } catch (e) { showToast('Could not read the file: ' + (e.message || e)); return; }
+  const rows = rbcParseCsv(text);
+  RCV_STATE.imp = { name: file.name, rows, header: rows[0] || [], map: null, step: 'map', items: [], extract: null, busy: false, checking: false, error: '' };
+  if (rows.length < 2) { RCV_STATE.imp.error = 'The file has no transactions.'; renderPartners(); return; }
+  const det = rbcDetectColumns(rows[0]);
+  if (!det.ok) { RCV_STATE.imp.map = { date: det.date, desc: det.desc, amount: det.amount }; renderPartners(); return; }
+  rcvImportBuild(det);
+}
+function rcvImportBuild(map){
+  const imp = RCV_STATE.imp;
+  imp.extract = rbcExtractCredits(imp.rows, map);
+  imp.items = rbcBuildItems(imp.extract.credits, ptnData.agencies, rcvRows());
+  imp.step = 'review';
+  renderPartners();
+  rcvImportCheckRecorded();
+}
+// Payments of every agency the rows point at, read fresh; returns agency_id -> payments.
+async function rcvImportPayments(items){
+  const ids = [...new Set(items.map(it => it.agency_id).filter(Boolean))];
+  const out = new Map();
+  for (const id of ids) {
+    const data = await rcvJson('GET', '/api/staff/billing/payments?agency_id=' + encodeURIComponent(id));
+    out.set(id, data.payments || []);
+  }
+  return out;
+}
+async function rcvImportCheckRecorded(){
+  const imp = RCV_STATE.imp;
+  if (!imp || imp.step !== 'review') return;
+  const my = imp.checkSeq = (imp.checkSeq || 0) + 1;
+  imp.checking = true; renderPartners();
+  try {
+    const pays = await rcvImportPayments(imp.items);
+    if (RCV_STATE.imp !== imp || my !== imp.checkSeq) return;
+    imp.items.forEach(it => {
+      if (it.status === 'recorded') return;
+      const done = it.agency_id && rbcAlreadyRecorded(it, pays.get(it.agency_id));
+      if (done) { it.status = 'already'; it.skip = true; } else if (it.status === 'already') it.status = '';
+    });
+  } catch (e) { showToast('Could not check existing payments: ' + (e.message || e)); }
+  if (RCV_STATE.imp === imp && my === imp.checkSeq) { imp.checking = false; renderPartners(); }
+}
+async function rcvImportConfirm(btn){
+  const imp = RCV_STATE.imp;
+  if (!imp || imp.busy) return;
+  const todo = imp.items.filter(it => !it.skip && it.status !== 'recorded' && it.status !== 'already');
+  if (!todo.length) return;
+  if (!window.confirm(`Record ${todo.length} payment${todo.length === 1 ? '' : 's'} totalling ${rcvMoney(todo.reduce((s, it) => s + it.amount_cents, 0))}?`)) return;
+  imp.busy = true; if (btn) btn.disabled = true; renderPartners();
+  try {
+    let pays;
+    try { pays = await rcvImportPayments(todo); }
+    catch (e) { showToast('Could not check existing payments, nothing was recorded: ' + (e.message || e)); return; }
+    for (const it of todo) {
+      if (rbcAlreadyRecorded(it, pays.get(it.agency_id))) { it.status = 'already'; it.skip = true; continue; }
+      const v = rbcPaymentBody(it, rcvToday());
+      if (!v.ok) { it.status = 'failed'; it.error = v.errors.join('. '); continue; }
+      it.status = 'posting'; renderPartners();
+      try {
+        const res = await rcvJson('POST', '/api/staff/billing/payments', v.body);
+        it.status = 'recorded'; it.result = rcvPaymentResultMsg(res);
+      } catch (e) { it.status = 'failed'; it.error = String(e.message || e); }
+    }
+  } finally {
+    imp.busy = false;
+    const s = rbcSummary(imp.items);
+    showToast(`${s.recorded} recorded` + (s.failed ? `, ${s.failed} failed` : '') + (s.already ? `, ${s.already} already recorded` : ''));
+    renderPartners();
+    await rcvAfterWrite();
+  }
 }
 /* CHECKOUT-CORE-START */
 /* Checkouts page. Phase 1 stored every value the resident's form computed
@@ -26997,6 +27444,125 @@ renderLeads();
   setTimeout(() => tick("post-hydrate-2"), 4000);
 })();
 
+/* AGENCY-HS-CORE-START */
+/* Homestay console > Agency requests: homestay requests agencies made on
+   partners.vanmates.com (partner_homestay_requests, read with the admin session)
+   become bookings through the SAME staff booking form and VM - Homestay Booking
+   Create webhook, with the agency as payer. Pure: rows in, form values, request
+   fields and result summaries out.
+   Spec: rina docs/superpowers/specs/2026-09-27-agency-paid-homestays-design.md */
+const AHS_PACKAGES = { homestay: 'Homestay Match', three: '3 Host Families', five: '5 Families + Airport Pickup' };
+const AHS_CITIES = { vancouver: 'Vancouver', toronto: 'Toronto', montreal: 'Montreal' };
+const AHS_MEALS = { full_board: 'Full board', half_board: 'Half board', self_catered: 'Self-catered', no_meals: 'No meals' };
+const AHS_OPEN = ['requested', 'matched'];
+// The request's meal plan -> the booking form's three tiers.
+function ahsMealPlan(m){
+  return ({ full_board: 'three_meals', half_board: 'two_meals', self_catered: 'no_meals', no_meals: 'no_meals' })[m] || '';
+}
+// billing_plan is added by sql/2026-09-27c; before that the column is absent and the
+// SQL default ('upfront') is what the request will read as.
+function ahsPlan(r){ return r && (r.billing_plan === 'per_period' || r.billing_plan === 'upfront') ? r.billing_plan : 'upfront'; }
+function ahsPlanLabel(r){
+  if (!r || r.billing_plan == null) return 'Upfront (default)';
+  return ahsPlan(r) === 'per_period' ? 'Per 28-day period' : 'Whole stay upfront';
+}
+function ahsStatus(s){
+  return ({ requested: { label: 'Requested', tone: 'gold' }, matched: { label: 'Matched', tone: 'blue' },
+    confirmed: { label: 'Confirmed', tone: 'green' }, cancelled: { label: 'Cancelled', tone: '' } })[s] || { label: String(s || '—'), tone: '' };
+}
+const ahsName = s => s ? `${s.given_name || ''} ${s.family_name || ''}`.trim() : '';
+// Open requests (requested, matched), joined to agency, student and the requesting user,
+// soonest check-in first. f: { status: '' | 'requested' | 'matched', q }.
+function ahsRequestRows(requests, agencies, students, users, f){
+  f = f || {};
+  const ag = new Map((agencies || []).map(a => [a.id, a]));
+  const st = new Map((students || []).map(s => [s.id, s]));
+  const us = new Map((users || []).map(u => [u.id, u]));
+  const q = String(f.q || '').trim().toLowerCase();
+  return (requests || [])
+    .filter(r => AHS_OPEN.includes(r.status) && (!f.status || r.status === f.status))
+    .map(r => {
+      const a = ag.get(r.agency_id), s = st.get(r.student_id), u = us.get(r.user_id);
+      return Object.assign({}, r, {
+        agency_name: a ? a.name : '', student_name: ahsName(s), student_email: s ? s.email || '' : '',
+        user_name: u ? u.name || u.email || '' : '', plan: ahsPlan(r), plan_label: ahsPlanLabel(r),
+        package_label: AHS_PACKAGES[r.package] || String(r.package || ''), city_label: AHS_CITIES[r.city] || String(r.city || ''),
+        meal_label: AHS_MEALS[r.meal_plan] || String(r.meal_plan || ''),
+      });
+    })
+    .filter(r => !q || [r.ref, r.agency_name, r.student_name, r.student_email].some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)) || String(a.ref).localeCompare(String(b.ref)));
+}
+// Letter notes from what the agency told us: dietary/medical restrictions, then the notes.
+function ahsLetterNotes(r){
+  const parts = [];
+  if (r.restrictions && String(r.restrictions_detail || '').trim()) parts.push('Restrictions: ' + String(r.restrictions_detail).trim());
+  if (String(r.notes || '').trim()) parts.push(String(r.notes).trim());
+  return parts.join(' · ').replace(/\s+/g, ' ').slice(0, 600);
+}
+// The staff booking form, prefilled from a request row (+ its student). Host and the two
+// weekly rates stay with staff, as for any booking.
+function ahsPrefill(r, student){
+  const s = student || {};
+  return {
+    email: String(s.email || '').trim().toLowerCase(),
+    name: ahsName(s).slice(0, 120),
+    phone: String(s.phone || '').trim(),
+    dob: /^\d{4}-\d{2}-\d{2}$/.test(String(s.date_of_birth || '')) ? s.date_of_birth : '',
+    gender: String(s.gender || '').trim(),
+    country: String(s.nationality || s.current_country || '').trim().slice(0, 80),
+    movein: String(r.check_in || '').slice(0, 10),
+    moveout: String(r.check_out || '').slice(0, 10),
+    meals: ahsMealPlan(r.meal_plan),
+    notes: ahsLetterNotes(r),
+    arrival: r.flight_booked === true ? 'Flight booked (details from the agency)' : r.flight_booked === false ? 'Flight not booked yet' : '',
+    city: r.city || '',
+    agency: {
+      payer_type: 'agency', agency_id: r.agency_id || '', partner_request_ref: r.ref || '',
+      billing_plan: ahsPlan(r), matching_package: r.package || '',
+    },
+  };
+}
+// Extra fields on the booking-create body for an agency booking.
+function ahsAgencyFields(agency, extra){
+  const a = agency || {}, x = extra || {};
+  const errors = [];
+  if (!a.agency_id) errors.push('The agency is missing');
+  if (!/^HS-\d+$/.test(String(a.partner_request_ref || ''))) errors.push('The request reference is missing');
+  if (!['upfront', 'per_period'].includes(a.billing_plan)) errors.push('The payment plan is missing');
+  if (!AHS_PACKAGES[a.matching_package]) errors.push('The matching package is missing');
+  if (errors.length) return { ok: false, errors, fields: null };
+  const fields = { payer_type: 'agency', agency_id: a.agency_id, partner_request_ref: a.partner_request_ref,
+    billing_plan: a.billing_plan, matching_package: a.matching_package };
+  const phone = String(x.phone || '').trim(), gender = String(x.gender || '').trim();
+  if (phone) fields.student_phone = phone.slice(0, 40);
+  if (gender) fields.student_gender = gender.slice(0, 40);
+  return { ok: true, errors, fields };
+}
+// Booking Create's answer for an agency booking: the invoices the partner app issued, or
+// the error flag it set when that call failed (the booking itself is already committed).
+function ahsCreateResult(d){
+  d = d || {};
+  const raw = d.partner_invoices;
+  const invoices = (Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(/[\s,]+/))
+    .map(x => String(x || '').trim()).filter(Boolean);
+  let err = d.partner_sync_error != null && d.partner_sync_error !== false ? d.partner_sync_error
+    : d.partner_error != null && d.partner_error !== false ? d.partner_error
+    : d.partner_sync_ok === false ? true : '';
+  if (err === true) err = 'the partner app did not issue the invoices';
+  err = String(err || '');
+  const known = 'partner_invoices' in d || !!err || 'partner_sync_ok' in d;
+  const ref = String(d.booking_ref || '');
+  let message, bad = false, retry = false;
+  if (!ref) { message = 'No booking reference came back. A booking may still have been created — check n8n before retrying.'; bad = true; }
+  else if (err) { message = `Booking ${ref} was created, but the agency invoices were not issued (${err}). Retry issues them; it does not create another booking.`; bad = true; retry = true; }
+  else if (invoices.length) message = `Created ${ref} — invoice${invoices.length === 1 ? '' : 's'} ${invoices.join(', ')} issued to the agency.`;
+  else if (known) { message = `Created ${ref}, but no invoice number came back. Check Receivables before retrying.`; bad = true; retry = true; }
+  else { message = `Created ${ref}, but the answer carried no agency invoice step — n8n may not have the agency flow live. Check the booking before doing anything else.`; bad = true; }
+  return { ref, invoices, error: err, known, message, bad, retry };
+}
+/* AGENCY-HS-CORE-END */
+
 /* ============ HOMESTAY BOOKINGS (n8n + Stripe) ============
    This view does NOT read Supabase. Bookings and hosts live in n8n data tables
    with Stripe as the source of truth for money, so everything here goes through
@@ -27029,7 +27595,9 @@ renderLeads();
   // stopped here rather than being sent and bounced, because a 401 clears the
   // token and would evict a read-only token that is working perfectly.
   const HB_RO_TOKEN_KEY = 'vm_staff_token_ro';
-  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-details', 'homestay-letter-resend'];
+  // homestay-agency-invoice-retry: re-runs only the partner-app invoice step of an
+  // agency booking Booking Create already committed (n8n side: agency-paid homestays).
+  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-details', 'homestay-letter-resend', 'homestay-agency-invoice-retry'];
 
   function hbFullToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
   function hbReadToken() { return hbFullToken() || localStorage.getItem(HB_RO_TOKEN_KEY) || ''; }
@@ -27933,10 +28501,24 @@ renderLeads();
       return hbStatus('The host would be paid more than the student pays. Fix the rates first.', true);
     }
 
+    // Agency booking: the request's fields ride on the same webhook, and the
+    // student-payment parts (placement fee, link) do not apply.
+    const agencyReq = AHS_FORM.request;
+    let agencyFields = null;
+    if (agencyReq) {
+      if (AHS_FORM.createdRef) {
+        return hbStatus('Booking ' + AHS_FORM.createdRef + ' was already created for ' + agencyReq.ref +
+          ' — use Retry agency invoices, or Clear to start another booking.', true);
+      }
+      const af = ahsAgencyFields(AHS_FORM.fields.agency, { phone: $('hb-agency-phone').value, gender: $('hb-agency-gender').value });
+      if (!af.ok) return hbStatus(af.errors.join('. ') + '.', true);
+      agencyFields = af.fields;
+    }
+
     $('hb-create').disabled = true;
     hbStatus('Creating…');
     try {
-      const d = await hbPost('booking-create', {
+      const body = {
         host_id: host,
         student_email: email,
         weekly_rate_cents: weekly,
@@ -27959,7 +28541,25 @@ renderLeads();
         placement_fee_cents: $('hb-placement-amount').value.trim() ? toCents($('hb-placement-amount').value.trim()) : '',
         placement_fee_ref: $('hb-placement-ref').value.trim(),
         deposit: $('hb-deposit').value,
-      });
+      };
+      if (agencyFields) {
+        // The matching package is invoiced to the agency by the partner app; no
+        // student placement fee is looked up or charged.
+        delete body.placement_fee_status; delete body.placement_fee_cents; delete body.placement_fee_ref;
+        Object.assign(body, agencyFields);
+      }
+      const d = await hbPost('booking-create', body);
+      if (agencyFields) {
+        const r = ahsCreateResult(d);
+        $('hb-link-panel').hidden = true;
+        $('hb-link').value = '';
+        if (r.ref) AHS_FORM.createdRef = r.ref;
+        hbStatus(r.message, r.bad);
+        ahsShowRetry(r.retry ? r.ref : '');
+        if (!r.bad) ahsClearForm(true);
+        await Promise.all([hbLoadBookings(), ahsLoad()]);
+        return;
+      }
       // A 2xx with no link is a real failure that hbPost cannot see: it does
       // `resp.json().catch(() => ({}))`, so an empty or non-JSON body becomes
       // {} and reads as success. That is exactly what booking-create returned
@@ -27995,10 +28595,169 @@ renderLeads();
     }
   }
 
+  /* ---- agency requests (DOM side of AGENCY-HS-CORE) ---- */
+  // Read with the signed-in admin's Supabase session: partner_homestay_requests,
+  // partner_agencies, partner_students and partner_users all have vm_is_admin()
+  // select policies. The staff token is not involved in reading them.
+  const AHS_FORM = { request: null, fields: null, createdRef: '' };
+  const AHS_DATA = { rows: null, students: new Map(), error: '', loading: null };
+
+  async function ahsLoad() {
+    const body = $('ahs-body'); if (!body) return;
+    if (typeof ptnIsAdmin === 'function' && !ptnIsAdmin()) {
+      body.innerHTML = '<div class="card-pad card-sub">Only portal admins can see agency requests.</div>';
+      return;
+    }
+    const sb = window.vmDb && window.vmDb.sb;
+    if (!sb) { body.innerHTML = '<div class="card-pad card-sub">Not connected to the database.</div>'; return; }
+    if (AHS_DATA.loading) return AHS_DATA.loading;
+    if (!AHS_DATA.rows) body.innerHTML = '<div class="card-pad card-sub">Loading agency requests…</div>';
+    AHS_DATA.loading = (async () => {
+      try {
+        const requests = await ptnSelectAll(sb, 'partner_homestay_requests', '*',
+          q => q.in('status', AHS_OPEN).order('check_in').order('id'));
+        const [agencies, students, users] = await Promise.all([
+          ptnSelectIn(sb, 'partner_agencies', 'id,name', 'id', requests.map(r => r.agency_id)),
+          ptnSelectIn(sb, 'partner_students', '*', 'id', requests.map(r => r.student_id)),
+          ptnSelectIn(sb, 'partner_users', 'id,name,email', 'id', requests.map(r => r.user_id)),
+        ]);
+        AHS_DATA.raw = { requests, agencies, students, users };
+        AHS_DATA.students = new Map(students.map(x => [x.id, x]));
+        AHS_DATA.error = '';
+      } catch (e) {
+        console.error('[agency requests] load failed', e);
+        const hint = /partner_/.test(String(e.message || '')) ? ' (has the homestay requests SQL been applied?)' : '';
+        AHS_DATA.error = String(e.message || e) + hint;
+      } finally { AHS_DATA.loading = null; }
+      ahsRender();
+    })();
+    return AHS_DATA.loading;
+  }
+
+  function ahsRender() {
+    const body = $('ahs-body'); if (!body) return;
+    if (AHS_DATA.error) { body.innerHTML = '<div class="card-pad card-sub">Could not load agency requests: ' + esc(AHS_DATA.error) + '</div>'; return; }
+    if (!AHS_DATA.raw) return;
+    const d = AHS_DATA.raw;
+    const rows = ahsRequestRows(d.requests, d.agencies, d.students, d.users,
+      { status: ($('ahs-status') || {}).value || '', q: ($('ahs-q') || {}).value || '' });
+    AHS_DATA.rows = rows;
+    if (!rows.length) {
+      body.innerHTML = '<div class="card-pad card-sub">' + (d.requests.length ? 'No request matches.' : 'No open agency requests.') + '</div>';
+      return;
+    }
+    const pill = (p) => '<span class="tag-pill ' + esc(p.tone) + '">' + esc(p.label) + '</span>';
+    body.innerHTML = '<table><thead><tr><th>Request</th><th>Agency</th><th>Student</th><th>City</th><th>Stay</th>' +
+      '<th>Package</th><th>Plan</th><th>Status</th><th></th></tr></thead><tbody>' +
+      rows.map((r) => '<tr>' +
+        '<td class="nowrap"><code>' + esc(r.ref) + '</code></td>' +
+        '<td>' + esc(r.agency_name || '—') + (r.user_name ? '<div class="card-sub">' + esc(r.user_name) + '</div>' : '') + '</td>' +
+        '<td>' + esc(r.student_name || '—') + '<div class="card-sub">' + esc(r.student_email) + '</div></td>' +
+        '<td>' + esc(r.city_label) + '</td>' +
+        '<td class="nowrap">' + esc(r.check_in) + '<div class="card-sub">to ' + esc(r.check_out) + '</div></td>' +
+        '<td>' + esc(r.package_label) + '<div class="card-sub">' + esc(r.meal_label) + '</div></td>' +
+        '<td>' + esc(r.plan_label) + '</td>' +
+        '<td>' + pill(ahsStatus(r.status)) + '</td>' +
+        '<td class="nowrap">' + (r.status === 'requested'
+          ? '<button class="btn btn-primary btn-mini ahs-create" type="button" data-id="' + esc(r.id) + '"' +
+            (AHS_FORM.request && AHS_FORM.request.id === r.id ? ' disabled' : '') + '>Create booking</button>'
+          : '') + '</td>' +
+        '</tr>').join('') + '</tbody></table>';
+  }
+
+  function ahsSetStudentOnly(hidden) {
+    document.querySelectorAll('.hb-student-only').forEach((el) => { el.hidden = hidden; });
+  }
+
+  // Fill the staff booking form from a request. Host and both weekly rates are
+  // left for staff, exactly as for a student booking.
+  function ahsFillForm(id) {
+    const r = (AHS_DATA.rows || []).find((x) => x.id === id);
+    if (!r) return;
+    const f = ahsPrefill(r, AHS_DATA.students.get(r.student_id));
+    AHS_FORM.request = r; AHS_FORM.fields = f; AHS_FORM.createdRef = '';
+    const set = (elId, v) => { const el = $(elId); if (el) el.value = v == null ? '' : v; };
+    set('hb-host', ''); set('hb-weekly', ''); set('hb-host-weekly', '');
+    set('hb-email', f.email); set('hb-name', f.name);
+    set('hb-movein', f.movein); set('hb-moveout', f.moveout);
+    if (f.meals) set('hb-meals', f.meals);
+    set('hb-dob', f.dob); set('hb-country', f.country);
+    set('hb-room-type', ''); set('hb-flight', '');
+    set('hb-arrival', f.arrival); set('hb-notes', f.notes);
+    set('hb-placement-status', ''); set('hb-placement-amount', ''); set('hb-placement-ref', ''); set('hb-deposit', '');
+    set('hb-agency-phone', f.phone); set('hb-agency-gender', f.gender);
+    const panel = $('hb-agency-panel'); if (panel) panel.hidden = false;
+    $('hb-agency-title').textContent = 'Agency booking for ' + r.ref + ' · ' + (r.agency_name || 'agency');
+    $('hb-agency-sub').textContent = [r.student_name, r.city_label ? 'choose a host in ' + r.city_label : '',
+      r.check_in + ' to ' + r.check_out, r.package_label, r.plan_label].filter(Boolean).join(' · ');
+    $('hb-new-title').textContent = 'New agency booking';
+    $('hb-new-sub').textContent = 'Billed to ' + (r.agency_name || 'the agency') + ' on the partner portal — the student is never charged and gets no payment link';
+    const c = $('hb-create'); if (c) c.textContent = 'Create agency booking';
+    $('hb-link-panel').hidden = true;
+    ahsSetStudentOnly(true);
+    ahsShowRetry('');
+    hbStatus('Filled from ' + r.ref + '. Choose the host and both weekly rates, check the dates, then create.');
+    if (typeof hbPreview === 'function') hbPreview();
+    ahsRender();
+    const card = $('hb-new-card'); if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function ahsClearForm(keepStatus) {
+    AHS_FORM.request = null; AHS_FORM.fields = null; AHS_FORM.createdRef = '';
+    const panel = $('hb-agency-panel'); if (panel) panel.hidden = true;
+    $('hb-new-title').textContent = 'New booking';
+    $('hb-new-sub').textContent = 'The student pays from their own link — nothing is charged here';
+    const c = $('hb-create'); if (c) c.textContent = 'Create booking & get link';
+    ahsSetStudentOnly(false);
+    if (!keepStatus) { hbStatus(''); ahsShowRetry(''); }
+    ahsRender();
+  }
+
+  function ahsShowRetry(ref) {
+    const b = $('hb-agency-retry'); if (!b) return;
+    b.hidden = !ref;
+    b.setAttribute('data-ref', ref || '');
+    b.disabled = false;
+  }
+
+  // Re-runs only the invoice step for a booking that already exists; never
+  // booking-create again (that would commit a second booking).
+  async function ahsRetry() {
+    const b = $('hb-agency-retry');
+    const ref = b ? b.getAttribute('data-ref') : '';
+    if (!ref) return;
+    b.disabled = true;
+    hbStatus('Retrying the agency invoices for ' + ref + '…');
+    try {
+      const d = await hbPost('homestay-agency-invoice-retry', {
+        booking_ref: ref, partner_request_ref: AHS_FORM.request ? AHS_FORM.request.ref : '',
+      });
+      const r = ahsCreateResult(Object.assign({ booking_ref: ref }, d));
+      hbStatus(r.message, r.bad);
+      ahsShowRetry(r.retry ? ref : '');
+      if (!r.bad) ahsClearForm(true);
+      await Promise.all([hbLoadBookings(), ahsLoad()]);
+    } catch (e) {
+      hbStatus('Retry failed for ' + ref + ': ' + e.message + (/404/.test(e.message) ? ' (the retry door is not live in n8n yet — tell Aldo; do not create the booking again)' : ''), true);
+      b.disabled = false;
+    }
+  }
+
   /* ---- wiring ---- */
   document.addEventListener('DOMContentLoaded', function () {
     const nav = document.querySelector('.nav-item[data-view="homestay-bookings"]');
     if (nav) nav.addEventListener('click', hbLoadAll);
+    if (nav) nav.addEventListener('click', () => { ahsLoad(); });
+    const ahsBody = $('ahs-body');
+    if (ahsBody) ahsBody.addEventListener('click', (e) => {
+      const b = e.target.closest ? e.target.closest('.ahs-create') : null;
+      if (b) ahsFillForm(b.getAttribute('data-id'));
+    });
+    const ahsSt = $('ahs-status'); if (ahsSt) ahsSt.addEventListener('change', ahsRender);
+    const ahsQ = $('ahs-q'); if (ahsQ) ahsQ.addEventListener('input', ahsRender);
+    const ahsRf = $('ahs-refresh'); if (ahsRf) ahsRf.addEventListener('click', () => { ahsLoad(); });
+    const ahsCl = $('hb-agency-clear'); if (ahsCl) ahsCl.addEventListener('click', () => ahsClearForm(false));
+    const ahsRt = $('hb-agency-retry'); if (ahsRt) ahsRt.addEventListener('click', ahsRetry);
     ['hb-weekly', 'hb-host-weekly', 'hb-movein', 'hb-moveout'].forEach((id) => {
       const el = $(id); if (el) el.addEventListener('input', hbPreview);
     });
