@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28x"></script>
+<script src="pms-supabase.js?v=2026-09-28y"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21078,6 +21078,31 @@ function ptnValidateUser(f){
   if (row.status !== 'active' && row.status !== 'disabled') errors.push('Status must be active or disabled');
   return { ok: errors.length === 0, errors, row };
 }
+// The agency admin made from an agency's contact when the agency has no users yet
+// (so a new agency has someone to invite); null when there is no valid contact email.
+function ptnContactUser(agency, users){
+  const a = agency || {};
+  const email = String(a.contact_email || '').trim().toLowerCase();
+  if (!a.id || !ptnValidEmail(email)) return null;
+  if ((users || []).some(u => u.agency_id === a.id)) return null;
+  return { agency_id: a.id, name: ptnText(a.contact_name) || ptnText(a.name) || email, email,
+    role: 'admin', sees_all_bookings: false, language: null, status: 'active' };
+}
+// Who gets an invitation email after an agency is saved: when it has just become
+// active (new, or from another status), every active user who has never signed in;
+// plus a user created on this save, if the agency is active. Ids, no repeats.
+function ptnAgencyInvites(beforeStatus, agency, users, createdUserId){
+  const a = agency || {};
+  if (a.status !== 'active') return [];
+  const ids = beforeStatus === 'active' ? [] : (users || [])
+    .filter(u => u.agency_id === a.id && u.status === 'active' && !u.last_login_at).map(u => u.id);
+  if (createdUserId && !ids.includes(createdUserId)) ids.push(createdUserId);
+  return ids;
+}
+// A user added by staff is invited at once when both the user and the agency are active.
+function ptnInviteNewUser(user, agency){
+  return !!user && user.status === 'active' && !!agency && agency.status === 'active';
+}
 function ptnMoney(cents, currency){
   if (cents == null) return '—';
   const n = (cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 });
@@ -21243,7 +21268,8 @@ function ptnAgencyFormHtml(a){
     ${ptnField('billing_email', 'Billing email', a.billing_email, ' type="email"')}
     ${ptnSelectField('language', 'Language', PTN_LANG_OPTS, a.language || 'en')}
     ${ptnField('currency', 'Currency', a.currency || 'CAD')}
-    ${ptnSelectField('status', 'Status', PTN_AGENCY_STATUSES.map(s => [s, s[0].toUpperCase() + s.slice(1)]), a.status || 'pending')}
+    ${ptnSelectField('status', 'Status', PTN_AGENCY_STATUSES.map(s => [s, s[0].toUpperCase() + s.slice(1)]), a.status || 'active')}
+    <p class="name-sub" style="grid-column:1/-1;margin:0">${a.id ? '' : 'The contact becomes the agency admin. '}Users get their invitation email when the agency is saved as Active.</p>
     ${ptnBillingOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Billing</strong>
     ${ptnSelectField('payment_terms', 'Payment terms', RCV_TERMS, a.payment_terms || 'net15')}
     ${ptnField('credit_limit', 'Credit limit (CAD, blank = none)', a.credit_limit_cents == null ? '' : rcvDollars(a.credit_limit_cents), ' inputmode="decimal"')}
@@ -21415,13 +21441,14 @@ async function ptnSaveAgency(form){
     newId = await ptnWrite(id ? sb.from('partner_agencies').update(row).eq('id', id) : sb.from('partner_agencies').insert(row));
   } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; return; }
   if (!id) { PTN_STATE.agencyId = newId; PTN_STATE.editAgency = newId; }
+  const invited = await ptnInviteAfterAgencySave(id ? current.status : undefined, Object.assign({ id: newId }, row));
   if (Object.keys(bill.patch).length) {
     try {
       await rcvJson('PATCH', '/api/staff/billing/agencies/' + encodeURIComponent(newId), bill.patch);
     } catch (e) {
       // The agency row is saved; keep the form open on it so the billing fields can be retried
       // (an existing agency keeps what was typed; a new one reopens as an edit of the new row).
-      const m = `Agency saved, but not its billing terms: ${e.message || e}`;
+      const m = `Agency saved${invited}, but not its billing terms: ${e.message || e}`;
       showToast(m);
       if (id) { msg.textContent = m; if (btn) btn.disabled = false; return; }
       await ptnReload();
@@ -21429,7 +21456,7 @@ async function ptnSaveAgency(form){
       return;
     }
   }
-  showToast(id ? 'Agency saved' : 'Agency created');
+  showToast((id ? 'Agency saved' : 'Agency created') + invited);
   PTN_STATE.editAgency = null;
   await ptnReload();
 }
@@ -21448,8 +21475,10 @@ async function ptnSaveUser(form){
   if (!id) row.agency_id = PTN_STATE.agencyId;
   msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
   try {
-    await ptnWrite(id ? sb.from('partner_users').update(row).eq('id', id) : sb.from('partner_users').insert(row));
-    showToast(id ? 'User saved' : 'User added');
+    const savedId = await ptnWrite(id ? sb.from('partner_users').update(row).eq('id', id) : sb.from('partner_users').insert(row));
+    const agency = ptnData.agencies.find(a => a.id === PTN_STATE.agencyId);
+    const invited = !id && ptnInviteNewUser(row, agency) ? await ptnInviteSummary([savedId], [row]) : '';
+    showToast((id ? 'User saved' : 'User added') + invited);
     PTN_STATE.editUser = null;
     await ptnReload();
   } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; }
@@ -21459,24 +21488,50 @@ async function ptnToken(refresh){
   if (refresh) { try { await sb.auth.refreshSession(); } catch (_) {} }
   try { const { data } = await sb.auth.getSession(); return (data && data.session && data.session.access_token) || ''; } catch (_) { return ''; }
 }
-async function ptnInvite(btn){
-  const userId = btn.dataset.ptnInvite;
-  btn.disabled = true;
+// Emails one partner user their invitation (the partner app re-checks the staff JWT). Throws with the reason.
+async function ptnSendInvite(userId){
   const call = tok => fetch(`${PARTNERS_APP}/api/staff/invite`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
     body: JSON.stringify({ user_id: userId }),
   });
-  try {
-    let tok = await ptnToken(false);
-    if (!tok) throw new Error('you are not signed in to the database; reload the portal');
-    let res = await call(tok);
-    if (res.status === 401) { tok = await ptnToken(true); if (tok) res = await call(tok); }
-    let body = null; try { body = await res.json(); } catch (_) {}
-    if (res.ok && body && body.ok) { showToast('Sign-in link sent'); return; }
-    const why = { 401: 'your session was not accepted', 403: 'only portal admins can send links', 404: 'that user was not found' }[res.status];
-    throw new Error(why || (body && (body.error || body.code)) || `HTTP ${res.status}`);
-  } catch (e) { showToast('Could not send the link: ' + (e.message || e)); }
+  let tok = await ptnToken(false);
+  if (!tok) throw new Error('you are not signed in to the database; reload the portal');
+  let res = await call(tok);
+  if (res.status === 401) { tok = await ptnToken(true); if (tok) res = await call(tok); }
+  let body = null; try { body = await res.json(); } catch (_) {}
+  if (res.ok && body && body.ok) return;
+  const why = { 401: 'your session was not accepted', 403: 'only portal admins can send links', 404: 'that user was not found',
+    409: 'the user or agency is not active', 502: 'the email could not be sent' }[res.status];
+  throw new Error(why || (body && (body.error || body.code)) || `HTTP ${res.status}`);
+}
+async function ptnInvite(btn){
+  btn.disabled = true;
+  try { await ptnSendInvite(btn.dataset.ptnInvite); showToast('Sign-in link sent'); }
+  catch (e) { showToast('Could not send the link: ' + (e.message || e)); }
   finally { btn.disabled = false; }
+}
+// Sends the invitations and returns the toast suffix: ' · invitation sent to a@x' / ' · could not email …'.
+async function ptnInviteSummary(ids, rows){
+  if (!ids.length) return '';
+  const byId = new Map(ptnData.users.map(u => [u.id, u]));
+  const who = i => ((byId.get(ids[i]) || rows[i] || {}).email) || 'a user';
+  const out = await Promise.allSettled(ids.map(ptnSendInvite));
+  const sent = [], failed = [];
+  out.forEach((r, i) => r.status === 'fulfilled' ? sent.push(who(i)) : failed.push(`${who(i)} (${(r.reason && r.reason.message) || r.reason})`));
+  return (sent.length ? ` · invitation sent to ${sent.join(', ')}` : '')
+    + (failed.length ? ` · could not email ${failed.join(', ')}; use Send sign-in link on the Users tab` : '');
+}
+// After an agency is written: give a user-less agency its contact as admin, then invite (see ptnAgencyInvites).
+async function ptnInviteAfterAgencySave(beforeStatus, agency){
+  const sb = window.vmDb && window.vmDb.sb;
+  const contact = ptnContactUser(agency, ptnData.users);
+  let createdId = null, note = '';
+  if (contact && sb) {
+    try { createdId = await ptnWrite(sb.from('partner_users').insert(Object.assign({ updated_by: ptnActor() }, contact))); }
+    catch (e) { note = ` · the contact was not added as a user: ${e.message || e}`; }
+  }
+  const ids = ptnAgencyInvites(beforeStatus, agency, ptnData.users, createdId);
+  return note + await ptnInviteSummary(ids, ids.map(i => (i === createdId ? contact : null)));
 }
 async function ptnCancelBooking(form){
   const sb = window.vmDb && window.vmDb.sb;
