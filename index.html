@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-28z"></script>
+<script src="pms-supabase.js?v=2026-09-29a"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -28412,8 +28412,9 @@ function ahsStatus(s){
 const ahsName = s => s ? `${s.given_name || ''} ${s.family_name || ''}`.trim() : '';
 // Open requests (requested, matched), joined to agency, student and the requesting user,
 // soonest check-in first. f: { status: '' | 'requested' | 'matched', q }.
-function ahsRequestRows(requests, agencies, students, users, f){
+function ahsRequestRows(requests, agencies, students, users, f, groups){
   f = f || {};
+  const gById = new Map((groups || []).map(g => [g.id, g.ref]));
   const ag = new Map((agencies || []).map(a => [a.id, a]));
   const st = new Map((students || []).map(s => [s.id, s]));
   const us = new Map((users || []).map(u => [u.id, u]));
@@ -28427,9 +28428,10 @@ function ahsRequestRows(requests, agencies, students, users, f){
         user_name: u ? u.name || u.email || '' : '', plan: ahsPlan(r), plan_label: ahsPlanLabel(r),
         package_label: AHS_PACKAGES[r.package] || String(r.package || ''), city_label: AHS_CITIES[r.city] || String(r.city || ''),
         meal_label: AHS_MEALS[r.meal_plan] || String(r.meal_plan || ''),
+        group_ref: gById.get(r.group_id) || '',
       });
     })
-    .filter(r => !q || [r.ref, r.agency_name, r.student_name, r.student_email].some(v => String(v || '').toLowerCase().includes(q)))
+    .filter(r => !q || [r.ref, r.agency_name, r.student_name, r.student_email, r.group_ref].some(v => String(v || '').toLowerCase().includes(q)))
     .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)) || String(a.ref).localeCompare(String(b.ref)));
 }
 // Letter notes from what the agency told us: dietary/medical restrictions, then the notes.
@@ -29969,12 +29971,14 @@ function ahsPayerLines(s, plan, fmt){
       try {
         const requests = await ptnSelectAll(sb, 'partner_homestay_requests', '*',
           q => q.in('status', AHS_OPEN).order('check_in').order('id'));
-        const [agencies, students, users] = await Promise.all([
+        const [agencies, students, users, groups] = await Promise.all([
           ptnSelectIn(sb, 'partner_agencies', 'id,name', 'id', requests.map(r => r.agency_id)),
           ptnSelectIn(sb, 'partner_students', '*', 'id', requests.map(r => r.student_id)),
           ptnSelectIn(sb, 'partner_users', 'id,name,email', 'id', requests.map(r => r.user_id)),
+          // the groups table may not exist yet; the page must still load
+          ptnSelectIn(sb, 'partner_homestay_groups', 'id,ref', 'id', requests.map(r => r.group_id).filter(Boolean)).catch((e) => { console.warn('[agency requests] groups unavailable:', (e && e.message) || e); return []; }),
         ]);
-        AHS_DATA.raw = { requests, agencies, students, users };
+        AHS_DATA.raw = { requests, agencies, students, users, groups };
         AHS_DATA.students = new Map(students.map(x => [x.id, x]));
         AHS_DATA.error = '';
       } catch (e) {
@@ -29995,7 +29999,7 @@ function ahsPayerLines(s, plan, fmt){
     const nReq = d.requests.filter((r) => r.status === 'requested').length;
     const nEl = $('hb-n-agency'); if (nEl) { nEl.textContent = nReq || ''; nEl.classList.toggle('hb-need-v', nReq > 0); }
     const rows = ahsRequestRows(d.requests, d.agencies, d.students, d.users,
-      { status: ($('ahs-status') || {}).value || '', q: ($('ahs-q') || {}).value || '' });
+      { status: ($('ahs-status') || {}).value || '', q: ($('ahs-q') || {}).value || '' }, d.groups);
     AHS_DATA.rows = rows;
     if (!rows.length) {
       body.innerHTML = '<div class="card-pad card-sub">' + (d.requests.length ? 'No request matches.' : 'No open agency requests.') + '</div>';
@@ -30004,7 +30008,7 @@ function ahsPayerLines(s, plan, fmt){
     body.innerHTML = '<table><thead><tr><th>Request</th><th>Agency</th><th>Student</th><th>City</th><th>Stay</th>' +
       '<th>Package</th><th>Plan</th><th>Status</th><th></th></tr></thead><tbody>' +
       rows.map((r) => '<tr>' +
-        '<td class="nowrap"><code>' + esc(r.ref) + '</code></td>' +
+        '<td class="nowrap"><code>' + esc(r.ref) + '</code>' + (r.group_ref ? '<div class="card-sub">Group ' + esc(r.group_ref) + '</div>' : '') + '</td>' +
         '<td>' + esc(r.agency_name || '—') + (r.user_name ? '<div class="card-sub">' + esc(r.user_name) + '</div>' : '') + '</td>' +
         '<td>' + esc(r.student_name || '—') + '<div class="card-sub">' + esc(r.student_email) + '</div></td>' +
         '<td>' + esc(r.city_label) + '</td>' +
