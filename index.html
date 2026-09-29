@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29-listings"></script>
+<script src="pms-supabase.js?v=2026-09-29-commledger"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21163,7 +21163,7 @@ function ptnStamp(iso){
 // Staff may cancel only before the move-in happens.
 function ptnCanCancel(status){ return status === 'CONFIRMED' || status === 'READY_FOR_MOVE_IN'; }
 // Deep link: #partners -> the Agencies tab, #partners/<tab> -> that tab; null = not ours.
-const PTN_HASH_TABS = ['agencies', 'users', 'bookings', 'receivables'];
+const PTN_HASH_TABS = ['agencies', 'users', 'bookings', 'receivables', 'commissions'];
 function ptnTabFromHash(hash){
   const m = /^#partners(?:\/([a-z]*))?$/.exec(String(hash || ''));
   if (!m) return null;
@@ -21326,8 +21326,8 @@ async function loadPartners(force){
 }
 async function ptnReload(){
   if (ptnLoading) { try { await ptnLoading; } catch (e) {} }
-  // Receivables reads the same agencies, so a reload refreshes it too once it has been opened.
-  await Promise.all([loadPartners(true), rcvData ? rcvAfterWrite() : null]);
+  // Receivables and Commissions read the same agencies, so a reload refreshes them too once opened.
+  await Promise.all([loadPartners(true), rcvData ? rcvAfterWrite() : null, CMM_STATE.key ? cmmLoad(true) : null]);
 }
 /* Deep link from the rent@ proof email: portal.vanmates.com/#partners/receivables (and
    #partners). Runs after hydrate (the post-hydrate hook next to openLeadFromHash), so the
@@ -21357,9 +21357,9 @@ function renderPartners(){
   const root = document.getElementById('ptn-root');
   if (!root || !ptnData) return;
   const scrollY = window.scrollY;
-  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`], ['receivables', 'Receivables']];
+  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`], ['receivables', 'Receivables'], ['commissions', 'Commissions']];
   const body = PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml()
-    : PTN_STATE.tab === 'receivables' ? rcvHtml() : ptnAgenciesHtml();
+    : PTN_STATE.tab === 'receivables' ? rcvHtml() : PTN_STATE.tab === 'commissions' ? cmmHtml() : ptnAgenciesHtml();
   root.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <div class="tabs" role="tablist">${tabs.map(([k, l]) =>
@@ -21381,9 +21381,24 @@ const PTN_LANG_OPTS = [['en', 'English'], ['es', 'Español'], ['ja', '日本語'
 function ptnBillingOn(){ return !ptnData || !ptnData.agencies.length || ptnData.agencies.some(a => 'payment_terms' in a); }
 // The commission columns exist once the partner app's 2026-09-28c SQL is applied.
 function ptnCommissionOn(){ return !!ptnData && ptnData.agencies.some(a => 'commission_pct' in a); }
+// The commission models (pct / flat / monthly) exist once the partner app's 2026-09-29b SQL is
+// applied; then every commission field is saved through PATCH /api/staff/billing/agencies/:id.
+function ptnCommissionModelOn(){ return !!ptnData && ptnData.agencies.some(a => 'commission_model' in a); }
+function ptnCommissionModelHtml(a){
+  const model = a.commission_model || 'pct';
+  const box = (m, inner) => `<div data-cmm-amount="${m}"${m === model ? '' : ' hidden'}>${inner}</div>`;
+  return `<strong style="grid-column:1/-1;margin-top:6px">Commission</strong>
+    ${ptnSelectField('commission_model', 'Co-living commission model', CMM_MODELS, model)}
+    ${box('pct', ptnField('commission_pct', 'Commission (% of co-living rent)', a.commission_pct == null ? '' : String(Number(a.commission_pct)), ' inputmode="decimal" placeholder="Not set"'))}
+    ${box('flat', ptnField('commission_flat', 'Flat commission per booking (CAD) *', a.commission_flat_cents == null ? '' : rcvDollars(a.commission_flat_cents), ' inputmode="decimal"'))}
+    ${box('monthly', ptnField('commission_monthly', 'Commission per month of stay (CAD) *', a.commission_monthly_cents == null ? '' : rcvDollars(a.commission_monthly_cents), ' inputmode="decimal"'))}
+    ${ptnField('homestay_commission', 'Homestay placement commission (CAD)', a.homestay_commission_cents == null ? '' : rcvDollars(a.homestay_commission_cents), ' inputmode="decimal" placeholder="Not set"')}
+    <p class="name-sub" style="grid-column:1/-1;margin:0">Deducted on the agency's invoices, at most the booking's rent: a % of each room booking's rent (not deposit, membership or cleaning), a flat amount per booking, or an amount per month prorated by day (monthly × stay days ÷ 30.4). Homestays always use the placement amount, at most the matching fee. Invoices already issued keep the commission they had; change one with Override… on the Commissions tab.</p>`;
+}
 function ptnBillingLine(a){
   if (!('payment_terms' in a)) return '—';
-  return `${esc(rcvTermsLabel(a.payment_terms))}<br><span class="name-sub">${a.credit_limit_cents == null ? 'no limit' : 'limit ' + esc(rcvMoney(a.credit_limit_cents))}${a.payment_ref ? ' · ref ' + esc(a.payment_ref) : ''}</span>` + (ptnCommissionLine(a) ? `<br><span class="name-sub">${esc(ptnCommissionLine(a))}</span>` : '');
+  const comm = 'commission_model' in a ? cmmAgencyTermsLine(a) : ptnCommissionLine(a);
+  return `${esc(rcvTermsLabel(a.payment_terms))}<br><span class="name-sub">${a.credit_limit_cents == null ? 'no limit' : 'limit ' + esc(rcvMoney(a.credit_limit_cents))}${a.payment_ref ? ' · ref ' + esc(a.payment_ref) : ''}</span>` + (comm ? `<br><span class="name-sub">${esc(comm)}</span>` : '');
 }
 function ptnAgencyFormHtml(a){
   a = a || {};
@@ -21408,7 +21423,7 @@ function ptnAgencyFormHtml(a){
     ${ptnSelectField('payment_terms', 'Payment terms', RCV_TERMS, a.payment_terms || 'net15')}
     ${ptnField('credit_limit', 'Credit limit (CAD, blank = none)', a.credit_limit_cents == null ? '' : rcvDollars(a.credit_limit_cents), ' inputmode="decimal"')}
     ${ptnField('payment_ref', 'Payment reference (A–Z, 0–9)', a.payment_ref, ` maxlength="20" style="text-transform:uppercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}` : ''}
-    ${ptnCommissionOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Commission</strong>
+    ${ptnCommissionModelOn() ? ptnCommissionModelHtml(a) : ptnCommissionOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Commission</strong>
     ${ptnField('commission_pct', 'Commission (% of co-living rent)', a.commission_pct == null ? '' : String(Number(a.commission_pct)), ' inputmode="decimal" placeholder="Not set"')}
     ${ptnField('homestay_commission', 'Homestay placement commission (CAD)', a.homestay_commission_cents == null ? '' : rcvDollars(a.homestay_commission_cents), ' inputmode="decimal" placeholder="Not set"')}
     <p class="name-sub" style="grid-column:1/-1;margin:0">Deducted on the agency's invoices: the % from each room booking's rent (not deposit, membership or cleaning), the flat amount from the first invoice of each agency homestay (at most the matching fee). Invoices already issued keep the commission they had.</p>` : ''}
@@ -21552,6 +21567,9 @@ function ptnWire(root){
   on('[data-ptn-agency-cancel]', 'click', () => { PTN_STATE.editAgency = null; renderPartners(); });
   on('[data-ptn-agency-users]', 'click', b => { PTN_STATE.agencyId = b.dataset.ptnAgencyUsers; PTN_STATE.editUser = null; PTN_STATE.tab = 'users'; renderPartners(); window.scrollTo(0, 0); });
   on('[data-ptn-agency-form]', 'submit', (f, e) => { e.preventDefault(); ptnSaveAgency(f); });
+  on('[data-ptn-agency-form] select[name="commission_model"]', 'change', s => {
+    s.form.querySelectorAll('[data-cmm-amount]').forEach(d => { d.hidden = d.dataset.cmmAmount !== s.value; });
+  });
   on('[data-ptn-agency-pick]', 'change', s => { PTN_STATE.agencyId = s.value; PTN_STATE.editUser = null; renderPartners(); });
   on('[data-ptn-user-new]', 'click', () => { PTN_STATE.editUser = 'new'; renderPartners(); });
   on('[data-ptn-user-edit]', 'click', b => { PTN_STATE.editUser = b.dataset.ptnUserEdit; renderPartners(); window.scrollTo(0, 0); });
@@ -21568,6 +21586,7 @@ function ptnWire(root){
   on('[data-ptn-cancel-close]', 'click', () => { PTN_STATE.cancelId = null; renderPartners(); });
   on('[data-ptn-cancel-form]', 'submit', (f, e) => { e.preventDefault(); ptnCancelBooking(f); });
   rcvWire(root);
+  cmmWire(root);
 }
 // A write that returns no row was refused by RLS (or the row is gone).
 async function ptnWrite(query){
@@ -21601,7 +21620,15 @@ async function ptnSaveAgency(form){
   const bill = el.payment_terms
     ? rcvAgencyBillingPatch(current, { payment_terms: el.payment_terms.value, credit_limit: el.credit_limit.value, payment_ref: el.payment_ref.value })
     : { ok: true, errors: [], patch: {} };
-  const comm = ptnCommissionOn() && el.commission_pct
+  // With the commission models live, every commission field goes through that same PATCH
+  // (one update, validated and audited there); before that, round 2's two columns are
+  // written straight to the row as they were.
+  const models = ptnCommissionModelOn() && el.commission_model;
+  const terms = models ? cmmValidateTerms({ commission_model: el.commission_model.value, commission_pct: el.commission_pct.value,
+    commission_flat: el.commission_flat.value, commission_monthly: el.commission_monthly.value, homestay_commission: el.homestay_commission.value }) : null;
+  if (terms && terms.ok) Object.assign(bill.patch, cmmTermsPatch(id ? current : null, terms.fields));
+  const comm = terms ? { ok: terms.ok, errors: Object.values(terms.errors), fields: {} }
+    : ptnCommissionOn() && el.commission_pct
     ? ptnCommissionFields({ commission_pct: el.commission_pct.value, homestay_commission: el.homestay_commission.value })
     : { ok: true, errors: [], fields: {} };
   if (!r.ok || !bill.ok || !comm.ok) { msg.textContent = r.errors.concat(bill.errors, comm.errors).join('. '); return; }
@@ -21628,11 +21655,11 @@ async function ptnSaveAgency(form){
   const invited = await ptnInviteAfterAgencySave(id ? current.status : undefined, Object.assign({ id: newId }, row), createdId);
   if (Object.keys(bill.patch).length) {
     try {
-      await rcvJson('PATCH', '/api/staff/billing/agencies/' + encodeURIComponent(newId), bill.patch);
+      await ptnPatchAgencyTerms(newId, bill.patch);
     } catch (e) {
       // The agency row is saved; keep the form open on it so the billing fields can be retried
       // (an existing agency keeps what was typed; a new one reopens as an edit of the new row).
-      const m = `Agency saved${userNote}${invited}; its billing terms were not: ${e.message || e}`;
+      const m = `Agency saved${userNote}${invited}; its billing and commission terms were not: ${e.message || e}`;
       showToast(m);
       if (id) { msg.textContent = m; if (btn) btn.disabled = false; return; }
       await ptnReload();
@@ -21645,6 +21672,15 @@ async function ptnSaveAgency(form){
   // A new agency lands on its Users view, where the next step (activate / send link) is shown.
   if (!id) PTN_STATE.tab = 'users';
   await ptnReload();
+}
+// PATCH the agency's billing + commission terms; a refusal about commission fields is worded
+// per field (cmmErrorMessage), anything else as the other billing refusals are.
+async function ptnPatchAgencyTerms(id, patch){
+  const res = await rcvApi('PATCH', '/api/staff/billing/agencies/' + encodeURIComponent(id), patch);
+  let data = null; try { data = await res.json(); } catch (_) {}
+  if (res.ok && data && data.ok !== false) return data;
+  const errs = data && data.code === 'INVALID' && data.errors && typeof data.errors === 'object' ? Object.keys(data.errors) : [];
+  throw new Error(errs.length && errs.every(k => k in CMM_FIELD_LABELS) ? cmmErrorMessage(res.status, data) : rcvErrorMessage(res.status, data));
 }
 async function ptnCreateFirstUser(btn){
   const sb = window.vmDb && window.vmDb.sb;
@@ -22103,6 +22139,221 @@ function rcvHomestayCancelMsg(res){
   return parts.join(' ');
 }
 /* RECEIVABLES-CORE-END */
+/* COMMISSIONS-CORE-START */
+/* Partners > Commissions (admin only) and the agency form's commission terms.
+   Pure: rows and form strings in, labels, request bodies and messages out. Uses
+   rcvMoney / rcvParseCents / rcvValidDate from RECEIVABLES-CORE. Money is integer
+   cents parsed as text. Reads and writes go to the partner app's staff routes:
+   GET /api/staff/billing/commissions, POST …/commissions/:id/override,
+   GET …/commissions/export.csv, PATCH /api/staff/billing/agencies/:id (terms).
+   Mirrors sql/2026-09-29b-commission-ledger.sql (partner app repo): model pct |
+   flat | monthly; flat / monthly need their amount; pct 0–100, 2 decimals, null ok;
+   cents 0..10,000,000. Override: new - current > 0 creates agency credit, < 0 an
+   adjustment invoice. Spec: rina docs/superpowers/specs/2026-09-29-partner-commission-ledger-design.md */
+const CMM_MODELS = [['pct', 'Percentage of rent'], ['flat', 'Flat per booking'], ['monthly', 'Monthly, prorated']];
+const CMM_MAX_CENTS = 10000000;
+const CMM_STATUSES = [['all', 'All statuses'], ['pending', 'Pending'], ['earned', 'Earned'], ['void', 'Void']];
+const CMM_PRESETS = [['this_month', 'This month'], ['last_month', 'Last month'], ['this_quarter', 'This quarter'],
+  ['last_quarter', 'Last quarter'], ['this_year', 'This year'], ['last_year', 'Last year'], ['custom', 'Custom dates']];
+const cmmPct = v => String(Number(v));
+// "12% of rent", "$300.00 flat", "$100.00/month", "$75.00 placement" for a ledger row.
+function cmmModelLabel(row){
+  const r = row || {};
+  const has = v => v != null && v !== '' && isFinite(Number(v));
+  switch (r.model) {
+    case 'pct': return has(r.rate_pct) ? `${cmmPct(r.rate_pct)}% of rent` : '% of rent';
+    case 'flat': return has(r.rate_cents) ? `${rcvMoney(r.rate_cents)} flat` : 'Flat';
+    case 'monthly': return has(r.rate_cents) ? `${rcvMoney(r.rate_cents)}/month` : 'Monthly';
+    case 'homestay_flat': return has(r.rate_cents) ? `${rcvMoney(r.rate_cents)} placement` : 'Placement';
+    default: return '—';
+  }
+}
+// The agency's current terms for the Agencies table; '' when none is set.
+function cmmAgencyTermsLine(a){
+  a = a || {};
+  const pos = v => v != null && v !== '' && Number(v) > 0;
+  const parts = [];
+  const model = a.commission_model || 'pct';
+  if (model === 'pct' && pos(a.commission_pct)) parts.push(`${cmmPct(a.commission_pct)}% of rent`);
+  if (model === 'flat' && pos(a.commission_flat_cents)) parts.push(`${rcvMoney(a.commission_flat_cents)} flat per booking`);
+  if (model === 'monthly' && pos(a.commission_monthly_cents)) parts.push(`${rcvMoney(a.commission_monthly_cents)}/month (prorated)`);
+  if (pos(a.homestay_commission_cents)) parts.push('homestay ' + rcvMoney(a.homestay_commission_cents));
+  return parts.length ? 'Commission ' + parts.join(' · ') : '';
+}
+// What an override to newCents will create, for the dialog.
+function cmmSettlementPreview(currentCents, newCents){
+  if (newCents == null || currentCents == null || !isFinite(Number(newCents)) || !isFinite(Number(currentCents))) return '';
+  const d = Math.round(Number(newCents)) - Math.round(Number(currentCents));
+  if (d > 0) return `Creates a ${rcvMoney(d)} credit for the agency (applied to their next invoice)`;
+  if (d < 0) return `Issues a ${rcvMoney(-d)} commission adjustment invoice to the agency`;
+  return 'No change';
+}
+function cmmCents(s, label){
+  const p = rcvParseCents(s, { blank: true, zero: true });
+  if (!p.ok || (p.cents != null && p.cents > CMM_MAX_CENTS)) return { error: `${label} must be a dollar amount from 0 to ${rcvMoney(CMM_MAX_CENTS)}` };
+  return { cents: p.cents };
+}
+// Agency form strings -> the terms columns, errors keyed by form field. Only the chosen
+// model's amount is read and written (the others stay as they are in the table).
+function cmmValidateTerms(form){
+  form = form || {};
+  const errors = {}, fields = {};
+  const model = String(form.commission_model == null || form.commission_model === '' ? 'pct' : form.commission_model);
+  if (!CMM_MODELS.some(m => m[0] === model)) errors.commission_model = 'Commission model must be Percentage of rent, Flat per booking or Monthly';
+  else fields.commission_model = model;
+  if (model === 'pct') {
+    const pct = String(form.commission_pct == null ? '' : form.commission_pct).trim();
+    if (pct === '') fields.commission_pct = null;
+    else if (!/^\d{1,3}(\.\d{1,2})?$/.test(pct) || Number(pct) > 100) errors.commission_pct = 'Commission must be a percentage from 0 to 100, up to 2 decimals';
+    else fields.commission_pct = Number(pct);
+  }
+  const amount = { flat: ['commission_flat', 'commission_flat_cents', 'Flat commission per booking', 'Flat'],
+    monthly: ['commission_monthly', 'commission_monthly_cents', 'Monthly commission', 'Monthly'] }[model];
+  if (amount) {
+    const c = cmmCents(form[amount[0]], amount[2]);
+    if (c.error) errors[amount[0]] = c.error;
+    else if (c.cents == null) errors[amount[0]] = `${amount[2]} is required for the ${amount[3]} model`;
+    else fields[amount[1]] = c.cents;
+  }
+  const hs = cmmCents(form.homestay_commission, 'Homestay commission');
+  if (hs.error) errors.homestay_commission = hs.error;
+  else fields.homestay_commission_cents = hs.cents;
+  return Object.keys(errors).length ? { ok: false, errors, fields: {} } : { ok: true, errors, fields };
+}
+// Only what changed, for PATCH /api/staff/billing/agencies/:id; a flat / monthly model is
+// always sent with its amount (the endpoint and the SQL check want them together).
+function cmmTermsPatch(current, fields){
+  const cur = Object.assign({ commission_model: 'pct' }, current || {});
+  const norm = v => (v == null || v === '' ? null : Number(v));
+  const patch = {};
+  Object.keys(fields || {}).forEach(k => {
+    const same = k === 'commission_model' ? (cur[k] || 'pct') === fields[k] : norm(cur[k]) === norm(fields[k]);
+    if (!same) patch[k] = fields[k];
+  });
+  const need = { flat: 'commission_flat_cents', monthly: 'commission_monthly_cents' }[fields && fields.commission_model];
+  if (need && ('commission_model' in patch || need in patch)) {
+    const rest = Object.assign({}, patch); delete rest.commission_model; delete rest[need];
+    return Object.assign({ commission_model: fields.commission_model, [need]: fields[need] }, rest);
+  }
+  return patch;
+}
+// The Override… dialog -> {new_cents, reason}.
+function cmmValidateOverride(newStr, reason, currentCents){
+  const errors = [];
+  let cents = null;
+  const p = rcvParseCents(newStr, { zero: true });
+  if (!p.ok) errors.push(p.error === 'required' ? 'Enter the new amount' : p.error === 'too large' ? `New amount cannot be more than ${rcvMoney(CMM_MAX_CENTS)}` : 'New amount must be a dollar amount, e.g. 400 or 400.50');
+  else if (p.cents > CMM_MAX_CENTS) errors.push(`New amount cannot be more than ${rcvMoney(CMM_MAX_CENTS)}`);
+  else if (currentCents != null && p.cents === Math.round(Number(currentCents))) errors.push('The new amount is the same as the current one');
+  else cents = p.cents;
+  const r = String(reason == null ? '' : reason).trim();
+  if (!r) errors.push('A reason is required');
+  else if (r.length > 500) errors.push('Reason must be 500 characters or fewer');
+  return errors.length ? { ok: false, errors, body: null } : { ok: true, errors, body: { new_cents: cents, reason: r } };
+}
+const cmmIso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+const cmmLastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();  // m is 1-based
+// {from, to} for a preset, from Vancouver today (YYYY-MM-DD); null for custom / unknown.
+function cmmDatePreset(preset, today){
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(String(today || ''));
+  if (!m) return null;
+  const y = +m[1], mo = +m[2];
+  const month = (yy, mm) => { while (mm < 1) { mm += 12; yy--; } return { from: cmmIso(yy, mm, 1), to: cmmIso(yy, mm, cmmLastDay(yy, mm)) }; };
+  const quarter = (yy, q) => { while (q < 0) { q += 4; yy--; } return { from: cmmIso(yy, q * 3 + 1, 1), to: cmmIso(yy, q * 3 + 3, cmmLastDay(yy, q * 3 + 3)) }; };
+  const q = Math.floor((mo - 1) / 3);
+  switch (preset) {
+    case 'this_month': return month(y, mo);
+    case 'last_month': return month(y, mo - 1);
+    case 'this_quarter': return quarter(y, q);
+    case 'last_quarter': return quarter(y, q - 1);
+    case 'this_year': return { from: cmmIso(y, 1, 1), to: cmmIso(y, 12, 31) };
+    case 'last_year': return { from: cmmIso(y - 1, 1, 1), to: cmmIso(y - 1, 12, 31) };
+    default: return null;
+  }
+}
+// Filters -> the query string shared by the list and the CSV export (the partner app's
+// range rule: from <= to, less than 3 years).
+function cmmQuery(f, today){
+  f = f || {};
+  const bad = error => ({ ok: false, error, from: '', to: '', qs: '' });
+  const status = f.status || 'all';
+  if (!CMM_STATUSES.some(s => s[0] === status)) return bad('Unknown status');
+  let from, to;
+  if ((f.preset || 'this_year') === 'custom') {
+    from = String(f.from || ''); to = String(f.to || '');
+    if (!from || !to) return bad('Pick both dates for a custom range');
+    if (!rcvValidDate(from)) return bad('From is not a valid date');
+    if (!rcvValidDate(to)) return bad('To is not a valid date');
+    if (from > to) return bad('From must be on or before To');
+    const limit = cmmIso(+from.slice(0, 4) + 3, +from.slice(5, 7), Math.min(+from.slice(8, 10), cmmLastDay(+from.slice(0, 4) + 3, +from.slice(5, 7))));
+    if (to >= limit) return bad('The range can be at most 3 years');
+  } else {
+    const r = cmmDatePreset(f.preset || 'this_year', today);
+    if (!r) return bad('Unknown date range');
+    from = r.from; to = r.to;
+  }
+  const qs = (f.agency ? 'agency=' + encodeURIComponent(f.agency) + '&' : '') + `status=${status}&from=${from}&to=${to}`;
+  return { ok: true, error: '', from, to, qs: '?' + qs };
+}
+const CMM_FIELD_LABELS = {
+  commission_model: 'the commission model', commission_pct: 'commission %', commission_flat_cents: 'flat commission per booking',
+  commission_monthly_cents: 'monthly commission', homestay_commission_cents: 'homestay commission',
+};
+const CMM_FILTER_FIELDS = ['agency', 'status', 'from', 'to'];
+// A staff route's refusal (HTTP status + JSON body) in plain English.
+function cmmErrorMessage(status, body){
+  body = body || {};
+  const code = body.code || '';
+  if (code === 'NOT_FOUND') return 'That commission was not found — refresh and try again.';
+  if (code === 'VOID') return 'This commission is void (cancelled booking or void invoice), so it cannot be changed.';
+  if (code === 'NO_CHANGE') return 'The new amount is the same as the current one — nothing to change.';
+  if (code === 'INVALID') {
+    const errs = body.errors && typeof body.errors === 'object' ? Object.entries(body.errors) : [];
+    const field = body.field || (errs[0] && errs[0][0]) || '';
+    if (field === 'new_cents') return `The new amount is not valid (0 to ${rcvMoney(CMM_MAX_CENTS)}).`;
+    if (field === 'reason') return 'A reason is required (up to 500 characters).';
+    if (errs.length && errs.every(([k]) => CMM_FILTER_FIELDS.includes(k)))
+      return 'check the filters: ' + errs.map(([k, v]) => `${k} (${String(v).replace(/_/g, ' ')})`).join(', ');
+    if (errs.length && errs.every(([k]) => CMM_FIELD_LABELS[k])) {
+      return errs.map(([k, v]) => v === 'amount_required' ? `${CMM_FIELD_LABELS[k]} needs its amount`
+        : v === 'required' ? `${CMM_FIELD_LABELS[k]} is required` : `${CMM_FIELD_LABELS[k]} is not valid`).join('. ');
+    }
+    return errs.length ? 'check the form: ' + errs.map(([k, v]) => `${k.replace(/_/g, ' ')} (${v})`).join(', ') : 'check the form';
+  }
+  if (status === 401) return 'your session was not accepted; reload the portal and sign in again';
+  if (status === 403) return 'only portal admins can do this';
+  return code || body.error || `HTTP ${status}`;
+}
+function cmmSigned(cents){
+  if (cents == null || cents === '' || !isFinite(Number(cents))) return '—';
+  return (Number(cents) > 0 ? '+' : '') + rcvMoney(cents);
+}
+// The outcome line after a successful override.
+function cmmOverrideResultMsg(res, ref){
+  res = res || {};
+  const d = Math.round(Number(res.delta_cents) || 0), abs = rcvMoney(Math.abs(d));
+  const head = `${ref ? ref + ': c' : 'C'}ommission ${d > 0 ? 'raised' : 'lowered'} by ${abs}.`;
+  if (res.settlement === 'credit') {
+    return `${head} ${res.credit_id != null ? `Credit #${res.credit_id}` : 'A credit'} of ${abs} created for the agency; it is applied to their next invoice.`;
+  }
+  return `${head} ${res.invoice_number ? `Adjustment invoice ${res.invoice_number} issued` : 'An adjustment invoice was issued'} to the agency for ${abs}.`;
+}
+function cmmStatus(s){
+  const map = { pending: ['Pending', 'gold'], earned: ['Earned', 'green'], void: ['Void', ''] };
+  if (!s) return { label: '—', tone: '' };
+  const hit = map[s] || [String(s), ''];
+  return { label: hit[0], tone: hit[1] };
+}
+// One adjustment in a commission's history.
+function cmmAdjustmentLine(a){
+  a = a || {};
+  const delta = a.delta_cents != null ? a.delta_cents : (Number(a.new_cents) || 0) - (Number(a.old_cents) || 0);
+  const settlement = a.settlement === 'invoice'
+    ? 'Adjustment invoice' + (a.invoice_number ? ' ' + a.invoice_number : '')
+    : 'Credit' + (a.credit_id != null ? ' #' + a.credit_id : '');
+  return { change: `${rcvMoney(a.old_cents)} → ${rcvMoney(a.new_cents)}`, delta: cmmSigned(delta), settlement, reversed: !!a.reversed_at };
+}
+/* COMMISSIONS-CORE-END */
 /* RBC-IMPORT-CORE-START */
 /* Receivables > Import RBC CSV: parse an RBC business-account CSV export, keep
    the credits, and propose which agency and invoices each one pays. Pure: text
@@ -22913,6 +23164,172 @@ async function rcvExport(btn, type){
     if (!res.ok) { let data = null; try { data = await res.json(); } catch (_) {} throw new Error(rcvErrorMessage(res.status, data)); }
     const blob = await res.blob();
     const name = rcvFilename(res.headers.get('Content-Disposition'), `vanmates-${type}.csv`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { showToast('Could not export: ' + (e.message || e)); }
+  finally { btn.disabled = false; }
+}
+// ---- Commissions (DOM side of COMMISSIONS-CORE)
+// A sub-tab of Partners, admin only. The ledger is read from the partner app's staff route
+// (it joins agencies, students and each commission's adjustments); an override goes through
+// POST /api/staff/billing/commissions/:id/override in the Receivables dialog, then the
+// commissions (and receivables, when open) are read again.
+const CMM_STATE = {
+  filters: { agency: '', status: 'all', preset: 'this_year', from: '', to: '' },
+  data: null, dataKey: null, error: '', loading: false, seq: 0, key: null, open: new Set(),
+};
+async function cmmJson(method, path, body){
+  const res = await rcvApi(method, path, body);
+  let data = null; try { data = await res.json(); } catch (_) {}
+  if (!res.ok || !data || data.ok === false) throw new Error(cmmErrorMessage(res.status, data));
+  return data;
+}
+async function cmmLoad(force){
+  const q = cmmQuery(CMM_STATE.filters, rcvToday());
+  if (!q.ok) { Object.assign(CMM_STATE, { error: q.error, data: null, key: null, loading: false }); CMM_STATE.seq++; return; }
+  if (!force && CMM_STATE.key === q.qs && (CMM_STATE.dataKey === q.qs || CMM_STATE.loading)) return;
+  const my = ++CMM_STATE.seq;
+  Object.assign(CMM_STATE, { key: q.qs, loading: true, error: '' });
+  try {
+    const data = await cmmJson('GET', '/api/staff/billing/commissions' + q.qs);
+    if (my !== CMM_STATE.seq) return;
+    CMM_STATE.data = { rows: Array.isArray(data.rows) ? data.rows : [], totals: data.totals || {} };
+    CMM_STATE.dataKey = q.qs;
+  } catch (e) {
+    if (my !== CMM_STATE.seq) return;
+    Object.assign(CMM_STATE, { data: null, error: String(e.message || e) });
+  }
+  CMM_STATE.loading = false;
+  if (PTN_STATE.tab === 'commissions') renderPartners();
+}
+function cmmFiltersHtml(){
+  const f = CMM_STATE.filters;
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <select class="form-input" data-cmm-filter="agency" style="max-width:260px">${ptnOptions([['', 'All agencies'], ...ptnData.agencies.map(a => [a.id, a.name])], f.agency)}</select>
+      <select class="form-input" data-cmm-filter="status" style="max-width:180px">${ptnOptions(CMM_STATUSES, f.status)}</select>
+      <select class="form-input" data-cmm-filter="preset" style="max-width:180px">${ptnOptions(CMM_PRESETS, f.preset)}</select>
+      ${f.preset === 'custom' ? `<label class="name-sub" style="display:flex;gap:6px;align-items:center">From <input class="form-input" type="date" data-cmm-date="from" value="${esc(f.from)}"></label>
+      <label class="name-sub" style="display:flex;gap:6px;align-items:center">To <input class="form-input" type="date" data-cmm-date="to" value="${esc(f.to)}"></label>` : ''}
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" type="button" data-cmm-export>Export CSV</button>
+    </div>`;
+}
+function cmmTotalsHtml(t){
+  const tile = (label, cents, sub) => `<div class="card" style="padding:12px 16px;min-width:160px;flex:1">
+      <div class="name-sub">${esc(label)}</div><div style="font-size:20px;font-weight:600">${esc(label === 'Adjustments' ? cmmSigned(cents || 0) : rcvMoney(cents || 0))}</div>
+      <div class="name-sub">${esc(sub)}</div></div>`;
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      ${tile('Earned', t.earned_cents, 'invoice paid and moved in')}
+      ${tile('Pending', t.pending_cents, 'not paid yet or before move-in')}
+      ${tile('Void', t.void_cents, 'cancelled or invoice voided')}
+      ${tile('Adjustments', t.adjustments_cents, 'net staff overrides')}
+    </div>`;
+}
+function cmmHistoryHtml(r){
+  const list = Array.isArray(r.adjustments) ? r.adjustments : [];
+  if (!list.length) return '<span class="name-sub">No adjustments.</span>';
+  return `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:4px 8px">Date</th><th>Change</th><th>Delta</th><th>Settlement</th><th>Reason</th><th>Staff</th><th></th></tr></thead>
+      <tbody>${list.map(a => { const l = cmmAdjustmentLine(a); return `<tr style="border-top:1px solid var(--line)">
+        <td style="padding:4px 8px;white-space:nowrap">${esc(ptnStamp(a.created_at))}</td>
+        <td style="white-space:nowrap">${esc(l.change)}</td><td style="white-space:nowrap">${esc(l.delta)}</td>
+        <td>${esc(l.settlement)}</td><td>${esc(a.reason || '')}</td><td>${esc(a.staff || '')}</td>
+        <td>${l.reversed ? `<span class="tag-pill" title="${esc('Reversed ' + ptnStamp(a.reversed_at))}">reversed</span>` : ''}</td></tr>`; }).join('')}</tbody></table>`;
+}
+function cmmHtml(){
+  const q = cmmQuery(CMM_STATE.filters, rcvToday());
+  if (q.ok && CMM_STATE.key !== q.qs && !CMM_STATE.loading) cmmLoad();
+  const head = cmmFiltersHtml();
+  if (!q.ok) return head + `<p class="name-sub">${esc(q.error)}</p>`;
+  if (CMM_STATE.error) return head + `<p class="name-sub">Could not load commissions: ${esc(CMM_STATE.error)} <button class="btn btn-ghost btn-mini" type="button" data-cmm-reload>Try again</button></p>`;
+  if (!CMM_STATE.data || CMM_STATE.dataKey !== q.qs) return head + '<p class="name-sub">Loading commissions…</p>';
+  const rows = CMM_STATE.data.rows;
+  const num = 'style="text-align:right;white-space:nowrap;padding:8px"';
+  return `${head}
+    <p class="name-sub" style="margin:0 0 10px">${esc(ptnDay(q.from))} – ${esc(ptnDay(q.to))}, by the date each commission was issued.${CMM_STATE.loading ? ' Refreshing…' : ''}</p>
+    ${cmmTotalsHtml(CMM_STATE.data.totals)}
+    ${rows.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Booking</th><th>Student</th><th>Model</th>
+        <th ${num}>Eligible revenue</th><th ${num}>Original</th><th ${num}>Adjustments</th><th ${num}>Current</th>
+        <th style="padding:8px">Status</th><th>Earned</th><th>Invoice</th><th></th></tr></thead>
+      <tbody>${rows.map(r => {
+        const open = CMM_STATE.open.has(r.id), n = Array.isArray(r.adjustments) ? r.adjustments.length : 0;
+        return `<tr style="border-top:1px solid var(--line)">
+        <td style="padding:8px">${esc(r.agency_name || '—')}</td>
+        <td style="white-space:nowrap"><strong>${esc(r.ref || '—')}</strong>${r.request_ref ? ` <span class="name-sub">${esc(r.request_ref)}</span>` : ''}${r.place ? `<br><span class="name-sub">${esc(r.place)}</span>` : ''}${r.move_in ? `<br><span class="name-sub">${esc(ptnDay(r.move_in))} → ${esc(ptnDay(r.move_out))}</span>` : ''}</td>
+        <td>${esc(r.student || '—')}</td>
+        <td style="white-space:nowrap">${esc(cmmModelLabel(r))}</td>
+        <td ${num}>${r.base_cents == null ? '—' : esc(rcvMoney(r.base_cents))}</td>
+        <td ${num}>${esc(rcvMoney(r.original_cents))}</td>
+        <td ${num}>${Number(r.adjustments_cents) ? esc(cmmSigned(r.adjustments_cents)) : '—'}</td>
+        <td ${num}><strong>${esc(rcvMoney(r.amount_cents))}</strong></td>
+        <td style="padding:8px;white-space:nowrap">${ptnPill(cmmStatus(r.status))}${r.adjusted ? ' <span class="tag-pill blue">adjusted</span>' : ''}</td>
+        <td style="white-space:nowrap">${esc(ptnDay(r.earned_on) || '—')}</td>
+        <td style="white-space:nowrap">${esc(r.invoice_number || '—')}${r.invoice_number ? `<br><span class="name-sub">${r.invoice_paid ? 'paid' : 'not paid'}</span>` : ''}</td>
+        <td style="padding:8px;white-space:nowrap">
+          <button class="btn btn-ghost btn-mini" type="button" data-cmm-toggle="${esc(r.id)}">${open ? 'Hide history' : `History (${n})`}</button>
+          <button class="btn btn-ghost btn-mini" type="button" data-cmm-override="${esc(r.id)}"${r.status === 'void' ? ' disabled title="A void commission cannot be changed"' : ''}>Override…</button></td>
+      </tr>${open ? `<tr><td colspan="12" style="padding:8px 16px 14px">${cmmHistoryHtml(r)}</td></tr>` : ''}`;
+      }).join('')}</tbody></table></div>` : '<p class="name-sub">No commissions match.</p>'}`;
+}
+function cmmWire(root){
+  const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => fn(el, e)));
+  on('[data-cmm-filter]', 'change', s => {
+    const f = CMM_STATE.filters, k = s.dataset.cmmFilter;
+    // Switching to custom starts from the range that was showing.
+    if (k === 'preset' && s.value === 'custom' && !f.from && !f.to) { const r = cmmDatePreset(f.preset, rcvToday()); if (r) { f.from = r.from; f.to = r.to; } }
+    f[k] = s.value; CMM_STATE.open.clear(); renderPartners();
+  });
+  on('[data-cmm-date]', 'change', i => { CMM_STATE.filters[i.dataset.cmmDate] = i.value; renderPartners(); });
+  on('[data-cmm-toggle]', 'click', b => {
+    const id = b.dataset.cmmToggle;
+    if (CMM_STATE.open.has(id)) CMM_STATE.open.delete(id); else CMM_STATE.open.add(id);
+    renderPartners();
+  });
+  on('[data-cmm-override]', 'click', b => cmmOpenOverride(b.dataset.cmmOverride));
+  on('[data-cmm-reload]', 'click', () => cmmLoad(true));
+  on('[data-cmm-export]', 'click', b => cmmExport(b));
+}
+function cmmOpenOverride(id){
+  const r = CMM_STATE.data && CMM_STATE.data.rows.find(x => x.id === id);
+  if (!r || r.status === 'void') return;
+  const current = Math.round(Number(r.amount_cents) || 0);
+  rcvModalOpen({
+    title: `Override commission <em>${esc(r.ref || '')}</em>`,
+    sub: `${r.agency_name || ''}${r.student ? ' · ' + r.student : ''} · ${cmmModelLabel(r)} · now ${rcvMoney(current)}`,
+    body: `${rcvFormField('New commission (CAD)', `<input class="form-input" name="amount" inputmode="decimal" value="${esc(rcvDollars(current))}" autocomplete="off">`)}
+      <p class="name-sub" data-cmm-preview style="margin:0 0 12px;min-height:18px"></p>
+      ${rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="2" maxlength="500" placeholder="e.g. early move-out on Oct 15 (shown to staff, kept with the adjustment)"></textarea>')}`,
+    submit: 'Save override',
+    wire: form => {
+      const input = form.elements.amount, out = form.querySelector('[data-cmm-preview]');
+      const draw = () => { const p = rcvParseCents(input.value, { zero: true }); out.textContent = p.ok ? cmmSettlementPreview(current, p.cents) : ''; };
+      input.addEventListener('input', draw); draw();
+    },
+    onSubmit: async (form, err) => {
+      const v = cmmValidateOverride(form.elements.amount.value, form.elements.reason.value, current);
+      if (!v.ok) { err.textContent = v.errors.join('. '); return; }
+      return rcvSubmit(err, 'save the override', async () => {
+        const res = await cmmJson('POST', `/api/staff/billing/commissions/${encodeURIComponent(r.id)}/override`, v.body);
+        rcvModalDone(cmmOverrideResultMsg(res, r.ref));
+        showToast('Commission overridden');
+        CMM_STATE.open.add(r.id);
+        await Promise.all([cmmLoad(true), rcvData ? rcvAfterWrite() : null]);
+      });
+    },
+  });
+}
+async function cmmExport(btn){
+  const q = cmmQuery(CMM_STATE.filters, rcvToday());
+  if (!q.ok) { showToast(q.error); return; }
+  btn.disabled = true;
+  try {
+    const res = await rcvApi('GET', '/api/staff/billing/commissions/export.csv' + q.qs);
+    if (!res.ok) { let data = null; try { data = await res.json(); } catch (_) {} throw new Error(cmmErrorMessage(res.status, data)); }
+    const blob = await res.blob();
+    const name = rcvFilename(res.headers.get('Content-Disposition'), `vanmates-commissions-${q.from}-to-${q.to}.csv`);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
