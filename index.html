@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29-commledger"></script>
+<script src="pms-supabase.js?v=2026-09-29-nominstay"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2755,7 +2755,7 @@
     </section>
 
     <section class="view" data-view="partner-inventory">
-      <p class="name-sub" style="margin:0 0 14px;max-width:760px">Rooms and availability come from Asana automatically — partners see every free room. Nothing needs adding here. Only use this page to hide a building from partners, or to set terms that differ from the website (half a month's deposit, cleaning included, 3-month minimum, $295 membership).</p>
+      <p class="name-sub" style="margin:0 0 14px;max-width:760px">Rooms and availability come from Asana automatically — partners see every free room. Nothing needs adding here. Only use this page to hide a building from partners, or to set terms that differ from the website (half a month's deposit, cleaning included, no minimum stay, $295 membership).</p>
       <div id="inv-root"><p class="name-sub">Loading…</p></div>
     </section>
 
@@ -20494,7 +20494,7 @@ function invMonths(input){
   return { ok: true, value: Number(s) };
 }
 // Blank building terms are valid: the database view fills them with the website
-// terms (deposit half a month's rent, cleaning included, 3-month minimum).
+// terms (deposit half a month's rent, cleaning included, no minimum stay).
 function invReadiness(p){
   const custom = [], blank = [];
   [['deposit_cents', 'deposit'], ['cleaning_fee_cents', 'cleaning fee'], ['min_stay_months', 'minimum stay']]
@@ -20522,7 +20522,7 @@ function invRoomStatus(r, today){
 function invPartnerReady(r){
   if (!r || !r.partner_bookable) return false;
   if (r.status !== 'available' && r.status !== 'available_later') return false;
-  return r.deposit_cents != null && r.cleaning_fee_cents != null && r.min_stay_months != null;
+  return r.deposit_cents != null && r.cleaning_fee_cents != null;
 }
 const INV_STATUS_ORDER = { available: 0, available_later: 1, not_bookable: 2, occupied: 3, unknown: 4, hidden: 5 };
 function invGroup(props, rooms, city){
@@ -20930,8 +20930,8 @@ function invCardHtml(g, today){
     <form data-inv-form style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:10px">
       ${field('deposit', 'Deposit ($)', invDollars(p.deposit_cents), 'decimal', "Blank = half a month's rent")}
       ${field('cleaning', 'Cleaning fee ($)', invDollars(p.cleaning_fee_cents), 'decimal', 'Blank = included')}
-      ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric', 'Blank = 3 months')}
-      <div class="name-sub" style="grid-column:1/-1">Blank uses the website terms: deposit half a month's rent, cleaning included, 3-month minimum, $295 membership.</div>
+      ${field('minstay', 'Minimum stay (months)', p.min_stay_months == null ? '' : p.min_stay_months, 'numeric', 'Blank = no minimum')}
+      <div class="name-sub" style="grid-column:1/-1">Blank uses the website terms: deposit half a month's rent, cleaning included, no minimum stay, $295 membership.</div>
       <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save terms</button> <span class="name-sub" data-inv-msg></span></div>
     </form>
     </details>
