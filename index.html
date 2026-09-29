@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29-comm"></script>
+<script src="pms-supabase.js?v=2026-09-29-groups2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3415,6 +3415,7 @@ hello@vanmates.com · vanmates.com</textarea>
               <select class="form-input" id="ahs-status" style="max-width:170px">
                 <option value="">Open (all)</option><option value="requested">Requested</option><option value="matched">Matched</option>
               </select>
+              <select class="form-input" id="ahs-group" style="max-width:170px"><option value="">All groups</option></select>
               <input class="form-input" id="ahs-q" placeholder="Ref, agency or student" style="max-width:200px">
               <button class="btn btn-ghost" id="ahs-refresh" type="button">Refresh</button>
             </div>
@@ -20737,7 +20738,8 @@ function hmNextAction(c, nowMs, invs){
   if (!c.next_action_at) return "Working…";
   // Any next_action other than "reminder" — "next_wave", "next_wave_now", or
   // anything else the Worker might send — reads as "Next wave".
-  const what = c.next_action === "reminder" ? "Reminder" : "Next wave";
+  // "texts": a first wave emailed at night; its texts go when contact hours start (Worker spec §21).
+  const what = c.next_action === "reminder" ? "Reminder" : c.next_action === "texts" ? "Texts" : "Next wave";
   const ms = Date.parse(c.next_action_at) - nowMs;
   return ms <= 0 ? `${what} due now` : `${what} in ${hmElapsed(new Date(nowMs - ms).toISOString(), nowMs)}`;
 }
@@ -28502,6 +28504,7 @@ function ahsRequestRows(requests, agencies, students, users, f, groups){
   const q = String(f.q || '').trim().toLowerCase();
   return (requests || [])
     .filter(r => AHS_OPEN.includes(r.status) && (!f.status || r.status === f.status))
+    .filter(r => !f.group || gById.get(r.group_id) === f.group)
     .map(r => {
       const a = ag.get(r.agency_id), s = st.get(r.student_id), u = us.get(r.user_id);
       return Object.assign({}, r, {
@@ -28514,6 +28517,15 @@ function ahsRequestRows(requests, agencies, students, users, f, groups){
     })
     .filter(r => !q || [r.ref, r.agency_name, r.student_name, r.student_email, r.group_ref].some(v => String(v || '').toLowerCase().includes(q)))
     .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)) || String(a.ref).localeCompare(String(b.ref)));
+}
+// Header for a selected group: name, leader contact, and "N of M shown" (M = open requests in the group).
+function ahsGroupHeader(groupRef, groups, requests, shown){
+  const g = (groups || []).find(x => x.ref === groupRef);
+  if (!groupRef || !g) return null;
+  const total = (requests || []).filter(r => AHS_OPEN.includes(r.status) && r.group_id === g.id).length;
+  return { ref: g.ref, name: g.name || '', leader_name: g.leader_name || '', leader_phone: g.leader_phone || '',
+    leader_email: g.leader_email || '', student_count: g.student_count == null ? '' : g.student_count,
+    shown: shown, total: total, count_label: shown + ' of ' + total + ' shown' };
 }
 // Letter notes from what the agency told us: dietary/medical restrictions, then the notes.
 function ahsLetterNotes(r){
@@ -30071,12 +30083,13 @@ function ahsArrivalText(row, city){
       try {
         const requests = await ptnSelectAll(sb, 'partner_homestay_requests', '*',
           q => q.in('status', AHS_OPEN).order('check_in').order('id'));
+        AHS_DATA.groupsFailed = false;
         const [agencies, students, users, groups] = await Promise.all([
           ptnSelectIn(sb, 'partner_agencies', 'id,name', 'id', requests.map(r => r.agency_id)),
           ptnSelectIn(sb, 'partner_students', '*', 'id', requests.map(r => r.student_id)),
           ptnSelectIn(sb, 'partner_users', 'id,name,email', 'id', requests.map(r => r.user_id)),
           // the groups table may not exist yet; the page must still load
-          ptnSelectIn(sb, 'partner_homestay_groups', 'id,ref', 'id', requests.map(r => r.group_id).filter(Boolean)).catch((e) => { console.warn('[agency requests] groups unavailable:', (e && e.message) || e); return []; }),
+          ptnSelectIn(sb, 'partner_homestay_groups', 'id,ref,name,leader_name,leader_phone,leader_email,student_count', 'id', requests.map(r => r.group_id).filter(Boolean)).catch((e) => { console.warn('[agency requests] groups unavailable:', (e && e.message) || e); AHS_DATA.groupsFailed = true; return []; }),
         ]);
         AHS_DATA.raw = { requests, agencies, students, users, groups };
         AHS_DATA.students = new Map(students.map(x => [x.id, x]));
@@ -30098,14 +30111,32 @@ function ahsArrivalText(row, city){
     const d = AHS_DATA.raw;
     const nReq = d.requests.filter((r) => r.status === 'requested').length;
     const nEl = $('hb-n-agency'); if (nEl) { nEl.textContent = nReq || ''; nEl.classList.toggle('hb-need-v', nReq > 0); }
+    const gSel = $('ahs-group');
+    if (gSel && AHS_DATA.groupsFailed) {
+      gSel.innerHTML = '<option value="">Groups unavailable</option>';
+      gSel.disabled = true;
+      gSel.title = 'The groups could not be loaded, so the group filter is off. Reload to try again.';
+    } else if (gSel) {
+      gSel.disabled = false; gSel.title = '';
+      const refs = Array.from(new Set((d.groups || []).map((g) => g.ref).filter(Boolean))).sort();
+      const cur = gSel.value;
+      gSel.innerHTML = '<option value="">All groups</option>' + refs.map((x) => '<option value="' + esc(x) + '">' + esc(x) + '</option>').join('');
+      gSel.value = refs.includes(cur) ? cur : '';
+    }
+    const groupRef = gSel ? gSel.value : '';
     const rows = ahsRequestRows(d.requests, d.agencies, d.students, d.users,
-      { status: ($('ahs-status') || {}).value || '', q: ($('ahs-q') || {}).value || '' }, d.groups);
+      { status: ($('ahs-status') || {}).value || '', q: ($('ahs-q') || {}).value || '', group: groupRef }, d.groups);
     AHS_DATA.rows = rows;
+    const gh = ahsGroupHeader(groupRef, d.groups, d.requests, rows.length);
+    const ghHtml = gh ? '<div class="card-pad" style="border-bottom:1px solid var(--line)"><strong>Group ' + esc(gh.ref) + (gh.name ? ' · ' + esc(gh.name) : '') + '</strong>' +
+      '<div class="card-sub">' + [gh.leader_name ? 'Leader ' + esc(gh.leader_name) : '', esc(gh.leader_phone), esc(gh.leader_email),
+        gh.student_count !== '' ? esc(gh.student_count) + ' students' : ''].filter(Boolean).join(' · ') + '</div>' +
+      '<div class="card-sub">' + esc(gh.count_label) + '</div></div>' : '';
     if (!rows.length) {
-      body.innerHTML = '<div class="card-pad card-sub">' + (d.requests.length ? 'No request matches.' : 'No open agency requests.') + '</div>';
+      body.innerHTML = ghHtml + '<div class="card-pad card-sub">' + (d.requests.length ? 'No request matches.' : 'No open agency requests.') + '</div>';
       return;
     }
-    body.innerHTML = '<table><thead><tr><th>Request</th><th>Agency</th><th>Student</th><th>City</th><th>Stay</th>' +
+    body.innerHTML = ghHtml + '<table><thead><tr><th>Request</th><th>Agency</th><th>Student</th><th>City</th><th>Stay</th>' +
       '<th>Package</th><th>Plan</th><th>Status</th><th></th></tr></thead><tbody>' +
       rows.map((r) => '<tr>' +
         '<td class="nowrap"><code>' + esc(r.ref) + '</code>' + (r.group_ref ? '<div class="card-sub">Group ' + esc(r.group_ref) + '</div>' : '') + '</td>' +
@@ -30314,6 +30345,7 @@ function ahsArrivalText(row, city){
       if (b) ahsFillForm(b.getAttribute('data-id'));
     });
     const ahsSt = $('ahs-status'); if (ahsSt) ahsSt.addEventListener('change', ahsRender);
+    const ahsGr = $('ahs-group'); if (ahsGr) ahsGr.addEventListener('change', ahsRender);
     const ahsQ = $('ahs-q'); if (ahsQ) ahsQ.addEventListener('input', ahsRender);
     const ahsRf = $('ahs-refresh'); if (ahsRf) ahsRf.addEventListener('click', () => { ahsLoad(); });
     const ahsCl = $('hb-agency-clear'); if (ahsCl) ahsCl.addEventListener('click', () => ahsClearForm(false));
