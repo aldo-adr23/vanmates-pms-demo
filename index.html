@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29a"></script>
+<script src="pms-supabase.js?v=2026-09-29n"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20663,12 +20663,60 @@ function hmInviteChip(inv){
   const key = inv.response || inv.send_state;
   return HM_INVITE_CHIP[key] || [String(key || "?"), "grey"];
 }
-function hmInviteRows(invs){
+// SMS (Worker design §20): the invitation's text, shown next to the email chip. sms_state null = email only (no chip).
+const HM_SMS_NUMBER = "+1 778 907 6954";
+const HM_SMS_CHIP = {
+  pending: ["Text queued", "grey"], sending: ["Texting", "grey"], queued: ["Texted", "blue"], sent: ["Texted", "blue"],
+  delivered: ["Text delivered", "green"], undelivered: ["Text not delivered", "red"], failed: ["Text failed", "red"],
+  skipped: ["No text", "grey"],
+};
+// sms_error is a code ("bad_phone", a Twilio code like "30006"), or "<code>: <message>" from a failed send.
+const HM_SMS_ERROR = {
+  bad_phone: "no +1 mobile number on the host's record", opted_out: "the host texted STOP",
+  not_configured: "SMS isn't set up yet (Twilio secrets missing). Ask Aldo", no_longer_eligible: "consent or phone changed before it went",
+  no_answer: "Twilio didn't answer (it may have been sent)", "21610": "the host texted STOP", "21614": "not a mobile number",
+  "21211": "not a valid phone number", "21408": "texting that region isn't enabled", "30003": "phone off or unreachable",
+  "30004": "blocked by the recipient", "30005": "unknown number", "30006": "a landline, or can't receive texts",
+  "30007": "filtered by the carrier", "30008": "carrier error",
+};
+function hmSmsErrorText(err){
+  if (!err) return "";
+  const code = String(err).split(":")[0].trim();
+  return HM_SMS_ERROR[code] || String(err);
+}
+// profile: the host's hm_host_profiles row (optional). A host who texted STOP reads "Opted out" on every texted row.
+// nowMs (optional): used only to detect a pending/sending text stuck long after its email finished (below).
+function hmSmsChip(inv, profile, nowMs){
+  if (!inv || !inv.sms_state) return null;
+  const code = String(inv.sms_error || "").split(":")[0].trim();
+  if ((profile && profile.sms_opted_out_at) || code === "opted_out" || code === "21610") return ["Opted out of texts", "grey"];
+  // M4: sms_error set but sms_state still the invitation text's delivered/sent means a later reminder failed, not the original send.
+  if (inv.sms_error && (inv.sms_state === "delivered" || inv.sms_state === "sent")) return ["Reminder text failed", "amber"];
+  // M1: the text is stuck pending/sending, the email itself is no longer sending, and it's been stuck >=15 min — it isn't going anywhere.
+  if ((inv.sms_state === "pending" || inv.sms_state === "sending")
+      && inv.send_state !== "queued" && inv.send_state !== "sending"
+      && nowMs != null && inv.created_at && (nowMs - Date.parse(inv.created_at)) >= HM_SENDING_STALE_MS) {
+    return ["Not texted", "grey"];
+  }
+  return HM_SMS_CHIP[inv.sms_state] || ["Text: " + inv.sms_state, "grey"];
+}
+const hmDay = s => new Date(s).toLocaleDateString("en-CA", { timeZone: "America/Vancouver" });
+function hmSmsConsentText(p){
+  if (!p) return "";
+  const parts = [];
+  if (p.sms_consent_at) parts.push(`SMS consent recorded ${hmDay(p.sms_consent_at)} by ${p.sms_consent_by || "?"}`);
+  if (p.sms_opted_out_at) parts.push(`opted out by text on ${hmDay(p.sms_opted_out_at)}: they must text START to ${HM_SMS_NUMBER} to get texts again`);
+  if (p.email_only) parts.push("email only");
+  return parts.join(" · ");
+}
+function hmInviteRows(invs, profiles, nowMs){
+  const byHost = new Map((profiles || []).map(p => [p.host_id, p]));
   return (invs || []).slice()
     .sort((a, b) => (a.wave || 0) - (b.wave || 0) || (a.rank || 999) - (b.rank || 999) || a.id - b.id)
     .map(i => ({ id: i.id, host_id: i.host_id, wave: i.wave || 0, chip: hmInviteChip(i),
       room: (i.verified && i.verified.room_label) || "", reminded: !!i.reminded_at,
-      reason: i.response_reason || "", error: i.send_error || "", withdrew: !!i.withdrawn_at }));
+      reason: i.response_reason || "", error: i.send_error || "", withdrew: !!i.withdrawn_at,
+      sms: hmSmsChip(i, byHost.get(i.host_id), nowMs), smsError: hmSmsErrorText(i.sms_error) }));
 }
 // An invitation counts as actively sending only while it's "queued", or it's
 // "sending" and started under 15 minutes ago. A row stuck in "sending" (by
@@ -30489,8 +30537,8 @@ async function hmOpenCase(id){
   const nameOf = hid => ((HM.hosts || []).find(h => h.host_id === hid) || {}).display_name || hid;
   const invs = iv.data || [];
   HM.invitations = invs;
-  const invRows = hmInviteRows(invs);
   const nowMs = Date.now();
+  const invRows = hmInviteRows(invs, HM.profiles, nowMs);
   const sending = hmActiveSends(invs, nowMs).length > 0;
   const uninvited = hmUninvited(ordered.map(e => e.host_id), invs);
   // Merge display name + payable across the shortlist snapshot and the live
@@ -30512,8 +30560,8 @@ async function hmOpenCase(id){
     </div>
     ${iv.error ? `<div class="card-sub">Could not load invitations: ${hmEsc(iv.error.message || iv.error)}</div>`
       : (invRows.map(r => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(r.host_id))}</div>
-      <div class="list-sub">${r.wave ? "wave " + r.wave : "recorded by staff"}${r.room ? " · " + hmEsc(r.room) : ""}${r.reminded ? " · reminded" : ""}${r.withdrew ? " · withdrew" : ""}${r.reason ? " · " + hmEsc(r.reason) : ""}${r.error ? " · " + hmEsc(r.error) : ""}</div></div>
-      <span class="badge badge-${r.chip[1]}">${hmEsc(r.chip[0])}</span></div>`).join("") || '<div class="card-sub">No invitations yet.</div>')}
+      <div class="list-sub">${r.wave ? "wave " + r.wave : "recorded by staff"}${r.room ? " · " + hmEsc(r.room) : ""}${r.reminded ? " · reminded" : ""}${r.withdrew ? " · withdrew" : ""}${r.reason ? " · " + hmEsc(r.reason) : ""}${r.error ? " · " + hmEsc(r.error) : ""}${r.smsError ? " · text: " + hmEsc(r.smsError) : ""}</div></div>
+      ${r.sms ? `<span class="badge badge-${r.sms[1]}" style="margin-right:4px">${hmEsc(r.sms[0])}</span>` : ""}<span class="badge badge-${r.chip[1]}">${hmEsc(r.chip[0])}</span></div>`).join("") || '<div class="card-sub">No invitations yet.</div>')}
     ${HM_RESPONDABLE.includes(c.status) ? `<details id="hm-phone-details" style="margin-top:8px"><summary class="card-sub">Record a phone answer</summary>
       <form id="hm-phone" class="hm-grid" style="margin-top:8px">
         <label>Host <select class="form-input" name="host_id" required><option value="">—</option>${hostOpts}</select></label>
@@ -30887,7 +30935,7 @@ function hmRenderProfiles(){
     const p = byId.get(h.host_id) || {};
     const k = hmEsc(h.host_id);
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
-        <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_consent_at ? " · SMS consent" : ""}</span></summary>
+        <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}</span></summary>
       <div class="hm-grid" data-hm-profile="${k}" style="margin-top:8px">
         <label>City <select class="form-input" name="city"><option value="">—</option>${["vancouver","toronto"].map(x => `<option ${p.city === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label>Area <input class="form-input" name="area" value="${hmEsc(p.area)}"></label>
@@ -30900,7 +30948,7 @@ function hmRenderProfiles(){
         <label><input type="checkbox" name="email_only" ${p.email_only ? "checked" : ""}> Email only (no SMS)</label>
         <label><input type="checkbox" name="matching_active" ${p.matching_active ? "checked" : ""}> Active for matching</label>
         <label><input type="checkbox" name="sms_consent" ${p.sms_consent_at ? "checked" : ""}> Host agreed to SMS
-          <span class="card-sub">${p.sms_consent_at ? "recorded " + hmEsc(new Date(p.sms_consent_at).toLocaleDateString()) + " by " + hmEsc(p.sms_consent_by || "?") : ""}</span></label>
+          <span class="card-sub" id="hm-consent-${k}">${hmEsc(hmSmsConsentText(p))}</span></label>
         <label>Unavailable until <input class="form-input" type="date" name="unavailable_until" value="${hmEsc(p.unavailable_until)}"></label>
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
         <div style="grid-column:1/-1"><button class="btn" type="button" data-hm-save-profile="${k}">Save profile</button>
@@ -30928,15 +30976,22 @@ async function hmSaveProfile(hostId){
   const changed = isNew || !!prev.sms_consent_at !== consent || Object.keys(r.value).some(k => !same(r.value[k], prev[k]));
   if (!changed) { out.textContent = "Nothing changed."; return; }
   const now = new Date().toISOString();
+  // The database stamps consent (trigger hm_profile_consent: now() + the signed-in staff email, kept while
+  // ticked) and never lets staff change sms_opted_out_at; what the browser sends here only says on/off.
   const row = Object.assign(r.value, {
     sms_consent_at: consent ? (prev.sms_consent_at || now) : null,
     sms_consent_by: consent ? (prev.sms_consent_by || (me && me.email) || null) : null,
     updated_by: me ? me.id : null, updated_at: now, verified_at: now,
   });
   out.textContent = "Saving…";
-  const { error } = await sb.from("hm_host_profiles").upsert(row, { onConflict: "host_id" });
+  const { data: saved, error } = await sb.from("hm_host_profiles").upsert(row, { onConflict: "host_id" }).select().single();
   out.textContent = error ? "Error: " + error.message : "Saved.";
-  if (!error) { if (isNew) HM.profiles.push(row); else Object.assign(prev, row); }
+  if (!error) {
+    const fresh = saved || row;
+    if (isNew) HM.profiles.push(fresh); else Object.assign(prev, fresh);
+    const line = document.getElementById("hm-consent-" + hostId);
+    if (line) line.textContent = hmSmsConsentText(fresh);
+  }
 }
 window.HM = HM;
 </script>
