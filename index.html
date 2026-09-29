@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29-csimg"></script>
+<script src="pms-supabase.js?v=2026-09-29-comm"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21168,6 +21168,30 @@ function ptnTabFromHash(hash){
   if (!m[1]) return 'agencies';
   return PTN_HASH_TABS.includes(m[1]) ? m[1] : null;
 }
+// Agency commission (the partner app deducts it on the agency's invoice): a % of co-living rent
+// (partner_agencies.commission_pct) and a flat homestay placement amount in cents
+// (homestay_commission_cents). Blank = not set (null). Form strings in, column values out.
+function ptnCommissionFields(form){
+  form = form || {};
+  const errors = [], fields = {};
+  const pct = String(form.commission_pct == null ? '' : form.commission_pct).trim();
+  if (pct === '') fields.commission_pct = null;
+  else if (!/^\d{1,3}(\.\d{1,2})?$/.test(pct) || Number(pct) > 100) errors.push('Commission must be a percentage from 0 to 100, up to 2 decimals');
+  else fields.commission_pct = Number(pct);
+  const flat = String(form.homestay_commission == null ? '' : form.homestay_commission).trim().replace(/^\$/, '').replace(/,/g, '');
+  if (flat === '') fields.homestay_commission_cents = null;
+  else if (!/^\d{1,5}(\.\d{1,2})?$/.test(flat)) errors.push('Homestay commission must be a dollar amount, e.g. 100');
+  else fields.homestay_commission_cents = Math.round(Number(flat) * 100);
+  return errors.length ? { ok: false, errors, fields: {} } : { ok: true, errors, fields };
+}
+// One line for the agencies table: "Commission 10% of rent · homestay $100", '' when none is set.
+function ptnCommissionLine(a){
+  a = a || {};
+  const parts = [];
+  if (a.commission_pct != null && Number(a.commission_pct) > 0) parts.push(`${Number(a.commission_pct)}% of rent`);
+  if (a.homestay_commission_cents != null && Number(a.homestay_commission_cents) > 0) parts.push('homestay ' + ptnMoney(Number(a.homestay_commission_cents)).replace(/ CAD$/, ''));
+  return parts.length ? 'Commission ' + parts.join(' · ') : '';
+}
 /* PARTNERS-CORE-END */
 /* PARTNER-ONBOARD-CORE-START */
 /* An agency's first user and its next steps. Pure; uses ptnValidateUser from
@@ -21353,9 +21377,11 @@ function ptnSelectField(name, label, list, value){
 const PTN_LANG_OPTS = [['en', 'English'], ['es', 'Español'], ['ja', '日本語']];
 // The billing columns exist once the partner billing SQL is applied (every agency row has payment_terms).
 function ptnBillingOn(){ return !ptnData || !ptnData.agencies.length || ptnData.agencies.some(a => 'payment_terms' in a); }
+// The commission columns exist once the partner app's 2026-09-28c SQL is applied.
+function ptnCommissionOn(){ return !!ptnData && ptnData.agencies.some(a => 'commission_pct' in a); }
 function ptnBillingLine(a){
   if (!('payment_terms' in a)) return '—';
-  return `${esc(rcvTermsLabel(a.payment_terms))}<br><span class="name-sub">${a.credit_limit_cents == null ? 'no limit' : 'limit ' + esc(rcvMoney(a.credit_limit_cents))}${a.payment_ref ? ' · ref ' + esc(a.payment_ref) : ''}</span>`;
+  return `${esc(rcvTermsLabel(a.payment_terms))}<br><span class="name-sub">${a.credit_limit_cents == null ? 'no limit' : 'limit ' + esc(rcvMoney(a.credit_limit_cents))}${a.payment_ref ? ' · ref ' + esc(a.payment_ref) : ''}</span>` + (ptnCommissionLine(a) ? `<br><span class="name-sub">${esc(ptnCommissionLine(a))}</span>` : '');
 }
 function ptnAgencyFormHtml(a){
   a = a || {};
@@ -21380,6 +21406,10 @@ function ptnAgencyFormHtml(a){
     ${ptnSelectField('payment_terms', 'Payment terms', RCV_TERMS, a.payment_terms || 'net15')}
     ${ptnField('credit_limit', 'Credit limit (CAD, blank = none)', a.credit_limit_cents == null ? '' : rcvDollars(a.credit_limit_cents), ' inputmode="decimal"')}
     ${ptnField('payment_ref', 'Payment reference (A–Z, 0–9)', a.payment_ref, ` maxlength="20" style="text-transform:uppercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}` : ''}
+    ${ptnCommissionOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Commission</strong>
+    ${ptnField('commission_pct', 'Commission (% of co-living rent)', a.commission_pct == null ? '' : String(Number(a.commission_pct)), ' inputmode="decimal" placeholder="Not set"')}
+    ${ptnField('homestay_commission', 'Homestay placement commission (CAD)', a.homestay_commission_cents == null ? '' : rcvDollars(a.homestay_commission_cents), ' inputmode="decimal" placeholder="Not set"')}
+    <p class="name-sub" style="grid-column:1/-1;margin:0">Deducted on the agency's invoices: the % from each room booking's rent (not deposit, membership or cleaning), the flat amount from the first invoice of each agency homestay (at most the matching fee). Invoices already issued keep the commission they had.</p>` : ''}
     <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save agency</button>
       <button class="btn btn-ghost" type="button" data-ptn-agency-cancel>Close</button> <span class="name-sub" data-ptn-msg></span></div>
   </form>`;
@@ -21496,7 +21526,7 @@ function ptnBookingsHtml(){
           <td>${esc(u ? u.name : '—')}${u ? `<br><span class="name-sub">${esc(u.email)}</span>` : ''}</td>
           <td>${esc(s ? `${s.given_name} ${s.family_name}` : '—')}${s ? `<br><span class="name-sub">${esc(s.email)}</span>` : ''}</td>
           <td>${esc(b.room_name || '—')}${b.city ? `<br><span class="name-sub">${esc(b.city)}</span>` : ''}</td>
-          <td style="white-space:nowrap">${esc(ptnDay(b.move_in))} → ${esc(ptnDay(b.move_out))}</td>
+          <td><span style="white-space:nowrap">${esc(ptnDay(b.move_in))} → ${esc(ptnDay(b.move_out))}</span>${ahsArrivalText(b, b.city) ? `<br><span class="name-sub">Arrival: ${esc(ahsArrivalText(b, b.city))}</span>` : ''}</td>
           <td>${ptnPill(ptnBookingStatus(b.status))}${b.cancel_reason ? `<br><span class="name-sub">${esc(b.cancel_reason)}</span>` : ''}</td>
           <td style="white-space:nowrap">${esc(ptnMoney(b.contract_value_cents, b.currency))}</td>
           <td><span class="tag-pill ${esc(wb.tone)}" title="${esc(wb.detail || '')}">${esc(wb.label)}</span></td>
@@ -21569,9 +21599,12 @@ async function ptnSaveAgency(form){
   const bill = el.payment_terms
     ? rcvAgencyBillingPatch(current, { payment_terms: el.payment_terms.value, credit_limit: el.credit_limit.value, payment_ref: el.payment_ref.value })
     : { ok: true, errors: [], patch: {} };
-  if (!r.ok || !bill.ok) { msg.textContent = r.errors.concat(bill.errors).join('. '); return; }
+  const comm = ptnCommissionOn() && el.commission_pct
+    ? ptnCommissionFields({ commission_pct: el.commission_pct.value, homestay_commission: el.homestay_commission.value })
+    : { ok: true, errors: [], fields: {} };
+  if (!r.ok || !bill.ok || !comm.ok) { msg.textContent = r.errors.concat(bill.errors, comm.errors).join('. '); return; }
   if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
-  const row = Object.assign({}, r.row, { updated_at: new Date().toISOString(), updated_by: ptnActor() });
+  const row = Object.assign({}, r.row, comm.fields, { updated_at: new Date().toISOString(), updated_by: ptnActor() });
   msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
   let newId;
   try {
@@ -28504,7 +28537,8 @@ function ahsPrefill(r, student){
     moveout: String(r.check_out || '').slice(0, 10),
     meals: ahsMealPlan(r.meal_plan),
     notes: ahsLetterNotes(r),
-    arrival: r.flight_booked === true ? 'Flight booked (details from the agency)' : r.flight_booked === false ? 'Flight not booked yet' : '',
+    arrival: ahsArrivalText(r, r.city) ? ('Flight: ' + ahsArrivalText(r, r.city)).slice(0, 600)
+      : r.flight_booked === true ? 'Flight booked (details from the agency)' : r.flight_booked === false ? 'Flight not booked yet' : '',
     city: r.city || '',
     agency: {
       payer_type: 'agency', agency_id: r.agency_id || '', partner_request_ref: r.ref || '',
@@ -28630,6 +28664,24 @@ function ahsPayerLines(s, plan, fmt){
   lines.push('Student pays ' + fmt(s.totals.studentTotalCents) + ' over ' + plural(charges.length, 'charge') + ':');
   charges.forEach(c => lines.push('   ' + c.dueDate + '   ' + fmt(c.totalCents) + '   (' + c.kind + ', ' + plural(c.days, 'day') + ')'));
   return lines;
+}
+// The flight details an agency entered on partners.vanmates.com (arrival_* columns of
+// partner_bookings / partner_homestay_requests), as one line in the stay city's local time.
+const AHS_ZONES = { vancouver: 'America/Vancouver', toronto: 'America/Toronto', montreal: 'America/Toronto' };
+function ahsArrivalText(row, city){
+  const r = row || {};
+  const zone = AHS_ZONES[String(city || '').toLowerCase()] || 'America/Vancouver';
+  const parts = [];
+  const flight = [r.arrival_flight, r.arrival_airline].map(x => String(x == null ? '' : x).trim()).filter(Boolean).join(' · ');
+  if (flight) parts.push(flight);
+  const t = Date.parse(r.arrival_at || '');
+  if (!isNaN(t)) parts.push(new Date(t).toLocaleString('en-US', { timeZone: zone, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) + ' local');
+  const airport = String(r.arrival_airport == null ? '' : r.arrival_airport).trim();
+  if (airport) parts.push(airport);
+  let out = parts.join(' · ');
+  const note = String(r.arrival_note == null ? '' : r.arrival_note).trim().replace(/\s+/g, ' ');
+  if (note) out += (out ? ' — ' : '') + note;
+  return out;
 }
 /* AGENCY-HS-CORE-END */
 
@@ -30060,7 +30112,8 @@ function ahsPayerLines(s, plan, fmt){
         '<td>' + esc(r.agency_name || '—') + (r.user_name ? '<div class="card-sub">' + esc(r.user_name) + '</div>' : '') + '</td>' +
         '<td>' + esc(r.student_name || '—') + '<div class="card-sub">' + esc(r.student_email) + '</div></td>' +
         '<td>' + esc(r.city_label) + '</td>' +
-        '<td class="nowrap">' + esc(r.check_in) + '<div class="card-sub">to ' + esc(r.check_out) + '</div></td>' +
+        '<td class="nowrap">' + esc(r.check_in) + '<div class="card-sub">to ' + esc(r.check_out) + '</div>' +
+          (ahsArrivalText(r, r.city) ? '<div class="card-sub" style="white-space:normal;max-width:260px">Arrival: ' + esc(ahsArrivalText(r, r.city)) + '</div>' : '') + '</td>' +
         '<td>' + esc(r.package_label) + '<div class="card-sub">' + esc(r.meal_label) + '</div></td>' +
         '<td>' + esc(r.plan_label) + '</td>' +
         '<td>' + esc(ahsStatus(r.status).label) + '</td>' +
