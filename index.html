@@ -1366,7 +1366,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29-groups2"></script>
+<script src="pms-supabase.js?v=2026-09-29-listings"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -30509,14 +30509,17 @@ async function loadHomestayMatching(){
   if (!sb || HM.loading) return;
   HM.loading = true;
   try {
-    const [c, p] = await Promise.all([
+    const [c, p, l] = await Promise.all([
       sb.from("hm_cases").select("*").order("created_at", { ascending: false }).range(0, 999),
       sb.from("hm_host_profiles").select("*").range(0, 999),
+      sb.from("hm_listings").select("host_id,status,approved,updated_at").range(0, 999),
     ]);
     if (c.error) throw c.error;
     if (p.error) throw p.error;
     HM.cases = c.data || [];
     HM.profiles = p.data || [];
+    // Listings are extra: a read error (e.g. the table not there yet) must not blank the cases page.
+    HM.listings = l.error ? [] : (l.data || []);
     HM.openCount = hmQueue(HM.cases, "open").length;
     if (typeof updateSidebarCounts === "function") updateSidebarCounts();
     try { const h = await vmN8n.read("hosts-list"); HM.hosts = (h && h.hosts) || []; } catch (e) { HM.hosts = []; }
@@ -31020,7 +31023,8 @@ function hmRenderProfiles(){
     const p = byId.get(h.host_id) || {};
     const k = hmEsc(h.host_id);
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
-        <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}</span></summary>
+        <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}</span>
+        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span></summary>
       <div class="hm-grid" data-hm-profile="${k}" style="margin-top:8px">
         <label>City <select class="form-input" name="city"><option value="">—</option>${["vancouver","toronto"].map(x => `<option ${p.city === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label>Area <input class="form-input" name="area" value="${hmEsc(p.area)}"></label>
@@ -31038,8 +31042,16 @@ function hmRenderProfiles(){
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
         <div style="grid-column:1/-1"><button class="btn" type="button" data-hm-save-profile="${k}">Save profile</button>
           <span class="card-sub" id="hm-pmsg-${k}"></span></div>
+        <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
+          <div class="card-title" style="font-size:15px">Listing</div>
+          <div data-hml-box="${k}" class="card-sub">Open to load…</div>
+        </div>
       </div></details>`;
   }).join("");
+  box.querySelectorAll("details").forEach(det => det.addEventListener("toggle", () => {
+    const b = det.querySelector("[data-hml-box]");
+    if (det.open && b && !b.dataset.loaded) hmlLoad(b.dataset.hmlBox);
+  }));
 }
 
 async function hmSaveProfile(hostId){
@@ -31078,6 +31090,189 @@ async function hmSaveProfile(hostId){
     if (line) line.textContent = hmSmsConsentText(fresh);
   }
 }
+
+/* ---- Host listings (photos + about us), edited here and approved for clients. Worker: /staff/hosts/:host/listing/:action ---- */
+const HML_TAGS = [["room","Student's room"],["bathroom","Bathroom"],["kitchen","Kitchen"],["living","Living area"],["outside","Outside"],["other","Other"]];
+const HML_ERRORS = { incomplete: "Not ready to approve", note_required: "Type what the host should change",
+  unknown_host: "This host has no email address in the hosts list", not_an_image: "That file isn't a JPEG, PNG or WebP photo",
+  too_many: "Already 10 photos: remove one first", too_large: "That photo is too big", bad_tag: "Pick what the photo shows",
+  bad_request: "The Worker did not understand that request: refresh and try again",
+  mail_not_configured: "Email isn't set up on the Worker yet (ask Aldo)", too_many_uploads: "40 photo uploads in 24 hours for this host: try again tomorrow", not_found: "No listing yet for this host: send the listing link or add a photo first" };
+
+// Staff edits on an approved listing keep status "approved", but clients still see the old snapshot until Approve is pressed again.
+function hmlUnpublishedEdits(l){
+  if (!l || l.status !== "approved" || !l.approved || !l.approved.approved_at || !l.updated_at) return false;
+  return Date.parse(l.updated_at) > Date.parse(l.approved.approved_at);
+}
+
+function hmlBadge(hostId){
+  const l = (HM.listings || []).find(x => x.host_id === hostId);
+  const label = !l ? "No listing" : l.status === "approved" ? "Listing approved"
+    : l.status === "submitted" ? "Listing to review" : l.status === "changes_requested" ? "Listing: changes asked"
+    : l.approved ? "Listing approved (edits in draft)" : "Listing draft";
+  return ` <span class="badge ${l && l.status === "submitted" ? "badge-amber" : "badge-grey"}"><span class="dot"></span>${label}</span>`;
+}
+
+async function hmlCall(hostId, action, body){
+  try { return await hmWorker(`/staff/hosts/${encodeURIComponent(hostId)}/listing/${action}`, body); }
+  catch (e) { const b = e.body || {}; throw new Error(HML_ERRORS[b.error] ? HML_ERRORS[b.error] + (b.problems ? ": " + b.problems.join(" ") : "") : e.message); }
+}
+
+// Photos are shrunk to 1600px JPEG in the browser (also turns phone orientation into real pixels) before upload.
+async function hmlUpload(hostId, file, tag){
+  // Same fallbacks as the host page: EXIF-aware bitmap, plain bitmap, then an <img> from a blob URL.
+  let bmp = null;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) {}
+  if (!bmp) { try { bmp = await createImageBitmap(file); } catch (e) {} }
+  if (!bmp) {
+    const u = URL.createObjectURL(file);
+    try {
+      bmp = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = u; });
+    } catch (e) { bmp = null; } finally { URL.revokeObjectURL(u); }
+  }
+  if (!bmp) throw new Error(`Could not read ${file.name} (use a JPEG, PNG or WebP photo)`);
+  const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("could not read the photo")), "image/jpeg", 0.85));
+  const { data } = await window.vmDb.sb.auth.getSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(`${HM_WORKER}/staff/hosts/${encodeURIComponent(hostId)}/listing/photo?tag=${encodeURIComponent(tag)}`,
+    { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + token }, body: blob });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(HML_ERRORS[out.error] || out.error || ("HTTP " + res.status));
+}
+
+async function hmlRefreshStatuses(){
+  const { data, error } = await window.vmDb.sb.from("hm_listings").select("host_id,status,approved,updated_at").range(0, 999);
+  if (error || !data) return;
+  HM.listings = data;
+  document.querySelectorAll("[data-hml-badge]").forEach(el => { el.innerHTML = hmlBadge(el.dataset.hmlBadge); });
+}
+
+async function hmlLoad(hostId, flash){
+  const box = document.querySelector(`[data-hml-box="${CSS.escape(hostId)}"]`);
+  if (!box) return;
+  box.dataset.loaded = "1";
+  box.textContent = "Loading…";
+  let r;
+  try { r = await hmlCall(hostId, "get"); } catch (e) { box.textContent = "Error: " + e.message; box.dataset.loaded = ""; return; }
+  const l = r.listing, a = (l && l.about) || { intro: "", household: "", pets: "", languages: [], house_rules: "" };
+  const photos = r.photos || [], problems = r.problems || [];
+  const status = !l ? "none" : hmlUnpublishedEdits(l) ? "approved · unpublished staff edits" : l.status.replace("_", " ");
+  const tagSel = sel => HML_TAGS.map(([v, t]) => `<option value="${v}" ${v === sel ? "selected" : ""}>${t}</option>`).join("");
+  box.classList.remove("card-sub");
+  box.innerHTML = `
+    ${flash ? `<div class="card-sub"><b>${hmEsc(flash)}</b></div>` : ""}
+    <div class="card-sub">Status: <b>${hmEsc(status)}</b>${l && l.approved && l.status !== "approved" ? " · an approved version is live" : ""}
+      ${l && l.change_note ? `<br>Changes asked: ${hmEsc(l.change_note)}` : ""}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:10px 0">
+      ${photos.map((p, i) => `<div>
+        <img src="${hmEsc(p.url || "")}" alt="" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px;background:#eee">
+        <select class="form-input" data-hml-tag="${hmEsc(p.id)}">${tagSel(p.tag)}</select>
+        <div style="display:flex;gap:4px;margin-top:4px">
+          <button class="btn btn-ghost" type="button" data-hml-move="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""}>←</button>
+          <button class="btn btn-ghost" type="button" data-hml-move="${i}" data-dir="1" ${i === photos.length - 1 ? "disabled" : ""}>→</button>
+          <button class="btn btn-ghost" type="button" data-hml-remove="${hmEsc(p.id)}">Remove</button></div></div>`).join("")}
+    </div>
+    <label>New photos show <select class="form-input" data-hml-newtag>${tagSel("room")}</select></label>
+    <input type="file" accept="image/*" multiple data-hml-files>
+    <div class="hm-grid" style="margin-top:10px">
+      <label style="grid-column:1/-1">Introduction <textarea class="form-input" rows="4" maxlength="800" data-hml-f="intro">${hmEsc(a.intro)}</textarea></label>
+      <label>Who lives there <input class="form-input" maxlength="200" data-hml-f="household" value="${hmEsc(a.household)}"></label>
+      <label>Pets <input class="form-input" maxlength="120" data-hml-f="pets" value="${hmEsc(a.pets)}"></label>
+      <label>Languages (comma separated) <input class="form-input" data-hml-f="languages" value="${hmEsc((a.languages || []).join(", "))}"></label>
+      <label style="grid-column:1/-1">House rules <textarea class="form-input" rows="2" maxlength="400" data-hml-f="house_rules">${hmEsc(a.house_rules)}</textarea></label>
+    </div>
+    ${problems.length ? `<div class="card-sub">Not ready: ${problems.map(hmEsc).join(" ")}</div>` : ""}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn btn-ghost" type="button" data-hml-act="about">Save text</button>
+      <button class="btn" type="button" data-hml-act="approve" ${problems.length ? "disabled" : ""}>Approve listing</button>
+      <button class="btn btn-ghost" type="button" data-hml-act="send-link">Send listing link</button>
+    </div>
+    <label style="display:block;margin-top:10px">Ask the host for changes <textarea class="form-input" rows="2" data-hml-note></textarea></label>
+    <button class="btn btn-ghost" type="button" data-hml-act="changes">Send change request</button>
+    <span class="card-sub" data-hml-msg></span>`;
+  box.dataset.photoIds = JSON.stringify(photos.map(p => p.id));
+}
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hml-act],[data-hml-remove],[data-hml-move]");
+  if (!t) return;
+  const box = t.closest("[data-hml-box]");
+  if (!box) return;
+  const hostId = box.dataset.hmlBox;
+  const msg = box.querySelector("[data-hml-msg]");
+  t.disabled = true;
+  if (msg) msg.textContent = "Working…";
+  try {
+    let flash = "Saved.";
+    if (t.dataset.hmlRemove) await hmlCall(hostId, "photo-remove", { id: Number(t.dataset.hmlRemove) });
+    else if (t.dataset.hmlMove !== undefined) {
+      // The Worker takes the full list of photo ids in the new order.
+      const ids = JSON.parse(box.dataset.photoIds || "[]"), i = Number(t.dataset.hmlMove), j = i + Number(t.dataset.dir);
+      if (j < 0 || j >= ids.length) throw new Error("Can't move that photo further");
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      await hmlCall(hostId, "photo-order", { ids });
+    } else if (t.dataset.hmlAct === "about") {
+      // "about" replaces all five fields on every save: always send every field.
+      const f = {}; box.querySelectorAll("[data-hml-f]").forEach(el => f[el.dataset.hmlF] = el.value);
+      await hmlCall(hostId, "about", f);
+    } else if (t.dataset.hmlAct === "approve") {
+      const r = await hmlCall(hostId, "approve");
+      flash = r && r.emailed ? "Approved. The host was emailed." : "Approved (the host was not emailed: no email address or the email failed).";
+    } else if (t.dataset.hmlAct === "changes") {
+      await hmlCall(hostId, "changes", { note: box.querySelector("[data-hml-note]").value });
+      flash = "Change request emailed to the host.";
+    } else if (t.dataset.hmlAct === "send-link") {
+      const r = await hmlCall(hostId, "send-link");
+      flash = r && r.texted ? "Listing link sent by email and text." : "Listing link sent by email.";
+    }
+    await hmlLoad(hostId, flash);
+    // Only the listing statuses: loadHomestayMatching() would re-render the list and close this row.
+    await hmlRefreshStatuses();
+  } catch (e) {
+    if (msg) msg.textContent = "Error: " + e.message;
+    t.disabled = false;
+  }
+});
+
+document.addEventListener("change", async (ev) => {
+  const t = ev.target;
+  const box = t.closest && t.closest("[data-hml-box]");
+  if (!box) return;
+  const hostId = box.dataset.hmlBox;
+  const msg = box.querySelector("[data-hml-msg]");
+  try {
+    if (t.dataset.hmlTag) {
+      if (msg) msg.textContent = "Saving…";
+      await hmlCall(hostId, "photo-tag", { id: Number(t.dataset.hmlTag), tag: t.value });
+      if (msg) msg.textContent = "Saved.";
+      await hmlRefreshStatuses();
+    }
+    if (t.hasAttribute("data-hml-files")) {
+      const tag = box.querySelector("[data-hml-newtag]").value;
+      const files = [...t.files];
+      if (!files.length) return;
+      t.disabled = true;
+      let done = 0;
+      try {
+        for (let i = 0; i < files.length; i++) { if (msg) msg.textContent = `Uploading ${i + 1} of ${files.length}…`; await hmlUpload(hostId, files[i], tag); done++; }
+      } catch (e) {
+        // Reload so the photos that did upload show, then say what stopped the rest.
+        await hmlLoad(hostId, `${done} of ${files.length} photo${files.length === 1 ? "" : "s"} added.`);
+        await hmlRefreshStatuses();
+        const m2 = box.querySelector("[data-hml-msg]");
+        if (m2) m2.textContent = "Error: " + e.message;
+        return;
+      }
+      await hmlLoad(hostId, `${files.length} photo${files.length === 1 ? "" : "s"} added.`);
+      await hmlRefreshStatuses();
+    }
+  } catch (e) { if (msg) msg.textContent = "Error: " + e.message; }
+});
 window.HM = HM;
 </script>
 <script>
