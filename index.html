@@ -201,6 +201,11 @@
   .row-2{display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-bottom:18px}
   .row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px}
   .row-15{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;margin-bottom:18px}
+  /* Homestay matching: a narrower case list, the case panel takes the rest and never overflows the screen. */
+  #hm-queue-pane{grid-template-columns:minmax(280px,2fr) minmax(0,3fr)}
+  #hm-queue-pane > *{min-width:0}
+  #hm-case{overflow-wrap:anywhere}
+  #hm-case .list-row{flex-wrap:wrap}
 
   /* ---------- Table ---------- */
   table{width:100%;border-collapse:collapse;font-size:13px}
@@ -1110,6 +1115,7 @@
   @media (max-width:1100px){
     .kpi-grid{grid-template-columns:repeat(2,1fr)}
     .row-2,.row-15{grid-template-columns:1fr}
+    #hm-queue-pane{grid-template-columns:1fr}
     .row-3{grid-template-columns:1fr}
     .prop-grid{grid-template-columns:1fr 1fr}
   }
@@ -1367,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-options"></script>
+<script src="pms-supabase.js?v=2026-09-30-options3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31118,7 +31124,8 @@ async function hmWorker(path, body){
 // In-page confirmation box (never window.alert/confirm). lines: strings, or { text, select: true } for
 // copyable text (a link). buttons: [{ label, primary, value, onClick }]. Resolves with the pressed
 // button's value (its label if none), or null on Escape.
-function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }] } = {}){
+// With `input` ({ label, placeholder }), a text box is shown and the Promise resolves to { value, text } (null on Escape).
+function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }], input = null } = {}){
   return new Promise(resolve => {
     const prevFocus = document.activeElement;
     const overlay = document.createElement("div");
@@ -31144,6 +31151,21 @@ function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }
       } else d.textContent = String(ln);
       box.appendChild(d);
     }
+    let field = null;
+    if (input) {
+      const lab = document.createElement("label");
+      lab.className = "card-sub";
+      lab.style.cssText = "display:block;margin-top:12px";
+      lab.textContent = String(input.label || "");
+      field = document.createElement("textarea");
+      field.className = "form-input";
+      field.rows = 2;
+      field.maxLength = 500;
+      field.placeholder = String(input.placeholder || "");
+      field.style.cssText = "display:block;width:100%;margin-top:4px";
+      lab.appendChild(field);
+      box.appendChild(lab);
+    }
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap";
     let primaryBtn = null;
@@ -31151,7 +31173,7 @@ function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }
       document.removeEventListener("keydown", onKey, true);
       overlay.remove();
       if (prevFocus && prevFocus.isConnected && prevFocus.focus) prevFocus.focus();
-      resolve(v);
+      resolve(field && v !== null ? { value: v, text: field.value } : v);
     };
     const onKey = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); } };
     for (const b of buttons) {
@@ -31172,7 +31194,7 @@ function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }
     overlay.appendChild(box);
     document.body.appendChild(overlay);
     document.addEventListener("keydown", onKey, true);
-    (primaryBtn || row.querySelector("button") || box).focus();
+    (field || primaryBtn || row.querySelector("button") || box).focus();
   });
 }
 // "<name> was emailed at <email>." / the failure fallback / nothing when the Worker didn't say.
@@ -31839,8 +31861,12 @@ document.addEventListener("click", async (ev) => {
       return;
     }
     if (t.dataset.hmOffer === "withdraw") {
-      const reason = prompt("Why withdraw this offer? (optional)");
-      if (reason === null) return;
+      const ans = await hmNotice({ title: "Withdraw this offer?",
+        lines: ["The student can no longer accept it. The host isn't emailed: tell them yourself if needed."],
+        input: { label: "Why? (optional)", placeholder: "e.g. the student found another place" },
+        buttons: [{ label: "Keep the offer", value: "keep" }, { label: "Withdraw offer", value: "withdraw", primary: true }] });
+      if (!ans || ans.value !== "withdraw") return;
+      const reason = ans.text || "";
       t.disabled = true;
       msg("Withdrawing…");
       await hmWorker(`/staff/cases/${c.id}/offer-withdraw`, { reason: reason.trim() || null });
@@ -31848,7 +31874,8 @@ document.addEventListener("click", async (ev) => {
       return await loadHomestayMatching();
     }
     if (t.dataset.hmOffer === "retry") {
-      if (!confirm("Nothing reached n8n. The timer will create the booking within a minute or two. Continue?")) return;
+      if (await hmNotice({ title: "Retry the booking?", lines: ["Nothing reached n8n. The timer will create the booking within a minute or two."],
+        buttons: [{ label: "Cancel", value: "no" }, { label: "Retry booking", value: "yes", primary: true }] }) !== "yes") return;
       t.disabled = true;
       msg("Queuing the booking…");
       await hmWorker(`/staff/cases/${c.id}/booking-retry`, {}); // answers {ok, state: "pending"}: it only re-arms
@@ -32105,7 +32132,8 @@ document.addEventListener("submit", async (ev) => {
   const el = document.getElementById("hm-msg");
   if (!c) return;
   const ref = ev.target.booking_ref.value.trim().toUpperCase();
-  if (!confirm(`Only record a booking you have found in Homestay bookings. Record ${ref} and confirm the case?`)) return;
+  if (await hmNotice({ title: `Record ${ref}?`, lines: ["Only record a booking you have found in Homestay bookings. This confirms the case."],
+    buttons: [{ label: "Cancel", value: "no" }, { label: "Record booking", value: "yes", primary: true }] }) !== "yes") return;
   const btn = ev.target.querySelector("button");
   if (btn) btn.disabled = true;
   try {
