@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-29-nominstay2"></script>
+<script src="pms-supabase.js?v=2026-09-30-match"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3325,6 +3325,8 @@ hello@vanmates.com · vanmates.com</textarea>
         .hm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
         .hm-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
         @media (max-width:700px){.hm-grid{grid-template-columns:1fr}}
+        [data-hml-box] .btn{border:1px solid var(--line)}
+        [data-hml-box] .btn:disabled{opacity:.5;cursor:not-allowed}
       </style>
       <div class="card card-pad" style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn hm-tab" data-hm-tab="queue">Queue</button>
@@ -30994,8 +30996,10 @@ async function loadHomestayMatching(){
   }
   HM.loading = false;
   hmRenderQueue();
-  if (HM.selected) hmOpenCase(HM.selected);
+  // Awaited (after the profiles render) so a caller can act on the re-rendered case, e.g. Match → Build offer.
+  const opening = HM.selected ? hmOpenCase(HM.selected) : null;
   hmRenderProfiles();
+  if (opening) await opening.catch(e => console.warn("hmOpenCase", e));
 }
 
 // Loads hosts' rooms (an n8n execution) on first need only — opening the
@@ -31129,6 +31133,16 @@ async function hmOpenCase(id){
   const verifiedInvs = cur && ["sent", "accepted"].includes(cur.status) ? [] : invs.filter(i => hmCanBuildOffer(c, i));
   const box = cur ? hmCreateBox(cur, nowMs) : null;
   const chipOf = s => HM_OFFER_STATUS[s] || [s, "grey"];
+  // "Match with a host": the one-button path (fit list → Match → offer builder). Hidden while an offer is out
+  // or accepted, and when offers could not be read (we can't tell then).
+  const matchCard = HM_RESPONDABLE.includes(c.status) && !of.error && !offers.some(o => ["sent", "accepted"].includes(o.status))
+    ? `<div data-hm-match-case="${hmEsc(c.id)}" style="margin-top:12px;padding:12px;border:2px solid var(--line);border-radius:10px">
+      <div class="card-title">Match with a host</div>
+      <div class="card-sub">See which hosts fit this student, pick a room and press Match. Then check the price and send the offer.</div>
+      <button class="btn btn-primary" type="button" data-hm-fit-open style="margin-top:8px">Match with a host</button>
+      <div class="card-sub" data-hm-fit-msg style="margin-top:6px"></div>
+      <div data-hm-fit-body></div>
+    </div>` : "";
   const offerSection = `
     <div class="card-title" style="margin-top:16px">Offer</div>
     ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
@@ -31160,6 +31174,7 @@ async function hmOpenCase(id){
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(c.status_reason) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
+    ${matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
@@ -31264,6 +31279,7 @@ document.addEventListener("click", async (ev) => {
       document.querySelectorAll(".hm-tab").forEach(b => b.classList.toggle("btn-ghost", b !== t));
       document.getElementById("hm-queue-pane").style.display = t.dataset.hmTab === "queue" ? "" : "none";
       document.getElementById("hm-profiles-pane").style.display = t.dataset.hmTab === "profiles" ? "" : "none";
+      if (t.dataset.hmTab === "profiles") hmReadyEnsureRooms();
       return;
     }
     if (t.dataset.hmSaveProfile) return await hmSaveProfile(t.dataset.hmSaveProfile);
@@ -31454,6 +31470,103 @@ document.addEventListener("submit", async (ev) => {
   }
 });
 
+/* ---- Match with a host (case page). The Worker's /fit lists who fits and why the rest don't; Match records a
+   "can host" answer (the phone-answer route) and then opens the existing offer builder for that host. ---- */
+function hmFitRoomOptions(hostId, roomIds, c){
+  const ids = (roomIds || []).map(String);
+  const mine = (HM.rooms || []).filter(r => String(r.host_id) === String(hostId) && ids.includes(String(r.room_id)));
+  return ids.map(id => {
+    const r = mine.find(x => String(x.room_id) === id);
+    // A room /fit names but rooms-list did not return (or failed to load) is still offered, by id.
+    if (!r) return `<option value="${hmEsc(id)}">${hmEsc(id)}</option>`;
+    const rr = hhResolveRoomRates(r, c && c.meal_plan);
+    return `<option value="${hmEsc(id)}">${hmEsc(r.label || id)} · host paid ${hmEsc(hmMoney(rr.host_weekly_rate))}/wk · student pays ${hmEsc(hmMoney(rr.weekly_rate))}/wk</option>`;
+  }).join("");
+}
+function hmFitHtml(fit, c){
+  const eligible = (fit && fit.eligible) || [], excluded = (fit && fit.excluded) || [];
+  const rows = eligible.map(e => {
+    const hasRooms = (e.room_ids || []).length > 0;
+    return `<div class="list-row" data-hm-fit-host="${hmEsc(e.host_id)}" style="flex-wrap:wrap;gap:8px">
+      <div class="list-main"><div class="list-title">${hmEsc(e.display_name || e.host_id)}</div>
+        <div class="list-sub">${e.weekly_rate != null ? hmEsc(hmMoney(e.weekly_rate)) + "/wk" : ""}${e.score != null ? " · score " + hmEsc(e.score) : ""}${(e.met || []).length ? " · meets " + e.met.map(hmEsc).join(", ") : ""}</div></div>
+      ${hasRooms ? `<select class="form-input" data-hm-fit-room style="max-width:340px">${hmFitRoomOptions(e.host_id, e.room_ids, c)}</select>
+      <button class="btn btn-primary" type="button" data-hm-fit-match="${hmEsc(e.host_id)}">Match</button>`
+        : '<span class="card-sub">No room listed for these meals</span>'}
+    </div>`;
+  }).join("");
+  const why = excluded.map(x => `<div class="list-sub"><b>${hmEsc(x.display_name || x.host_id)}</b>: ${(x.reasons || []).map(hmEsc).join("; ") || "no reason given"}</div>`).join("");
+  return `<div style="margin-top:8px">
+    ${eligible.length ? rows : '<div class="list-title" style="margin:6px 0">No host fits this student right now. The reasons for each host are below.</div>'}
+    ${excluded.length ? `<details ${eligible.length ? "" : "open"} style="margin-top:8px"><summary class="card-sub">Why other hosts don't fit (${hmEsc(excluded.length)})</summary>${why}</details>` : ""}
+    ${fit && fit.computed_at ? `<div class="card-sub" style="margin-top:6px">Checked ${hmEsc(new Date(fit.computed_at).toLocaleString())}</div>` : ""}
+  </div>`;
+}
+async function hmFitOpen(card, caseId){
+  const body = card.querySelector("[data-hm-fit-body]"), msg = card.querySelector("[data-hm-fit-msg]");
+  msg.textContent = "Checking which hosts fit…";
+  body.innerHTML = "";
+  let fit;
+  try {
+    [fit] = await Promise.all([hmWorker(`/staff/cases/${encodeURIComponent(caseId)}/fit`), hmEnsureRoomsLoaded()]);
+  } catch (e) {
+    if (card.isConnected) msg.textContent = "Error: " + (e.message || e);
+    return;
+  }
+  if (!card.isConnected || HM.selected !== caseId) return; // the case was re-rendered or another one opened
+  msg.textContent = "";
+  body.innerHTML = hmFitHtml(fit, HM.cases.find(x => x.id === caseId));
+}
+async function hmFitMatch(card, caseId, btn){
+  const msg = card.querySelector("[data-hm-fit-msg]");
+  const row = btn.closest("[data-hm-fit-host]");
+  const hostId = btn.dataset.hmFitMatch;
+  const roomSel = row && row.querySelector("[data-hm-fit-room]");
+  const roomId = roomSel ? roomSel.value : "";
+  if (!roomId) { msg.textContent = "Pick a room first"; return; }
+  const all = [...card.querySelectorAll("[data-hm-fit-match]")];
+  all.forEach(b => b.disabled = true);
+  msg.textContent = "Matching…";
+  let r;
+  try {
+    r = await hmWorker(`/staff/cases/${encodeURIComponent(caseId)}/response`, { host_id: hostId, response: "available", room_id: roomId, reason: "Matched by staff" });
+  } catch (e) {
+    all.forEach(b => b.disabled = false);
+    msg.textContent = "Error: " + (e.message || e);
+    return;
+  }
+  HM.flash = { id: caseId, text: "Matched. Check the price, then press Send offer." };
+  await loadHomestayMatching();
+  if (HM.selected !== caseId) return;
+  // The offer builder for this host's invitation; the existing Build offer handler does the pricing preview.
+  const c = HM.cases.find(x => x.id === caseId);
+  const inv = (HM.invitations || []).find(i => String(i.host_id) === String(hostId) && hmCanBuildOffer(c, i));
+  const build = inv && document.querySelector(`[data-hm-offer-build="${CSS.escape(String(inv.id))}"]`);
+  const preview = document.getElementById("hm-offer-preview");
+  if (!build || !preview) {
+    if (card.isConnected) all.forEach(b => b.disabled = false); // the reload was skipped (another load was running)
+    const m = document.getElementById("hm-msg");
+    if (m) m.textContent = `Matched${r && r.status ? " (case is " + ((HM_STATUS[r.status] || [r.status])[0]) + ")" : ""}, but the offer builder isn't available for this host yet: press Refresh, then Build offer under Offer.`;
+    return;
+  }
+  const note = document.createElement("div");
+  note.className = "list-title";
+  note.style.margin = "6px 0";
+  note.textContent = "Check the price, then press Send offer.";
+  preview.parentNode.insertBefore(note, preview);
+  build.click();
+  note.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hm-fit-open],[data-hm-fit-match]");
+  if (!t) return;
+  const card = t.closest("[data-hm-match-case]");
+  if (!card) return;
+  const caseId = card.dataset.hmMatchCase;
+  if (t.hasAttribute("data-hm-fit-open")) return hmFitOpen(card, caseId);
+  return hmFitMatch(card, caseId, t);
+});
+
 // Stage 3: staff made the booking by hand (Booking Create failed or never answered) and record its ref.
 document.addEventListener("submit", async (ev) => {
   if (ev.target.id !== "hm-record-booking") return;
@@ -31477,6 +31590,71 @@ document.addEventListener("submit", async (ev) => {
   }
 });
 
+/* ---- "Ready to match" on each Host profiles row: payouts, a sellable room, an active profile, an approved listing. ---- */
+function hmHostEmail(h){ return lc((h && (h.host_email || h.email || h.contact_email)) || "").trim(); }
+// The portal host card (Hosts page, homestayHosts) for an n8n host, joined on email like the payout badges.
+function hmHostCard(h){
+  const em = hmHostEmail(h);
+  if (!em) return null;
+  const cards = (typeof homestayHosts !== "undefined" && homestayHosts) || window.homestayHosts || [];
+  return cards.find(x => lc(x && x.email).trim() === em) || null;
+}
+function hmReadiness(h){
+  const p = (HM.profiles || []).find(x => x.host_id === h.host_id);
+  const l = (HM.listings || []).find(x => x.host_id === h.host_id);
+  const room = !HM.roomsLoaded ? null : (HM.rooms || []).some(r => String(r.host_id) === String(h.host_id) && r.bookable === true && !r.archived_at
+    && Math.round(Number(r.weekly_rate) || 0) > 0 && Math.round(Number(r.host_weekly_rate) || 0) > 0);
+  return { payouts: !!h.payable, room, matching: !!(p && p.matching_active),
+    listing: !!(l && (l.status === "approved" || l.approved)) };
+}
+function hmReadyChips(h){
+  const r = hmReadiness(h);
+  const chip = (ok, label, why) => `<span class="badge ${ok === true ? "badge-green" : ok === null ? "badge-grey" : "badge-amber"}" title="${hmEsc(why)}"><span class="dot"></span>${hmEsc(label)}</span>`;
+  const ready = r.payouts && r.room === true && r.matching && r.listing;
+  return (ready ? '<span class="badge badge-green"><span class="dot"></span>Ready to match</span> ' : "")
+    + [chip(r.payouts, "Payouts", r.payouts ? "Stripe payouts set up" : "Stripe payouts not set up"),
+       chip(r.room, "Room", r.room === null ? (HM.roomsLoading ? "Loading rooms…" : "Rooms not loaded") : r.room ? "Has a bookable room with both prices" : "No bookable room with student and host prices"),
+       chip(r.matching, "Matching", r.matching ? "Active for matching" : "Not active for matching"),
+       chip(r.listing, "Listing", r.listing ? "Listing approved" : "Listing not approved")].join(" ");
+}
+function hmReadyList(h){
+  const r = hmReadiness(h);
+  if (r.payouts && r.room === true && r.matching && r.listing) return '<div class="card-sub"><b>Ready to match.</b> This host can be shortlisted and matched.</div>';
+  const card = hmHostCard(h);
+  const items = [];
+  if (!r.payouts) items.push("<b>Payouts:</b> finish the host's Stripe payout setup.");
+  if (r.room === null) items.push("<b>Room:</b> " + (HM.roomsLoading ? "checking rooms…" : "rooms could not be loaded; open this tab again to retry."));
+  else if (!r.room) items.push("<b>Room:</b> no bookable room with a student price and a host price. "
+    + (card ? `<button class="btn btn-ghost btn-mini" type="button" data-hm-open-host="${hmEsc(card.id)}">Open host card</button>` : "No host card with this email."));
+  if (!r.matching) items.push("<b>Matching:</b> Tick Active for matching below and Save profile.");
+  if (!r.listing) items.push("<b>Listing:</b> approve it in the Listing section below.");
+  return `<div class="card-sub" style="margin-bottom:4px"><b>Not ready to match yet.</b> To fix:</div>`
+    + items.map(x => `<div class="card-sub" style="margin:2px 0 2px 10px">• ${x}</div>`).join("");
+}
+// Redraws only the readiness bits in place: a full hmRenderProfiles would close open rows and drop typed edits.
+function hmReadyUpdate(hostId){
+  for (const h of (HM.hosts || [])) {
+    if (hostId && h.host_id !== hostId) continue;
+    const k = CSS.escape(String(h.host_id));
+    const chips = document.querySelector(`[data-hm-ready-chips="${k}"]`);
+    if (chips) chips.innerHTML = hmReadyChips(h);
+    const list = document.querySelector(`[data-hm-ready-list="${k}"]`);
+    if (list) list.innerHTML = hmReadyList(h);
+  }
+}
+// rooms-list is an n8n execution: loaded (once, cached) only when the Host profiles tab is shown.
+function hmReadyEnsureRooms(){
+  if (HM.roomsLoaded) return;
+  const p = hmEnsureRoomsLoaded();
+  hmReadyUpdate();
+  p.then(() => hmReadyUpdate());
+}
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hm-open-host]");
+  if (!t || !t.closest("#hm-profiles")) return;
+  if (typeof openHost === "function") openHost(t.dataset.hmOpenHost);
+});
+
 function hmRenderProfiles(){
   const byId = new Map(HM.profiles.map(p => [p.host_id, p]));
   const rows = HM.hosts.filter(h => h.payable);
@@ -31485,9 +31663,13 @@ function hmRenderProfiles(){
   box.innerHTML = rows.map(h => {
     const p = byId.get(h.host_id) || {};
     const k = hmEsc(h.host_id);
+    const card = hmHostCard(h);
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
         <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}</span>
-        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span></summary>
+        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px" data-hm-ready-chips="${k}">${hmReadyChips(h)}</div>
+        ${card && lc(card.name).trim() !== lc(h.display_name).trim() ? `<div class="card-sub">Host card: ${hmEsc(card.name)} · Payout account: ${hmEsc(h.display_name)}</div>` : ""}</summary>
+      <div data-hm-ready-list="${k}" style="margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px">${hmReadyList(h)}</div>
       <div class="hm-grid" data-hm-profile="${k}" style="margin-top:8px">
         <label>City <select class="form-input" name="city"><option value="">—</option>${["vancouver","toronto"].map(x => `<option ${p.city === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label>Area <input class="form-input" name="area" value="${hmEsc(p.area)}"></label>
@@ -31515,6 +31697,8 @@ function hmRenderProfiles(){
     const b = det.querySelector("[data-hml-box]");
     if (det.open && b && !b.dataset.loaded) hmlLoad(b.dataset.hmlBox);
   }));
+  const pane = document.getElementById("hm-profiles-pane");
+  if (pane && pane.style.display !== "none") hmReadyEnsureRooms();
 }
 
 async function hmSaveProfile(hostId){
@@ -31551,6 +31735,7 @@ async function hmSaveProfile(hostId){
     if (isNew) HM.profiles.push(fresh); else Object.assign(prev, fresh);
     const line = document.getElementById("hm-consent-" + hostId);
     if (line) line.textContent = hmSmsConsentText(fresh);
+    hmReadyUpdate(hostId);
   }
 }
 
@@ -31613,6 +31798,7 @@ async function hmlRefreshStatuses(){
   if (error || !data) return;
   HM.listings = data;
   document.querySelectorAll("[data-hml-badge]").forEach(el => { el.innerHTML = hmlBadge(el.dataset.hmlBadge); });
+  hmReadyUpdate();
 }
 
 async function hmlLoad(hostId, flash){
@@ -31652,10 +31838,10 @@ async function hmlLoad(hostId, flash){
     ${problems.length ? `<div class="card-sub">Not ready: ${problems.map(hmEsc).join(" ")}</div>` : ""}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
       <button class="btn btn-ghost" type="button" data-hml-act="about">Save text</button>
-      <button class="btn" type="button" data-hml-act="approve" ${problems.length ? "disabled" : ""}>Approve listing</button>
+      <button class="btn" type="button" data-hml-act="approve" ${problems.length ? `disabled title="${hmEsc("Not ready: " + problems.join(" "))}"` : ""}>Approve listing</button>
       <button class="btn btn-ghost" type="button" data-hml-act="send-link">Send listing link</button>
     </div>
-    <label style="display:block;margin-top:10px">Ask the host for changes <textarea class="form-input" rows="2" data-hml-note></textarea></label>
+    <label style="display:block;width:100%;margin-top:10px">Ask the host for changes <textarea class="form-input" rows="2" data-hml-note style="display:block;width:100%;box-sizing:border-box;margin-top:4px"></textarea></label>
     <button class="btn btn-ghost" type="button" data-hml-act="changes">Send change request</button>
     <span class="card-sub" data-hml-msg></span>`;
   box.dataset.photoIds = JSON.stringify(photos.map(p => p.id));
