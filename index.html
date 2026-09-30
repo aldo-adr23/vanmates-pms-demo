@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-match5"></script>
+<script src="pms-supabase.js?v=2026-09-30-offers"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3331,6 +3331,7 @@ hello@vanmates.com · vanmates.com</textarea>
       <div class="card card-pad" style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn hm-tab" data-hm-tab="queue">Queue</button>
         <button class="btn btn-ghost hm-tab" data-hm-tab="profiles">Host profiles</button>
+        <button class="btn btn-ghost hm-tab" data-hm-tab="offers" id="hm-offers-tab">Offers</button>
         <span style="flex:1"></span>
         <select id="hm-filter" class="form-input" style="max-width:220px">
           <option value="open">All open</option><option value="NEEDS_INFO">Needs info</option>
@@ -3347,6 +3348,18 @@ hello@vanmates.com · vanmates.com</textarea>
         <div class="card-title">Host <em>profiles</em></div>
         <div class="card-sub">What matching knows about each host. Hosts without an active profile are never shortlisted.</div>
         <div id="hm-profiles" style="margin-top:12px"></div>
+      </div>
+      <div id="hm-offers-pane" style="display:none">
+        <div class="card card-pad" style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:8px"><div class="card-title" style="flex:1">Waiting for an <em>answer</em> <span id="hm-offers-waiting-n"></span></div>
+            <button class="btn btn-ghost" type="button" data-hmo-refresh>Refresh</button></div>
+          <div class="card-sub">Offers sent to a student or an agency that have not been answered yet. Soonest expiry first.</div>
+          <div id="hm-offers-waiting" style="margin-top:12px"></div>
+        </div>
+        <div class="card card-pad">
+          <div class="card-title">Recently <em>answered</em> <span class="card-sub">(last 14 days)</span></div>
+          <div id="hm-offers-answered" style="margin-top:12px"></div>
+        </div>
       </div>
     </section>
 
@@ -30869,7 +30882,8 @@ function ahsArrivalText(row, city){
 const HM_WORKER = "https://vanmates-homestay-matching.talatcan.workers.dev";
 // rooms is loaded lazily (n8n executions are precious) — see hmEnsureRoomsLoaded.
 const HM = { cases: [], events: [], profiles: [], hosts: [], rooms: [], roomsLoaded: false, roomsLoading: null,
-  selected: null, filter: "open", openCount: 0, loading: false, flash: null, offers: [], offerDraft: null };
+  selected: null, filter: "open", openCount: 0, loading: false, flash: null, offers: [], offerDraft: null,
+  allOffers: [], allOffersLoading: false };
 const hmEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // Staff moves the Worker allows (canTransition + STAFF_TARGETS); keep in step with it.
@@ -31107,6 +31121,85 @@ function hmRenderQueue(){
     </div>`).join("") : `<div class="card-sub">No cases here.</div>`;
 }
 
+// Offers tab: every offer still waiting for an answer, plus the ones answered in the last 14 days.
+// Loaded only when the tab is opened (or its Refresh is clicked). HM.offers stays the open case's offers.
+function hmShowTab(name){
+  document.querySelectorAll(".hm-tab").forEach(b => b.classList.toggle("btn-ghost", b.dataset.hmTab !== name));
+  document.getElementById("hm-queue-pane").style.display = name === "queue" ? "" : "none";
+  document.getElementById("hm-profiles-pane").style.display = name === "profiles" ? "" : "none";
+  document.getElementById("hm-offers-pane").style.display = name === "offers" ? "" : "none";
+}
+async function hmLoadOffers(){
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb || HM.allOffersLoading) return;
+  HM.allOffersLoading = true;
+  const waitEl = document.getElementById("hm-offers-waiting"), ansEl = document.getElementById("hm-offers-answered");
+  if (!HM.allOffers.length) { waitEl.innerHTML = '<div class="card-sub">Loading…</div>'; ansEl.innerHTML = ""; }
+  try {
+    const since = new Date(Date.now() - 14 * 86400000).toISOString();
+    const r = await sb.from("hm_offers").select("*")
+      .or(`status.eq.sent,and(status.neq.draft,decided_at.gte."${since}")`)
+      .order("sent_at", { ascending: false, nullsFirst: false }).range(0, 199);
+    if (r.error) throw r.error;
+    HM.allOffers = r.data || [];
+    hmRenderOffers();
+  } catch (e) {
+    const m = `<div class="card-sub">Could not load offers: ${hmEsc(e.message || e)}</div>`;
+    waitEl.innerHTML = m; ansEl.innerHTML = "";
+  } finally {
+    HM.allOffersLoading = false;
+  }
+}
+function hmRenderOffers(){
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const all = HM.allOffers || [];
+  const waiting = all.filter(o => o.status === "sent")
+    .sort((a, b) => (Date.parse(a.expires_at) || Infinity) - (Date.parse(b.expires_at) || Infinity));
+  const answered = all.filter(o => o.status !== "sent" && o.status !== "draft")
+    .sort((a, b) => String(b.decided_at || "").localeCompare(String(a.decided_at || "")));
+  const tab = document.getElementById("hm-offers-tab");
+  if (tab) tab.textContent = `Offers (${waiting.length})`;
+  document.getElementById("hm-offers-waiting-n").textContent = `(${waiting.length})`;
+  const caseOf = id => (HM.cases || []).find(c => c.id === id) || {};
+  const hostOf = o => ((HM.hosts || []).find(h => h.host_id === o.host_id) || {}).display_name || o.host_first_name || o.host_id || "Host";
+  const head = o => `${hmEsc(o.case_id)} · ${hmEsc(caseOf(o.case_id).student_name || "No name")}`;
+  const where = o => `${hmEsc(hostOf(o))} · ${hmEsc(o.room_label || "room")}${o.area ? " · " + hmEsc(o.area) : ""}`;
+  const to = o => `${o.recipient === "partner" ? "Agency" : "Student"} ${hmEsc(o.recipient_email || "(no email)")}`;
+  const price = o => `student pays ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · host gets ${hmEsc(hmMoney(o.host_weekly_cents))}/wk`;
+  document.getElementById("hm-offers-waiting").innerHTML = waiting.length ? waiting.map(o => {
+    const exp = Date.parse(o.expires_at);
+    const left = exp - now;
+    const expText = !Number.isFinite(exp) ? "no expiry"
+      : left <= 0 ? "expired, closing soon" : `expires in ${hmElapsed(nowIso, exp)}`;
+    const badge = Number.isFinite(exp) && left <= 12 * 3600000
+      ? `<span class="badge badge-amber">${hmEsc(expText)}</span>` : `<span class="badge badge-blue">${hmEsc(expText)}</span>`;
+    return `<div class="list-row" style="cursor:pointer" data-hmo-case="${hmEsc(o.case_id)}">
+      <div class="list-main">
+        <div class="list-title">${head(o)}</div>
+        <div class="list-sub">${where(o)} · ${price(o)}</div>
+        <div class="list-sub">Sent to ${to(o)}${o.sent_at ? ` · sent ${hmEsc(hmElapsed(o.sent_at, now))} ago` : ""}</div>
+      </div>${badge}
+    </div>`;
+  }).join("") : '<div class="card-sub">No offers waiting for an answer.</div>';
+  document.getElementById("hm-offers-answered").innerHTML = answered.length ? answered.map(o => {
+    const s = HM_OFFER_STATUS[o.status] || [o.status, "grey"];
+    let booking = "";
+    if (o.status === "accepted") {
+      booking = o.booking_ref ? ` · booking ${hmEsc(o.booking_ref)}`
+        : o.create_state === "failed" ? ' · <span class="badge badge-red">booking failed</span>'
+        : o.create_state === "creating" ? " · booking being created" : "";
+    }
+    return `<div class="list-row" style="cursor:pointer" data-hmo-case="${hmEsc(o.case_id)}">
+      <div class="list-main">
+        <div class="list-title">${head(o)}</div>
+        <div class="list-sub">${where(o)} · ${price(o)}</div>
+        <div class="list-sub">${to(o)}${o.decided_at ? ` · ${hmEsc(hmElapsed(o.decided_at, now))} ago (${hmEsc(new Date(o.decided_at).toLocaleString())})` : ""}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}${booking}</div>
+      </div><span class="badge badge-${hmEsc(s[1])}">${hmEsc(s[0])}</span>
+    </div>`;
+  }).join("") : '<div class="card-sub">Nothing answered in the last 14 days.</div>';
+}
+
 // Stage 3: the offer box. Prices come from the Worker (dry_run preview, then hm_offers rows); the
 // portal only formats them (HM-MATCH-CORE hmOfferRows / hmCreateBox).
 function hmOfferRowsHtml(o){
@@ -31341,18 +31434,25 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match]");
+  const t = ev.target.closest("[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
   try {
     if (t.dataset.hmCase) return hmOpenCase(t.dataset.hmCase);
+    if (t.hasAttribute("data-hmo-refresh")) return hmLoadOffers();
+    if (t.dataset.hmoCase) {
+      hmShowTab("queue");
+      await hmOpenCase(t.dataset.hmoCase);
+      const box = document.getElementById("hm-case");
+      if (box) box.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     if (t.id === "hm-refresh") return loadHomestayMatching();
     if (t.dataset.hmTab) {
-      document.querySelectorAll(".hm-tab").forEach(b => b.classList.toggle("btn-ghost", b !== t));
-      document.getElementById("hm-queue-pane").style.display = t.dataset.hmTab === "queue" ? "" : "none";
-      document.getElementById("hm-profiles-pane").style.display = t.dataset.hmTab === "profiles" ? "" : "none";
+      hmShowTab(t.dataset.hmTab);
       if (t.dataset.hmTab === "profiles") hmReadyEnsureRooms();
+      if (t.dataset.hmTab === "offers") hmLoadOffers();
       return;
     }
     if (t.dataset.hmSaveProfile) return await hmSaveProfile(t.dataset.hmSaveProfile);
