@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-flow"></script>
+<script src="pms-supabase.js?v=2026-09-30-flow2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31124,6 +31124,12 @@ async function hmWorker(path, body){
 // In-page confirmation box (never window.alert/confirm). lines: strings, or { text, select: true } for
 // copyable text (a link). buttons: [{ label, primary, value, onClick }]. Resolves with the pressed
 // button's value (its label if none), or null on Escape.
+// "Fri 2 Oct, 8:29 a.m." for deadlines and offer times in Homestay matching.
+function hmWhen(iso){
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleString("en-CA", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
 // With `input` ({ label, placeholder }), a text box is shown and the Promise resolves to { value, text } (null on Escape).
 function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }], input = null } = {}){
   return new Promise(resolve => {
@@ -31400,7 +31406,7 @@ function hmOfferPreviewHtml(p){
   return `<div class="list-row" style="display:block;border:1px dashed var(--line);padding:8px;border-radius:8px">
     <div class="list-title">Preview: ${hmEsc(p.host_first_name)} · ${hmEsc(p.room_label)}${p.area ? " · " + hmEsc(p.area) : ""}</div>
     <div class="list-sub">To ${p.recipient === "partner" ? "the agency" : "the student"} (${hmEsc(p.recipient_email || "no email: partner app only")})${p.billing_plan ? " · " + hmEsc(p.billing_plan) : ""}
-      · answer by ${hmEsc(new Date(p.expires_at).toLocaleString())} · host gets ${hmEsc(hmMoney(p.host_weekly_cents))}/wk · Vanmates keeps ${hmEsc(hmMoney(p.margin_cents))}/wk</div>
+      · answer by ${hmEsc(hmWhen(p.expires_at))} · host gets ${hmEsc(hmMoney(p.host_weekly_cents))}/wk · Vanmates keeps ${hmEsc(hmMoney(p.margin_cents))}/wk</div>
     ${hmOfferRowsHtml(p)}
     <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
       <label class="card-sub">Student's weekly price $ <input class="form-input" id="hm-offer-rate" inputmode="decimal" style="width:110px" value="${hmEsc((p.weekly_rate_cents / 100).toFixed(2))}"></label>
@@ -31416,7 +31422,7 @@ function hmOptionsPreviewHtml(d){
   const exp = new Date(d.expires_at || first.expires_at);
   return `<div class="list-row" style="display:block;border:1px dashed var(--line);padding:8px;border-radius:8px" data-hm-optset-preview>
     <div class="list-title">Preview: one offer with ${hmEsc(n)} homes</div>
-    <div class="list-sub">To the student (${hmEsc(first.recipient_email || "no email")})${isNaN(exp) ? "" : " · answer by " + hmEsc(exp.toLocaleString())}
+    <div class="list-sub">To the student (${hmEsc(first.recipient_email || "no email")})${isNaN(exp) ? "" : " · answer by " + hmEsc(hmWhen(exp))}
       · the student picks one home; the others close then</div>
     ${d.previews.map(p => `<div style="margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px">
       <div class="list-title">${hmEsc(hostOf(p))} · ${hmEsc(p.room_label || "room")}${p.area ? " · " + hmEsc(p.area) : ""}</div>
@@ -31573,7 +31579,7 @@ async function hmOpenCase(id){
       <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}
         <span class="badge badge-${hmEsc(chipOf(o.status)[1])}">${hmEsc(chipOf(o.status)[0])}</span></div>
       <div class="list-sub">To ${o.recipient === "partner" ? "the agency" : "the student"}${o.recipient_email ? " (" + hmEsc(o.recipient_email) + ")" : ""}${o.billing_plan ? " · " + hmEsc(o.billing_plan) : ""}
-        · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · answer by ${hmEsc(new Date(o.expires_at).toLocaleString())}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
+        · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · answer by ${hmEsc(hmWhen(o.expires_at))}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
       ${hmOfferRowsHtml(o)}
       ${o.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
       ${boxHtml(box)}
@@ -31586,7 +31592,7 @@ async function hmOpenCase(id){
     const first = g[0];
     return `<div class="list-row" style="display:block" data-hm-offer-group="${hmEsc(first.group_id)}">
       <div class="list-title">Offer with ${hmEsc(g.length)} homes <span class="badge badge-${hmEsc(gs[1])}">${hmEsc(gs[0])}</span></div>
-      <div class="list-sub">To the student${first.recipient_email ? " (" + hmEsc(first.recipient_email) + ")" : ""}${isNaN(exp) ? "" : " · expires " + hmEsc(exp.toLocaleString())} · the student picks one home</div>
+      <div class="list-sub">To the student${first.recipient_email ? " (" + hmEsc(first.recipient_email) + ")" : ""}${isNaN(exp) ? "" : " · expires " + hmEsc(hmWhen(exp))} · the student picks one home</div>
       ${g.map(o => `<div style="margin-top:6px;padding:6px 8px;border:1px solid ${o.status === "accepted" ? "var(--ink)" : "var(--line)"};border-radius:8px">
         <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}${o.area ? " · " + hmEsc(o.area) : ""}
           <span class="badge badge-${hmEsc(optChipOf(o.status)[1])}">${hmEsc(optChipOf(o.status)[0])}</span></div>
@@ -31600,10 +31606,10 @@ async function hmOpenCase(id){
   const earlier = readyForOffer ? offerGroups : offerGroups.slice(1);
   const earlierHtml = !earlier.length ? "" : `<details style="margin-top:8px"><summary class="card-sub">Earlier offers (${hmEsc(earlier.length)})</summary>
       ${earlier.map(g => g[0].group_id
-        ? `<div class="list-sub">Offer with ${hmEsc(g.length)} homes · ${hmEsc(chipOf(hmGroupStatus(g))[0])} · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}
+        ? `<div class="list-sub">Offer with ${hmEsc(g.length)} homes · ${hmEsc(chipOf(hmGroupStatus(g))[0])} · ${hmEsc(hmWhen(g[0].expires_at))}
           · ${g.map(o => `${hmEsc(o.host_first_name || nameOf(o.host_id))} ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk (${hmEsc(optChipOf(o.status)[0])})`).join(", ")}</div>`
         : `<div class="list-sub">#${hmEsc(g[0].id)} · ${hmEsc(g[0].host_first_name || nameOf(g[0].host_id))} · ${hmEsc(chipOf(g[0].status)[0])} · ${hmEsc(hmMoney(g[0].weekly_rate_cents))}/wk
-        · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}${g[0].decided_reason ? " · " + hmEsc(g[0].decided_reason) : ""}</div>`).join("")}</details>`;
+        · ${hmEsc(hmWhen(g[0].expires_at))}${g[0].decided_reason ? " · " + hmEsc(g[0].decided_reason) : ""}</div>`).join("")}</details>`;
   // The matched hosts: each with Include (multi-home), its own offer, and Undo match.
   const matchedRows = verifiedInvs.map((i, k) => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
       <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div>
@@ -31632,7 +31638,7 @@ async function hmOpenCase(id){
       <div class="card-sub">${canOptions
         ? `${hmEsc(verifiedInvs.length)} hosts can take this student. Press ${hmEsc(hmOptSetLabel(preTicked, verifiedInvs.length))}, check the prices, then send.`
         : "A host can take this student. Press Build offer, check the price, then Send offer."}</div>
-      ${canOptions ? '<div class="list-title" style="margin-top:8px">Tick the homes to send together. The student sees them all on one page and picks one.</div>' : ""}
+      ${canOptions ? '<div class="card-sub" style="margin-top:4px">The student sees all ticked homes on one page and picks one. Untick a home to leave it out.</div>' : ""}
       ${matchedRows}
       ${builderHtml}
       ${matchAnother}
@@ -31685,6 +31691,11 @@ async function hmOpenCase(id){
     <div class="card-title" style="margin-top:16px">Timeline</div>
     ${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
     ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`;
+  // A case that still needs a host: show who fits straight away (one /fit call), instead of making staff press a button first.
+  if (!readyForOffer && matchCard && ["SHORTLISTING", "MANUAL_REVIEW"].includes(c.status)) {
+    const openBtn = document.querySelector("#hm-case [data-hm-match-case] [data-hm-fit-open]");
+    if (openBtn) setTimeout(() => { if (openBtn.isConnected) openBtn.click(); }, 0);
+  }
 }
 
 // Reads named fields straight off the DOM (not via FormData) because matching
@@ -31806,7 +31817,7 @@ document.addEventListener("click", async (ev) => {
       await loadHomestayMatching();
       const who = c.source === "partner" ? `the agency for ${c.student_name || "the student"}` : (c.student_name || "the student");
       const exp = r && r.expires_at ? new Date(r.expires_at) : null;
-      const expTxt = exp && !isNaN(exp) ? exp.toLocaleString() : "";
+      const expTxt = exp && !isNaN(exp) ? hmWhen(exp) : "";
       hmNotice({ title: r.emailed ? "Offer sent" : "Offer created, email failed",
         lines: r.emailed
           ? [`Offer sent to ${who}${r.recipient_email ? " (" + r.recipient_email + ")" : ""}.${expTxt ? " It expires " + expTxt + "." : ""}`,
@@ -31843,6 +31854,7 @@ document.addEventListener("click", async (ev) => {
       HM.optionDraft = { case_id: c.id, expires_at: r.expires_at, previews,
         items: previews.map(p => ({ invitation_id: Number(p.invitation_id), weekly_rate_cents: p.weekly_rate_cents, total_due_now_cents: p.total_due_now_cents })) };
       document.getElementById("hm-offer-preview").innerHTML = hmOptionsPreviewHtml(HM.optionDraft);
+      document.getElementById("hm-offer-preview").scrollIntoView({ behavior: "smooth", block: "start" });
       msg("");
       return;
     }
@@ -31867,7 +31879,7 @@ document.addEventListener("click", async (ev) => {
       HM.optionDraft = null;
       const to = r.recipient_email || email;
       const exp = r && r.expires_at ? new Date(r.expires_at) : null;
-      const expTxt = exp && !isNaN(exp) ? exp.toLocaleString() : "";
+      const expTxt = exp && !isNaN(exp) ? hmWhen(exp) : "";
       HM.flash = { id: c.id, text: r.emailed ? `Offer with ${n} homes sent.` : `Offer with ${n} homes saved, but the email did not go out. Send this link yourself: ${r.link || "(no link: check the timeline)"}` };
       await loadHomestayMatching();
       hmNotice({ title: r.emailed ? "Offer sent" : "Offer created, email failed",
@@ -32084,11 +32096,13 @@ function hmFitHtml(fit, c){
     </div>`;
   }).join("");
   const why = excluded.map(x => `<div class="list-sub"><b>${hmEsc(x.display_name || x.host_id)}</b>: ${(x.reasons || []).map(hmEsc).join("; ") || "no reason given"}</div>`).join("");
-  return `<div style="margin-top:8px">
-    ${eligible.length ? rows : '<div class="list-title" style="margin:6px 0">No host fits this student right now. The reasons for each host are below.</div>'}
-    ${pickable ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+  const pickBar = pickable ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
       <button class="btn btn-primary" type="button" data-hm-fit-match-selected disabled>Match selected (0)</button>
-      <span class="card-sub">Tick hosts to match them all at once. Each host is emailed.</span></div>` : ""}
+      <span class="card-sub">Tick hosts to match them all at once. Each host is emailed.</span></div>` : "";
+  return `<div style="margin-top:8px">
+    ${pickBar}
+    ${eligible.length ? rows : '<div class="list-title" style="margin:6px 0">No host fits this student right now. The reasons for each host are below.</div>'}
+    ${pickBar}
     ${excluded.length ? `<details ${eligible.length ? "" : "open"} style="margin-top:8px"><summary class="card-sub">Why other hosts don't fit (${hmEsc(excluded.length)})</summary>${why}</details>` : ""}
     ${fit && fit.computed_at ? `<div class="card-sub" style="margin-top:6px">Checked ${hmEsc(new Date(fit.computed_at).toLocaleString())}</div>` : ""}
   </div>`;
@@ -32145,7 +32159,7 @@ async function hmFitMatch(card, caseId, btn){
   const buildable = (HM.invitations || []).filter(i => hmCanBuildOffer(c, i));
   const several = buildable.length >= 2;
   const nextLine = !several ? "Next: press Build offer, check the price, then Send offer. The student is emailed when you send the offer."
-    : c && c.source === "direct" ? "Next: tick the homes to send together and send them as one offer. The student is emailed when you send the offer."
+    : c && c.source === "direct" ? "Next: press Send all homes as one offer (they are already ticked). The student is emailed when you send it."
     : "Next: press Build offer on the home to offer, check the price, then Send offer.";
   const emailLine = hmHostEmailLine(r, hostName);
   const showMatched = () => hmNotice({ title: "Matched",
@@ -32213,14 +32227,13 @@ async function hmFitMatchSelected(card, caseId){
   hmNotice({ title: `Matched ${done.length} host${done.length === 1 ? "" : "s"}`,
     lines: [`Matched ${done.length} host${done.length === 1 ? "" : "s"}: ${done.map(d => `${d.hostName} (${emailBit(d)})`).join(", ")}.`,
       ...failed.map(f => `Could not match ${f.hostName}: ${f.err}`),
-      several && c && c.source === "direct" ? "Next: tick the homes to send together and send them as one offer."
+      several && c && c.source === "direct" ? "Next: press Send all homes as one offer (they are already ticked)."
         : "Next: press Build offer, check the price, then Send offer."],
     buttons: [{ label: "OK", primary: true }] });
 }
 function hmFitPickUpdate(card){
   const n = card.querySelectorAll("[data-hm-fit-pick]:checked").length;
-  const b = card.querySelector("[data-hm-fit-match-selected]");
-  if (b) { b.disabled = n === 0; b.textContent = `Match selected (${n})`; }
+  card.querySelectorAll("[data-hm-fit-match-selected]").forEach(b => { b.disabled = n === 0; b.textContent = `Match selected (${n})`; });
 }
 document.addEventListener("click", (ev) => {
   const t = ev.target.closest && ev.target.closest("[data-hm-fit-open],[data-hm-fit-match],[data-hm-fit-match-selected]");
