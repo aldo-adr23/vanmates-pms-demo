@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-flow4"></script>
+<script src="pms-supabase.js?v=2026-09-30-flow5"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31743,12 +31743,12 @@ async function hmOpenCase(id){
           <button class="btn btn-ghost" type="submit">Record booking made by hand</button></form>` : ""}
       </div>`;
   const singleHtml = o => `<div class="list-row" style="display:block">
-      <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}
-        <span class="badge badge-${hmEsc(chipOf(o.status)[1])}">${hmEsc(chipOf(o.status)[0])}</span></div>
+      <div class="list-title" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}
+        <span class="badge badge-${hmEsc(chipOf(o.status)[1])}">${hmEsc(chipOf(o.status)[0])}</span>
+        ${o.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-left:auto">Withdraw offer</button>' : ""}</div>
       <div class="list-sub">To ${o.recipient === "partner" ? "the agency" : "the student"}${o.recipient_email ? " (" + hmEsc(o.recipient_email) + ")" : ""}${o.billing_plan ? " · " + hmEsc(o.billing_plan) : ""}
         · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · answer by ${hmEsc(hmWhen(o.expires_at))}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
       ${hmOfferRowsHtml(o)}
-      ${o.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
       ${boxHtml(box)}
     </div>`;
   // One block for a multi-host offer: every home with its own chip; one Withdraw (the Worker closes every
@@ -31758,7 +31758,8 @@ async function hmOpenCase(id){
     const exp = new Date((g.find(o => o.status === "sent") || g[0]).expires_at);
     const first = g[0];
     return `<div class="list-row" style="display:block" data-hm-offer-group="${hmEsc(first.group_id)}">
-      <div class="list-title">Offer with ${hmEsc(g.length)} homes <span class="badge badge-${hmEsc(gs[1])}">${hmEsc(gs[0])}</span></div>
+      <div class="list-title" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">Offer with ${hmEsc(g.length)} homes <span class="badge badge-${hmEsc(gs[1])}">${hmEsc(gs[0])}</span>
+        ${g.some(o => o.status === "sent") ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-left:auto">Withdraw offer</button>' : ""}</div>
       <div class="list-sub">To the student${first.recipient_email ? " (" + hmEsc(first.recipient_email) + ")" : ""}${isNaN(exp) ? "" : " · expires " + hmEsc(hmWhen(exp))} · the student picks one home</div>
       ${g.map(o => `<div style="margin-top:6px;padding:6px 8px;border:1px solid ${o.status === "accepted" ? "var(--ink)" : "var(--line)"};border-radius:8px">
         <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}${o.area ? " · " + hmEsc(o.area) : ""}
@@ -31766,7 +31767,6 @@ async function hmOpenCase(id){
         <div class="list-sub">student pays ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · host gets ${hmEsc(hmMoney(o.host_weekly_cents))}/wk · due when booking ${hmEsc(hmMoney(o.total_due_now_cents))}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
         ${o.status === "accepted" ? hmOfferRowsHtml(o) + boxHtml(box) : ""}
       </div>`).join("")}
-      ${g.some(o => o.status === "sent") ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
     </div>`;
   };
   // Ready for an offer means nothing is out, so every offer on the case is closed: all of them are "earlier".
@@ -31799,6 +31799,8 @@ async function hmOpenCase(id){
     ${builderHtml}
     ${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
     ${earlierHtml}`;
+  // An offer is out (or accepted): the Offer section moves to the top of the case, with Withdraw on its title row.
+  const offerTop = `<div id="hm-offer-top" style="margin-top:12px;padding:0 12px 12px;border:2px solid var(--line);border-radius:10px">${offerSection}</div>`;
   // Ready: the Next box holds only the matched hosts and the builder; closed offers sit below it, collapsed.
   const nextBox = !readyForOffer ? "" : `<div id="hm-next-offer" style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">
       <div class="card-title">Next: send the offer</div>
@@ -31815,7 +31817,7 @@ async function hmOpenCase(id){
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
-    ${readyForOffer ? nextBox : matchCard}
+    ${readyForOffer ? nextBox : offerOut ? offerTop : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
@@ -31854,7 +31856,7 @@ async function hmOpenCase(id){
     <details style="margin-top:8px"><summary class="card-sub">Excluded hosts (${(sl.excluded || []).length})</summary>
       ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>`}
     ${invitations}
-    ${readyForOffer ? "" : offerSection}
+    ${readyForOffer || offerOut ? "" : offerSection}
     <div class="card-title" style="margin-top:16px">Timeline</div>
     ${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
     ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`;
