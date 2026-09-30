@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-match"></script>
+<script src="pms-supabase.js?v=2026-09-30-match2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31480,18 +31480,23 @@ function hmFitRoomOptions(hostId, roomIds, c){
     // A room /fit names but rooms-list did not return (or failed to load) is still offered, by id.
     if (!r) return `<option value="${hmEsc(id)}">${hmEsc(id)}</option>`;
     const rr = hhResolveRoomRates(r, c && c.meal_plan);
-    return `<option value="${hmEsc(id)}">${hmEsc(r.label || id)} · host paid ${hmEsc(hmMoney(rr.host_weekly_rate))}/wk · student pays ${hmEsc(hmMoney(rr.weekly_rate))}/wk</option>`;
+    return `<option value="${hmEsc(id)}">${hmEsc(r.label || id)}: student ${hmEsc(hmMoney(rr.weekly_rate))}/wk, host gets ${hmEsc(hmMoney(rr.host_weekly_rate))}/wk</option>`;
   }).join("");
 }
 function hmFitHtml(fit, c){
   const eligible = (fit && fit.eligible) || [], excluded = (fit && fit.excluded) || [];
   const rows = eligible.map(e => {
     const hasRooms = (e.room_ids || []).length > 0;
-    return `<div class="list-row" data-hm-fit-host="${hmEsc(e.host_id)}" style="flex-wrap:wrap;gap:8px">
-      <div class="list-main"><div class="list-title">${hmEsc(e.display_name || e.host_id)}</div>
-        <div class="list-sub">${e.weekly_rate != null ? hmEsc(hmMoney(e.weekly_rate)) + "/wk" : ""}${e.score != null ? " · score " + hmEsc(e.score) : ""}${(e.met || []).length ? " · meets " + e.met.map(hmEsc).join(", ") : ""}</div></div>
-      ${hasRooms ? `<select class="form-input" data-hm-fit-room style="max-width:340px">${hmFitRoomOptions(e.host_id, e.room_ids, c)}</select>
-      <button class="btn btn-primary" type="button" data-hm-fit-match="${hmEsc(e.host_id)}">Match</button>`
+    const n = (e.room_ids || []).length;
+    const summary = [n ? `${n} room${n === 1 ? "" : "s"} free for these dates` : "",
+      e.weekly_rate != null ? `from ${hmMoney(e.weekly_rate)}/wk` : "",
+      (e.met || []).length ? "meets " + e.met.join(", ") : ""].filter(Boolean).join(" · ");
+    return `<div data-hm-fit-host="${hmEsc(e.host_id)}" style="display:block;padding:10px 0;border-bottom:1px dashed var(--line)">
+      <div class="list-title">${hmEsc(e.display_name || e.host_id)}</div>
+      <div class="list-sub" style="margin-bottom:6px">${hmEsc(summary)}</div>
+      ${hasRooms ? `<div style="display:flex;gap:8px;align-items:center">
+        <select class="form-input" data-hm-fit-room style="flex:1;min-width:0">${hmFitRoomOptions(e.host_id, e.room_ids, c)}</select>
+        <button class="btn btn-primary" type="button" data-hm-fit-match="${hmEsc(e.host_id)}" style="flex:none">Match</button></div>`
         : '<span class="card-sub">No room listed for these meals</span>'}
     </div>`;
   }).join("");
