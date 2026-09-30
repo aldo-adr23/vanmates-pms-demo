@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-offers"></script>
+<script src="pms-supabase.js?v=2026-09-30-agencylinks3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21211,6 +21211,53 @@ function ptnCommissionLine(a){
   if (a.homestay_commission_cents != null && Number(a.homestay_commission_cents) > 0) parts.push('homestay ' + ptnMoney(Number(a.homestay_commission_cents)).replace(/ CAD$/, ''));
   return parts.length ? 'Commission ' + parts.join(' · ') : '';
 }
+// Room link tag (ruf_ref): the SQL check is ^[a-z0-9_-]{1,40}$; the form lowercases before testing.
+const PTN_REF_RE = /^[a-z0-9_-]{1,40}$/;
+// Vanmates rep + links-only + room-link tag, folded into the same PATCH the billing and
+// commission terms use (one update, not two — see ptnPatchAgencyTerms). Only changed fields
+// are sent; a blank tag leaves the agency's current one (or the server's auto-generated one)
+// alone rather than clearing it.
+function ptnLinksPatch(current, form){
+  current = current || {}; form = form || {};
+  const errors = [], patch = {};
+  const linksOnly = !!form.links_only;
+  if (linksOnly !== !!current.links_only) patch.links_only = linksOnly;
+  const repId = form.rep_id === '' || form.rep_id == null ? null : String(form.rep_id);
+  if (repId !== (current.rep_id == null ? null : String(current.rep_id))) patch.rep_id = repId;
+  const ref = String(form.ruf_ref == null ? '' : form.ruf_ref).trim().toLowerCase();
+  if (!ref) {
+    if (current.ruf_ref) errors.push('Room link tag cannot be removed once set');
+  } else if (!PTN_REF_RE.test(ref)) {
+    errors.push('Room link tag must be 1–40 lowercase letters, digits, _ or -');
+  } else if (ref !== (current.ruf_ref || '')) {
+    patch.ruf_ref = ref;
+  }
+  return errors.length ? { ok: false, errors, patch: {} } : { ok: true, errors, patch };
+}
+// A REF_TAKEN refusal (409) from PATCH /api/staff/billing/agencies/:id, worded for the form;
+// any other refusal is worded by rcvErrorMessage / cmmErrorMessage, as ptnPatchAgencyTerms does.
+function ptnRefErrorMessage(body){
+  return body && body.code === 'REF_TAKEN' ? 'Tag already used by another agency' : '';
+}
+// Rep <option> list for the agency form: "none" first, then reps by name.
+function ptnRepOptionList(reps){
+  return [['', '— none (emails go to hello@) —']].concat(
+    (reps || []).slice().sort((a, b) => String((a && a.name) || '').localeCompare(String((b && b.name) || '')))
+      .map(r => [String(r.id), (r && (r.name || r.email)) || String(r.id)]));
+}
+// The rep's name for the Agencies table; '—' when none or unknown (reps not loaded yet).
+function ptnRepName(reps, repId){
+  if (!repId) return '—';
+  const r = (reps || []).find(x => x && String(x.id) === String(repId));
+  return r ? String(r.name || r.email || repId) : '—';
+}
+// Public logo proxy URL for the Room-link pages (contract: GET https://partners.vanmates.com/
+// brand/<ref>/logo); null once the agency has no logo yet, or no tag.
+function ptnLogoUrl(a){
+  a = a || {};
+  if (!a.logo_path || !a.ruf_ref) return null;
+  return 'https://partners.vanmates.com/brand/' + encodeURIComponent(a.ruf_ref) + '/logo?v=' + (a.logo_version || 0);
+}
 /* PARTNERS-CORE-END */
 /* PARTNER-ONBOARD-CORE-START */
 /* An agency's first user and its next steps. Pure; uses ptnValidateUser from
@@ -21284,7 +21331,7 @@ function ptnNewAgencyStatus(activateNow){ return activateNow ? 'active' : 'pendi
    team_members.role = 'admin'. Cancel goes through partner_cancel_booking, which
    also releases the room and queues the Asana write-back. */
 const PARTNERS_APP = 'https://partners.vanmates.com';
-const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, editUser: null, cancelId: null, filters: { agency: '', city: '', status: '' } };
+const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, editUser: null, cancelId: null, confirmRemoveLogo: null, filters: { agency: '', city: '', status: '' } };
 let ptnData = null, ptnLoading = null, ptnLoadedAt = 0;
 function ptnIsAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
 function ptnActor(){ return (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.email) || null; }
@@ -21401,6 +21448,48 @@ function ptnCommissionOn(){ return !!ptnData && ptnData.agencies.some(a => 'comm
 // The commission models (pct / flat / monthly) exist once the partner app's 2026-09-29b SQL is
 // applied; then every commission field is saved through PATCH /api/staff/billing/agencies/:id.
 function ptnCommissionModelOn(){ return !!ptnData && ptnData.agencies.some(a => 'commission_model' in a); }
+// The room-link columns (ruf_ref, links_only, rep_id, logo_path) exist once the partner
+// app's 2026-09-30 agency-links SQL is applied; then the form's tag/rep/links/logo fields
+// render and save through the same PATCH as the billing and commission terms.
+function ptnLinksOn(){ return !!ptnData && ptnData.agencies.some(a => 'links_only' in a); }
+// Vanmates reps for the rep select (GET /api/staff/sales-reps -> [{id,name,email}]), loaded
+// lazily and cached; a failure just leaves the select at "— none —" rather than breaking the tab.
+let PTN_REPS = null, ptnRepsLoading = null;
+function ptnLoadReps(){
+  if (PTN_REPS || ptnRepsLoading) return ptnRepsLoading;
+  ptnRepsLoading = (async () => {
+    try {
+      const res = await rcvApi('GET', '/api/staff/sales-reps');
+      let data = null; try { data = await res.json(); } catch (_) {}
+      PTN_REPS = res.ok && Array.isArray(data) ? data : [];
+    } catch (e) { console.warn('[partners] sales reps not loaded', e); PTN_REPS = []; }
+    ptnRepsLoading = null;
+    if (PTN_STATE.tab === 'agencies') renderPartners();
+  })();
+  return ptnRepsLoading;
+}
+// Room link: tag, links-only, rep and logo (Account → Your logo on the partner side; staff
+// can only view + remove it here, for abuse cases).
+function ptnLinksFieldsHtml(a){
+  ptnLoadReps();
+  const logoUrl = ptnLogoUrl(a);
+  const removing = a.id && PTN_STATE.confirmRemoveLogo === a.id;
+  return `<strong style="grid-column:1/-1;margin-top:6px">Room link</strong>
+    ${ptnField('ruf_ref', 'Room link tag', a.ruf_ref, ` maxlength="40" style="text-transform:lowercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}
+    <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Vanmates rep
+      <select class="form-input" name="rep_id">${ptnOptions(ptnRepOptionList(PTN_REPS || []), a.rep_id || '')}</select></label>
+    <label style="display:flex;gap:6px;align-items:center;grid-column:1/-1"><input type="checkbox" name="links_only"${a.links_only ? ' checked' : ''}> Links only
+      <span class="name-sub">(hide Book: this agency only shares room links; students pay by card)</span></label>
+    <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(a.name || 'Agency')} logo" style="height:32px;max-width:160px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff">`
+        : '<span class="name-sub">No logo uploaded yet.</span>'}
+      ${logoUrl && a.id ? (removing
+        ? `<span class="name-sub">Remove this agency's logo?</span>
+           <button class="btn btn-ghost btn-mini" type="button" data-ptn-logo-remove-confirm="${esc(a.id)}">Yes, remove</button>
+           <button class="btn btn-ghost btn-mini" type="button" data-ptn-logo-remove-cancel>Cancel</button>`
+        : `<button class="btn btn-ghost btn-mini" type="button" data-ptn-logo-remove="${esc(a.id)}">Remove logo</button>`) : ''}
+    </div>`;
+}
 function ptnCommissionModelHtml(a){
   const model = a.commission_model || 'pct';
   const box = (m, inner) => `<div data-cmm-amount="${m}"${m === model ? '' : ' hidden'}>${inner}</div>`;
@@ -21444,18 +21533,21 @@ function ptnAgencyFormHtml(a){
     ${ptnField('commission_pct', 'Commission (% of co-living rent)', a.commission_pct == null ? '' : String(Number(a.commission_pct)), ' inputmode="decimal" placeholder="Not set"')}
     ${ptnField('homestay_commission', 'Homestay placement commission (CAD)', a.homestay_commission_cents == null ? '' : rcvDollars(a.homestay_commission_cents), ' inputmode="decimal" placeholder="Not set"')}
     <p class="name-sub" style="grid-column:1/-1;margin:0">Deducted on the agency's invoices: the % from each room booking's rent (not deposit, membership or cleaning), the flat amount from the first invoice of each agency homestay (at most the matching fee). Invoices already issued keep the commission they had.</p>` : ''}
+    ${ptnLinksOn() ? ptnLinksFieldsHtml(a) : ''}
     <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save agency</button>
       <button class="btn btn-ghost" type="button" data-ptn-agency-cancel>Close</button> <span class="name-sub" data-ptn-msg></span></div>
   </form>`;
 }
 function ptnAgenciesHtml(){
   const d = ptnData;
+  const linksOn = ptnLinksOn();
+  if (linksOn && !PTN_REPS && !ptnRepsLoading) ptnLoadReps();
   const edit = PTN_STATE.editAgency === 'new' ? {} : (PTN_STATE.editAgency && d.agencies.find(a => a.id === PTN_STATE.editAgency));
   const count = (list, id) => list.filter(x => x.agency_id === id).length;
   return `<div style="margin-bottom:12px"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button></div>
     ${edit ? ptnAgencyFormHtml(edit) : ''}
     ${d.agencies.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th><th>Billing</th><th>Users</th><th>Bookings</th><th></th></tr></thead>
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th><th>Billing</th>${linksOn ? '<th>Rep</th>' : ''}<th>Users</th><th>Bookings</th><th></th></tr></thead>
       <tbody>${d.agencies.map(a => `<tr style="border-top:1px solid var(--line)">
         <td style="padding:8px"><strong>${esc(a.name)}</strong>${a.legal_name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}</td>
         <td>${esc(a.country || '—')}</td>
@@ -21463,6 +21555,7 @@ function ptnAgenciesHtml(){
         <td>${esc(a.billing_email || '—')}</td><td>${esc(a.language)}</td>
         <td>${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}</td>
         <td style="white-space:nowrap">${ptnBillingLine(a)}</td>
+        ${linksOn ? `<td>${esc(ptnRepName(PTN_REPS || [], a.rep_id))}</td>` : ''}
         <td>${count(d.users, a.id)}${count(d.users, a.id) ? '' : ptnNoUsersHtml(a, true)}</td><td>${count(d.bookings, a.id)}</td>
         <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
           <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button></td>
@@ -21587,6 +21680,9 @@ function ptnWire(root){
   on('[data-ptn-agency-form] select[name="commission_model"]', 'change', s => {
     s.form.querySelectorAll('[data-cmm-amount]').forEach(d => { d.hidden = d.dataset.cmmAmount !== s.value; });
   });
+  on('[data-ptn-logo-remove]', 'click', b => { PTN_STATE.confirmRemoveLogo = b.dataset.ptnLogoRemove; renderPartners(); });
+  on('[data-ptn-logo-remove-cancel]', 'click', () => { PTN_STATE.confirmRemoveLogo = null; renderPartners(); });
+  on('[data-ptn-logo-remove-confirm]', 'click', b => ptnRemoveLogo(b.dataset.ptnLogoRemoveConfirm));
   on('[data-ptn-agency-pick]', 'change', s => { PTN_STATE.agencyId = s.value; PTN_STATE.editUser = null; renderPartners(); });
   on('[data-ptn-user-new]', 'click', () => { PTN_STATE.editUser = 'new'; renderPartners(); });
   on('[data-ptn-user-edit]', 'click', b => { PTN_STATE.editUser = b.dataset.ptnUserEdit; renderPartners(); window.scrollTo(0, 0); });
@@ -21633,7 +21729,8 @@ async function ptnSaveAgency(form){
   }
   // Payment terms, credit limit and reference are not written here: the partner app's
   // staff endpoint validates and audits them (PATCH /api/staff/billing/agencies/:id).
-  const current = (id && ptnData.agencies.find(a => a.id === id)) || { payment_terms: 'net15', credit_limit_cents: null, payment_ref: null };
+  const current = (id && ptnData.agencies.find(a => a.id === id))
+    || { payment_terms: 'net15', credit_limit_cents: null, payment_ref: null, links_only: false, rep_id: null, ruf_ref: null };
   const bill = el.payment_terms
     ? rcvAgencyBillingPatch(current, { payment_terms: el.payment_terms.value, credit_limit: el.credit_limit.value, payment_ref: el.payment_ref.value })
     : { ok: true, errors: [], patch: {} };
@@ -21648,7 +21745,12 @@ async function ptnSaveAgency(form){
     : ptnCommissionOn() && el.commission_pct
     ? ptnCommissionFields({ commission_pct: el.commission_pct.value, homestay_commission: el.homestay_commission.value })
     : { ok: true, errors: [], fields: {} };
-  if (!r.ok || !bill.ok || !comm.ok) { msg.textContent = r.errors.concat(bill.errors, comm.errors).join('. '); return; }
+  // Vanmates rep, links-only and the room link tag go through the same PATCH too.
+  const links = ptnLinksOn() && el.rep_id
+    ? ptnLinksPatch(current, { links_only: el.links_only.checked, rep_id: el.rep_id.value, ruf_ref: el.ruf_ref.value })
+    : { ok: true, errors: [], patch: {} };
+  if (links.ok && Object.keys(links.patch).length) Object.assign(bill.patch, links.patch);
+  if (!r.ok || !bill.ok || !comm.ok || !links.ok) { msg.textContent = r.errors.concat(bill.errors, comm.errors, links.errors).join('. '); return; }
   if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
   const row = Object.assign({}, r.row, comm.fields, { updated_at: new Date().toISOString(), updated_by: ptnActor() });
   msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
@@ -21690,14 +21792,29 @@ async function ptnSaveAgency(form){
   if (!id) PTN_STATE.tab = 'users';
   await ptnReload();
 }
-// PATCH the agency's billing + commission terms; a refusal about commission fields is worded
-// per field (cmmErrorMessage), anything else as the other billing refusals are.
+// PATCH the agency's billing + commission + room-link terms; a refusal about the tag is
+// "Tag already used…" (409 REF_TAKEN), one about commission fields is worded per field
+// (cmmErrorMessage), anything else as the other billing refusals are.
 async function ptnPatchAgencyTerms(id, patch){
   const res = await rcvApi('PATCH', '/api/staff/billing/agencies/' + encodeURIComponent(id), patch);
   let data = null; try { data = await res.json(); } catch (_) {}
   if (res.ok && data && data.ok !== false) return data;
+  const refMsg = ptnRefErrorMessage(data);
+  if (refMsg) throw new Error(refMsg);
   const errs = data && data.code === 'INVALID' && data.errors && typeof data.errors === 'object' ? Object.keys(data.errors) : [];
   throw new Error(errs.length && errs.every(k => k in CMM_FIELD_LABELS) ? cmmErrorMessage(res.status, data) : rcvErrorMessage(res.status, data));
+}
+// DELETE the agency's logo (staff abuse-removal, no confirm() — the form shows its own
+// inline confirmation before this is called).
+async function ptnRemoveLogo(id){
+  try {
+    const res = await rcvApi('DELETE', '/api/staff/billing/agencies/' + encodeURIComponent(id) + '/logo', {});
+    let data = null; try { data = await res.json(); } catch (_) {}
+    if (!res.ok || (data && data.ok === false)) throw new Error(rcvErrorMessage(res.status, data));
+    PTN_STATE.confirmRemoveLogo = null;
+    showToast('Logo removed');
+    await ptnReload();
+  } catch (e) { showToast('Could not remove the logo: ' + (e.message || e)); }
 }
 async function ptnCreateFirstUser(btn){
   const sb = window.vmDb && window.vmDb.sb;
