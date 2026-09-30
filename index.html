@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-match2"></script>
+<script src="pms-supabase.js?v=2026-09-30-match3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31143,6 +31143,8 @@ async function hmOpenCase(id){
       <div class="card-sub" data-hm-fit-msg style="margin-top:6px"></div>
       <div data-hm-fit-body></div>
     </div>` : "";
+  // A host said yes (or was matched) and no offer is out: the offer builder moves to the top of the case.
+  const readyForOffer = verifiedInvs.length > 0 && !of.error;
   const offerSection = `
     <div class="card-title" style="margin-top:16px">Offer</div>
     ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
@@ -31172,9 +31174,12 @@ async function hmOpenCase(id){
         · ${hmEsc(new Date(o.expires_at).toLocaleString())}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>`).join("")}</details>` : ""}`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
-      <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(c.status_reason) : ""}</div></div></div>
+      <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
-    ${matchCard}
+    ${readyForOffer
+      ? `<div style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">${offerSection.replace('<div class="card-title" style="margin-top:16px">Offer</div>', '<div class="card-title">Next: send the offer</div><div class="card-sub">A host can take this student. Press Build offer, check the price, then Send offer.</div>')}</div>
+        ${matchCard ? `<details style="margin-top:8px"><summary class="card-sub">Match a different host</summary>${matchCard}</details>` : ""}`
+      : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
@@ -31204,16 +31209,16 @@ async function hmOpenCase(id){
       </div>
       <div id="hm-msg" class="card-sub" style="grid-column:1/-1">${hmEsc(flash)}</div>
     </form>
-    <div class="card-title" style="margin-top:16px">Shortlist <span class="card-sub">${sl.computed_at ? "computed " + hmElapsed(sl.computed_at, Date.now()) + " ago" : "not computed"}</span></div>
+    ${!sl.computed_at ? "" : `<div class="card-title" style="margin-top:16px">Shortlist <span class="card-sub">${sl.computed_at ? "computed " + hmElapsed(sl.computed_at, Date.now()) + " ago" : "not computed"}</span></div>
     <div id="hm-shortlist">${ordered.map((e, i) => `
       <div class="list-row"><div class="list-main"><div class="list-title">${i + 1}. ${hmEsc(e.display_name)}</div>
         <div class="list-sub">$${(e.weekly_rate / 100).toFixed(0)}/wk · score ${e.score}${e.met.length ? " · meets " + e.met.map(hmEsc).join(", ") : ""}</div></div>
         ${notesLocked ? "" : `<button class="btn btn-ghost" data-hm-up="${hmEsc(e.host_id)}" ${i === 0 ? "disabled" : ""}>↑</button>
         <button class="btn btn-ghost" data-hm-remove="${hmEsc(e.host_id)}">Remove</button>`}</div>`).join("") || '<div class="card-sub">No eligible hosts.</div>'}</div>
     <details style="margin-top:8px"><summary class="card-sub">Excluded hosts (${(sl.excluded || []).length})</summary>
-      ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>
+      ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>`}
     ${invitations}
-    ${offerSection}
+    ${readyForOffer ? "" : offerSection}
     <div class="card-title" style="margin-top:16px">Timeline</div>
     ${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
     ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`;
