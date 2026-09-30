@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-options3"></script>
+<script src="pms-supabase.js?v=2026-09-30-flow"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31405,7 +31405,7 @@ function hmOfferPreviewHtml(p){
     <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
       <label class="card-sub">Student's weekly price $ <input class="form-input" id="hm-offer-rate" inputmode="decimal" style="width:110px" value="${hmEsc((p.weekly_rate_cents / 100).toFixed(2))}"></label>
       <button class="btn btn-ghost" type="button" data-hm-offer-price>Update price</button>
-      <button class="btn" type="button" data-hm-offer-send>Send offer</button>
+      <button class="btn btn-primary" type="button" data-hm-offer-send>Send offer</button>
     </div></div>`;
 }
 // The combined preview of one offer with several homes (offer-set dry_run). d = HM.optionDraft.
@@ -31427,18 +31427,23 @@ function hmOptionsPreviewHtml(d){
     </div>`).join("")}
     <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
       <button class="btn btn-ghost" type="button" data-hm-optset-price>Update prices</button>
-      <button class="btn" type="button" data-hm-optset-send>Send offer with ${hmEsc(n)} homes</button>
+      <button class="btn btn-primary" type="button" data-hm-optset-send>Send offer with ${hmEsc(n)} homes</button>
     </div></div>`;
 }
-// Ticked "Include in a multi-host offer" boxes → show "Send as one offer (N homes)" for 2-5 of them.
+// Label for the "send several homes as one offer" button: n ticked of `total` matched homes.
+function hmOptSetLabel(n, total){
+  return n === total ? `Send all ${n} homes as one offer` : `Send ${n} homes as one offer`;
+}
+// Ticked "Include" boxes → show the send-as-one-offer button for 2-5 of them.
 // Changing the ticks drops a combined preview already on screen (it no longer matches).
 function hmOptPickUpdate(){
   const root = document.getElementById("hm-case");
   if (!root) return;
   const n = root.querySelectorAll("[data-hm-opt-pick]:checked").length;
+  const total = root.querySelectorAll("[data-hm-opt-pick]").length;
   const btn = root.querySelector("[data-hm-optset-build]");
   const note = root.querySelector("[data-hm-optset-note]");
-  if (btn) { btn.hidden = !(n >= 2 && n <= 5); btn.textContent = `Send as one offer (${n} homes)`; }
+  if (btn) { btn.hidden = !(n >= 2 && n <= 5); btn.textContent = hmOptSetLabel(n, total); }
   if (note) note.textContent = n === 1 ? "Tick at least one more home to send them as one offer." : n > 5 ? "At most 5 homes in one offer." : "";
   if (HM.optionDraft) {
     HM.optionDraft = null;
@@ -31535,7 +31540,8 @@ async function hmOpenCase(id){
   const canOptions = c.source === "direct" && verifiedInvs.length >= 2;
   // "Match with a host": the one-button path (fit list → Match → offer builder). Hidden while an offer is out
   // or accepted, and when offers could not be read (we can't tell then).
-  const matchCard = HM_RESPONDABLE.includes(c.status) && !of.error && !offerOut
+  const canMatch = HM_RESPONDABLE.includes(c.status) && !of.error && !offerOut;
+  const matchCard = canMatch
     ? `<div data-hm-match-case="${hmEsc(c.id)}" style="margin-top:12px;padding:12px;border:2px solid var(--line);border-radius:10px">
       <div class="card-title">Match with a host</div>
       <div class="card-sub">See which hosts fit this student, pick a room and press Match. Then check the price and send the offer.</div>
@@ -31545,6 +31551,15 @@ async function hmOpenCase(id){
     </div>` : "";
   // A host said yes (or was matched) and no offer is out: the offer builder moves to the top of the case.
   const readyForOffer = verifiedInvs.length > 0 && !of.error;
+  // Inside the Next box: one visible button that opens the fit list straight away.
+  const matchAnother = canMatch
+    ? `<div data-hm-match-case="${hmEsc(c.id)}" style="margin-top:10px">
+      <button class="btn btn-ghost" type="button" data-hm-fit-open>+ Match another host</button>
+      <div class="card-sub" data-hm-fit-msg style="margin-top:6px"></div>
+      <div data-hm-fit-body></div>
+    </div>` : "";
+  // 2-5 matched homes on a direct case: all pre-ticked (the first 5 when there are more), one click sends them.
+  const preTicked = canOptions ? Math.min(5, verifiedInvs.length) : 0;
   const boxHtml = bx => !bx ? "" : `<div style="margin-top:8px;padding:8px;border-radius:8px;border:1px solid ${bx.tone === "red" ? "var(--red)" : "var(--line)"}">
         <div class="list-title" style="${bx.tone === "red" ? "color:var(--red)" : ""}">${hmEsc(bx.title)}</div>
         ${bx.text ? `<div class="list-sub">${bx.tone === "green" && /^https:\/\//.test(bx.text)
@@ -31581,35 +31596,53 @@ async function hmOpenCase(id){
       ${g.some(o => o.status === "sent") ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
     </div>`;
   };
-  const earlier = offerGroups.slice(1);
-  const offerSection = `
-    <div class="card-title" style="margin-top:16px">Offer</div>
-    ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
-    ${verifiedInvs.map(i => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
-      <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div>
-      ${canOptions ? `<label class="card-sub" style="display:inline-flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" data-hm-opt-pick="${hmEsc(i.id)}"> Include in a multi-host offer</label>` : ""}</div>
-      <div style="display:flex;gap:8px;flex:none"><button class="btn" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button>
-      ${offerOut ? "" : `<button class="btn btn-ghost" type="button" data-hm-undo-match="${hmEsc(i.id)}" data-hm-undo-host="${hmEsc(i.host_id)}" data-hm-undo-name="${hmEsc(nameOf(i.host_id))}">Undo match</button>`}</div></div>`).join("")}
-    ${canOptions ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
-      <button class="btn" type="button" data-hm-optset-build hidden>Send as one offer (0 homes)</button>
-      <span class="card-sub" data-hm-optset-note></span></div>` : ""}
-    ${c.source !== "direct" && verifiedInvs.length >= 2 ? '<div class="card-sub" style="margin-top:6px">Agency requests: one host per offer for now.</div>' : ""}
-    <div id="hm-offer-preview"></div>
-    ${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
-    ${earlier.length ? `<details><summary class="card-sub">Earlier offers (${hmEsc(earlier.length)})</summary>
+  // Ready for an offer means nothing is out, so every offer on the case is closed: all of them are "earlier".
+  const earlier = readyForOffer ? offerGroups : offerGroups.slice(1);
+  const earlierHtml = !earlier.length ? "" : `<details style="margin-top:8px"><summary class="card-sub">Earlier offers (${hmEsc(earlier.length)})</summary>
       ${earlier.map(g => g[0].group_id
         ? `<div class="list-sub">Offer with ${hmEsc(g.length)} homes · ${hmEsc(chipOf(hmGroupStatus(g))[0])} · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}
           · ${g.map(o => `${hmEsc(o.host_first_name || nameOf(o.host_id))} ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk (${hmEsc(optChipOf(o.status)[0])})`).join(", ")}</div>`
-        : `<div class="list-sub">#${hmEsc(g[0].id)} · ${hmEsc(chipOf(g[0].status)[0])} · ${hmEsc(hmMoney(g[0].weekly_rate_cents))}/wk
-        · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}${g[0].decided_reason ? " · " + hmEsc(g[0].decided_reason) : ""}</div>`).join("")}</details>` : ""}`;
+        : `<div class="list-sub">#${hmEsc(g[0].id)} · ${hmEsc(g[0].host_first_name || nameOf(g[0].host_id))} · ${hmEsc(chipOf(g[0].status)[0])} · ${hmEsc(hmMoney(g[0].weekly_rate_cents))}/wk
+        · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}${g[0].decided_reason ? " · " + hmEsc(g[0].decided_reason) : ""}</div>`).join("")}</details>`;
+  // The matched hosts: each with Include (multi-home), its own offer, and Undo match.
+  const matchedRows = verifiedInvs.map((i, k) => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
+      <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div>
+      ${canOptions ? `<label class="card-sub" style="display:inline-flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" data-hm-opt-pick="${hmEsc(i.id)}" ${k < preTicked ? "checked" : ""}> Include</label>` : ""}</div>
+      <div style="display:flex;gap:8px;flex:none;flex-wrap:wrap">${canOptions
+        ? `<button class="btn btn-ghost" type="button" data-hm-offer-build="${hmEsc(i.id)}">Offer only this home</button>`
+        : `<button class="btn btn-primary" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button>`}
+      ${offerOut ? "" : `<button class="btn btn-ghost" type="button" data-hm-undo-match="${hmEsc(i.id)}" data-hm-undo-host="${hmEsc(i.host_id)}" data-hm-undo-name="${hmEsc(nameOf(i.host_id))}">Undo match</button>`}</div></div>`).join("");
+  const builderHtml = `
+    ${canOptions ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+      <button class="btn btn-primary" type="button" data-hm-optset-build ${preTicked >= 2 ? "" : "hidden"}>${hmEsc(hmOptSetLabel(preTicked, verifiedInvs.length))}</button>
+      <span class="card-sub" data-hm-optset-note></span></div>` : ""}
+    ${c.source !== "direct" && verifiedInvs.length >= 2 ? '<div class="card-sub" style="margin-top:6px">Agency requests: one host per offer for now.</div>' : ""}
+    <div id="hm-offer-preview"></div>`;
+  // Not ready for an offer: the usual Offer section (current offer, then the earlier ones).
+  const offerSection = `
+    <div class="card-title" style="margin-top:16px">Offer</div>
+    ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
+    ${matchedRows}
+    ${builderHtml}
+    ${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
+    ${earlierHtml}`;
+  // Ready: the Next box holds only the matched hosts and the builder; closed offers sit below it, collapsed.
+  const nextBox = !readyForOffer ? "" : `<div id="hm-next-offer" style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">
+      <div class="card-title">Next: send the offer</div>
+      <div class="card-sub">${canOptions
+        ? `${hmEsc(verifiedInvs.length)} hosts can take this student. Press ${hmEsc(hmOptSetLabel(preTicked, verifiedInvs.length))}, check the prices, then send.`
+        : "A host can take this student. Press Build offer, check the price, then Send offer."}</div>
+      ${canOptions ? '<div class="list-title" style="margin-top:8px">Tick the homes to send together. The student sees them all on one page and picks one.</div>' : ""}
+      ${matchedRows}
+      ${builderHtml}
+      ${matchAnother}
+    </div>
+    ${earlierHtml}`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
-    ${readyForOffer
-      ? `<div style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">${offerSection.replace('<div class="card-title" style="margin-top:16px">Offer</div>', '<div class="card-title">Next: send the offer</div><div class="card-sub">A host can take this student. Press Build offer, check the price, then Send offer.' + (canOptions ? " Or tick 2 to 5 homes and send them as one offer: the student picks one." : "") + '</div>')}</div>
-        ${matchCard ? `<details style="margin-top:8px"><summary class="card-sub">Match a different host</summary>${matchCard}</details>` : ""}`
-      : matchCard}
+    ${readyForOffer ? nextBox : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
@@ -31793,7 +31826,7 @@ document.addEventListener("click", async (ev) => {
         items = ids.map(id => ({ invitation_id: id }));
       } else {
         const dft = HM.optionDraft;
-        if (!dft || dft.case_id !== c.id) { msg("Press Send as one offer first"); return; }
+        if (!dft || dft.case_id !== c.id) { msg("Tick 2 to 5 homes and press the send-as-one-offer button first"); return; }
         items = [];
         for (const it of dft.items) {
           const inp = document.querySelector(`#hm-offer-preview [data-hm-opt-rate="${CSS.escape(String(it.invitation_id))}"]`);
@@ -31815,7 +31848,7 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.hasAttribute("data-hm-optset-send")) {
       const dft = HM.optionDraft;
-      if (!dft || dft.case_id !== c.id || dft.items.length < 2) { msg("Press Send as one offer first"); return; }
+      if (!dft || dft.case_id !== c.id || dft.items.length < 2) { msg("Tick 2 to 5 homes and press the send-as-one-offer button first"); return; }
       for (const it of dft.items) {
         const inp = document.querySelector(`#hm-offer-preview [data-hm-opt-rate="${CSS.escape(String(it.invitation_id))}"]`);
         if (inp && Math.round(Number(inp.value) * 100) !== it.weekly_rate_cents) { msg("Press Update prices first: the preview is not at those weekly prices"); return; }
@@ -32024,26 +32057,38 @@ function hmFitRoomOptions(hostId, roomIds, c){
     return `<option value="${hmEsc(id)}">${hmEsc(r.label || id)}: student ${hmEsc(hmMoney(rr.weekly_rate))}/wk, host gets ${hmEsc(hmMoney(rr.host_weekly_rate))}/wk</option>`;
   }).join("");
 }
+// Hosts already matched for this case: an open invitation answered "can host".
+function hmMatchedHostIds(c){
+  return new Set((HM.invitations || []).filter(i => c && (!i.case_id || i.case_id === c.id) && i.response === "available" && !i.closed_at).map(i => String(i.host_id)));
+}
 function hmFitHtml(fit, c){
   const eligible = (fit && fit.eligible) || [], excluded = (fit && fit.excluded) || [];
+  const matched = hmMatchedHostIds(c);
+  let pickable = 0;
   const rows = eligible.map(e => {
     const hasRooms = (e.room_ids || []).length > 0;
     const n = (e.room_ids || []).length;
     const summary = [n ? `${n} room${n === 1 ? "" : "s"} free for these dates` : "",
       e.weekly_rate != null ? `from ${hmMoney(e.weekly_rate)}/wk` : "",
       (e.met || []).length ? "meets " + e.met.join(", ") : ""].filter(Boolean).join(" · ");
+    const isMatched = matched.has(String(e.host_id));
+    if (hasRooms && !isMatched) pickable++;
     return `<div data-hm-fit-host="${hmEsc(e.host_id)}" style="display:block;padding:10px 0;border-bottom:1px dashed var(--line)">
-      <div class="list-title">${hmEsc(e.display_name || e.host_id)}</div>
+      <div class="list-title">${hasRooms && !isMatched ? `<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" data-hm-fit-pick> ${hmEsc(e.display_name || e.host_id)}</label>` : hmEsc(e.display_name || e.host_id)}</div>
       <div class="list-sub" style="margin-bottom:6px">${hmEsc(summary)}</div>
-      ${hasRooms ? `<div style="display:flex;gap:8px;align-items:center">
+      ${isMatched ? '<span class="badge badge-blue">Matched ✓</span>'
+        : hasRooms ? `<div style="display:flex;gap:8px;align-items:center">
         <select class="form-input" data-hm-fit-room style="flex:1;min-width:0">${hmFitRoomOptions(e.host_id, e.room_ids, c)}</select>
-        <button class="btn btn-primary" type="button" data-hm-fit-match="${hmEsc(e.host_id)}" style="flex:none">Match</button></div>`
+        <button class="btn btn-ghost" type="button" data-hm-fit-match="${hmEsc(e.host_id)}" style="flex:none">Match</button></div>`
         : '<span class="card-sub">No room listed for these meals</span>'}
     </div>`;
   }).join("");
   const why = excluded.map(x => `<div class="list-sub"><b>${hmEsc(x.display_name || x.host_id)}</b>: ${(x.reasons || []).map(hmEsc).join("; ") || "no reason given"}</div>`).join("");
   return `<div style="margin-top:8px">
     ${eligible.length ? rows : '<div class="list-title" style="margin:6px 0">No host fits this student right now. The reasons for each host are below.</div>'}
+    ${pickable ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+      <button class="btn btn-primary" type="button" data-hm-fit-match-selected disabled>Match selected (0)</button>
+      <span class="card-sub">Tick hosts to match them all at once. Each host is emailed.</span></div>` : ""}
     ${excluded.length ? `<details ${eligible.length ? "" : "open"} style="margin-top:8px"><summary class="card-sub">Why other hosts don't fit (${hmEsc(excluded.length)})</summary>${why}</details>` : ""}
     ${fit && fit.computed_at ? `<div class="card-sub" style="margin-top:6px">Checked ${hmEsc(new Date(fit.computed_at).toLocaleString())}</div>` : ""}
   </div>`;
@@ -32063,6 +32108,18 @@ async function hmFitOpen(card, caseId){
   msg.textContent = "";
   body.innerHTML = hmFitHtml(fit, HM.cases.find(x => x.id === caseId));
 }
+// Host name + room label of one fit-list row (for the notices).
+function hmFitRowInfo(row, hostId, roomId){
+  const hostName = ((HM.hosts || []).find(h => String(h.host_id) === String(hostId)) || {}).display_name
+    || (((row && row.querySelector(".list-title")) || {}).textContent || "").trim() || hostId;
+  const roomObj = (HM.rooms || []).find(x => String(x.host_id) === String(hostId) && String(x.room_id) === String(roomId));
+  return { hostName, roomLabel: (roomObj && roomObj.label) || roomId };
+}
+// After a match: scroll to the Next box (the case re-rendered).
+function hmScrollToNext(){
+  const nb = document.getElementById("hm-next-offer");
+  if (nb) nb.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 async function hmFitMatch(card, caseId, btn){
   const msg = card.querySelector("[data-hm-fit-msg]");
   const row = btn.closest("[data-hm-fit-host]");
@@ -32070,11 +32127,8 @@ async function hmFitMatch(card, caseId, btn){
   const roomSel = row && row.querySelector("[data-hm-fit-room]");
   const roomId = roomSel ? roomSel.value : "";
   if (!roomId) { msg.textContent = "Pick a room first"; return; }
-  const hostName = ((HM.hosts || []).find(h => String(h.host_id) === String(hostId)) || {}).display_name
-    || ((row && row.querySelector(".list-title")) || {}).textContent || hostId;
-  const roomObj = (HM.rooms || []).find(x => String(x.host_id) === String(hostId) && String(x.room_id) === String(roomId));
-  const roomLabel = (roomObj && roomObj.label) || roomId;
-  const all = [...card.querySelectorAll("[data-hm-fit-match]")];
+  const { hostName, roomLabel } = hmFitRowInfo(row, hostId, roomId);
+  const all = [...card.querySelectorAll("[data-hm-fit-match],[data-hm-fit-match-selected]")];
   all.forEach(b => b.disabled = true);
   msg.textContent = "Matching…";
   let r;
@@ -32087,15 +32141,21 @@ async function hmFitMatch(card, caseId, btn){
   }
   HM.flash = { id: caseId, text: "Matched. Check the price, then press Send offer." };
   await loadHomestayMatching();
+  const c = HM.cases.find(x => x.id === caseId);
+  const buildable = (HM.invitations || []).filter(i => hmCanBuildOffer(c, i));
+  const several = buildable.length >= 2;
+  const nextLine = !several ? "Next: press Build offer, check the price, then Send offer. The student is emailed when you send the offer."
+    : c && c.source === "direct" ? "Next: tick the homes to send together and send them as one offer. The student is emailed when you send the offer."
+    : "Next: press Build offer on the home to offer, check the price, then Send offer.";
   const emailLine = hmHostEmailLine(r, hostName);
   const showMatched = () => hmNotice({ title: "Matched",
-    lines: [emailLine && !r.host_emailed ? `Matched with ${hostName} · ${roomLabel}, ${emailLine}` : `Matched with ${hostName} · ${roomLabel}.${emailLine ? " " + emailLine : ""}`,
-      "Next: press Build offer, check the price, then Send offer. The student is emailed when you send the offer."],
+    lines: [emailLine && !r.host_emailed ? `Matched with ${hostName} · ${roomLabel}, ${emailLine}` : `Matched with ${hostName} · ${roomLabel}.${emailLine ? " " + emailLine : ""}`, nextLine],
     buttons: [{ label: "OK", primary: true }] });
   if (HM.selected !== caseId) { showMatched(); return; }
-  // The offer builder for this host's invitation; the existing Build offer handler does the pricing preview.
-  const c = HM.cases.find(x => x.id === caseId);
-  const inv = (HM.invitations || []).find(i => String(i.host_id) === String(hostId) && hmCanBuildOffer(c, i));
+  // The case already had matched hosts: no single-host builder, just the Next box with everyone in it.
+  if (several) { hmScrollToNext(); showMatched(); return; }
+  // First and only matched host: open the offer builder for its invitation (the Build offer handler prices it).
+  const inv = buildable.find(i => String(i.host_id) === String(hostId));
   const build = inv && document.querySelector(`[data-hm-offer-build="${CSS.escape(String(inv.id))}"]`);
   const preview = document.getElementById("hm-offer-preview");
   if (!build || !preview) {
@@ -32114,14 +32174,67 @@ async function hmFitMatch(card, caseId, btn){
   note.scrollIntoView({ behavior: "smooth", block: "start" });
   showMatched();
 }
+// "Match selected (N)": match the ticked hosts one after another (same /response call), reload once, one notice.
+async function hmFitMatchSelected(card, caseId){
+  const msg = card.querySelector("[data-hm-fit-msg]");
+  const picks = [...card.querySelectorAll("[data-hm-fit-pick]:checked")].map(cb => {
+    const row = cb.closest("[data-hm-fit-host]");
+    const sel = row && row.querySelector("[data-hm-fit-room]");
+    return { row, hostId: row && row.dataset.hmFitHost, roomId: sel ? sel.value : "" };
+  }).filter(p => p.hostId);
+  if (!picks.length) { msg.textContent = "Tick at least one host"; return; }
+  if (picks.some(p => !p.roomId)) { msg.textContent = "Pick a room for each ticked host"; return; }
+  const all = [...card.querySelectorAll("[data-hm-fit-match],[data-hm-fit-match-selected],[data-hm-fit-pick]")];
+  all.forEach(b => b.disabled = true);
+  const done = [], failed = [];
+  for (let k = 0; k < picks.length; k++) {
+    const p = picks[k];
+    const info = hmFitRowInfo(p.row, p.hostId, p.roomId);
+    msg.textContent = `Matching ${k + 1} of ${picks.length}: ${info.hostName}…`;
+    try {
+      const r = await hmWorker(`/staff/cases/${encodeURIComponent(caseId)}/response`, { host_id: p.hostId, response: "available", room_id: p.roomId, reason: "Matched by staff", notify_host: true });
+      done.push({ ...info, r });
+    } catch (e) {
+      failed.push({ ...info, err: e.message || String(e) });
+    }
+  }
+  if (!done.length) {
+    all.forEach(b => b.disabled = false);
+    msg.textContent = "Error: " + failed.map(f => `${f.hostName}: ${f.err}`).join("; ");
+    return;
+  }
+  const emailBit = d => !d.r || typeof d.r.host_emailed !== "boolean" ? d.roomLabel
+    : d.r.host_emailed ? (d.r.host_email ? `emailed at ${d.r.host_email}` : "emailed") : "email failed: tell them yourself";
+  HM.flash = { id: caseId, text: `Matched ${done.length} host${done.length === 1 ? "" : "s"}. Tick the homes to send, then send the offer.` };
+  await loadHomestayMatching();
+  if (HM.selected === caseId) hmScrollToNext();
+  const c = HM.cases.find(x => x.id === caseId);
+  const several = (HM.invitations || []).filter(i => hmCanBuildOffer(c, i)).length >= 2;
+  hmNotice({ title: `Matched ${done.length} host${done.length === 1 ? "" : "s"}`,
+    lines: [`Matched ${done.length} host${done.length === 1 ? "" : "s"}: ${done.map(d => `${d.hostName} (${emailBit(d)})`).join(", ")}.`,
+      ...failed.map(f => `Could not match ${f.hostName}: ${f.err}`),
+      several && c && c.source === "direct" ? "Next: tick the homes to send together and send them as one offer."
+        : "Next: press Build offer, check the price, then Send offer."],
+    buttons: [{ label: "OK", primary: true }] });
+}
+function hmFitPickUpdate(card){
+  const n = card.querySelectorAll("[data-hm-fit-pick]:checked").length;
+  const b = card.querySelector("[data-hm-fit-match-selected]");
+  if (b) { b.disabled = n === 0; b.textContent = `Match selected (${n})`; }
+}
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest && ev.target.closest("[data-hm-fit-open],[data-hm-fit-match]");
+  const t = ev.target.closest && ev.target.closest("[data-hm-fit-open],[data-hm-fit-match],[data-hm-fit-match-selected]");
   if (!t) return;
   const card = t.closest("[data-hm-match-case]");
   if (!card) return;
   const caseId = card.dataset.hmMatchCase;
   if (t.hasAttribute("data-hm-fit-open")) return hmFitOpen(card, caseId);
+  if (t.hasAttribute("data-hm-fit-match-selected")) return hmFitMatchSelected(card, caseId);
   return hmFitMatch(card, caseId, t);
+});
+document.addEventListener("change", (ev) => {
+  if (!(ev.target.matches && ev.target.matches("[data-hm-match-case] [data-hm-fit-pick]"))) return;
+  hmFitPickUpdate(ev.target.closest("[data-hm-match-case]"));
 });
 
 // Stage 3: staff made the booking by hand (Booking Create failed or never answered) and record its ref.
