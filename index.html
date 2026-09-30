@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-agencylinks3"></script>
+<script src="pms-supabase.js?v=2026-09-30-options"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -30999,7 +30999,7 @@ function ahsArrivalText(row, city){
 const HM_WORKER = "https://vanmates-homestay-matching.talatcan.workers.dev";
 // rooms is loaded lazily (n8n executions are precious) — see hmEnsureRoomsLoaded.
 const HM = { cases: [], events: [], profiles: [], hosts: [], rooms: [], roomsLoaded: false, roomsLoading: null,
-  selected: null, filter: "open", openCount: 0, loading: false, flash: null, offers: [], offerDraft: null,
+  selected: null, filter: "open", openCount: 0, loading: false, flash: null, offers: [], offerDraft: null, optionDraft: null,
   allOffers: [], allOffersLoading: false };
 const hmEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -31029,7 +31029,16 @@ const hmFieldLabel = f => HM_FIELD_LABEL[f] || String(f || "a field").replace(/_
 // a closed case (HM_CLOSED) is fully locked, including notes.
 const HM_FIELDS_EDITABLE = ["NEW", "NEEDS_INFO", "SHORTLISTING", "MANUAL_REVIEW"];
 
+// Errors about one home of a multi-host offer (offer-set) carry invitation_id: name the host first.
 function hmWorkerErrorMessage(out, res){
+  const text = hmWorkerErrorText(out, res);
+  const invId = out && out.invitation_id;
+  if (!invId) return text;
+  const inv = (HM.invitations || []).find(i => Number(i.id) === Number(invId));
+  const name = inv ? (((HM.hosts || []).find(h => h.host_id === inv.host_id) || {}).display_name || inv.host_id) : "";
+  return name ? `${name}: ${text}` : text;
+}
+function hmWorkerErrorText(out, res){
   if (!out || !out.error) return "HTTP " + res.status;
   if (out.error === "bad_request") return "The request was missing or malformed data — refresh and try again";
   if (out.error === "bad_target") return "That status can't be set here — refresh and try again";
@@ -31058,7 +31067,13 @@ function hmWorkerErrorMessage(out, res){
   if (out.error === "invitation_not_available") return "That host's answer changed: refresh and pick a verified host";
   if (out.error === "verification_stale") return "The host confirmed other dates or meals than the case has now: ask the host again";
   if (out.error === "stale") return "The case or the host's answer changed since the preview: press Build offer again";
-  if (out.error === "price_changed") return `The price changed since the preview (now ${hmMoney(out.total_due_now_cents)} due): press Update price and check it again`;
+  if (out.error === "price_changed") return `The price changed since the preview (now ${hmMoney(out.total_due_now_cents)} due): press ${out.invitation_id ? "Update prices" : "Update price"} and check it again`;
+  // One offer with several homes (offer-set, direct students only) and its SQL refusals.
+  if (out.error === "options_direct_only") return "Agency requests take one host at a time for now";
+  if (out.error === "duplicate_invitation") return "The same home is in the offer twice: untick it and try again";
+  if (out.error === "group_full") return "At most 5 homes in one offer";
+  if (out.error === "group_mismatch") return "Those homes don't all belong to this case: refresh and tick them again";
+  if (out.error === "group_closed") return "That offer is already closed: refresh";
   if (out.error === "offer_open") return "An offer is already out: withdraw it first";
   if (out.error === "offer_accepted") return "This case already has an accepted offer";
   if (out.error === "rate_too_high") return `The weekly price can't be above ${hmMoney(out.max_weekly_cents)}`;
@@ -31267,14 +31282,40 @@ async function hmLoadOffers(){
     HM.allOffersLoading = false;
   }
 }
+// One offer with several homes (direct students only): hm_offers rows sharing a group_id are ONE offer, each
+// row one home ("option"). A null group_id is a single offer. Groups keep the order rows are first seen in;
+// the rows inside a group are oldest first (the first one's token is the student's link).
+const HM_OPTION_STATUS = {
+  draft: ["Draft", "grey"], sent: ["Waiting", "blue"], accepted: ["Chosen", "green"], declined: ["Declined", "grey"],
+  expired: ["Expired", "grey"], conflict: ["Room taken", "red"], superseded: ["Not chosen", "grey"], cancelled: ["Withdrawn", "grey"],
+};
+function hmOfferGroups(rows){
+  const map = new Map();
+  for (const o of rows || []) {
+    const k = o.group_id ? "g:" + o.group_id : "o:" + o.id;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(o);
+  }
+  return [...map.values()].map(list => list.sort((x, y) => Number(x.id) - Number(y.id)));
+}
+// The status of the whole offer: accepted if a home was chosen, sent while any home still waits,
+// otherwise the status of the last home decided (all withdrawn, all expired, ...).
+function hmGroupStatus(list){
+  if (list.some(o => o.status === "accepted")) return "accepted";
+  if (list.some(o => o.status === "sent")) return "sent";
+  const last = [...list].sort((x, y) => String(y.decided_at || "").localeCompare(String(x.decided_at || "")))[0];
+  return last ? last.status : "draft";
+}
 function hmRenderOffers(){
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
-  const all = HM.allOffers || [];
-  const waiting = all.filter(o => o.status === "sent")
-    .sort((a, b) => (Date.parse(a.expires_at) || Infinity) - (Date.parse(b.expires_at) || Infinity));
-  const answered = all.filter(o => o.status !== "sent" && o.status !== "draft")
-    .sort((a, b) => String(b.decided_at || "").localeCompare(String(a.decided_at || "")));
+  const all = (HM.allOffers || []).filter(o => o.status !== "draft");
+  const groups = hmOfferGroups(all);
+  const expOf = g => Math.min(...g.filter(o => o.status === "sent").map(o => Date.parse(o.expires_at) || Infinity));
+  const decidedOf = g => g.map(o => String(o.decided_at || "")).sort().pop() || "";
+  const waiting = groups.filter(g => g.some(o => o.status === "sent")).sort((x, y) => expOf(x) - expOf(y));
+  const answered = groups.filter(g => !g.some(o => o.status === "sent"))
+    .sort((x, y) => decidedOf(y).localeCompare(decidedOf(x)));
   const tab = document.getElementById("hm-offers-tab");
   if (tab) tab.textContent = `Offers (${waiting.length})`;
   document.getElementById("hm-offers-waiting-n").textContent = `(${waiting.length})`;
@@ -31284,8 +31325,16 @@ function hmRenderOffers(){
   const where = o => `${hmEsc(hostOf(o))} · ${hmEsc(o.room_label || "room")}${o.area ? " · " + hmEsc(o.area) : ""}`;
   const to = o => `${o.recipient === "partner" ? "Agency" : "Student"} ${hmEsc(o.recipient_email || "(no email)")}`;
   const price = o => `student pays ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · host gets ${hmEsc(hmMoney(o.host_weekly_cents))}/wk`;
-  document.getElementById("hm-offers-waiting").innerHTML = waiting.length ? waiting.map(o => {
-    const exp = Date.parse(o.expires_at);
+  const optChip = o => { const s = HM_OPTION_STATUS[o.status] || [o.status, "grey"]; return `<span class="badge badge-${hmEsc(s[1])}">${hmEsc(s[0])}</span>`; };
+  const homes = g => g.map(o => `<div class="list-sub">${where(o)} · ${price(o)} ${o.status === "sent" ? "" : optChip(o)}</div>`).join("");
+  const bookingOf = o => o.status !== "accepted" ? ""
+    : o.booking_ref ? ` · booking ${hmEsc(o.booking_ref)}`
+    : o.create_state === "failed" ? ' · <span class="badge badge-red">booking failed</span>'
+    : o.create_state === "creating" ? " · booking being created" : "";
+  document.getElementById("hm-offers-waiting").innerHTML = waiting.length ? waiting.map(g => {
+    const o = g.find(x => x.status === "sent");
+    const isGroup = !!o.group_id;
+    const exp = expOf(g);
     const left = exp - now;
     const expText = !Number.isFinite(exp) ? "no expiry"
       : left <= 0 ? "expired, closing soon" : `expires in ${hmElapsed(nowIso, exp)}`;
@@ -31293,25 +31342,27 @@ function hmRenderOffers(){
       ? `<span class="badge badge-amber">${hmEsc(expText)}</span>` : `<span class="badge badge-blue">${hmEsc(expText)}</span>`;
     return `<div class="list-row" style="cursor:pointer" data-hmo-case="${hmEsc(o.case_id)}">
       <div class="list-main">
-        <div class="list-title">${head(o)}</div>
-        <div class="list-sub">${where(o)} · ${price(o)}</div>
+        <div class="list-title">${head(o)}${isGroup ? ` · ${hmEsc(g.length)} homes` : ""}</div>
+        ${isGroup ? homes(g) : `<div class="list-sub">${where(o)} · ${price(o)}</div>`}
         <div class="list-sub">Sent to ${to(o)}${o.sent_at ? ` · sent ${hmEsc(hmElapsed(o.sent_at, now))} ago` : ""}</div>
       </div>${badge}
     </div>`;
   }).join("") : '<div class="card-sub">No offers waiting for an answer.</div>';
-  document.getElementById("hm-offers-answered").innerHTML = answered.length ? answered.map(o => {
-    const s = HM_OFFER_STATUS[o.status] || [o.status, "grey"];
-    let booking = "";
-    if (o.status === "accepted") {
-      booking = o.booking_ref ? ` · booking ${hmEsc(o.booking_ref)}`
-        : o.create_state === "failed" ? ' · <span class="badge badge-red">booking failed</span>'
-        : o.create_state === "creating" ? " · booking being created" : "";
-    }
+  document.getElementById("hm-offers-answered").innerHTML = answered.length ? answered.map(g => {
+    const isGroup = !!g[0].group_id;
+    const chosen = g.find(x => x.status === "accepted");
+    const decided = decidedOf(g);
+    const o = chosen || g.find(x => String(x.decided_at || "") === decided) || g[0];
+    const s = HM_OFFER_STATUS[isGroup ? hmGroupStatus(g) : o.status] || [o.status, "grey"];
+    const what = !isGroup ? `<div class="list-sub">${where(o)} · ${price(o)}</div>`
+      : chosen ? `<div class="list-sub">Chose ${where(chosen)} · ${price(chosen)}</div>
+        <div class="list-sub">Other homes: ${g.filter(x => x !== chosen).map(x => hmEsc(hostOf(x))).join(", ")}</div>`
+      : `<div class="list-sub">No home chosen: ${g.map(x => `${hmEsc(hostOf(x))} (${hmEsc((HM_OPTION_STATUS[x.status] || [x.status])[0])})`).join(", ")}</div>`;
     return `<div class="list-row" style="cursor:pointer" data-hmo-case="${hmEsc(o.case_id)}">
       <div class="list-main">
-        <div class="list-title">${head(o)}</div>
-        <div class="list-sub">${where(o)} · ${price(o)}</div>
-        <div class="list-sub">${to(o)}${o.decided_at ? ` · ${hmEsc(hmElapsed(o.decided_at, now))} ago (${hmEsc(new Date(o.decided_at).toLocaleString())})` : ""}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}${booking}</div>
+        <div class="list-title">${head(o)}${isGroup ? ` · ${hmEsc(g.length)} homes` : ""}</div>
+        ${what}
+        <div class="list-sub">${to(o)}${o.decided_at ? ` · ${hmEsc(hmElapsed(o.decided_at, now))} ago (${hmEsc(new Date(o.decided_at).toLocaleString())})` : ""}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}${bookingOf(o)}</div>
       </div><span class="badge badge-${hmEsc(s[1])}">${hmEsc(s[0])}</span>
     </div>`;
   }).join("") : '<div class="card-sub">Nothing answered in the last 14 days.</div>';
@@ -31334,6 +31385,44 @@ function hmOfferPreviewHtml(p){
       <button class="btn btn-ghost" type="button" data-hm-offer-price>Update price</button>
       <button class="btn" type="button" data-hm-offer-send>Send offer</button>
     </div></div>`;
+}
+// The combined preview of one offer with several homes (offer-set dry_run). d = HM.optionDraft.
+function hmOptionsPreviewHtml(d){
+  const n = d.previews.length;
+  const hostOf = p => ((HM.hosts || []).find(h => h.host_id === p.host_id) || {}).display_name || p.host_first_name || "Host";
+  const first = d.previews[0] || {};
+  const exp = new Date(d.expires_at || first.expires_at);
+  return `<div class="list-row" style="display:block;border:1px dashed var(--line);padding:8px;border-radius:8px" data-hm-optset-preview>
+    <div class="list-title">Preview: one offer with ${hmEsc(n)} homes</div>
+    <div class="list-sub">To the student (${hmEsc(first.recipient_email || "no email")})${isNaN(exp) ? "" : " · answer by " + hmEsc(exp.toLocaleString())}
+      · the student picks one home; the others close then</div>
+    ${d.previews.map(p => `<div style="margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px">
+      <div class="list-title">${hmEsc(hostOf(p))} · ${hmEsc(p.room_label || "room")}${p.area ? " · " + hmEsc(p.area) : ""}</div>
+      <div class="list-sub">student pays ${hmEsc(hmMoney(p.weekly_rate_cents))}/wk · host gets ${hmEsc(hmMoney(p.host_weekly_cents))}/wk
+        · Vanmates keeps ${hmEsc(hmMoney(p.margin_cents))}/wk · due when booking ${hmEsc(hmMoney(p.total_due_now_cents))}</div>
+      <details><summary class="card-sub">Price lines</summary>${hmOfferRowsHtml(p)}</details>
+      <label class="card-sub" style="display:inline-block;margin-top:6px">Student's weekly price $ <input class="form-input" data-hm-opt-rate="${hmEsc(p.invitation_id)}" inputmode="decimal" style="width:110px" value="${hmEsc((p.weekly_rate_cents / 100).toFixed(2))}"></label>
+    </div>`).join("")}
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost" type="button" data-hm-optset-price>Update prices</button>
+      <button class="btn" type="button" data-hm-optset-send>Send offer with ${hmEsc(n)} homes</button>
+    </div></div>`;
+}
+// Ticked "Include in a multi-host offer" boxes → show "Send as one offer (N homes)" for 2-5 of them.
+// Changing the ticks drops a combined preview already on screen (it no longer matches).
+function hmOptPickUpdate(){
+  const root = document.getElementById("hm-case");
+  if (!root) return;
+  const n = root.querySelectorAll("[data-hm-opt-pick]:checked").length;
+  const btn = root.querySelector("[data-hm-optset-build]");
+  const note = root.querySelector("[data-hm-optset-note]");
+  if (btn) { btn.hidden = !(n >= 2 && n <= 5); btn.textContent = `Send as one offer (${n} homes)`; }
+  if (note) note.textContent = n === 1 ? "Tick at least one more home to send them as one offer." : n > 5 ? "At most 5 homes in one offer." : "";
+  if (HM.optionDraft) {
+    HM.optionDraft = null;
+    const pv = document.getElementById("hm-offer-preview");
+    if (pv && pv.querySelector("[data-hm-optset-preview]")) pv.innerHTML = "";
+  }
 }
 async function hmOpenCase(id){
   HM.selected = id;
@@ -31406,13 +31495,25 @@ async function hmOpenCase(id){
   const offers = of.error ? [] : (of.data || []);
   HM.offers = offers;
   HM.offerDraft = null; // the preview box is re-rendered empty below
-  const cur = offers[0] || null;
-  const verifiedInvs = cur && ["sent", "accepted"].includes(cur.status) ? [] : invs.filter(i => hmCanBuildOffer(c, i));
+  HM.optionDraft = null;
+  // The current offer is the group holding the newest row: one row for a single offer, or every home
+  // (option) of a multi-host offer. `cur` is the row that stands for it: the chosen home, else a waiting one.
+  const offerGroups = hmOfferGroups(offers);
+  const curSet = offerGroups[0] || [];
+  const isGroup = !!(curSet[0] && curSet[0].group_id);
+  const cur = !curSet.length ? null
+    : !isGroup ? curSet[0]
+    : curSet.find(o => o.status === "accepted") || curSet.find(o => o.status === "sent") || curSet[0];
+  const offerOut = offers.some(o => ["sent", "accepted"].includes(o.status));
+  const verifiedInvs = offerOut ? [] : invs.filter(i => hmCanBuildOffer(c, i));
   const box = cur ? hmCreateBox(cur, nowMs) : null;
   const chipOf = s => HM_OFFER_STATUS[s] || [s, "grey"];
+  const optChipOf = s => HM_OPTION_STATUS[s] || [s, "grey"];
+  // Several homes in one offer: direct students only (the Worker refuses agency cases: options_direct_only).
+  const canOptions = c.source === "direct" && verifiedInvs.length >= 2;
   // "Match with a host": the one-button path (fit list → Match → offer builder). Hidden while an offer is out
   // or accepted, and when offers could not be read (we can't tell then).
-  const matchCard = HM_RESPONDABLE.includes(c.status) && !of.error && !offers.some(o => ["sent", "accepted"].includes(o.status))
+  const matchCard = HM_RESPONDABLE.includes(c.status) && !of.error && !offerOut
     ? `<div data-hm-match-case="${hmEsc(c.id)}" style="margin-top:12px;padding:12px;border:2px solid var(--line);border-radius:10px">
       <div class="card-title">Match with a host</div>
       <div class="card-sub">See which hosts fit this student, pick a room and press Match. Then check the price and send the offer.</div>
@@ -31422,40 +31523,69 @@ async function hmOpenCase(id){
     </div>` : "";
   // A host said yes (or was matched) and no offer is out: the offer builder moves to the top of the case.
   const readyForOffer = verifiedInvs.length > 0 && !of.error;
+  const boxHtml = bx => !bx ? "" : `<div style="margin-top:8px;padding:8px;border-radius:8px;border:1px solid ${bx.tone === "red" ? "var(--red)" : "var(--line)"}">
+        <div class="list-title" style="${bx.tone === "red" ? "color:var(--red)" : ""}">${hmEsc(bx.title)}</div>
+        ${bx.text ? `<div class="list-sub">${bx.tone === "green" && /^https:\/\//.test(bx.text)
+          ? `<a href="${hmEsc(bx.text)}" target="_blank" rel="noopener">${hmEsc(bx.text)}</a>` : hmEsc(bx.text)}</div>` : ""}
+        ${bx.retry && c.status === "ACCEPTED" ? '<button class="btn" type="button" data-hm-offer="retry" style="margin-top:6px">Retry booking</button>' : ""}
+        ${bx.record && ["ACCEPTED", "MANUAL_REVIEW"].includes(c.status) ? `<form id="hm-record-booking" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <input class="form-input" name="booking_ref" placeholder="VM-HS-2026-XXXXXX" required style="width:200px">
+          <button class="btn btn-ghost" type="submit">Record booking made by hand</button></form>` : ""}
+      </div>`;
+  const singleHtml = o => `<div class="list-row" style="display:block">
+      <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}
+        <span class="badge badge-${hmEsc(chipOf(o.status)[1])}">${hmEsc(chipOf(o.status)[0])}</span></div>
+      <div class="list-sub">To ${o.recipient === "partner" ? "the agency" : "the student"}${o.recipient_email ? " (" + hmEsc(o.recipient_email) + ")" : ""}${o.billing_plan ? " · " + hmEsc(o.billing_plan) : ""}
+        · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · answer by ${hmEsc(new Date(o.expires_at).toLocaleString())}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
+      ${hmOfferRowsHtml(o)}
+      ${o.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
+      ${boxHtml(box)}
+    </div>`;
+  // One block for a multi-host offer: every home with its own chip; one Withdraw (the Worker closes every
+  // open home); the chosen home keeps the price lines and the booking box.
+  const groupHtml = g => {
+    const gs = chipOf(hmGroupStatus(g));
+    const exp = new Date((g.find(o => o.status === "sent") || g[0]).expires_at);
+    const first = g[0];
+    return `<div class="list-row" style="display:block" data-hm-offer-group="${hmEsc(first.group_id)}">
+      <div class="list-title">Offer with ${hmEsc(g.length)} homes <span class="badge badge-${hmEsc(gs[1])}">${hmEsc(gs[0])}</span></div>
+      <div class="list-sub">To the student${first.recipient_email ? " (" + hmEsc(first.recipient_email) + ")" : ""}${isNaN(exp) ? "" : " · expires " + hmEsc(exp.toLocaleString())} · the student picks one home</div>
+      ${g.map(o => `<div style="margin-top:6px;padding:6px 8px;border:1px solid ${o.status === "accepted" ? "var(--ink)" : "var(--line)"};border-radius:8px">
+        <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}${o.area ? " · " + hmEsc(o.area) : ""}
+          <span class="badge badge-${hmEsc(optChipOf(o.status)[1])}">${hmEsc(optChipOf(o.status)[0])}</span></div>
+        <div class="list-sub">student pays ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · host gets ${hmEsc(hmMoney(o.host_weekly_cents))}/wk · due when booking ${hmEsc(hmMoney(o.total_due_now_cents))}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
+        ${o.status === "accepted" ? hmOfferRowsHtml(o) + boxHtml(box) : ""}
+      </div>`).join("")}
+      ${g.some(o => o.status === "sent") ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
+    </div>`;
+  };
+  const earlier = offerGroups.slice(1);
   const offerSection = `
     <div class="card-title" style="margin-top:16px">Offer</div>
     ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
     ${verifiedInvs.map(i => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
-      <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div></div>
+      <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div>
+      ${canOptions ? `<label class="card-sub" style="display:inline-flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" data-hm-opt-pick="${hmEsc(i.id)}"> Include in a multi-host offer</label>` : ""}</div>
       <div style="display:flex;gap:8px;flex:none"><button class="btn" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button>
-      ${cur && ["sent", "accepted"].includes(cur.status) ? "" : `<button class="btn btn-ghost" type="button" data-hm-undo-match="${hmEsc(i.id)}" data-hm-undo-host="${hmEsc(i.host_id)}" data-hm-undo-name="${hmEsc(nameOf(i.host_id))}">Undo match</button>`}</div></div>`).join("")}
+      ${offerOut ? "" : `<button class="btn btn-ghost" type="button" data-hm-undo-match="${hmEsc(i.id)}" data-hm-undo-host="${hmEsc(i.host_id)}" data-hm-undo-name="${hmEsc(nameOf(i.host_id))}">Undo match</button>`}</div></div>`).join("")}
+    ${canOptions ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+      <button class="btn" type="button" data-hm-optset-build hidden>Send as one offer (0 homes)</button>
+      <span class="card-sub" data-hm-optset-note></span></div>` : ""}
+    ${c.source !== "direct" && verifiedInvs.length >= 2 ? '<div class="card-sub" style="margin-top:6px">Agency requests: one host per offer for now.</div>' : ""}
     <div id="hm-offer-preview"></div>
-    ${cur ? `<div class="list-row" style="display:block">
-      <div class="list-title">${hmEsc(cur.host_first_name || nameOf(cur.host_id))} · ${hmEsc(cur.room_label || "")}
-        <span class="badge badge-${hmEsc(chipOf(cur.status)[1])}">${hmEsc(chipOf(cur.status)[0])}</span></div>
-      <div class="list-sub">To ${cur.recipient === "partner" ? "the agency" : "the student"}${cur.recipient_email ? " (" + hmEsc(cur.recipient_email) + ")" : ""}${cur.billing_plan ? " · " + hmEsc(cur.billing_plan) : ""}
-        · ${hmEsc(hmMoney(cur.weekly_rate_cents))}/wk · answer by ${hmEsc(new Date(cur.expires_at).toLocaleString())}${cur.decided_reason ? " · " + hmEsc(cur.decided_reason) : ""}</div>
-      ${hmOfferRowsHtml(cur)}
-      ${cur.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-top:6px">Withdraw offer</button>' : ""}
-      ${box ? `<div style="margin-top:8px;padding:8px;border-radius:8px;border:1px solid ${box.tone === "red" ? "var(--red)" : "var(--line)"}">
-        <div class="list-title" style="${box.tone === "red" ? "color:var(--red)" : ""}">${hmEsc(box.title)}</div>
-        ${box.text ? `<div class="list-sub">${box.tone === "green" && /^https:\/\//.test(box.text)
-          ? `<a href="${hmEsc(box.text)}" target="_blank" rel="noopener">${hmEsc(box.text)}</a>` : hmEsc(box.text)}</div>` : ""}
-        ${box.retry && c.status === "ACCEPTED" ? '<button class="btn" type="button" data-hm-offer="retry" style="margin-top:6px">Retry booking</button>' : ""}
-        ${box.record && ["ACCEPTED", "MANUAL_REVIEW"].includes(c.status) ? `<form id="hm-record-booking" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-          <input class="form-input" name="booking_ref" placeholder="VM-HS-2026-XXXXXX" required style="width:200px">
-          <button class="btn btn-ghost" type="submit">Record booking made by hand</button></form>` : ""}
-      </div>` : ""}
-    </div>` : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
-    ${offers.length > 1 ? `<details><summary class="card-sub">Earlier offers (${hmEsc(offers.length - 1)})</summary>
-      ${offers.slice(1).map(o => `<div class="list-sub">#${hmEsc(o.id)} · ${hmEsc(chipOf(o.status)[0])} · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk
-        · ${hmEsc(new Date(o.expires_at).toLocaleString())}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>`).join("")}</details>` : ""}`;
+    ${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
+    ${earlier.length ? `<details><summary class="card-sub">Earlier offers (${hmEsc(earlier.length)})</summary>
+      ${earlier.map(g => g[0].group_id
+        ? `<div class="list-sub">Offer with ${hmEsc(g.length)} homes · ${hmEsc(chipOf(hmGroupStatus(g))[0])} · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}
+          · ${g.map(o => `${hmEsc(o.host_first_name || nameOf(o.host_id))} ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk (${hmEsc(optChipOf(o.status)[0])})`).join(", ")}</div>`
+        : `<div class="list-sub">#${hmEsc(g[0].id)} · ${hmEsc(chipOf(g[0].status)[0])} · ${hmEsc(hmMoney(g[0].weekly_rate_cents))}/wk
+        · ${hmEsc(new Date(g[0].expires_at).toLocaleString())}${g[0].decided_reason ? " · " + hmEsc(g[0].decided_reason) : ""}</div>`).join("")}</details>` : ""}`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
     ${readyForOffer
-      ? `<div style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">${offerSection.replace('<div class="card-title" style="margin-top:16px">Offer</div>', '<div class="card-title">Next: send the offer</div><div class="card-sub">A host can take this student. Press Build offer, check the price, then Send offer.</div>')}</div>
+      ? `<div style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">${offerSection.replace('<div class="card-title" style="margin-top:16px">Offer</div>', '<div class="card-title">Next: send the offer</div><div class="card-sub">A host can take this student. Press Build offer, check the price, then Send offer.' + (canOptions ? " Or tick 2 to 5 homes and send them as one offer: the student picks one." : "") + '</div>')}</div>
         ${matchCard ? `<details style="margin-top:8px"><summary class="card-sub">Match a different host</summary>${matchCard}</details>` : ""}`
       : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
@@ -31551,7 +31681,7 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match]");
+  const t = ev.target.closest("[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
@@ -31595,6 +31725,7 @@ document.addEventListener("click", async (ev) => {
       const weekly = t.dataset.hmOfferPrice !== undefined && input && input.value.trim() ? Math.round(Number(input.value) * 100) : null;
       if (weekly !== null && !(weekly > 0)) { msg("Type the weekly price in dollars"); return; }
       msg("Pricing…");
+      HM.optionDraft = null; // a single-host preview replaces a combined one
       const r = await hmWorker(`/staff/cases/${c.id}/offer`, { invitation_id: invId, dry_run: true, ...(weekly ? { weekly_rate_cents: weekly } : {}) });
       HM.offerDraft = { case_id: c.id, invitation_id: invId, weekly_rate_cents: r.preview.weekly_rate_cents,
         total_due_now_cents: r.preview.total_due_now_cents };
@@ -31628,6 +31759,67 @@ document.addEventListener("click", async (ev) => {
           : ["Offer created, but the email failed: send them this link:", { text: r.link || "(no link: check the timeline)", select: true },
              expTxt ? `It expires ${expTxt}.` : "",
              "The host has already been told; they'll hear again when the student accepts or declines."],
+        buttons: [{ label: "OK", primary: true }] });
+      return;
+    }
+    // One offer with several homes (direct students): dry_run preview, Update prices, then send.
+    if (t.hasAttribute("data-hm-optset-build") || t.hasAttribute("data-hm-optset-price")) {
+      let items;
+      if (t.hasAttribute("data-hm-optset-build")) {
+        const ids = [...document.querySelectorAll("#hm-case [data-hm-opt-pick]:checked")].map(x => Number(x.dataset.hmOptPick));
+        if (ids.length < 2 || ids.length > 5) { msg("Tick 2 to 5 homes"); return; }
+        items = ids.map(id => ({ invitation_id: id }));
+      } else {
+        const dft = HM.optionDraft;
+        if (!dft || dft.case_id !== c.id) { msg("Press Send as one offer first"); return; }
+        items = [];
+        for (const it of dft.items) {
+          const inp = document.querySelector(`#hm-offer-preview [data-hm-opt-rate="${CSS.escape(String(it.invitation_id))}"]`);
+          const v = inp && inp.value.trim() ? Math.round(Number(inp.value) * 100) : it.weekly_rate_cents;
+          if (!(v > 0)) { msg("Type each weekly price in dollars"); return; }
+          items.push({ invitation_id: it.invitation_id, weekly_rate_cents: v });
+        }
+      }
+      msg("Pricing…");
+      const r = await hmWorker(`/staff/cases/${c.id}/offer-set`, { items, dry_run: true });
+      if (HM.selected !== c.id) return;
+      const previews = (r && r.previews) || [];
+      HM.offerDraft = null;
+      HM.optionDraft = { case_id: c.id, expires_at: r.expires_at, previews,
+        items: previews.map(p => ({ invitation_id: Number(p.invitation_id), weekly_rate_cents: p.weekly_rate_cents, total_due_now_cents: p.total_due_now_cents })) };
+      document.getElementById("hm-offer-preview").innerHTML = hmOptionsPreviewHtml(HM.optionDraft);
+      msg("");
+      return;
+    }
+    if (t.hasAttribute("data-hm-optset-send")) {
+      const dft = HM.optionDraft;
+      if (!dft || dft.case_id !== c.id || dft.items.length < 2) { msg("Press Send as one offer first"); return; }
+      for (const it of dft.items) {
+        const inp = document.querySelector(`#hm-offer-preview [data-hm-opt-rate="${CSS.escape(String(it.invitation_id))}"]`);
+        if (inp && Math.round(Number(inp.value) * 100) !== it.weekly_rate_cents) { msg("Press Update prices first: the preview is not at those weekly prices"); return; }
+      }
+      const n = dft.items.length;
+      const email = (dft.previews[0] && dft.previews[0].recipient_email) || c.student_email || "the student";
+      const go = await hmNotice({ title: `Send one offer with ${n} homes?`,
+        lines: [`Send one offer with ${n} homes to ${email}? Each host already knows they're matched.`],
+        buttons: [{ label: `Send offer with ${n} homes`, primary: true, value: true }, { label: "Cancel", value: false }] });
+      if (go !== true) return;
+      t.disabled = true;
+      msg("Sending…");
+      // expected_total_cents per home: the Worker refuses (price_changed) if a fresh total differs from the preview.
+      const r = await hmWorker(`/staff/cases/${c.id}/offer-set`, { items: dft.items.map(it => ({ invitation_id: it.invitation_id,
+        weekly_rate_cents: it.weekly_rate_cents, expected_total_cents: it.total_due_now_cents })) });
+      HM.optionDraft = null;
+      const to = r.recipient_email || email;
+      const exp = r && r.expires_at ? new Date(r.expires_at) : null;
+      const expTxt = exp && !isNaN(exp) ? exp.toLocaleString() : "";
+      HM.flash = { id: c.id, text: r.emailed ? `Offer with ${n} homes sent.` : `Offer with ${n} homes saved, but the email did not go out. Send this link yourself: ${r.link || "(no link: check the timeline)"}` };
+      await loadHomestayMatching();
+      hmNotice({ title: r.emailed ? "Offer sent" : "Offer created, email failed",
+        lines: r.emailed
+          ? [`Offer with ${n} homes sent to ${to}.${expTxt ? " It expires " + expTxt + "." : ""} Each host is emailed when the student chooses.`]
+          : [`Offer with ${n} homes created, but the email to ${to} failed: send the student this link:`, { text: r.link || "(no link: check the timeline)", select: true },
+             expTxt ? `It expires ${expTxt}.` : "", "Each host is emailed when the student chooses."],
         buttons: [{ label: "OK", primary: true }] });
       return;
     }
@@ -31687,7 +31879,7 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.dataset.hmRemove) return await hmSaveOverride(c, { order: ids.filter(x => x !== t.dataset.hmRemove), removed: [...(ov.removed || []), t.dataset.hmRemove] });
   } catch (e) {
-    if (t.dataset.hmInv || t.dataset.hmOfferSend !== undefined || t.dataset.hmOffer || t.dataset.hmUndoMatch) t.disabled = false;
+    if (t.dataset.hmInv || t.dataset.hmOfferSend !== undefined || t.dataset.hmOffer || t.dataset.hmUndoMatch || t.hasAttribute("data-hm-optset-send")) t.disabled = false;
     msg("Error: " + (e.message || e));
     if (c && e.body && e.body.error === "conflict") { HM.flash = { id: c.id, text: "Error: " + e.message }; await loadHomestayMatching(); }
   }
@@ -31716,6 +31908,9 @@ document.addEventListener("submit", async (ev) => {
   }
 });
 
+document.addEventListener("change", (ev) => {
+  if (ev.target.matches && ev.target.matches("#hm-case [data-hm-opt-pick]")) hmOptPickUpdate();
+});
 document.addEventListener("change", (ev) => {
   if (ev.target.id !== "hm-filter") return;
   HM.filter = ev.target.value;
