@@ -1367,7 +1367,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-match3"></script>
+<script src="pms-supabase.js?v=2026-09-30-match4"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -30969,6 +30969,73 @@ async function hmWorker(path, body){
   return out;
 }
 
+// In-page confirmation box (never window.alert/confirm). lines: strings, or { text, select: true } for
+// copyable text (a link). buttons: [{ label, primary, value, onClick }]. Resolves with the pressed
+// button's value (its label if none), or null on Escape.
+function hmNotice({ title, lines = [], buttons = [{ label: "OK", primary: true }] } = {}){
+  return new Promise(resolve => {
+    const prevFocus = document.activeElement;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-hm-notice", "");
+    overlay.style.cssText = "position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px";
+    const box = document.createElement("div");
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.style.cssText = "background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-md);max-width:480px;width:100%;padding:18px";
+    const h = document.createElement("div");
+    h.className = "card-title";
+    h.style.fontWeight = "700";
+    h.textContent = String(title == null ? "" : title);
+    box.appendChild(h);
+    for (const ln of lines) {
+      if (ln == null || ln === "") continue;
+      const d = document.createElement("div");
+      d.className = "card-sub";
+      d.style.marginTop = "8px";
+      if (typeof ln === "object") {
+        d.textContent = String(ln.text == null ? "" : ln.text);
+        if (ln.select) { d.style.userSelect = "all"; d.style.wordBreak = "break-all"; d.style.color = "var(--ink)"; }
+      } else d.textContent = String(ln);
+      box.appendChild(d);
+    }
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap";
+    let primaryBtn = null;
+    const close = v => {
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      if (prevFocus && prevFocus.isConnected && prevFocus.focus) prevFocus.focus();
+      resolve(v);
+    };
+    const onKey = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); } };
+    for (const b of buttons) {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "btn " + (b.primary ? "btn-primary" : "btn-ghost");
+      el.textContent = String(b.label == null ? "OK" : b.label);
+      el.addEventListener("click", ev => {
+        ev.stopPropagation();
+        const v = b.value !== undefined ? b.value : b.label;
+        close(v);
+        if (typeof b.onClick === "function") b.onClick(v);
+      });
+      if (b.primary && !primaryBtn) primaryBtn = el;
+      row.appendChild(el);
+    }
+    box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKey, true);
+    (primaryBtn || row.querySelector("button") || box).focus();
+  });
+}
+// "<name> was emailed at <email>." / the failure fallback / nothing when the Worker didn't say.
+function hmHostEmailLine(r, name){
+  if (!r || typeof r.host_emailed !== "boolean") return "";
+  if (r.host_emailed) return `${name} was emailed${r.host_email ? " at " + r.host_email : ""}.`;
+  return "but the email to the host failed: tell them yourself.";
+}
+
 async function loadHomestayMatching(){
   const sb = window.vmDb && window.vmDb.sb;
   if (!sb || HM.loading) return;
@@ -31150,7 +31217,8 @@ async function hmOpenCase(id){
     ${of.error ? `<div class="card-sub">Could not load offers: ${hmEsc(of.error.message || of.error)}</div>` : ""}
     ${verifiedInvs.map(i => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
       <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div></div>
-      <button class="btn" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button></div>`).join("")}
+      <div style="display:flex;gap:8px;flex:none"><button class="btn" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button>
+      ${cur && ["sent", "accepted"].includes(cur.status) ? "" : `<button class="btn btn-ghost" type="button" data-hm-undo-match="${hmEsc(i.id)}" data-hm-undo-host="${hmEsc(i.host_id)}" data-hm-undo-name="${hmEsc(nameOf(i.host_id))}">Undo match</button>`}</div></div>`).join("")}
     <div id="hm-offer-preview"></div>
     ${cur ? `<div class="list-row" style="display:block">
       <div class="list-title">${hmEsc(cur.host_first_name || nameOf(cur.host_id))} · ${hmEsc(cur.room_label || "")}
@@ -31273,7 +31341,7 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price]");
+  const t = ev.target.closest("[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
@@ -31322,7 +31390,9 @@ document.addEventListener("click", async (ev) => {
       if (!dft || dft.case_id !== c.id) { msg("Press Build offer first"); return; }
       const input = document.getElementById("hm-offer-rate");
       if (input && Math.round(Number(input.value) * 100) !== dft.weekly_rate_cents) { msg("Press Update price first: the preview is not at that weekly price"); return; }
-      if (!confirm(`Send this offer? The ${c.source === "partner" ? "agency" : "student"} is emailed now.`)) return;
+      const go = await hmNotice({ title: "Send this offer?", lines: [`The ${c.source === "partner" ? "agency" : "student"} is emailed now.`],
+        buttons: [{ label: "Send offer", primary: true, value: true }, { label: "Cancel", value: false }] });
+      if (go !== true) return;
       t.disabled = true;
       msg("Sending…");
       // expected_total_cents: the Worker refuses (price_changed) if its fresh total differs from what staff saw.
@@ -31330,7 +31400,34 @@ document.addEventListener("click", async (ev) => {
         weekly_rate_cents: dft.weekly_rate_cents, expected_total_cents: dft.total_due_now_cents });
       HM.offerDraft = null;
       HM.flash = { id: c.id, text: r.emailed ? "Offer sent." : `Offer saved, but the email did not go out. Send this link yourself: ${r.link || "(no link: check the timeline)"}` };
-      return await loadHomestayMatching();
+      await loadHomestayMatching();
+      const who = c.source === "partner" ? `the agency for ${c.student_name || "the student"}` : (c.student_name || "the student");
+      const exp = r && r.expires_at ? new Date(r.expires_at) : null;
+      const expTxt = exp && !isNaN(exp) ? exp.toLocaleString() : "";
+      hmNotice({ title: r.emailed ? "Offer sent" : "Offer created, email failed",
+        lines: r.emailed
+          ? [`Offer sent to ${who}${r.recipient_email ? " (" + r.recipient_email + ")" : ""}.${expTxt ? " It expires " + expTxt + "." : ""}`,
+             "The host has already been told; they'll hear again when the student accepts or declines."]
+          : ["Offer created, but the email failed: send them this link:", { text: r.link || "(no link: check the timeline)", select: true },
+             expTxt ? `It expires ${expTxt}.` : "",
+             "The host has already been told; they'll hear again when the student accepts or declines."],
+        buttons: [{ label: "OK", primary: true }] });
+      return;
+    }
+    if (t.dataset.hmUndoMatch) {
+      const hostId = t.dataset.hmUndoHost, name = t.dataset.hmUndoName || hostId;
+      const ok = await hmNotice({ title: "Undo match?", lines: [`Undo the match with ${name}? They'll be emailed that the match is off.`],
+        buttons: [{ label: "Undo match", primary: true, value: true }, { label: "Keep it", value: false }] });
+      if (ok !== true) return;
+      t.disabled = true;
+      msg("Undoing the match…");
+      const r = await hmWorker(`/staff/cases/${c.id}/response`, { host_id: hostId, response: "unavailable", reason: "Match undone by staff", notify_host: true });
+      HM.flash = { id: c.id, text: "Match undone." };
+      await loadHomestayMatching();
+      const line = hmHostEmailLine(r, name);
+      hmNotice({ title: "Match undone", lines: [line ? (r.host_emailed ? `Match undone. ${line}` : `Match undone, ${line}`) : "Match undone."],
+        buttons: [{ label: "OK", primary: true }] });
+      return;
     }
     if (t.dataset.hmOffer === "withdraw") {
       const reason = prompt("Why withdraw this offer? (optional)");
@@ -31373,7 +31470,7 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.dataset.hmRemove) return await hmSaveOverride(c, { order: ids.filter(x => x !== t.dataset.hmRemove), removed: [...(ov.removed || []), t.dataset.hmRemove] });
   } catch (e) {
-    if (t.dataset.hmInv || t.dataset.hmOfferSend !== undefined || t.dataset.hmOffer) t.disabled = false;
+    if (t.dataset.hmInv || t.dataset.hmOfferSend !== undefined || t.dataset.hmOffer || t.dataset.hmUndoMatch) t.disabled = false;
     msg("Error: " + (e.message || e));
     if (c && e.body && e.body.error === "conflict") { HM.flash = { id: c.id, text: "Error: " + e.message }; await loadHomestayMatching(); }
   }
@@ -31534,12 +31631,16 @@ async function hmFitMatch(card, caseId, btn){
   const roomSel = row && row.querySelector("[data-hm-fit-room]");
   const roomId = roomSel ? roomSel.value : "";
   if (!roomId) { msg.textContent = "Pick a room first"; return; }
+  const hostName = ((HM.hosts || []).find(h => String(h.host_id) === String(hostId)) || {}).display_name
+    || ((row && row.querySelector(".list-title")) || {}).textContent || hostId;
+  const roomObj = (HM.rooms || []).find(x => String(x.host_id) === String(hostId) && String(x.room_id) === String(roomId));
+  const roomLabel = (roomObj && roomObj.label) || roomId;
   const all = [...card.querySelectorAll("[data-hm-fit-match]")];
   all.forEach(b => b.disabled = true);
   msg.textContent = "Matching…";
   let r;
   try {
-    r = await hmWorker(`/staff/cases/${encodeURIComponent(caseId)}/response`, { host_id: hostId, response: "available", room_id: roomId, reason: "Matched by staff" });
+    r = await hmWorker(`/staff/cases/${encodeURIComponent(caseId)}/response`, { host_id: hostId, response: "available", room_id: roomId, reason: "Matched by staff", notify_host: true });
   } catch (e) {
     all.forEach(b => b.disabled = false);
     msg.textContent = "Error: " + (e.message || e);
@@ -31547,7 +31648,12 @@ async function hmFitMatch(card, caseId, btn){
   }
   HM.flash = { id: caseId, text: "Matched. Check the price, then press Send offer." };
   await loadHomestayMatching();
-  if (HM.selected !== caseId) return;
+  const emailLine = hmHostEmailLine(r, hostName);
+  const showMatched = () => hmNotice({ title: "Matched",
+    lines: [emailLine && !r.host_emailed ? `Matched with ${hostName} · ${roomLabel}, ${emailLine}` : `Matched with ${hostName} · ${roomLabel}.${emailLine ? " " + emailLine : ""}`,
+      "Next: press Build offer, check the price, then Send offer. The student is emailed when you send the offer."],
+    buttons: [{ label: "OK", primary: true }] });
+  if (HM.selected !== caseId) { showMatched(); return; }
   // The offer builder for this host's invitation; the existing Build offer handler does the pricing preview.
   const c = HM.cases.find(x => x.id === caseId);
   const inv = (HM.invitations || []).find(i => String(i.host_id) === String(hostId) && hmCanBuildOffer(c, i));
@@ -31557,6 +31663,7 @@ async function hmFitMatch(card, caseId, btn){
     if (card.isConnected) all.forEach(b => b.disabled = false); // the reload was skipped (another load was running)
     const m = document.getElementById("hm-msg");
     if (m) m.textContent = `Matched${r && r.status ? " (case is " + ((HM_STATUS[r.status] || [r.status])[0]) + ")" : ""}, but the offer builder isn't available for this host yet: press Refresh, then Build offer under Offer.`;
+    showMatched();
     return;
   }
   const note = document.createElement("div");
@@ -31566,6 +31673,7 @@ async function hmFitMatch(card, caseId, btn){
   preview.parentNode.insertBefore(note, preview);
   build.click();
   note.scrollIntoView({ behavior: "smooth", block: "start" });
+  showMatched();
 }
 document.addEventListener("click", (ev) => {
   const t = ev.target.closest && ev.target.closest("[data-hm-fit-open],[data-hm-fit-match]");
