@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-09-30-flow5"></script>
+<script src="pms-supabase.js?v=2026-10-01-autorelease"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20837,6 +20837,15 @@ function hmCreateBox(o, nowMs){
 function hmCanBuildOffer(c, inv){
   return !!c && c.status === "OFFER_REVIEW" && !!inv && inv.response === "available" && !inv.closed_at && !!inv.verified;
 }
+// Agency case in a city with auto_release_partner: the Worker's minute cron sends a matched home with an approved
+// listing to the agency by itself (Worker src/release.ts, hm_due_partner_releases); staff build nothing. A home the
+// cron skipped (a release_skipped event on its invitation) stays with staff, who build the offer as usual.
+function hmAutoReleases(c, inv, settings, listings, events){
+  if (!c || c.source !== "partner" || c.paused || !hmCanBuildOffer(c, inv) || !inv.room_id) return false;
+  if (!(settings || []).some(s => s.city === c.city && s.auto_release_partner)) return false;
+  if (!(listings || []).some(l => l.host_id === inv.host_id && l.approved)) return false;
+  return !(events || []).some(e => e.type === "release_skipped" && Number(e.invitation_id) === Number(inv.id));
+}
 /* HM-MATCH-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
    Read when the page is opened. Writes go through the signed-in admin's
@@ -31382,10 +31391,11 @@ async function loadHomestayMatching(){
   if (!sb || HM.loading) return;
   HM.loading = true;
   try {
-    const [c, p, l] = await Promise.all([
+    const [c, p, l, st] = await Promise.all([
       sb.from("hm_cases").select("*").order("created_at", { ascending: false }).range(0, 999),
       sb.from("hm_host_profiles").select("*").range(0, 999),
       sb.from("hm_listings").select("host_id,status,approved,updated_at").range(0, 999),
+      sb.from("hm_settings").select("city,auto_release_partner"),
     ]);
     if (c.error) throw c.error;
     if (p.error) throw p.error;
@@ -31393,6 +31403,7 @@ async function loadHomestayMatching(){
     HM.profiles = p.data || [];
     // Listings are extra: a read error (e.g. the table not there yet) must not blank the cases page.
     HM.listings = l.error ? [] : (l.data || []);
+    HM.settings = st.error ? [] : (st.data || []);
     HM.openCount = hmQueue(HM.cases, "open").length;
     if (typeof updateSidebarCounts === "function") updateSidebarCounts();
     try { const h = await vmN8n.read("hosts-list"); HM.hosts = (h && h.hosts) || []; } catch (e) { HM.hosts = []; }
@@ -31630,12 +31641,13 @@ async function hmOpenCase(id){
   if (!c) return;
   const sb = window.vmDb.sb;
   const [ev, iv, of] = await Promise.all([
-    sb.from("hm_events").select("type,actor,after,created_at").eq("case_id", id).order("created_at", { ascending: false }).range(0, 99),
+    sb.from("hm_events").select("type,actor,after,created_at,invitation_id").eq("case_id", id).order("created_at", { ascending: false }).range(0, 99),
     sb.from("hm_invitations").select("*").eq("case_id", id).order("wave").order("rank").range(0, 199),
     sb.from("hm_offers").select("*").eq("case_id", id).order("id", { ascending: false }).range(0, 19),
   ]);
   if (HM.selected !== id) return; // another case was opened while this one loaded
   const events = ev.data || [];
+  HM.caseEvents = events;
   const flash = HM.flash && HM.flash.id === id ? HM.flash.text : "";
   HM.flash = null;
   const sl = c.shortlist || { eligible: [], excluded: [] };
@@ -31711,6 +31723,8 @@ async function hmOpenCase(id){
   const optChipOf = s => HM_OPTION_STATUS[s] || [s, "grey"];
   // Several homes in one offer: direct students only (the Worker refuses agency cases: options_direct_only).
   const canOptions = c.source === "direct" && verifiedInvs.length >= 2;
+  const autoIds = new Set(verifiedInvs.filter(i => hmAutoReleases(c, i, HM.settings, HM.listings, events)).map(i => i.id));
+  const allAuto = verifiedInvs.length > 0 && autoIds.size === verifiedInvs.length;
   // "Match with a host": the one-button path (fit list → Match → offer builder). Hidden while an offer is out
   // or accepted, and when offers could not be read (we can't tell then).
   const canMatch = HM_RESPONDABLE.includes(c.status) && !of.error && !offerOut;
@@ -31781,7 +31795,9 @@ async function hmOpenCase(id){
   const matchedRows = verifiedInvs.map((i, k) => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(i.host_id))}</div>
       <div class="list-sub">${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</div>
       ${canOptions ? `<label class="card-sub" style="display:inline-flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" data-hm-opt-pick="${hmEsc(i.id)}" ${k < preTicked ? "checked" : ""}> Include</label>` : ""}</div>
-      <div style="display:flex;gap:8px;flex:none;flex-wrap:wrap">${canOptions
+      <div style="display:flex;gap:8px;flex:none;flex-wrap:wrap;align-items:center">${autoIds.has(i.id)
+        ? '<span class="badge badge-grey">Going to the agency automatically</span>'
+        : canOptions
         ? `<button class="btn btn-ghost" type="button" data-hm-offer-build="${hmEsc(i.id)}">Offer only this home</button>`
         : `<button class="btn btn-primary" type="button" data-hm-offer-build="${hmEsc(i.id)}">Build offer</button>`}
       ${offerOut ? "" : `<button class="btn btn-ghost" type="button" data-hm-undo-match="${hmEsc(i.id)}" data-hm-undo-host="${hmEsc(i.host_id)}" data-hm-undo-name="${hmEsc(nameOf(i.host_id))}">Undo match</button>`}</div></div>`).join("");
@@ -31789,7 +31805,7 @@ async function hmOpenCase(id){
     ${canOptions ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <button class="btn btn-primary" type="button" data-hm-optset-build ${preTicked >= 2 ? "" : "hidden"}>${hmEsc(hmOptSetLabel(preTicked, verifiedInvs.length))}</button>
       <span class="card-sub" data-hm-optset-note></span></div>` : ""}
-    ${c.source !== "direct" && verifiedInvs.length >= 2 ? '<div class="card-sub" style="margin-top:6px">Agency requests: one host per offer for now.</div>' : ""}
+    ${c.source !== "direct" && verifiedInvs.length - autoIds.size >= 2 ? '<div class="card-sub" style="margin-top:6px">Agency requests: one host per offer for now.</div>' : ""}
     <div id="hm-offer-preview"></div>`;
   // Not ready for an offer: the usual Offer section (current offer, then the earlier ones).
   const offerSection = `
@@ -31803,8 +31819,9 @@ async function hmOpenCase(id){
   const offerTop = `<div id="hm-offer-top" style="margin-top:12px;padding:0 12px 12px;border:2px solid var(--line);border-radius:10px">${offerSection}</div>`;
   // Ready: the Next box holds only the matched hosts and the builder; closed offers sit below it, collapsed.
   const nextBox = !readyForOffer ? "" : `<div id="hm-next-offer" style="margin-top:12px;padding:12px;border:2px solid var(--red);border-radius:10px">
-      <div class="card-title">Next: send the offer</div>
-      <div class="card-sub">${canOptions
+      <div class="card-title">${allAuto ? "Sending to the agency…" : "Next: send the offer"}</div>
+      ${autoIds.size ? `<div class="card-sub" data-hm-release-note>Agency request: ${allAuto ? "the matched homes go" : "the homes marked below go"} to the agency by themselves within about a minute (the agency picks one and books). Nothing to send${allAuto ? "" : " for those"}. This page updates by itself.</div>` : ""}
+      <div class="card-sub" ${allAuto ? "hidden" : ""}>${canOptions
         ? `${hmEsc(verifiedInvs.length)} hosts can take this student. Press ${hmEsc(hmOptSetLabel(preTicked, verifiedInvs.length))}, check the prices, then send.`
         : "A host can take this student. Press Build offer, check the price, then Send offer."}</div>
       ${canOptions ? '<div class="card-sub" style="margin-top:4px">The student sees all ticked homes on one page and picks one. Untick a home to leave it out.</div>' : ""}
@@ -31865,6 +31882,57 @@ async function hmOpenCase(id){
     const openBtn = document.querySelector("#hm-case [data-hm-match-case] [data-hm-fit-open]");
     if (openBtn) setTimeout(() => { if (openBtn.isConnected) openBtn.click(); }, 0);
   }
+  if (autoIds.size) hmWatchRelease(c.id, [...autoIds]); else if (HM.releaseWatch && HM.releaseWatch.id === c.id) hmStopReleaseWatch();
+}
+
+// Agency auto-release (hmAutoReleases): the Worker's cron sends the home within about a minute, so the page
+// re-reads this case every 15 s for up to 3 minutes and re-opens it once it moved on (sent) or a home was
+// skipped (left for staff). Supabase reads only: no n8n execution, unlike a full Refresh.
+const HM_RELEASE_POLL_MS = 15000, HM_RELEASE_WATCH_MS = 180000;
+// Re-read one case row and re-open it (Supabase only), e.g. when the Worker says the page is out of date.
+async function hmReloadCase(id, flash){
+  const { data } = await window.vmDb.sb.from("hm_cases").select("*").eq("id", id).maybeSingle();
+  if (data) HM.cases = HM.cases.map(x => x.id === id ? data : x);
+  hmRenderQueue();
+  if (flash) HM.flash = { id, text: flash };
+  if (HM.selected === id) await hmOpenCase(id);
+}
+function hmStopReleaseWatch(){
+  if (HM.releaseWatch) clearTimeout(HM.releaseWatch.timer);
+  HM.releaseWatch = null;
+}
+function hmWatchRelease(id, invIds){
+  if (HM.releaseWatch && HM.releaseWatch.id === id) return;
+  hmStopReleaseWatch();
+  const w = { id, started: Date.now(), timer: null };
+  HM.releaseWatch = w;
+  const tick = async () => {
+    if (HM.releaseWatch !== w) return;
+    if (HM.selected !== id) { hmStopReleaseWatch(); return; }
+    if (Date.now() - w.started > HM_RELEASE_WATCH_MS) {
+      const note = document.querySelector("#hm-case [data-hm-release-note]");
+      if (note) note.textContent = "Not sent to the agency after 3 minutes. Press Refresh; if it is still waiting, check #homestay-matching in Slack.";
+      return; // stays the current watch, so re-renders of this case don't restart it; opening another case clears it
+    }
+    try {
+      const sb = window.vmDb.sb;
+      const [cs, sk] = await Promise.all([
+        sb.from("hm_cases").select("*").eq("id", id).maybeSingle(),
+        sb.from("hm_events").select("invitation_id").eq("case_id", id).eq("type", "release_skipped").in("invitation_id", invIds),
+      ]);
+      if (HM.releaseWatch !== w || HM.selected !== id) return;
+      const row = cs.data;
+      const moved = row && row.status !== "OFFER_REVIEW";
+      if (moved || (sk.data || []).length) {
+        hmStopReleaseWatch();
+        await hmReloadCase(id, moved ? (row.status === "OFFER_SENT" ? "Sent to the agency. They pick a home and book it themselves." : "")
+          : "A home was not sent automatically: build its offer by hand (Slack has the reason).");
+        return;
+      }
+    } catch (e) { console.warn("hmWatchRelease", e); }
+    if (HM.releaseWatch === w) w.timer = setTimeout(tick, HM_RELEASE_POLL_MS);
+  };
+  w.timer = setTimeout(tick, HM_RELEASE_POLL_MS);
 }
 
 // Reads named fields straight off the DOM (not via FormData) because matching
@@ -32122,7 +32190,7 @@ document.addEventListener("click", async (ev) => {
   } catch (e) {
     if (t.dataset.hmInv || t.dataset.hmOfferSend !== undefined || t.dataset.hmOffer || t.dataset.hmUndoMatch || t.hasAttribute("data-hm-optset-send")) t.disabled = false;
     msg("Error: " + (e.message || e));
-    if (c && e.body && e.body.error === "conflict") { HM.flash = { id: c.id, text: "Error: " + e.message }; await loadHomestayMatching(); }
+    if (c && e.body && ["conflict", "locked", "not_offer_review"].includes(e.body.error)) { HM.flash = { id: c.id, text: "Error: " + e.message }; await loadHomestayMatching(); }
   }
 });
 
@@ -32285,6 +32353,8 @@ async function hmFitOpen(card, caseId){
     [fit] = await Promise.all([hmWorker(`/staff/cases/${encodeURIComponent(caseId)}/fit`), hmEnsureRoomsLoaded()]);
   } catch (e) {
     if (card.isConnected) msg.textContent = "Error: " + (e.message || e);
+    // The case moved on since the page loaded (e.g. the cron sent the home to the agency): show it as it is now.
+    if (e.body && e.body.error === "locked" && HM.selected === caseId) await hmReloadCase(caseId, "This case moved on: " + (e.message || e)).catch(() => {});
     return;
   }
   if (!card.isConnected || HM.selected !== caseId) return; // the case was re-rendered or another one opened
@@ -32330,7 +32400,10 @@ async function hmFitMatch(card, caseId, btn){
   const c = HM.cases.find(x => x.id === caseId);
   const buildable = (HM.invitations || []).filter(i => hmCanBuildOffer(c, i));
   const several = buildable.length >= 2;
-  const nextLine = !several ? "Next: press Build offer, check the price, then Send offer. The student is emailed when you send the offer."
+  const mine = buildable.find(i => String(i.host_id) === String(hostId));
+  const auto = !!mine && hmAutoReleases(c, mine, HM.settings, HM.listings, HM.caseEvents);
+  const nextLine = auto ? "Nothing to send: this agency request goes to the agency by itself within about a minute, and the page updates when it has."
+    : !several ? "Next: press Build offer, check the price, then Send offer. The student is emailed when you send the offer."
     : c && c.source === "direct" ? "Next: press Send all homes as one offer (they are already ticked). The student is emailed when you send it."
     : "Next: press Build offer on the home to offer, check the price, then Send offer.";
   const emailLine = hmHostEmailLine(r, hostName);
@@ -32338,6 +32411,7 @@ async function hmFitMatch(card, caseId, btn){
     lines: [emailLine && !r.host_emailed ? `Matched with ${hostName} · ${roomLabel}, ${emailLine}` : `Matched with ${hostName} · ${roomLabel}.${emailLine ? " " + emailLine : ""}`, nextLine],
     buttons: [{ label: "OK", primary: true }] });
   if (HM.selected !== caseId) { showMatched(); return; }
+  if (auto) { hmScrollToNext(); showMatched(); return; }
   // The case already had matched hosts: no single-host builder, just the Next box with everyone in it.
   if (several) { hmScrollToNext(); showMatched(); return; }
   // First and only matched host: open the offer builder for its invitation (the Build offer handler prices it).
@@ -32395,11 +32469,14 @@ async function hmFitMatchSelected(card, caseId){
   await loadHomestayMatching();
   if (HM.selected === caseId) hmScrollToNext();
   const c = HM.cases.find(x => x.id === caseId);
-  const several = (HM.invitations || []).filter(i => hmCanBuildOffer(c, i)).length >= 2;
+  const buildable = (HM.invitations || []).filter(i => hmCanBuildOffer(c, i));
+  const several = buildable.length >= 2;
+  const allAuto = buildable.length > 0 && buildable.every(i => hmAutoReleases(c, i, HM.settings, HM.listings, HM.caseEvents));
   hmNotice({ title: `Matched ${done.length} host${done.length === 1 ? "" : "s"}`,
     lines: [`Matched ${done.length} host${done.length === 1 ? "" : "s"}: ${done.map(d => `${d.hostName} (${emailBit(d)})`).join(", ")}.`,
       ...failed.map(f => `Could not match ${f.hostName}: ${f.err}`),
-      several && c && c.source === "direct" ? "Next: press Send all homes as one offer (they are already ticked)."
+      allAuto ? "Nothing to send: this agency request goes to the agency by itself within about a minute, and the page updates when it has."
+        : several && c && c.source === "direct" ? "Next: press Send all homes as one offer (they are already ticked)."
         : "Next: press Build offer, check the price, then Send offer."],
     buttons: [{ label: "OK", primary: true }] });
 }
