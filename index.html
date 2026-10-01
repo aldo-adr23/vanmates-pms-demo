@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-01-autorelease"></script>
+<script src="pms-supabase.js?v=2026-10-01-hostdocs"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20846,6 +20846,41 @@ function hmAutoReleases(c, inv, settings, listings, events){
   if (!(listings || []).some(l => l.host_id === inv.host_id && l.approved)) return false;
   return !(events || []).some(e => e.type === "release_skipped" && Number(e.invitation_id) === Number(inv.id));
 }
+// Host phone for SMS: the same rule as the Worker's toE164NA (src/core/phone.ts), so what this
+// says matches what the Worker will text. The number itself lives on the n8n host row.
+function hmPhoneE164(raw){
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!s || /[a-z]/i.test(s.replace(/^tel:/i, ""))) return null;
+  const digits = s.replace(/\D/g, "");
+  const ten = digits.length === 11 && digits[0] === "1" ? digits.slice(1) : digits.length === 10 ? digits : null;
+  if (!ten || !/^[2-9]\d{2}[2-9]\d{6}$/.test(ten) || /^[2-9]11/.test(ten)) return null;
+  return "+1" + ten;
+}
+function hmPhoneNote(raw){
+  if (!String(raw == null ? "" : raw).trim()) return { ok: false, text: "No phone: this host only gets emails" };
+  const e = hmPhoneE164(String(raw));
+  return e ? { ok: true, text: "Texts go to " + e } : { ok: false, text: "Not a Canada/US mobile number: this host only gets emails" };
+}
+// Criminal record check (optional): one file per host in the private hm-host-docs bucket, under <host_id>/.
+const HM_CRC_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+const HM_CRC_MAX = 10 * 1024 * 1024;
+function hmCrcCheckFile(f){
+  if (!f) return "Pick a file first";
+  if (!HM_CRC_TYPES.includes(f.type)) return "Upload a PDF, JPEG, PNG or WebP file";
+  if (!(f.size > 0)) return "That file is empty";
+  if (f.size > HM_CRC_MAX) return "That file is over 10 MB";
+  return "";
+}
+function hmCrcPath(hostId, name, now){
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(String(hostId || ""))) return null;
+  const safe = String(name || "file").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+  return `${hostId}/crc-${now}-${safe}`;
+}
+function hmCrcText(p){
+  if (!p || !p.crc_path) return "";
+  return `On file: ${p.crc_file_name || p.crc_path.split("/").pop()} · uploaded ${hmDay(p.crc_uploaded_at)} by ${p.crc_uploaded_by || "?"}`;
+}
 /* HM-MATCH-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
    Read when the page is opened. Writes go through the signed-in admin's
@@ -32598,7 +32633,7 @@ function hmRenderProfiles(){
     const k = hmEsc(h.host_id);
     const card = hmHostCard(h);
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
-        <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}</span>
+        <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}${p.crc_path ? " · criminal record check on file" : ""}</span>
         <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span>
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px" data-hm-ready-chips="${k}">${hmReadyChips(h)}</div>
         ${card && lc(card.name).trim() !== lc(h.display_name).trim() ? `<div class="card-sub">Host card: ${hmEsc(card.name)} · Payout account: ${hmEsc(h.display_name)}</div>` : ""}</summary>
@@ -32606,6 +32641,9 @@ function hmRenderProfiles(){
       <div class="hm-grid" data-hm-profile="${k}" style="margin-top:8px">
         <label>City <select class="form-input" name="city"><option value="">—</option>${["vancouver","toronto"].map(x => `<option ${p.city === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label>Area <input class="form-input" name="area" value="${hmEsc(p.area)}"></label>
+        <label>Phone (for SMS) <input class="form-input" type="tel" maxlength="40" name="phone" value="${hmEsc(h.phone)}" data-hm-phone="${k}">
+          <span class="card-sub" data-hm-phone-note="${k}">${hmEsc(hmPhoneNote(h.phone).text)}</span></label>
+        <label>Email <input class="form-input" value="${hmEsc(h.email)}" disabled></label>
         <label>Max students <input class="form-input" name="max_students" value="${hmEsc(p.max_students || 1)}"></label>
         <label>Languages (comma separated) <input class="form-input" name="languages" value="${hmEsc((p.languages || []).join(", "))}"></label>
         <label><input type="checkbox" name="has_pets" ${p.has_pets ? "checked" : ""}> Pets in home</label>
@@ -32620,6 +32658,10 @@ function hmRenderProfiles(){
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
         <div style="grid-column:1/-1"><button class="btn" type="button" data-hm-save-profile="${k}">Save profile</button>
           <span class="card-sub" id="hm-pmsg-${k}"></span></div>
+        <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
+          <div class="card-title" style="font-size:15px">Criminal record check <span class="card-sub">(optional)</span></div>
+          <div data-hm-crc="${k}">${hmCrcBox(h.host_id)}</div>
+        </div>
         <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
           <div class="card-title" style="font-size:15px">Listing</div>
           <div data-hml-box="${k}" class="card-sub">Open to load…</div>
@@ -32638,11 +32680,19 @@ async function hmSaveProfile(hostId){
   const root = document.querySelector(`[data-hm-profile="${CSS.escape(hostId)}"]`);
   const get = n => root.querySelector(`[name="${n}"]`);
   const out = document.getElementById("hm-pmsg-" + hostId);
+  const host = (HM.hosts || []).find(x => x.host_id === hostId) || {};
+  const phone = get("phone").value.trim();
+  let phoneMsg = "";
+  if (phone !== String(host.phone || "").trim()) {
+    out.textContent = "Saving phone…";
+    phoneMsg = await hmSavePhone(host, phone);
+  }
+  const done = m => { out.textContent = [phoneMsg, m].filter(Boolean).join(" "); };
   const f = { host_id: hostId };
   ["city","area","max_students","languages","pets_detail","unavailable_until","notes"].forEach(n => f[n] = get(n).value);
   ["has_pets","accepts_minors","smoking_household","email_only","matching_active"].forEach(n => f[n] = get(n).checked);
   const r = hmProfileFromForm(f);
-  if (!r.ok) { out.textContent = "Check " + hmFieldLabel(r.error); return; }
+  if (!r.ok) { done((phoneMsg ? "Profile not saved: check " : "Check ") + hmFieldLabel(r.error)); return; }
   const sb = window.vmDb.sb;
   const { data } = await sb.auth.getSession();
   const me = data && data.session && data.session.user;
@@ -32651,7 +32701,7 @@ async function hmSaveProfile(hostId){
   const isNew = !HM.profiles.some(p => p.host_id === hostId);
   const same = (a, b) => JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b);
   const changed = isNew || !!prev.sms_consent_at !== consent || Object.keys(r.value).some(k => !same(r.value[k], prev[k]));
-  if (!changed) { out.textContent = "Nothing changed."; return; }
+  if (!changed) { done(phoneMsg ? "" : "Nothing changed."); return; }
   const now = new Date().toISOString();
   // The database stamps consent (trigger hm_profile_consent: now() + the signed-in staff email, kept while
   // ticked) and never lets staff change sms_opted_out_at; what the browser sends here only says on/off.
@@ -32662,15 +32712,148 @@ async function hmSaveProfile(hostId){
   });
   out.textContent = "Saving…";
   const { data: saved, error } = await sb.from("hm_host_profiles").upsert(row, { onConflict: "host_id" }).select().single();
-  out.textContent = error ? "Error: " + error.message : "Saved.";
+  done(error ? "Error: " + error.message : "Saved.");
   if (!error) {
     const fresh = saved || row;
     if (isNew) HM.profiles.push(fresh); else Object.assign(prev, fresh);
     const line = document.getElementById("hm-consent-" + hostId);
     if (line) line.textContent = hmSmsConsentText(fresh);
+    if (isNew) hmCrcRedraw(hostId);
     hmReadyUpdate(hostId);
   }
 }
+
+// The phone lives on the n8n host row (Worker SMS and the confirmation letter read it there), written by the
+// host-contact webhook. That webhook writes phone AND address, so the address is re-read fresh and sent back as is.
+async function hmSavePhone(host, phone){
+  const token = hhFullToken();
+  if (!token) return "Phone not saved: it needs the full staff token (set it on Homestay bookings).";
+  let address = host.address || "";
+  try {
+    const d = await vmN8n.read("hosts-list");
+    const row = ((d && d.hosts) || []).find(x => x.host_id === host.host_id);
+    if (!row) return "Phone not saved: this host isn't in the hosts list any more.";
+    address = row.address || "";
+  } catch (e) { return "Phone not saved: the hosts list couldn't be read, try again."; }
+  let resp;
+  try {
+    resp = await fetch(HH_CONTACT_ENDPOINT, { method: "POST",
+      headers: { "Content-Type": "application/json", "x-vm-staff-token": token },
+      body: JSON.stringify({ host_id: host.host_id, phone, address }) });
+  } catch (e) { return "Phone not saved: couldn't reach n8n."; }
+  if (resp.status === 401) return "Phone not saved: the staff token was rejected.";
+  if (!resp.ok) return "Phone not saved (HTTP " + resp.status + ").";
+  const d = await resp.json().catch(() => null);
+  host.phone = d && typeof d.phone === "string" ? d.phone : phone;
+  host.address = address;
+  if (typeof hhInvalidateHostCaches === "function") hhInvalidateHostCaches();
+  return "Phone saved.";
+}
+document.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (!t || !t.dataset || t.dataset.hmPhone === undefined) return;
+  const note = document.querySelector(`[data-hm-phone-note="${CSS.escape(t.dataset.hmPhone)}"]`);
+  if (note) note.textContent = hmPhoneNote(t.value).text;
+});
+
+/* ---- Criminal record check (optional): private bucket hm-host-docs, path on hm_host_profiles.crc_* ---- */
+const HM_CRC_BUCKET = "hm-host-docs";
+function hmCrcBox(hostId){
+  const p = (HM.profiles || []).find(x => x.host_id === hostId);
+  const k = hmEsc(hostId);
+  if (!p) return '<div class="card-sub">Save the profile first, then upload the check here.</div>';
+  const picker = `<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" data-hm-crc-file="${k}">
+    <button class="btn btn-ghost btn-mini" type="button" data-hm-crc-upload="${k}">${p.crc_path ? "Replace" : "Upload"}</button>`;
+  const head = p.crc_path
+    ? `<div class="card-sub" style="margin-bottom:6px">${hmEsc(hmCrcText(p))}
+        <button class="btn btn-ghost btn-mini" type="button" data-hm-crc-view="${k}">View</button>
+        <button class="btn btn-ghost btn-mini" type="button" data-hm-crc-remove="${k}">Remove</button></div>`
+    : '<div class="card-sub" style="margin-bottom:6px">None on file. PDF or photo, up to 10 MB. Only staff can open it.</div>';
+  return head + `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${picker}<span class="card-sub" id="hm-crc-msg-${k}"></span></div>`;
+}
+function hmCrcRedraw(hostId, msg){
+  const box = document.querySelector(`[data-hm-crc="${CSS.escape(hostId)}"]`);
+  if (box) box.innerHTML = hmCrcBox(hostId);
+  const sum = msg && document.getElementById("hm-crc-msg-" + hostId);
+  if (sum) sum.textContent = msg;
+}
+async function hmCrcSetRow(hostId, fields){
+  const sb = window.vmDb.sb;
+  const { data, error } = await sb.from("hm_host_profiles").update(fields).eq("host_id", hostId).select().single();
+  if (error) throw new Error(error.message);
+  const prev = HM.profiles.find(p => p.host_id === hostId);
+  if (prev) Object.assign(prev, data || fields);
+}
+async function hmCrcUpload(hostId){
+  const input = document.querySelector(`[data-hm-crc-file="${CSS.escape(hostId)}"]`);
+  const out = document.getElementById("hm-crc-msg-" + hostId);
+  const file = input && input.files && input.files[0];
+  const bad = hmCrcCheckFile(file);
+  if (bad) { out.textContent = bad; return; }
+  const path = hmCrcPath(hostId, file.name, Date.now());
+  if (!path) { out.textContent = "This host id can't be used for a file name."; return; }
+  const sb = window.vmDb.sb;
+  const prev = HM.profiles.find(p => p.host_id === hostId) || {};
+  const old = prev.crc_path;
+  out.textContent = "Uploading…";
+  const up = await sb.storage.from(HM_CRC_BUCKET).upload(path, file, { upsert: false, contentType: file.type });
+  if (up.error) { out.textContent = "Upload failed: " + up.error.message; return; }
+  const { data } = await sb.auth.getSession();
+  const me = data && data.session && data.session.user;
+  try {
+    await hmCrcSetRow(hostId, { crc_path: path, crc_file_name: String(file.name).slice(0, 200),
+      crc_uploaded_at: new Date().toISOString(), crc_uploaded_by: (me && me.email) || null });
+  } catch (e) {
+    await sb.storage.from(HM_CRC_BUCKET).remove([path]);
+    out.textContent = "Upload failed: " + e.message; return;
+  }
+  if (old && old !== path) await sb.storage.from(HM_CRC_BUCKET).remove([old]);
+  hmCrcRedraw(hostId, "Uploaded.");
+  hmRefreshProfileSummary(hostId);
+}
+async function hmCrcView(hostId){
+  const p = HM.profiles.find(x => x.host_id === hostId);
+  const out = document.getElementById("hm-crc-msg-" + hostId);
+  if (!p || !p.crc_path) return;
+  const tab = window.open("", "_blank");
+  const { data, error } = await window.vmDb.sb.storage.from(HM_CRC_BUCKET).createSignedUrl(p.crc_path, 300);
+  if (error || !data) { if (tab) tab.close(); out.textContent = "Couldn't open it: " + (error ? error.message : "no link"); return; }
+  if (tab) tab.location = data.signedUrl; else out.innerHTML = `<a href="${hmEsc(data.signedUrl)}" target="_blank" rel="noopener">Open the file</a>`;
+}
+// Two clicks instead of a browser confirm (no pop-ups in Homestay matching).
+async function hmCrcRemove(hostId, btn){
+  if (btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.textContent = "Click again to remove"; return; }
+  const p = HM.profiles.find(x => x.host_id === hostId);
+  if (!p || !p.crc_path) return;
+  const out = document.getElementById("hm-crc-msg-" + hostId);
+  const old = p.crc_path;
+  try { await hmCrcSetRow(hostId, { crc_path: null, crc_file_name: null, crc_uploaded_at: null, crc_uploaded_by: null }); }
+  catch (e) { out.textContent = "Couldn't remove: " + e.message; return; }
+  const del = await window.vmDb.sb.storage.from(HM_CRC_BUCKET).remove([old]);
+  hmCrcRedraw(hostId, del.error ? "Removed from the profile (the file itself couldn't be deleted: " + del.error.message + ")." : "Removed.");
+  hmRefreshProfileSummary(hostId);
+}
+function hmRefreshProfileSummary(hostId){
+  const det = document.querySelector(`[data-hm-profile="${CSS.escape(hostId)}"]`);
+  const sub = det && det.closest("details") && det.closest("details").querySelector("summary .card-sub");
+  const p = HM.profiles.find(x => x.host_id === hostId);
+  if (!sub || !p) return;
+  sub.textContent = sub.textContent.replace(/ · criminal record check on file/, "") + (p.crc_path ? " · criminal record check on file" : "");
+}
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hm-crc-upload],[data-hm-crc-view],[data-hm-crc-remove]");
+  if (!t || !t.closest("#hm-profiles")) return;
+  t.disabled = true;
+  try {
+    if (t.dataset.hmCrcUpload) await hmCrcUpload(t.dataset.hmCrcUpload);
+    else if (t.dataset.hmCrcView) await hmCrcView(t.dataset.hmCrcView);
+    else if (t.dataset.hmCrcRemove) await hmCrcRemove(t.dataset.hmCrcRemove, t);
+  } catch (e) {
+    const id = t.dataset.hmCrcUpload || t.dataset.hmCrcView || t.dataset.hmCrcRemove;
+    const out = document.getElementById("hm-crc-msg-" + id);
+    if (out) out.textContent = "Error: " + (e.message || e);
+  } finally { if (t.isConnected) t.disabled = false; }
+});
 
 /* ---- Host listings (photos + about us), edited here and approved for clients. Worker: /staff/hosts/:host/listing/:action ---- */
 const HML_TAGS = [["room","Student's room"],["bathroom","Bathroom"],["kitchen","Kitchen"],["living","Living area"],["outside","Outside"],["other","Other"]];
