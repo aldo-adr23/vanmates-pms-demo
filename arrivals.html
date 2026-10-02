@@ -356,7 +356,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-02-arrivals3"></script>
+<script src="arrivals-core.js?v=2026-10-02-wifiunit"></script>
 <script>
 (function () {
   'use strict';
@@ -364,7 +364,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   var esc = A.escapeHtml;
   var ARRIVALS_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/arrivals-send';
   var ARRIVALS_UPLOAD_URL = 'https://adr23.app.n8n.cloud/webhook/arrivals-upload';
-  var UPLOAD_MAX_BYTES = 2200000;   // base64 of it stays under Roster Actions' 3,000,000-char limit
+  var UPLOAD_MAX_BYTES = 2200000;   // base64 of it stays under Roster Actions' 3,000,000-char limit (checked AFTER stripping)
+  var UPLOAD_MAX_PICK_BYTES = 20000000;   // the file as picked (Kaplan rosters are ~9 MB before stripping)
+  // fflate for A.stripExternalLinks: loaded on the first upload only. Same pinned version as Limpio's package.json.
+  var FFLATE_URL = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js';
+  var FFLATE_SRI = 'sha384-DT0Ls0mO7JmjTnT+oBuMhEJzYJO1zUqzuuMXNdnOmOQRIpN2BgSjvBV/j50NngIT';
   var CITIES = ['Toronto', 'Vancouver', 'Montréal'];
   var PAGE = 1000;   // PostgREST answers with at most 1,000 rows per request
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
@@ -615,7 +619,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (str(r.unit)) {
       fx += fxBlock('wifi', 'Wi-Fi · unit ' + str(r.unit), has('wifi'),
         '<div class="frow"><input class="inp" name="wifi_name" value="' + esc(r.wifi_name) + '" placeholder="Network name" autocomplete="off" />' + secret('wifi_password', r.wifi_password, 'Password') +
-        '<button class="btn btn-ghost" type="submit">Save</button></div>', 'Applies to every arrival in unit ' + esc(r.unit) + '.');
+        '<button class="btn btn-ghost" type="submit">Save</button></div>', 'Applies to every arrival in unit ' + esc(r.unit) + '.' + (r.wifi_in_unit ? ' Optional: ' + esc(r.building) + ' posts the Wi-Fi in the apartment.' : ''));
     } else if (has('wifi')) {
       fx += '<p class="note">The roster has no unit for this student, so Wi-Fi can’t be stored.</p>';
     }
@@ -739,17 +743,28 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!file) return 'Choose a roster file.';
     if (!/\.(xlsx|xls|csv)$/i.test(String(file.name || ''))) return 'Choose an .xlsx, .xls or .csv roster.';
     if (!(file.size > 0)) return 'The file is empty.';
-    if (file.size > UPLOAD_MAX_BYTES) return 'File too large (2 MB max)';
+    if (file.size > UPLOAD_MAX_PICK_BYTES) return 'File too large (20 MB max)';
     return '';
   }
   // end rosterFileError
-  function readBase64(file) {
-    return new Promise(function (resolve, reject) {
-      var fr = new FileReader();
-      fr.onload = function () { resolve(String(fr.result || '').replace(/^data:[^,]*,/, '')); };
-      fr.onerror = function () { reject(fr.error || new Error('read failed')); };
-      fr.readAsDataURL(file);
+  var fflateP = null;
+  function loadFflate() {
+    if (window.fflate && window.fflate.unzipSync) return Promise.resolve(window.fflate);
+    if (!fflateP) fflateP = new Promise(function (resolve, reject) {
+      var sc = document.createElement('script');
+      sc.src = FFLATE_URL; sc.integrity = FFLATE_SRI; sc.crossOrigin = 'anonymous';
+      sc.onload = function () { if (window.fflate && window.fflate.unzipSync) resolve(window.fflate); else reject(new Error('fflate missing')); };
+      sc.onerror = function () { fflateP = null; sc.remove(); reject(new Error('Could not load fflate')); };
+      document.head.appendChild(sc);
     });
+    return fflateP;
+  }
+  // The picked file's bytes; an .xlsx loses its linked-workbook cache (Kaplan). If fflate can't load, the
+  // file goes as it is and the 2.2 MB check below decides.
+  async function readRosterBytes(file) {
+    var bytes = new Uint8Array(await file.arrayBuffer());
+    if (!/\.xlsx$/i.test(String(file.name || ''))) return bytes;
+    try { return A.stripExternalLinks(await loadFflate(), bytes); } catch (e) { return bytes; }
   }
   async function uploadRoster(file) {
     var bad = rosterFileError(file);
@@ -762,10 +777,12 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var ctl = new AbortController();
     var timer = setTimeout(function () { ctl.abort(); }, 95000);
     try {
-      var b64 = await readBase64(file);
-      var tok = await token();
-      if (!tok) { err = 'Your session expired — reload the page.'; }
+      var bytes = await readRosterBytes(file);
+      var tok = '';
+      if (bytes.length > UPLOAD_MAX_BYTES) { err = 'File too large (2 MB max)'; }
+      else if (!(tok = await token())) { err = 'Your session expired — reload the page.'; }
       else {
+        var b64 = A.bytesToBase64(bytes);
         var res = await fetch(ARRIVALS_UPLOAD_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
           body: JSON.stringify({ file_b64: b64, filename: file.name }), signal: ctl.signal });
         try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the upload service (HTTP ' + res.status + ').' }; }
@@ -853,7 +870,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function gaps(m) {
     var out = [], keys = m.tpl && m.tpl.keys_only;
     if (!m.address) out.push('no address');
-    var nu = Object.keys(m.units).filter(function (k) { return m.units[k].upcoming && !m.units[k].wifi_name; }).length;
+    var nu = m.tpl && m.tpl.wifi_in_unit ? 0 : Object.keys(m.units).filter(function (k) { return m.units[k].upcoming && !m.units[k].wifi_name; }).length;
     if (nu) out.push(nu + ' unit' + (nu === 1 ? '' : 's') + ' without Wi-Fi');
     var nr = keys ? 0 : Object.keys(m.rooms).filter(function (k) { return m.rooms[k].upcoming && !m.rooms[k].door_code; }).length;
     if (nr) out.push(nr + ' room' + (nr === 1 ? '' : 's') + ' without a door code');
@@ -956,8 +973,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return { building: b, city: str(t.city) || m.city || '', subject: t.subject || '', intro: t.intro || '', checkin_text: t.checkin_text || '',
       checkin_time: t.checkin_time || '', checkout_time: t.checkout_time || '',
       sections: (Array.isArray(t.sections) ? t.sections : []).map(function (s) { return { title: str(s && s.title), text: String((s && s.text) || '') }; }),
-      rules_url: t.rules_url || '', docs_url: t.docs_url || '', keys_only: !!t.keys_only, reviewed: !!t.reviewed,
-      reviewed_by: t.reviewed_by || '', reviewed_at: t.reviewed_at || '', exists: !!t.building };
+      rules_url: t.rules_url || '', docs_url: t.docs_url || '', keys_only: !!t.keys_only, wifi_in_unit: !!t.wifi_in_unit, reviewed: !!t.reviewed,
+      reviewed_by: t.reviewed_by || '', reviewed_at: t.reviewed_at || '', exists: !!t.building,
+      house_code: m.house_code || '', house_code_was: m.house_code || '' };
   }
   function renderTemplates() {
     var list = buildingList();
@@ -995,7 +1013,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<button type="button" class="btn btn-ghost addbtn" data-sec="add">+ Add section</button></div>' +
       '<label><span>House rules link <small>· the button in the email</small></span><input class="inp" name="rules_url" type="url" value="' + esc(t.rules_url) + '" placeholder="https://" /></label>' +
       '<label><span>Building documents link</span><input class="inp" name="docs_url" type="url" value="' + esc(t.docs_url) + '" placeholder="https://" /></label>' +
+      '<label><span>House code <small>· the House code row of the email; saved for the whole building (same as Access)</small></span><textarea class="inp" name="house_code" placeholder="Building / lobby code, or key pick-up instructions">' + esc(t.house_code) + '</textarea></label>' +
       '<label class="chk"><input type="checkbox" name="keys_only"' + (t.keys_only ? ' checked' : '') + ' /> Keys / FOB building (no bedroom door code)</label>' +
+      '<label class="chk"><input type="checkbox" name="wifi_in_unit"' + (t.wifi_in_unit ? ' checked' : '') + ' /> Wi-Fi is posted in the apartment (no Wi-Fi needed per unit)</label>' +
       '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
       (t.reviewed ? '<button type="button" class="btn btn-ghost" data-tpl="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-tpl="review">Save &amp; mark reviewed</button>') +
       '</div></form></div>' +
@@ -1010,7 +1030,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var sat = S.wk.saturday;
     return {
       arrival: { student_name: 'Alex Sample', building: t.building, unit: (u && u.unit) || (r && r.unit) || '1203', bed: 'B', arrival_date: sat, checkout_date: addDaysYmd(sat, 27) },
-      access: { address: m.address || '123 Sample Street', house_code: m.house_code || '', wifi_name: (u && u.wifi_name) || 'Sample-WiFi', wifi_password: (u && u.wifi_password) || 'sample-password',
+      access: { address: m.address || '123 Sample Street', house_code: t.house_code !== undefined ? str(t.house_code) : (m.house_code || ''), wifi_name: (u && u.wifi_name) || (t.wifi_in_unit ? '' : 'Sample-WiFi'), wifi_password: (u && u.wifi_password) || (t.wifi_in_unit ? '' : 'sample-password'),
         door_code: (r && r.door_code) || '1234', room_label: (r && r.room_label) || 'Room B' }
     };
   }
@@ -1026,7 +1046,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var el = e.target, t = S.tpl; if (!t) return;
     var sec = el.closest('.sect');
     if (sec && el.getAttribute('data-st')) t.sections[+sec.getAttribute('data-i')][el.getAttribute('data-st')] = el.value;
-    else if (el.name === 'keys_only') t.keys_only = el.checked;
+    else if (el.name === 'keys_only' || el.name === 'wifi_in_unit') t[el.name] = el.checked;
     else if (el.name && el.name in t) t[el.name] = el.value;
     else return;
     S.tplDirty = true;
@@ -1046,9 +1066,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var bad = ['rules_url', 'docs_url'].filter(function (k) { return str(t[k]) && !/^https?:\/\//i.test(str(t[k])); });
     if (bad.length) { toast('Links must start with https://'); return; }
     var sections = t.sections.filter(function (s) { return str(s.title) || str(s.text); }).map(function (s) { return { title: str(s.title), text: String(s.text).trim() }; });
+    if (str(t.house_code) !== str(t.house_code_was)) {
+      if (!(await rpc('arrivals_save_building', { p_building: t.building, p_city: null, p_house_code: str(t.house_code), p_address: null }))) return;
+      t.house_code_was = str(t.house_code);
+    }
     var ok = await rpc('arrivals_save_template', { p_building: t.building, p_city: t.city, p_subject: t.subject.trim(), p_intro: t.intro.trim(),
       p_checkin_text: t.checkin_text.trim(), p_checkin_time: t.checkin_time.trim(), p_checkout_time: t.checkout_time.trim(), p_sections: sections,
-      p_rules_url: t.rules_url.trim(), p_docs_url: t.docs_url.trim(), p_keys_only: !!t.keys_only, p_reviewed: reviewed });
+      p_rules_url: t.rules_url.trim(), p_docs_url: t.docs_url.trim(), p_keys_only: !!t.keys_only, p_reviewed: reviewed, p_wifi_in_unit: !!t.wifi_in_unit });
     if (!ok) return;
     toast(reviewed === true ? 'Saved and marked reviewed' : reviewed === false ? 'Marked not reviewed'
       : ok.unreviewed ? 'Changes saved — mark reviewed again to send' : 'Saved');
