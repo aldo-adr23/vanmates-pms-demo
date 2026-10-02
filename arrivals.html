@@ -356,7 +356,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-02-wifiunit"></script>
+<script src="arrivals-core.js?v=2026-10-02-tplcopy"></script>
 <script>
 (function () {
   'use strict';
@@ -1002,7 +1002,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
     }).join('');
     $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + banner +
-      '<form class="tf" id="tplForm" autocomplete="off">' +
+      '<form class="tf" id="tplForm" autocomplete="off">' + tplCopyPicker(t) +
       '<label><span>City</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>' +
       '<label><span>Subject <small>· {first_name} and {building} are filled in</small></span><input class="inp" name="subject" value="' + esc(t.subject) + '" placeholder="Welcome to {building}: your check-in details" /></label>' +
       '<label><span>Intro <small>· blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="Hi {first_name}, welcome to Vanmates! Here is everything you need for your arrival at {building}.">' + esc(t.intro) + '</textarea></label>' +
@@ -1042,8 +1042,29 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('tplPv').srcdoc = mail.html;
   }
   var _pvT = 0;
+  // "Copy from…": another building's template content into this form (unsaved until Save). The house code is the
+  // building's own and is never copied.
+  function tplCopyPicker(t) {
+    var src = buildingList().filter(function (m) { return m.building !== t.building && m.tpl; });
+    if (!src.length) return '';
+    return '<label><span>Copy from <small>· fills this form with another building\u2019s template; nothing is saved until you press Save</small></span>' +
+      '<select class="sel" name="tpl_copy_from"><option value="">— pick a building —</option>' +
+      src.map(function (m) { return '<option value="' + esc(m.building) + '">' + esc((m.tpl.reviewed ? '\u2713 ' : '') + m.building) + '</option>'; }).join('') +
+      '</select></label>';
+  }
+  var TPL_COPY_FIELDS = ['subject', 'intro', 'checkin_text', 'checkin_time', 'checkout_time', 'rules_url', 'docs_url', 'keys_only', 'wifi_in_unit'];
+  function tplCopyFrom(b) {
+    var m = S.acc[b], t = S.tpl; if (!m || !m.tpl || !t) return;
+    var src = tplFromRow(b, m.tpl);
+    TPL_COPY_FIELDS.forEach(function (k) { t[k] = src[k]; });
+    t.sections = src.sections.map(function (x) { return { title: x.title, text: x.text }; });
+    S.tplDirty = true;
+    renderTplForm();
+    toast('Copied from ' + b + ' — change what differs, then Save');
+  }
   function tplInput(e) {
     var el = e.target, t = S.tpl; if (!t) return;
+    if (el.name === 'tpl_copy_from') { if (e.type === 'change' && el.value) tplCopyFrom(el.value); return; }
     var sec = el.closest('.sect');
     if (sec && el.getAttribute('data-st')) t.sections[+sec.getAttribute('data-i')][el.getAttribute('data-st')] = el.value;
     else if (el.name === 'keys_only' || el.name === 'wifi_in_unit') t[el.name] = el.checked;
