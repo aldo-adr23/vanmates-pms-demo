@@ -278,7 +278,8 @@ function longDate(v) {
 
 /* ---- Readiness (mirrors SQL view arrivals_v) ----------------------------- */
 
-// missing, in this order: email, door_code (waived when template.keys_only), wifi (network name),
+// missing, in this order: email, door_code (waived when template.keys_only), wifi (network name; waived when
+// template.wifi_in_unit: the Wi-Fi is posted in the apartment),
 // template (absent or not reviewed), address.
 var MISSING_ORDER = ["email", "door_code", "wifi", "template", "address"];
 var MISSING_LABEL = { email: "email", door_code: "door code", wifi: "Wi-Fi", template: "template not reviewed", address: "address" };
@@ -289,7 +290,7 @@ function readiness(arrival, template, access) {
   var missing = [];
   if (!str(a.student_email)) missing.push("email");
   if (!(t && t.keys_only) && !acc.door_code) missing.push("door_code");
-  if (!acc.wifi_name) missing.push("wifi");
+  if (!(t && t.wifi_in_unit) && !acc.wifi_name) missing.push("wifi");
   if (!(t && t.reviewed)) missing.push("template");
   if (!acc.address) missing.push("address");
   return { ready: missing.length === 0, missing: missing };
@@ -488,13 +489,49 @@ function statusChip(a) {
   return { cls: "missing", label: String(s || "Unknown") };
 }
 /* ARR-CORE-END */
+/* ---- Upload roster: linked-workbook caches --------------------------------
+   Outside the ARR-CORE fence on purpose: that fence is pasted verbatim into the
+   n8n "Portal - Arrivals Send" workflow (n8n/arrivals/gen.js), which has no use
+   for this; keeping it out leaves that live workflow unchanged.
+   Kaplan rosters keep a full cached copy of a LINKED workbook in
+   xl/externalLinks/externalLink1.xml (~100 MB inflated, so the .xlsx is ~9 MB
+   while the roster itself is < 0.5 MB). stripExternalLinks drops
+   xl/externalLinks/** without inflating them (fflate unzip filter) plus their
+   references, so the upload fits the webhook's 3,000,000-char cap. Same logic
+   as Limpio functions/_lib/rosters/strip.mjs (stripExternalLinksWith). ff =
+   fflate (arrivals.html loads it lazily); anything else -> the same bytes. */
+function stripExternalLinks(ff, bytes) {
+  try {
+    const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (!(u.length > 4 && u[0] === 0x50 && u[1] === 0x4b && u[2] === 0x03 && u[3] === 0x04)) return bytes;
+    let dropped = 0;
+    const files = ff.unzipSync(u, { filter: f => (String(f.name).indexOf('xl/externalLinks/') === 0 ? (dropped++, false) : true) });
+    if (!dropped) return bytes;
+    const dec = s => ff.strFromU8(s);
+    const enc = s => ff.strToU8(s);
+    const edit = (name, fn) => { if (files[name]) files[name] = enc(fn(dec(files[name]))); };
+    edit('xl/_rels/workbook.xml.rels', x => x.replace(/<(\w+:)?Relationship\b[^>]*?(externalLinks\/|\/externalLink")[^>]*?\/>/g, ''));
+    edit('[Content_Types].xml', x => x.replace(/<(\w+:)?Override\b[^>]*?PartName="\/xl\/externalLinks\/[^>]*?\/>/g, ''));
+    edit('xl/workbook.xml', x => x.replace(/<(\w+:)?externalReferences\b[^>]*?\/>/g, '')
+      .replace(/<(\w+:)?externalReferences\b[\s\S]*?<\/(\w+:)?externalReferences>/g, ''));
+    return ff.zipSync(files, { level: 6, mtime: new Date(1980, 0, 1) });   // fixed time: same file -> same bytes (sha256)
+  } catch (e) { return bytes; }
+}
+
+function bytesToBase64(bytes) {
+  var bin = "";
+  for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
 
 var ArrCore = {
   buildArrivalEmail: buildArrivalEmail, arrivalEmailSpec: arrivalEmailSpec, renderEmail: renderEmail,
   readiness: readiness, flattenAccess: flattenAccess, missingLabel: missingLabel,
   groupByBuilding: groupByBuilding, weekendOf: weekendOf, shiftWeekend: shiftWeekend, inWeekend: inWeekend,
   counts: counts, statusChip: statusChip, batchReady: batchReady, firstName: firstName, escapeHtml: escapeHtml, longDate: longDate,
-  MISSING_ORDER: MISSING_ORDER, ARR_NOTICE: ARR_NOTICE
+  MISSING_ORDER: MISSING_ORDER, ARR_NOTICE: ARR_NOTICE,
+  stripExternalLinks: stripExternalLinks, bytesToBase64: bytesToBase64
 };
 if (typeof window !== "undefined") window.ArrCore = ArrCore;
 if (typeof module !== "undefined" && module.exports) module.exports = ArrCore;
