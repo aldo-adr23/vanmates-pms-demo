@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<title>Arrivals · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;1,500;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Slab:wght@500;700&display=swap" rel="stylesheet" />
+<script>
+// Same theme as the portal (index.html stores it under vm-theme), applied before first paint.
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Synchronous gate, same test as index.html's authGate. After sign-in, index.html bounces back here
+// via sessionStorage.vm_next_path (signin.html always lands on index.html).
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now()));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'arrivals.html'); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+/* ---------- Vanmates brand tokens (verbatim from index.html, via cs.html) ---------- */
+:root{
+  --cream:#FAF5ED;
+  --cream-2:#F4ECDD;
+  --red:#B94A3F;
+  --red-dark:#A13A30;
+  --red-soft:#F3DDD8;
+  --ink:#2B211A;
+  --muted:#8A7B6C;
+  --line:#E4DBC9;
+  --green:#5C8A6B;
+  --green-soft:#E2EDDF;
+  --amber:#C8923A;
+  --amber-soft:#F4E5C7;
+  --blue:#3F6E94;
+  --blue-soft:#DCE7F1;
+  --surface:#FFFFFF;
+  --surface-2:#FAF5ED;
+
+  --serif:"Playfair Display", Georgia, serif;
+  --slab:"Roboto Slab", Georgia, serif;
+  --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05);
+  --shadow-md: 0 6px 24px -8px rgba(43,33,26,.12);
+  --radius: 14px;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16;
+  --cream-2:#2A231E;
+  --red:#D17262;
+  --red-dark:#B95F50;
+  --red-soft:#5C2B25;
+  --ink:#F4ECDD;
+  --muted:#A89685;
+  --line:#3A302A;
+  --green:#85A88E;
+  --green-soft:#2C3E32;
+  --amber:#E5C896;
+  --amber-soft:#4A3C20;
+  --blue:#6F9DC4;
+  --blue-soft:#28394A;
+  --surface:#26201B;
+  --surface-2:#1F1A16;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30);
+  --shadow-md: 0 6px 24px -8px rgba(0,0,0,.42);
+}
+/* Badge ink + scrim/toast (same values as cs.html) */
+:root{ --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e; --scrim:rgba(43,33,26,.38); --toast:#2B211A; --toast-ink:#FAF5ED; }
+:root[data-theme="dark"]{ --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --scrim:rgba(0,0,0,.55); --toast:#F4ECDD; --toast-ink:#1F1A16; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--sans); font-size: 14px; line-height: 1.5; color: var(--ink); background: var(--cream); -webkit-font-smoothing: antialiased; min-height: 100dvh; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: inherit; }
+[hidden] { display: none !important; }
+
+/* ---------- header (cs.html) ---------- */
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px 12px 8px; padding-top: max(12px, env(safe-area-inset-top)); background: var(--cream); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none;
+  font-family: var(--serif); font-style: italic; font-weight: 700; font-size: 15px; box-shadow: var(--shadow-sm); }
+a.brand-home { text-decoration: none; cursor: pointer; transition: background .12s ease; }
+a.brand-home:hover { background: var(--red-dark); }
+a.brand-home:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.ttl { min-width: 0; flex: 0 1 auto; display: flex; align-items: baseline; gap: 10px; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; letter-spacing: -.3px; white-space: nowrap; flex: none; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.top .sp { flex: 1; min-width: 0; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
+  border: 1px solid transparent; text-decoration: none; transition: .12s ease; white-space: nowrap; }
+.btn svg { width: 14px; height: 14px; flex: none; }
+.btn-primary { background: var(--red); color: var(--on-red); }
+.btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); color: var(--ink); }
+.btn-ghost:hover { background: var(--cream-2); }
+.btn:disabled { opacity: .55; cursor: default; }
+#me { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; flex: none; background: linear-gradient(135deg,#D9B58A,#B0855A); color: #fff;
+  display: grid; place-items: center; font-weight: 700; font-size: 11px; }
+.avatar:empty { display: none; }
+.tabrow { flex: 0 1 auto; min-width: 0; display: flex; }
+.tabs { display: flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap;
+  min-height: 28px; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.tab:hover { color: var(--ink); }
+.tab.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+
+/* ---------- page ---------- */
+.wrap { padding: 0 12px 24px; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.muted { color: var(--muted); }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.wkpick { display: inline-flex; align-items: center; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
+.wkpick button { border: 0; background: transparent; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--ink); }
+.wkpick button:hover { background: var(--cream-2); }
+.wkpick svg { width: 16px; height: 16px; }
+.wklabel { font-weight: 700; font-size: 13px; padding: 0 6px; white-space: nowrap; }
+.wklabel small { font-weight: 500; color: var(--muted); margin-left: 4px; }
+select.sel, input.inp, textarea.inp { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 34px; padding: 6px 10px; outline: 0;
+  transition: border-color .12s ease, box-shadow .12s ease; min-width: 0; }
+select.sel:focus, input.inp:focus, textarea.inp:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.45; }
+.toolbar .sp { flex: 1; }
+.chips { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); padding: 0 10px; font-size: 12px; font-weight: 600;
+  min-height: 30px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chip:hover { background: var(--cream-2); }
+.chip.on { background: var(--red); border-color: var(--red); color: var(--on-red); }
+.chip .n { opacity: .75; font-weight: 700; }
+
+.kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.kpi { padding: 10px 12px; }
+.kpi .k { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.kpi .v { font-family: var(--serif); font-size: 24px; font-weight: 700; line-height: 1.15; }
+.ibtn { border: 0; background: transparent; padding: 0; width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; color: var(--muted); }
+.ibtn:hover { color: var(--ink); background: var(--cream-2); }
+.ibtn svg { width: 14px; height: 14px; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: 12px; align-items: start; }
+.grp { margin-bottom: 12px; overflow: hidden; }
+.ghead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.ghead b { font-family: var(--serif); font-size: 17px; }
+.tag { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.tag.warn { background: var(--amber-soft); color: var(--b-amber); }
+.arow { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 190px); gap: 4px 12px; align-items: center; width: 100%;
+  text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 9px 14px; min-height: 48px; }
+.arow:last-child { border-bottom: 0; }
+.arow:hover { background: var(--cream); }
+.arow.on { background: var(--cream-2); box-shadow: inset 3px 0 0 var(--red); }
+.arow .c-who, .arow .c-chip { min-width: 0; }
+.arow .c-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.arow .c-who b { display: block; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arow .c-who small, .arow .c-room, .arow .c-date, .arow .c-open { color: var(--muted); font-size: 12.5px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.arow .c-room, .arow .c-date { color: var(--ink); }
+.st { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ph .st { max-width: none; white-space: normal; }
+.st-ready { background: var(--green-soft); color: var(--b-green); }
+.st-missing, .st-changed, .st-dropped { background: var(--amber-soft); color: var(--b-amber); }
+.st-sent, .st-opened { background: var(--blue-soft); color: var(--b-blue); }
+.st-failed { background: var(--red-soft); color: var(--red); }
+.st-handled, .st-cancelled { background: var(--cream-2); color: var(--muted); }
+.empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+.empty b { display: block; color: var(--ink); font-family: var(--serif); font-size: 18px; margin-bottom: 4px; }
+
+/* side panel */
+.panel { position: sticky; top: 12px; max-height: calc(100dvh - 24px); overflow: auto; }
+.pin { padding: 14px 16px; }
+.ph { display: flex; align-items: flex-start; gap: 10px; }
+.ph .who { flex: 1; min-width: 0; }
+.pname { font-family: var(--serif); font-weight: 700; font-size: 20px; line-height: 1.2; overflow-wrap: anywhere; }
+.psub { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.pclose { border: 1px solid var(--line); background: var(--surface); width: 32px; height: 32px; border-radius: 50%; display: none; place-items: center; flex: none; }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 12px 0; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.pact { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.note { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+.warnbox { border-left: 3px solid var(--amber); background: var(--amber-soft); color: var(--ink); padding: 8px 12px; border-radius: 0 9px 9px 0; font-size: 13px; margin: 0 0 12px; }
+.warnbox.bad { border-color: var(--red); background: var(--red-soft); }
+.warnbox.good { border-color: var(--green); background: var(--green-soft); }
+.fx { border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; margin-bottom: 8px; }
+.fx.miss { border-color: var(--amber); }
+.fx .fh { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.fx .fh small { font-weight: 600; color: var(--b-amber); }
+.frow { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.frow .inp { flex: 1 1 140px; }
+.fx .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.secret { display: inline-flex; flex: 1 1 140px; min-width: 0; gap: 4px; }
+.secret .inp { flex: 1; width: 100%; }
+.eye { border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 0 8px; font-size: 12px; font-weight: 600; color: var(--muted); min-height: 34px; }
+.eye:hover { color: var(--ink); }
+.pv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 14px 0 6px; }
+.pv-head b { font-size: 13px; }
+.pv-subj { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
+iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-radius: 11px; background: #FAF5ED; display: block; }
+
+/* access */
+.acc-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.acc-tools .inp { flex: 1 1 220px; }
+.check { padding: 12px 14px; margin-bottom: 12px; }
+.check h3, .tp h3 { margin: 0 0 6px; font-family: var(--serif); font-size: 17px; }
+.check ul { margin: 0; padding: 0; list-style: none; }
+.check li { padding: 6px 0; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.check li:first-child { border-top: 0; }
+.linkbtn { border: 0; background: transparent; padding: 0; color: var(--red); font-weight: 700; text-align: left; }
+.bcard { margin-bottom: 10px; overflow: hidden; }
+.bcard > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 12px 14px; }
+.bcard > summary::-webkit-details-marker { display: none; }
+.bcard > summary b { font-family: var(--serif); font-size: 17px; }
+.bcard[open] > summary { border-bottom: 1px solid var(--line); }
+.bbody { padding: 12px 14px; display: grid; gap: 14px; }
+.bsec h4 { margin: 0 0 6px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.erow { display: grid; gap: 6px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+.erow:first-of-type { border-top: 0; }
+.erow.b { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+.erow.u { grid-template-columns: minmax(0, .8fr) minmax(0, 1.4fr) minmax(0, 1.4fr) auto; }
+.erow.r { grid-template-columns: minmax(0, .9fr) minmax(0, .7fr) minmax(0, 1fr) minmax(0, 1.3fr) auto; }
+.erow .key { font-weight: 700; overflow-wrap: anywhere; }
+.erow .key small { display: block; color: var(--muted); font-weight: 500; font-size: 11.5px; }
+.erow.flag .key::after { content: " • needed"; color: var(--b-amber); font-size: 11px; font-weight: 700; }
+.erow .inp, .erow .secret { width: 100%; }
+.addbtn { margin-top: 6px; }
+
+/* templates */
+.tsplit { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.tp { padding: 14px 16px; }
+.tf { display: grid; gap: 10px; }
+.tf label { display: grid; gap: 3px; font-size: 12.5px; font-weight: 700; }
+.tf label > span small { font-weight: 500; color: var(--muted); }
+.tf .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tf .chk { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.sect { border: 1px solid var(--line); border-radius: 11px; padding: 8px 10px; display: grid; gap: 6px; }
+.sect .sbar { display: flex; gap: 4px; justify-content: flex-end; }
+.sbtn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; min-width: 30px; height: 28px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.sbtn:hover { color: var(--ink); background: var(--cream-2); }
+.sbtn:disabled { opacity: .4; cursor: default; }
+.tbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.tpv { position: sticky; top: 12px; }
+
+/* modal + toast (cs.html) */
+.modal { position: fixed; inset: 0; background: var(--scrim); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.modal.show { display: flex; }
+.modal .mcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 20px; width: min(500px, 100%); max-height: calc(100dvh - 32px); overflow: auto; }
+.modal .mcard > b:first-child { display: block; font-family: var(--serif); font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.modal .btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+.modal .btns .btn { min-height: 40px; padding: 8px 16px; font-size: 13px; }
+.mlist { margin: 8px 0 0; padding: 0; list-style: none; max-height: 320px; overflow: auto; border-top: 1px solid var(--line); }
+.mlist li { padding: 6px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+.mlist .bad { color: var(--red); font-weight: 600; text-align: right; }
+.mlist .ok { color: var(--b-green); font-weight: 600; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--toast); color: var(--toast-ink);
+  padding: 10px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow-md); display: none; z-index: 60; max-width: calc(100% - 32px); }
+.toast.show { display: block; }
+.gate { padding: 60px 20px; text-align: center; color: var(--muted); }
+.gate a { color: var(--red); font-weight: 600; }
+.gate.card { max-width: 460px; margin: 60px auto; padding: 28px 24px; }
+.gate.card > b { display: block; font-family: var(--serif); font-size: 22px; color: var(--ink); margin-bottom: 6px; }
+
+@media (max-width: 1099px) {
+  .split { grid-template-columns: minmax(0, 1fr) 400px; }
+  .tsplit { grid-template-columns: 1fr; }
+  .tpv { position: static; }
+}
+@media (max-width: 899px) {
+  .split { grid-template-columns: 1fr; }
+  .panel { position: fixed; inset: 0; top: 0; max-height: none; z-index: 40; border-radius: 0; border: 0; display: none; }
+  body[data-panel="open"] .panel { display: block; }
+  body[data-panel="open"] { overflow: hidden; }
+  .pclose { display: grid; }
+  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .erow.b, .erow.u, .erow.r { grid-template-columns: 1fr 1fr; }
+  .erow .key { grid-column: 1 / -1; }
+}
+@media (max-width: 599px) {
+  .top .lbl, #me { display: none; }
+  .tabrow { order: 10; flex: 1 1 100%; }
+  .arow { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "who chip" "room date"; }
+  .arow .c-who { grid-area: who; } .arow .c-chip { grid-area: chip; } .arow .c-room { grid-area: room; }
+  .arow .c-date { grid-area: date; text-align: right; } .arow .c-chip { align-items: flex-end; }
+  .arow .st { max-width: 150px; }
+  .kpi .v { font-size: 20px; }
+  .tf .two { grid-template-columns: 1fr; }
+  .wkpick { flex: 1 1 100%; justify-content: space-between; }
+  .toolbar select.sel { flex: 1; }
+}
+</style>
+</head>
+<body data-tab="arrivals">
+<header class="top">
+  <a class="brand-mark brand-home" href="index.html" title="Back to the Vanmates portal" aria-label="Back to the Vanmates portal">V</a>
+  <div class="ttl"><div class="page-title"><em>Arrivals</em></div></div>
+  <div class="tabrow"><nav class="tabs" id="tabs">
+    <button class="tab on" data-tab="arrivals">Arrivals</button>
+    <button class="tab" data-tab="access">Access</button>
+    <button class="tab" data-tab="templates">Templates</button>
+  </nav></div>
+  <span class="sp"></span>
+  <a class="portal btn btn-ghost" href="index.html" aria-label="Back to the portal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg><span class="lbl">Portal</span></a>
+  <span id="me"></span>
+  <div class="avatar" id="meAv" aria-hidden="true"></div>
+</header>
+<div class="wrap" id="wrap">
+  <section id="v-arrivals">
+    <div class="toolbar">
+      <div class="wkpick">
+        <button type="button" id="wkPrev" aria-label="Previous weekend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg></button>
+        <span class="wklabel" id="wkLabel">…</span>
+        <button type="button" id="wkNext" aria-label="Next weekend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></button>
+      </div>
+      <select class="sel" id="cityF" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
+      <span class="sp"></span>
+      <button type="button" class="btn btn-primary" id="sendAll" disabled>Send all ready (0)</button>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="chips" id="chips" style="margin-bottom:10px"></div>
+    <div class="split">
+      <div id="groups"><div class="empty">Loading…</div></div>
+      <aside class="panel card" id="panel"></aside>
+    </div>
+  </section>
+  <section id="v-access" hidden>
+    <div class="acc-tools">
+      <input class="inp" id="accQ" type="search" placeholder="Search building" autocomplete="off" />
+      <select class="sel" id="accCity" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
+    </div>
+    <div id="accBody"><div class="empty">Loading…</div></div>
+  </section>
+  <section id="v-templates" hidden>
+    <div class="toolbar">
+      <select class="sel" id="tplB" aria-label="Building"></select>
+      <span class="muted" id="tplState"></span>
+    </div>
+    <div id="tplBody"><div class="empty">Loading…</div></div>
+  </section>
+</div>
+<div class="modal" id="modal"><div class="mcard" id="modalCard" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script src="arrivals-core.js?v=2026-10-02-arrivals"></script>
+<script>
+(function () {
+  'use strict';
+  var A = window.ArrCore;
+  var esc = A.escapeHtml;
+  var ARRIVALS_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/arrivals-send';
+  var CITIES = ['Toronto', 'Vancouver', 'Montréal'];
+  var PAGE = 1000;   // PostgREST answers with at most 1,000 rows per request
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
+    { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var NARROW = window.matchMedia('(max-width: 899px)');
+
+  var S = { me: null, tab: 'arrivals', wk: A.weekendOf(new Date()), city: '', filter: 'all', rows: [], openId: null, seq: 0, busy: false,
+    acc: null, accSeq: 0, accOpen: {}, accNew: {}, tpl: null, tplDirty: false };
+
+  function $(id) { return document.getElementById(id); }
+  function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 3500); }
+  function str(v) { return v === null || v === undefined ? '' : String(v).trim(); }
+  function clock(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  var DAY3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function ymdUtc(v) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(str(v)); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null; }
+  function shortDate(v) { var d = ymdUtc(v); return d ? DAY3[d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' + MON3[d.getUTCMonth()] : str(v); }
+  function addDaysYmd(v, n) { var d = ymdUtc(v); if (!d) return ''; d = new Date(d.getTime() + n * 86400000); return d.toISOString().slice(0, 10); }
+  function todayYmd() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function cityOpts(sel, blank) {
+    return (blank ? '<option value="">' + esc(blank) + '</option>' : '') + CITIES.map(function (c) { return '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('');
+  }
+  function secret(name, value, label) {
+    return '<span class="secret"><input class="inp" type="password" autocomplete="new-password" spellcheck="false" name="' + name + '" value="' + esc(value) + '" placeholder="' + esc(label) + '" aria-label="' + esc(label) + '" /><button type="button" class="eye" data-eye>Show</button></span>';
+  }
+  async function token() { try { var s = await sb.auth.getSession(); return (s.data && s.data.session && s.data.session.access_token) || ''; } catch (e) { return ''; } }
+
+  // Client RPCs answer {ok:true,...} or {ok:false,error}. Returns the data on success, else null (after a toast).
+  async function rpc(name, args) {
+    try {
+      var r = await sb.rpc(name, args);
+      if (r.error) { toast(r.error.message || 'Not saved.'); return null; }
+      if (!r.data || !r.data.ok) { toast((r.data && r.data.error) || 'Not saved.'); return null; }
+      return r.data;
+    } catch (e) { toast('Can’t reach the server — check your connection.'); return null; }
+  }
+  // Every table read is paged (1,000-row PostgREST ceiling).
+  async function selectAll(table, cols, mod) {
+    var out = [];
+    for (var from = 0; ; from += PAGE) {
+      var q = sb.from(table).select(cols);
+      if (mod) q = mod(q);
+      var r = await q.range(from, from + PAGE - 1);
+      if (r.error) throw r.error;
+      out = out.concat(r.data || []);
+      if (!r.data || r.data.length < PAGE) return out;
+    }
+  }
+
+  // ───────── modal ─────────
+  var _modalResolve = null;
+  function openModal(html) { $('modalCard').innerHTML = html; $('modal').classList.add('show'); }
+  function closeModal(v) { $('modal').classList.remove('show'); var r = _modalResolve; _modalResolve = null; if (r) r(!!v); }
+  function confirmSheet(title, bodyHtml, okLabel) {
+    return new Promise(function (resolve) {
+      if (_modalResolve) _modalResolve(false);
+      _modalResolve = resolve;
+      openModal('<b>' + esc(title) + '</b>' + bodyHtml + '<div class="btns"><button type="button" class="btn btn-ghost" data-m="0">Cancel</button><button type="button" class="btn btn-primary" data-m="1">' + esc(okLabel) + '</button></div>');
+    });
+  }
+  function infoSheet(title, bodyHtml) {
+    if (_modalResolve) { _modalResolve(false); _modalResolve = null; }
+    openModal('<b>' + esc(title) + '</b>' + bodyHtml + '<div class="btns"><button type="button" class="btn btn-primary" data-m="0">Close</button></div>');
+  }
+
+  // ───────── boot ─────────
+  function isAuthError(err) { return err.name === 'AuthSessionMissingError' || err.status === 400 || err.status === 401 || err.status === 403; }
+  function isMember(m) {
+    if (!m) return false;
+    if (m.role === 'admin') return true;
+    var p = m.allowed_pages;
+    if (typeof p === 'string') { try { p = JSON.parse(p); } catch (e) { p = []; } }
+    return Array.isArray(p) && (p.indexOf('arrivals') !== -1 || p.indexOf('cs') !== -1);
+  }
+  async function boot() {
+    var u = await sb.auth.getUser();
+    if (u && u.error && (navigator.onLine === false || !isAuthError(u.error))) {
+      $('groups').innerHTML = '<div class="gate"><p>Can’t reach the server — check your connection</p><button class="btn btn-primary" id="reloadBtn">Reload</button></div>';
+      $('reloadBtn').addEventListener('click', function () { location.reload(); });
+      return;
+    }
+    var user = u && u.data && u.data.user;
+    if (!user) { try { sessionStorage.setItem('vm_next_path', 'arrivals.html'); } catch (e) {} location.replace('signin.html'); return; }
+    var tm = await sb.from('team_members').select('id,email,name,role,allowed_pages').eq('id', user.id);
+    if (tm.error) { $('groups').innerHTML = '<div class="gate">Could not load your team profile: ' + esc(tm.error.message) + '</div>'; return; }
+    S.me = (tm.data || [])[0] || null;
+    if (!isMember(S.me)) {
+      document.body.innerHTML = '<div class="gate card"><b>No access</b><p>Your account does not have Arrivals access.</p><p>Ask an admin to add the <b>Arrivals</b> page to your profile in Team.</p><p><a href="index.html">Back to the portal</a></p></div>';
+      return;
+    }
+    $('me').textContent = S.me.name || S.me.email;
+    $('meAv').textContent = initials(S.me.name || S.me.email);
+    wire();
+    var h = (location.hash || '').replace('#', '');
+    setTab(h === 'access' || h === 'templates' ? h : 'arrivals');
+  }
+
+  function setTab(t) {
+    if (S.tab === 'templates' && t !== 'templates' && S.tplDirty && !window.confirm('Leave the template without saving?')) return;
+    if (t !== 'templates') S.tplDirty = false;
+    S.tab = t;
+    document.body.dataset.tab = t;
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === t); });
+    $('v-arrivals').hidden = t !== 'arrivals';
+    $('v-access').hidden = t !== 'access';
+    $('v-templates').hidden = t !== 'templates';
+    try { history.replaceState(null, '', location.pathname + location.search + (t === 'arrivals' ? '' : '#' + t)); } catch (e) {}
+    if (t === 'arrivals') loadArrivals();
+    else loadAccess();
+  }
+
+  // ───────── Arrivals tab ─────────
+  async function loadArrivals() {
+    var seq = ++S.seq;
+    renderWeek();
+    if (!S.rows.length) $('groups').innerHTML = '<div class="empty card">Loading…</div>';
+    var rows;
+    try {
+      rows = await selectAll('arrivals_v', '*', function (q) {
+        q = q.gte('arrival_date', S.wk.start).lte('arrival_date', S.wk.end);
+        if (S.city) q = q.eq('city', S.city);
+        return q.order('arrival_date', { ascending: true }).order('id', { ascending: true });
+      });
+    } catch (e) {
+      if (seq !== S.seq) return;
+      $('groups').innerHTML = '<div class="gate card">Could not load arrivals: ' + esc(e && e.message) + '</div>';
+      return;
+    }
+    if (seq !== S.seq) return;
+    S.rows = rows;
+    if (S.openId && !byId(S.openId)) S.openId = null;
+    renderArrivals();
+  }
+  function byId(id) { for (var i = 0; i < S.rows.length; i++) if (S.rows[i].id === id) return S.rows[i]; return null; }
+  function renderWeek() {
+    var w = S.wk;
+    $('wkLabel').innerHTML = esc(w.title) + '<small>' + esc(w.range) + '</small>';
+    $('wkLabel').title = w.label;
+  }
+  function notOpened24(r) { return r.status === 'sent' && !r.opened_at && !!r.sent_at && Date.now() - Date.parse(r.sent_at) > 86400000; }
+  var FILTERS = [['all', 'All'], ['missing', 'Missing'], ['ready', 'Ready'], ['sent', 'Sent'], ['notopened', 'Not opened 24h'], ['failed', 'Failed'], ['dropped', 'Not in latest roster']];
+  function matches(r, f) {
+    if (f === 'all') return true;
+    if (f === 'notopened') return notOpened24(r);
+    if (f === 'dropped') return !!r.not_in_latest_roster && r.status !== 'cancelled' && r.status !== 'handled';
+    return r.status === f;
+  }
+  function canSend(r) { return (r.status === 'ready' || r.status === 'failed') && !(r.missing && r.missing.length); }
+  function roomText(r) {
+    var p = [];
+    if (str(r.unit)) p.push('Unit ' + str(r.unit));
+    if (str(r.room_label)) p.push(str(r.room_label)); else if (str(r.bed)) p.push('Room ' + str(r.bed));
+    return p.join(' · ') || '—';
+  }
+  function chipHtml(r) { var c = A.statusChip(r); return '<span class="st st-' + esc(c.cls) + '" title="' + esc(c.label) + '">' + esc(c.label) + '</span>'; }
+  function openText(r) {
+    if (r.opened_at) return 'Opened ' + clock(r.opened_at) + (r.open_count > 1 ? ' (' + r.open_count + '×)' : '');
+    if (r.status === 'sent') return notOpened24(r) ? 'Not opened in 24h' : 'Not opened yet';
+    return '';
+  }
+  var INFO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>';
+
+  function renderArrivals() {
+    var c = A.counts(S.rows);
+    $('kpis').innerHTML = [
+      ['Arriving', c.arriving], ['Ready', c.ready], ['Missing', c.missing], ['Sent', c.sent],
+      ['Opened', c.opened, true], ['Failed', c.failed]
+    ].map(function (k) {
+      return '<div class="kpi card"><div class="k">' + esc(k[0]) + (k[2] ? ' <button type="button" class="ibtn" id="openInfo" aria-label="About open tracking" title="About open tracking">' + INFO_SVG + '</button>' : '') + '</div><div class="v">' + esc(k[1]) + '</div></div>';
+    }).join('');
+    $('chips').innerHTML = FILTERS.map(function (f) {
+      var n = S.rows.filter(function (r) { return matches(r, f[0]); }).length;
+      return '<button type="button" class="chip' + (S.filter === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + esc(f[1]) + ' <span class="n">' + n + '</span></button>';
+    }).join('');
+    var ready = A.batchReady(S.rows);
+    $('sendAll').textContent = 'Send all ready (' + ready.length + ')';
+    $('sendAll').disabled = !ready.length || S.busy;
+
+    var list = S.rows.filter(function (r) { return matches(r, S.filter); });
+    if (!list.length) {
+      $('groups').innerHTML = '<div class="empty card"><b>' + (S.rows.length ? 'Nothing in this filter' : 'No arrivals this weekend') + '</b>' +
+        (S.rows.length ? 'Try another status.' : 'Rosters land here when the school emails them.') + '</div>';
+    } else {
+      $('groups').innerHTML = A.groupByBuilding(list).map(function (g) {
+        var unreviewed = g.arrivals.some(function (r) { return !r.template_reviewed; });
+        var n = g.arrivals.filter(function (r) { return r.status !== 'cancelled'; }).length;
+        return '<section class="grp card"><div class="ghead"><b>' + esc(g.building) + '</b><span class="muted">' + esc(g.city) + ' · ' + n + ' arriving</span>' +
+          (unreviewed ? '<span class="tag warn">Template not reviewed</span>' : '') + '</div>' +
+          g.arrivals.map(function (r) {
+            return '<button type="button" class="arow' + (r.id === S.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
+              '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + esc(r.school || '—') + '</small></span>' +
+              '<span class="c-room">' + esc(roomText(r)) + '</span>' +
+              '<span class="c-date">' + esc(shortDate(r.arrival_date)) + (str(r.arrival_time) ? ' · ' + esc(r.arrival_time) : '') + '</span>' +
+              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + '</span></button>';
+          }).join('') + '</section>';
+      }).join('');
+    }
+    renderPanel();
+  }
+
+  function fxBlock(kind, title, missing, inner, hint) {
+    return '<form class="fx' + (missing ? ' miss' : '') + '" data-fx="' + kind + '"><div class="fh"><span>' + esc(title) + '</span>' + (missing ? '<small>Missing</small>' : '') + '</div>' +
+      inner + (hint ? '<div class="hint">' + hint + '</div>' : '') + '</form>';
+  }
+  function renderPanel() {
+    var r = S.openId ? byId(S.openId) : null;
+    document.body.dataset.panel = r ? 'open' : '';
+    if (!r) {
+      $('panel').innerHTML = '<div class="empty"><b>Pick an arrival</b>See the email it will get, fill what’s missing and send.</div>';
+      return;
+    }
+    var miss = Array.isArray(r.missing) ? r.missing : [];
+    var has = function (k) { return miss.indexOf(k) !== -1; };
+    var facts = [
+      ['Arrives', A.longDate(r.arrival_date) + (str(r.arrival_time) ? ' · ' + str(r.arrival_time) : '')],
+      ['Checks out', r.checkout_date ? A.longDate(r.checkout_date) : ''],
+      ['Room', str(r.building) + ' · ' + roomText(r)],
+      ['Roster', str(r.roster_filename)],
+      ['Sent', r.sent_at ? clock(r.sent_at) + (r.sent_by ? ' by ' + r.sent_by : '') : ''],
+      ['Opened', r.opened_at ? clock(r.opened_at) + (r.open_count > 1 ? ' · ' + r.open_count + ' opens, last ' + clock(r.last_opened_at) : '') : (r.status === 'sent' ? 'Not yet' : '')],
+      ['Error', r.status === 'failed' || (r.last_error && r.status === 'sent') ? str(r.last_error) : '']
+    ].filter(function (f) { return str(f[1]); });
+
+    var acts = [];
+    if (canSend(r)) acts.push('<button type="button" class="btn btn-primary" data-act="send">' + (r.status === 'failed' ? 'Retry send' : 'Send this one') + '</button>');
+    if (r.status === 'sent') acts.push('<button type="button" class="btn btn-ghost" data-act="resend">Resend</button>');
+    if (r.status !== 'handled' && r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="handled">Mark handled</button>');
+    else acts.push('<button type="button" class="btn btn-ghost" data-act="reopen">Reopen</button>');
+
+    var warn = '';
+    if (r.status === 'cancelled') warn = '<p class="warnbox">Cancelled' + (r.cancelled_by ? ' by ' + esc(r.cancelled_by) : ' — no longer on the roster') + '.</p>';
+    else if (r.not_in_latest_roster && r.status !== 'handled') warn = '<p class="warnbox">Not in the latest roster from ' + esc(r.school || 'the school') + '. Check with the school before ' + (r.sent_at ? 'acting on it' : 'sending') + ' — it is left out of “Send all ready”' + (r.sent_at ? '' : ', but “Send” here still works') + '.</p>';
+    else if (r.changed_after_send) warn = '<p class="warnbox">The roster changed after this email was sent. Check the details and resend if needed.</p>';
+    else if (miss.length) warn = '<p class="warnbox">Held — missing ' + esc(miss.map(A.missingLabel).join(', ')) + '. It won’t be sent with blanks.</p>';
+
+    var fx = '';
+    fx += fxBlock('email', 'Student email', has('email'),
+      '<div class="frow"><input class="inp" type="email" name="email" value="' + esc(r.student_email) + '" placeholder="student@example.com" autocomplete="off" /><button class="btn btn-ghost" type="submit">Save</button></div>');
+    if (r.keys_only) {
+      fx += '<p class="note">' + esc(r.building) + ' uses keys / FOB — no bedroom door code needed.</p>';
+    } else if (str(r.room_key)) {
+      fx += fxBlock('room', str(r.room_label) || ('Room ' + (str(r.bed) || str(r.room_key))), has('door_code'),
+        '<div class="frow"><input class="inp" name="room_label" value="' + esc(r.room_label) + '" placeholder="Room label (e.g. Room B)" />' + secret('door_code', r.door_code, 'Door code') +
+        '<button class="btn btn-ghost" type="submit">Save</button></div>', 'Applies to every arrival in this room.');
+    } else {
+      fx += '<p class="note">The roster has no room for this student, so a door code can’t be stored. Fix the roster or mark handled.</p>';
+    }
+    if (str(r.unit)) {
+      fx += fxBlock('wifi', 'Wi-Fi · unit ' + str(r.unit), has('wifi'),
+        '<div class="frow"><input class="inp" name="wifi_name" value="' + esc(r.wifi_name) + '" placeholder="Network name" autocomplete="off" />' + secret('wifi_password', r.wifi_password, 'Password') +
+        '<button class="btn btn-ghost" type="submit">Save</button></div>', 'Applies to every arrival in unit ' + esc(r.unit) + '.');
+    } else if (has('wifi')) {
+      fx += '<p class="note">The roster has no unit for this student, so Wi-Fi can’t be stored.</p>';
+    }
+    fx += fxBlock('building', 'Building · ' + str(r.building), has('address'),
+      '<div class="frow"><input class="inp" name="address" value="' + esc(r.address) + '" placeholder="Street address" autocomplete="off" />' + secret('house_code', r.house_code, 'House code') +
+      '<button class="btn btn-ghost" type="submit">Save</button></div>', 'Applies to every arrival in ' + esc(r.building) + '.');
+    if (has('template')) {
+      fx += '<div class="fx miss"><div class="fh"><span>Email template</span><small>Not reviewed</small></div><button type="button" class="btn btn-ghost" data-act="tpl">Open the ' + esc(r.building) + ' template</button></div>';
+    }
+
+    var mail = emailFor(r);
+    $('panel').innerHTML = '<div class="pin"><div class="ph"><div class="who"><div class="pname">' + esc(r.student_name || '(no name)') + '</div>' +
+      '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + chipHtml(r) + '</div></div>' +
+      '<button type="button" class="pclose" data-act="close" aria-label="Close">✕</button></div>' +
+      '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
+      warn + '<div class="pact">' + acts.join('') + '</div>' + fx +
+      '<div class="pv-head"><b>Email preview</b><span class="muted" style="font-size:12px">' + esc(r.student_email || 'no email yet') + '</span></div>' +
+      '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
+      '<iframe class="pv" id="pv" sandbox="" title="Email preview" referrerpolicy="no-referrer"></iframe></div>';
+    $('pv').srcdoc = mail.html;
+  }
+  // The arrivals_v row is flat: it carries the template columns (subject, intro, …, keys_only) and the access
+  // columns (address, house_code, wifi_*, door_code, room_label), which is what buildArrivalEmail and
+  // flattenAccess read — the same call n8n makes, without the open pixel.
+  function emailFor(r) { return A.buildArrivalEmail(r, r, r, { pixelBase: '' }); }
+
+  function openRow(id) {
+    S.openId = id;
+    Array.prototype.forEach.call(document.querySelectorAll('.arow'), function (b) { b.classList.toggle('on', b.getAttribute('data-id') === id); });
+    renderPanel();
+    if (!NARROW.matches) $('panel').scrollTop = 0;
+  }
+
+  async function saveFx(form) {
+    var r = byId(S.openId); if (!r) return;
+    var kind = form.getAttribute('data-fx');
+    var v = function (n) { var el = form.elements[n]; return el ? el.value.trim() : ''; };
+    var ok = null;
+    var btn = form.querySelector('[type=submit]'); if (btn) btn.disabled = true;
+    try {
+      if (kind === 'email') ok = await rpc('arrivals_save_email', { p_id: r.id, p_email: v('email') });
+      else if (kind === 'room') ok = await rpc('arrivals_save_access', { p_building: r.building, p_unit: r.unit || '', p_room_key: r.room_key,
+        p_room_label: v('room_label'), p_door_code: v('door_code'), p_wifi_name: null, p_wifi_password: null });
+      else if (kind === 'wifi') ok = await rpc('arrivals_save_access', { p_building: r.building, p_unit: r.unit, p_room_key: '',
+        p_room_label: null, p_door_code: null, p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password') });
+      else if (kind === 'building') ok = await rpc('arrivals_save_building', { p_building: r.building, p_city: null, p_house_code: v('house_code'), p_address: v('address') });
+    } finally { if (btn) btn.disabled = false; }
+    if (ok) { toast('Saved'); S.acc = null; await loadArrivals(); }
+  }
+
+  var SEND_ERR = { not_ready: 'Missing info', already_sent: 'Already sent', closed: 'Handled or cancelled', not_found: 'Not found', not_claimed: 'Already being sent, or not ready', not_ready_or_busy: 'Not ready, already sent, or already being sent', not_processed: 'Not processed — try again', bad_email: 'Email isn’t one valid address — fix it and send again' };
+  async function sendIds(ids, resend) {
+    if (S.busy || !ids.length) return;
+    S.busy = true; setBusy(true);
+    var j = null;
+    try {
+      var tok = await token();
+      if (!tok) { toast('Your session expired — reload the page.'); return; }
+      var res = await fetch(ARRIVALS_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+        body: JSON.stringify({ ids: ids, resend: !!resend }) });
+      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service (HTTP ' + res.status + ').' }; }
+    } catch (e) {
+      toast('Send service unreachable — check your connection and try again.');
+    } finally { S.busy = false; setBusy(false); }
+    if (!j) return;
+    showResults(j, ids);
+    await loadArrivals();
+  }
+  function setBusy(on) {
+    Array.prototype.forEach.call(document.querySelectorAll('#sendAll, [data-act="send"], [data-act="resend"]'), function (b) { b.disabled = on || (b.id === 'sendAll' && !A.batchReady(S.rows).length); });
+    if (on) $('sendAll').textContent = 'Sending…';
+  }
+  function showResults(j, ids) {
+    var results = Array.isArray(j.results) ? j.results : [];
+    if (!results.length) {
+      if (!j.ok) { infoSheet('Not sent', '<p>' + esc(j.error || 'The send service refused the request.') + '</p>'); return; }
+      toast('Sent'); return;
+    }
+    var sent = results.filter(function (x) { return x && x.ok; }).length;
+    var bad = results.length - sent;
+    if (ids.length === 1 && !bad) { toast('Sent'); return; }
+    var name = function (id) { var r = byId(id); return r ? (r.student_name || r.student_email || id) : id; };
+    infoSheet(bad ? sent + ' sent, ' + bad + ' not sent' : sent + ' sent',
+      '<ul class="mlist">' + results.map(function (x) {
+        var e = x && x.ok ? '<span class="ok">Sent</span>' : '<span class="bad">' + esc(SEND_ERR[x && x.error] || (x && x.error) || 'Not sent') + '</span>';
+        return '<li><span>' + esc(name(x && x.id)) + '</span>' + e + '</li>';
+      }).join('') + '</ul>');
+  }
+  async function sendAll() {
+    var ready = A.batchReady(S.rows);
+    if (!ready.length) return;
+    var byB = {};
+    ready.forEach(function (r) { byB[r.building] = (byB[r.building] || 0) + 1; });
+    var ok = await confirmSheet('Send ' + ready.length + ' arrival email' + (ready.length === 1 ? '' : 's') + '?',
+      '<p class="note">' + esc(S.wk.label) + (S.city ? ' · ' + esc(S.city) : '') + '. Each student gets their own email with their codes.</p>' +
+      '<ul class="mlist">' + Object.keys(byB).sort().map(function (b) { return '<li><span>' + esc(b) + '</span><b>' + byB[b] + '</b></li>'; }).join('') + '</ul>',
+      'Send ' + ready.length);
+    if (ok) await sendIds(ready.map(function (r) { return r.id; }), false);
+  }
+  async function act(name) {
+    var r = byId(S.openId);
+    if (name === 'close') { S.openId = null; renderArrivals(); return; }
+    if (!r) return;
+    if (name === 'send') { await sendIds([r.id], false); return; }
+    if (name === 'resend') {
+      var ok = await confirmSheet('Resend to ' + (r.student_name || 'this student') + '?',
+        '<p class="note">They already got it' + (r.sent_at ? ' on ' + esc(clock(r.sent_at)) : '') + '. A new copy goes to ' + esc(r.student_email) + '.</p>', 'Resend');
+      if (ok) await sendIds([r.id], true);
+      return;
+    }
+    if (name === 'handled' || name === 'reopen') {
+      if (await rpc('arrivals_set_status', { p_id: r.id, p_status: name === 'handled' ? 'handled' : 'open' })) {
+        toast(name === 'handled' ? 'Marked handled' : 'Reopened'); await loadArrivals();
+      }
+      return;
+    }
+    if (name === 'tpl') { S.tplPick = r.building; setTab('templates'); }
+  }
+  function openInfo() {
+    infoSheet('About “opened”', '<p>Opens are counted with a tiny image in the email. It’s a hint, not proof:</p><ul style="padding-left:18px;margin:0">' +
+      '<li>Apple Mail (Privacy Protection) loads images on its own, so some emails show as opened when nobody read them.</li>' +
+      '<li>Gmail and Outlook users who block images never report an open, even after reading.</li>' +
+      '<li>“Not opened 24h” is worth a WhatsApp nudge, not a resend by default.</li></ul>');
+  }
+
+  // ───────── Access + Templates data ─────────
+  async function loadAccess() {
+    var seq = ++S.accSeq;
+    if (!S.acc) {
+      $('accBody').innerHTML = '<div class="empty card">Loading…</div>';
+      $('tplBody').innerHTML = '<div class="empty card">Loading…</div>';
+      try {
+        var since = addDaysYmd(todayYmd(), -30);
+        var res = await Promise.all([
+          selectAll('access_buildings', '*', function (q) { return q.order('building'); }),
+          selectAll('access_units', '*', function (q) { return q.order('building').order('unit'); }),
+          selectAll('access_rooms', '*', function (q) { return q.order('building').order('room_key'); }),
+          selectAll('arrival_templates', '*', function (q) { return q.order('building'); }),
+          selectAll('arrivals_v', 'id,building,city,unit,bed,room_key,arrival_date,status', function (q) { return q.gte('arrival_date', since).order('arrival_date').order('id'); })
+        ]);
+        if (seq !== S.accSeq) return;
+        S.acc = buildModel(res[0], res[1], res[2], res[3], res[4]);
+      } catch (e) {
+        if (seq !== S.accSeq) return;
+        var msg = '<div class="gate card">Could not load access lists: ' + esc(e && e.message) + '</div>';
+        $('accBody').innerHTML = msg; $('tplBody').innerHTML = msg;
+        return;
+      }
+    }
+    if (S.tab === 'access') renderAccess(); else if (S.tab === 'templates') renderTemplates();
+  }
+  // building → { city, address, house_code, units{}, rooms{}, tpl, upcoming }
+  function buildModel(bs, us, rs, ts, arr) {
+    var M = {}, today = todayYmd();
+    function B(name, city) {
+      name = str(name); if (!name) return null;
+      if (!M[name]) M[name] = { building: name, city: '', address: '', house_code: '', saved: false, units: {}, rooms: {}, tpl: null, upcoming: 0 };
+      if (city && !M[name].city) M[name].city = city;
+      return M[name];
+    }
+    bs.forEach(function (b) { var m = B(b.building, b.city); if (!m) return; m.address = str(b.address); m.house_code = str(b.house_code); m.city = str(b.city) || m.city; m.saved = true; });
+    us.forEach(function (u) { var m = B(u.building); if (!m) return; m.units[u.unit] = { unit: u.unit, wifi_name: str(u.wifi_name), wifi_password: str(u.wifi_password), saved: true, upcoming: 0 }; });
+    rs.forEach(function (r) { var m = B(r.building); if (!m) return; m.rooms[r.room_key] = { room_key: r.room_key, unit: str(r.unit), room_label: str(r.room_label), door_code: str(r.door_code), bed: '', saved: true, upcoming: 0 }; });
+    ts.forEach(function (t) { var m = B(t.building, t.city); if (m) m.tpl = t; });
+    arr.forEach(function (a) {
+      var m = B(a.building, a.city); if (!m) return;
+      var up = a.arrival_date >= today && a.status !== 'cancelled' && a.status !== 'handled' ? 1 : 0;
+      m.upcoming += up;
+      if (str(a.unit)) {
+        if (!m.units[a.unit]) m.units[a.unit] = { unit: a.unit, wifi_name: '', wifi_password: '', saved: false, upcoming: 0 };
+        m.units[a.unit].upcoming += up;
+      }
+      if (str(a.room_key)) {
+        if (!m.rooms[a.room_key]) m.rooms[a.room_key] = { room_key: a.room_key, unit: str(a.unit), room_label: '', door_code: '', bed: str(a.bed), saved: false, upcoming: 0 };
+        if (!m.rooms[a.room_key].bed) m.rooms[a.room_key].bed = str(a.bed);
+        m.rooms[a.room_key].upcoming += up;
+      }
+    });
+    return M;
+  }
+  function natSort(a, b) { return String(a).localeCompare(String(b), 'en', { numeric: true, sensitivity: 'base' }); }
+  function buildingList() { return Object.keys(S.acc || {}).sort(natSort).map(function (k) { return S.acc[k]; }); }
+
+  function gaps(m) {
+    var out = [], keys = m.tpl && m.tpl.keys_only;
+    if (!m.address) out.push('no address');
+    var nu = Object.keys(m.units).filter(function (k) { return m.units[k].upcoming && !m.units[k].wifi_name; }).length;
+    if (nu) out.push(nu + ' unit' + (nu === 1 ? '' : 's') + ' without Wi-Fi');
+    var nr = keys ? 0 : Object.keys(m.rooms).filter(function (k) { return m.rooms[k].upcoming && !m.rooms[k].door_code; }).length;
+    if (nr) out.push(nr + ' room' + (nr === 1 ? '' : 's') + ' without a door code');
+    if (!(m.tpl && m.tpl.reviewed)) out.push('template not reviewed');
+    return out;
+  }
+
+  function renderAccess() {
+    var q = $('accQ').value.trim().toLowerCase(), city = $('accCity').value;
+    var all = buildingList();
+    var list = all.filter(function (m) { return (!city || m.city === city) && (!q || m.building.toLowerCase().indexOf(q) !== -1); });
+    var check = all.filter(function (m) { return m.upcoming && (!city || m.city === city); })
+      .map(function (m) { return { m: m, g: gaps(m) }; }).filter(function (x) { return x.g.length; });
+    var html = '';
+    if (check.length) {
+      html += '<div class="check card"><h3>Please check</h3><p class="note">Buildings with upcoming arrivals that can’t be sent yet.</p><ul>' + check.map(function (x) {
+        return '<li><button type="button" class="linkbtn" data-goto="' + esc(x.m.building) + '">' + esc(x.m.building) + '</button><span class="muted">' + esc(x.g.join(' · ')) + '</span></li>';
+      }).join('') + '</ul></div>';
+    }
+    if (!list.length) html += '<div class="empty card"><b>No buildings</b>' + (all.length ? 'Nothing matches the search.' : 'Buildings appear here once a roster or an access list mentions them.') + '</div>';
+    html += list.map(renderBuilding).join('');
+    $('accBody').innerHTML = html;
+  }
+  function renderBuilding(m) {
+    var keys = m.tpl && m.tpl.keys_only;
+    var g = gaps(m);
+    var units = Object.keys(m.units).sort(natSort).map(function (k) { return m.units[k]; });
+    var rooms = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; });
+    var nb = esc(m.building);
+    var news = S.accNew[m.building] || { units: 0, rooms: 0 };
+    var h = '<details class="bcard card" data-b="' + nb + '"' + (S.accOpen[m.building] ? ' open' : '') + '><summary><b>' + nb + '</b><span class="muted">' +
+      esc([m.city || 'No city', units.length + ' unit' + (units.length === 1 ? '' : 's'), rooms.length + ' room' + (rooms.length === 1 ? '' : 's'), m.upcoming ? m.upcoming + ' upcoming' : ''].filter(Boolean).join(' · ')) +
+      '</span>' + (g.length && m.upcoming ? '<span class="tag warn">' + esc(g.length) + ' to check</span>' : '') + '</summary><div class="bbody">';
+    h += '<div class="bsec"><h4>Building</h4><form class="erow b' + (!m.address ? ' flag' : '') + '" data-kind="building" data-b="' + nb + '">' +
+      '<input class="inp" name="address" value="' + esc(m.address) + '" placeholder="Street address" aria-label="Address" autocomplete="off" />' +
+      secret('house_code', m.house_code, 'House code') +
+      '<select class="sel" name="city" aria-label="City">' + cityOpts(m.city, 'City') + '</select>' +
+      '<button class="btn btn-ghost" type="submit">Save</button></form></div>';
+    h += '<div class="bsec"><h4>Units · Wi-Fi</h4>' + units.map(function (u) {
+      return '<form class="erow u' + (u.upcoming && !u.wifi_name ? ' flag' : '') + '" data-kind="unit" data-b="' + nb + '" data-unit="' + esc(u.unit) + '">' +
+        '<span class="key">' + esc(u.unit) + (u.upcoming ? '<small>' + u.upcoming + ' upcoming</small>' : '') + '</span>' +
+        '<input class="inp" name="wifi_name" value="' + esc(u.wifi_name) + '" placeholder="Network name" aria-label="Wi-Fi network" autocomplete="off" />' +
+        secret('wifi_password', u.wifi_password, 'Wi-Fi password') + '<button class="btn btn-ghost" type="submit">Save</button></form>';
+    }).join('');
+    for (var i = 0; i < news.units; i++) {
+      h += '<form class="erow u" data-kind="unit" data-b="' + nb + '" data-unit=""><input class="inp" name="unit" placeholder="Unit" aria-label="Unit" />' +
+        '<input class="inp" name="wifi_name" placeholder="Network name" aria-label="Wi-Fi network" autocomplete="off" />' + secret('wifi_password', '', 'Wi-Fi password') +
+        '<button class="btn btn-ghost" type="submit">Save</button></form>';
+    }
+    h += '<button type="button" class="btn btn-ghost addbtn" data-add="units" data-b="' + nb + '">+ Add unit</button></div>';
+    h += '<div class="bsec"><h4>Rooms · door codes' + (keys ? ' (keys / FOB building — codes optional)' : '') + '</h4>' + rooms.map(function (r) {
+      return '<form class="erow r' + (!keys && r.upcoming && !r.door_code ? ' flag' : '') + '" data-kind="room" data-b="' + nb + '" data-room="' + esc(r.room_key) + '">' +
+        '<span class="key">' + esc(r.room_key) + (r.bed ? '<small>bed ' + esc(r.bed) + (r.upcoming ? ' · ' + r.upcoming + ' upcoming' : '') + '</small>' : (r.upcoming ? '<small>' + r.upcoming + ' upcoming</small>' : '')) + '</span>' +
+        '<input class="inp" name="unit" value="' + esc(r.unit) + '" placeholder="Unit" aria-label="Unit" />' +
+        '<input class="inp" name="room_label" value="' + esc(r.room_label) + '" placeholder="Label (e.g. Room B)" aria-label="Room label" />' +
+        secret('door_code', r.door_code, 'Door code') + '<button class="btn btn-ghost" type="submit">Save</button></form>';
+    }).join('');
+    for (var k = 0; k < news.rooms; k++) {
+      h += '<form class="erow r" data-kind="room" data-b="' + nb + '" data-room=""><input class="inp" name="room_key" placeholder="Room key" aria-label="Room key" />' +
+        '<input class="inp" name="unit" placeholder="Unit" aria-label="Unit" /><input class="inp" name="room_label" placeholder="Label (e.g. Room B)" aria-label="Room label" />' +
+        secret('door_code', '', 'Door code') + '<button class="btn btn-ghost" type="submit">Save</button></form>';
+    }
+    h += '<button type="button" class="btn btn-ghost addbtn" data-add="rooms" data-b="' + nb + '">+ Add room</button>' +
+      '<p class="note" style="margin-top:6px">Room key = the roster’s room reference (unit + bed). It is how an arrival finds its door code.</p></div>';
+    return h + '</div></details>';
+  }
+  async function saveAccessForm(form) {
+    var kind = form.getAttribute('data-kind'), b = form.getAttribute('data-b');
+    var v = function (n) { var el = form.elements[n]; return el ? el.value.trim() : ''; };
+    var ok = null, btn = form.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
+    try {
+      if (kind === 'building') ok = await rpc('arrivals_save_building', { p_building: b, p_city: v('city'), p_house_code: v('house_code'), p_address: v('address') });
+      else if (kind === 'unit') {
+        var unit = form.getAttribute('data-unit') || v('unit');
+        if (!unit) { toast('Enter the unit first.'); return; }
+        ok = await rpc('arrivals_save_access', { p_building: b, p_unit: unit, p_room_key: '', p_room_label: null, p_door_code: null,
+          p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password') });
+      } else if (kind === 'room') {
+        var rk = form.getAttribute('data-room') || v('room_key');
+        if (!rk) { toast('Enter the room key first.'); return; }
+        ok = await rpc('arrivals_save_access', { p_building: b, p_unit: v('unit'), p_room_key: rk, p_room_label: v('room_label'), p_door_code: v('door_code'),
+          p_wifi_name: null, p_wifi_password: null });
+      }
+    } finally { if (btn) btn.disabled = false; }
+    if (ok) {
+      toast('Saved');
+      S.accOpen[b] = true;
+      if (form.getAttribute('data-unit') === '' || form.getAttribute('data-room') === '') {
+        var n = S.accNew[b]; if (n) { if (kind === 'unit') n.units = Math.max(0, n.units - 1); else n.rooms = Math.max(0, n.rooms - 1); }
+      }
+      S.acc = null; await loadAccess();
+    }
+  }
+
+  // ───────── Templates ─────────
+  function tplFromRow(b, t) {
+    t = t || {};
+    var m = S.acc[b] || {};
+    return { building: b, city: str(t.city) || m.city || '', subject: t.subject || '', intro: t.intro || '', checkin_text: t.checkin_text || '',
+      checkin_time: t.checkin_time || '', checkout_time: t.checkout_time || '',
+      sections: (Array.isArray(t.sections) ? t.sections : []).map(function (s) { return { title: str(s && s.title), text: String((s && s.text) || '') }; }),
+      rules_url: t.rules_url || '', docs_url: t.docs_url || '', keys_only: !!t.keys_only, reviewed: !!t.reviewed,
+      reviewed_by: t.reviewed_by || '', reviewed_at: t.reviewed_at || '', exists: !!t.building };
+  }
+  function renderTemplates() {
+    var list = buildingList();
+    if (!list.length) { $('tplB').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
+    var pick = S.tplPick || (S.tpl && S.tpl.building) || (list.filter(function (m) { return m.upcoming && !(m.tpl && m.tpl.reviewed); })[0] || list[0]).building;
+    S.tplPick = null;
+    if (!S.acc[pick]) pick = list[0].building;
+    $('tplB').innerHTML = list.map(function (m) {
+      var st = m.tpl && m.tpl.reviewed ? '✓ ' : (m.upcoming ? '• ' : '');
+      return '<option value="' + esc(m.building) + '"' + (m.building === pick ? ' selected' : '') + '>' + esc(st + m.building + (m.city ? ' (' + m.city + ')' : '')) + '</option>';
+    }).join('');
+    if (!S.tpl || S.tpl.building !== pick || !S.tplDirty) { S.tpl = tplFromRow(pick, S.acc[pick].tpl); S.tplDirty = false; }
+    renderTplForm();
+  }
+  function renderTplForm() {
+    var t = S.tpl;
+    $('tplState').textContent = t.reviewed ? 'Reviewed' + (t.reviewed_by ? ' by ' + t.reviewed_by : '') + (t.reviewed_at ? ', ' + clock(t.reviewed_at) : '') : (t.exists ? 'Not reviewed' : 'No template yet');
+    var banner = t.reviewed ? '<p class="warnbox good">Reviewed — arrivals for this building can be sent.</p>' : '<p class="warnbox bad">Not reviewed — arrivals for this building can’t be sent.</p>';
+    var sec = t.sections.map(function (s, i) {
+      return '<div class="sect" data-i="' + i + '"><div class="sbar"><button type="button" class="sbtn" data-sec="up" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up">↑</button>' +
+        '<button type="button" class="sbtn" data-sec="down" ' + (i === t.sections.length - 1 ? 'disabled' : '') + ' aria-label="Move down">↓</button>' +
+        '<button type="button" class="sbtn" data-sec="del" aria-label="Remove section">Remove</button></div>' +
+        '<input class="inp" data-st="title" value="' + esc(s.title) + '" placeholder="Section title (e.g. Laundry)" />' +
+        '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
+    }).join('');
+    $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + banner +
+      '<form class="tf" id="tplForm" autocomplete="off">' +
+      '<label><span>City</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>' +
+      '<label><span>Subject <small>· {first_name} and {building} are filled in</small></span><input class="inp" name="subject" value="' + esc(t.subject) + '" placeholder="Welcome to {building}: your check-in details" /></label>' +
+      '<label><span>Intro <small>· blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="Hi {first_name}, welcome to Vanmates! Here is everything you need for your arrival at {building}.">' + esc(t.intro) + '</textarea></label>' +
+      '<label><span>Checking in</span><textarea class="inp" name="checkin_text" placeholder="How to get in: lobby, buzzer, where the keys are…">' + esc(t.checkin_text) + '</textarea></label>' +
+      '<div class="two"><label><span>Check-in time</span><input class="inp" name="checkin_time" value="' + esc(t.checkin_time) + '" placeholder="3:00 PM" /></label>' +
+      '<label><span>Check-out time</span><input class="inp" name="checkout_time" value="' + esc(t.checkout_time) + '" placeholder="11:00 AM" /></label></div>' +
+      '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Sections</div><div id="secs" style="display:grid;gap:8px">' + sec + '</div>' +
+      '<button type="button" class="btn btn-ghost addbtn" data-sec="add">+ Add section</button></div>' +
+      '<label><span>House rules link <small>· the button in the email</small></span><input class="inp" name="rules_url" type="url" value="' + esc(t.rules_url) + '" placeholder="https://" /></label>' +
+      '<label><span>Building documents link</span><input class="inp" name="docs_url" type="url" value="' + esc(t.docs_url) + '" placeholder="https://" /></label>' +
+      '<label class="chk"><input type="checkbox" name="keys_only"' + (t.keys_only ? ' checked' : '') + ' /> Keys / FOB building (no bedroom door code)</label>' +
+      '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
+      (t.reviewed ? '<button type="button" class="btn btn-ghost" data-tpl="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-tpl="review">Save &amp; mark reviewed</button>') +
+      '</div></form></div>' +
+      '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample arrival</span></div>' +
+      '<div class="pv-subj" id="tplSubj"></div><iframe class="pv" id="tplPv" sandbox="" title="Template preview" referrerpolicy="no-referrer"></iframe></div></div>';
+    renderTplPreview();
+  }
+  function sampleFor(t) {
+    var m = S.acc[t.building] || { units: {}, rooms: {} };
+    var u = Object.keys(m.units).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
+    var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
+    var sat = S.wk.saturday;
+    return {
+      arrival: { student_name: 'Alex Sample', building: t.building, unit: (u && u.unit) || (r && r.unit) || '1203', bed: 'B', arrival_date: sat, checkout_date: addDaysYmd(sat, 27) },
+      access: { address: m.address || '123 Sample Street', house_code: m.house_code || '', wifi_name: (u && u.wifi_name) || 'Sample-WiFi', wifi_password: (u && u.wifi_password) || 'sample-password',
+        door_code: (r && r.door_code) || '1234', room_label: (r && r.room_label) || 'Room B' }
+    };
+  }
+  function renderTplPreview() {
+    if (!S.tpl || !$('tplPv')) return;
+    var s = sampleFor(S.tpl);
+    var mail = A.buildArrivalEmail(s.arrival, S.tpl, s.access, { pixelBase: '' });
+    $('tplSubj').textContent = 'Subject: ' + mail.subject;
+    $('tplPv').srcdoc = mail.html;
+  }
+  var _pvT = 0;
+  function tplInput(e) {
+    var el = e.target, t = S.tpl; if (!t) return;
+    var sec = el.closest('.sect');
+    if (sec && el.getAttribute('data-st')) t.sections[+sec.getAttribute('data-i')][el.getAttribute('data-st')] = el.value;
+    else if (el.name === 'keys_only') t.keys_only = el.checked;
+    else if (el.name && el.name in t) t[el.name] = el.value;
+    else return;
+    S.tplDirty = true;
+    clearTimeout(_pvT); _pvT = setTimeout(renderTplPreview, 200);
+  }
+  function tplSection(op, i) {
+    var s = S.tpl.sections;
+    if (op === 'add') s.push({ title: '', text: '' });
+    else if (op === 'del') s.splice(i, 1);
+    else if (op === 'up' && i > 0) s.splice(i - 1, 0, s.splice(i, 1)[0]);
+    else if (op === 'down' && i < s.length - 1) s.splice(i + 1, 0, s.splice(i, 1)[0]);
+    S.tplDirty = true;
+    renderTplForm();
+  }
+  async function saveTpl(reviewed) {
+    var t = S.tpl; if (!t) return;
+    var bad = ['rules_url', 'docs_url'].filter(function (k) { return str(t[k]) && !/^https?:\/\//i.test(str(t[k])); });
+    if (bad.length) { toast('Links must start with https://'); return; }
+    var sections = t.sections.filter(function (s) { return str(s.title) || str(s.text); }).map(function (s) { return { title: str(s.title), text: String(s.text).trim() }; });
+    var ok = await rpc('arrivals_save_template', { p_building: t.building, p_city: t.city, p_subject: t.subject.trim(), p_intro: t.intro.trim(),
+      p_checkin_text: t.checkin_text.trim(), p_checkin_time: t.checkin_time.trim(), p_checkout_time: t.checkout_time.trim(), p_sections: sections,
+      p_rules_url: t.rules_url.trim(), p_docs_url: t.docs_url.trim(), p_keys_only: !!t.keys_only, p_reviewed: reviewed });
+    if (!ok) return;
+    toast(reviewed === true ? 'Saved and marked reviewed' : reviewed === false ? 'Marked not reviewed'
+      : ok.unreviewed ? 'Changes saved — mark reviewed again to send' : 'Saved');
+    S.tplDirty = false; S.tplPick = t.building; S.tpl = null; S.acc = null;
+    await loadAccess();
+  }
+
+  // ───────── wiring ─────────
+  function wire() {
+    $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) setTab(b.getAttribute('data-tab')); });
+    $('wkPrev').addEventListener('click', function () { S.wk = A.shiftWeekend(S.wk, -1); S.openId = null; S.rows = []; loadArrivals(); });
+    $('wkNext').addEventListener('click', function () { S.wk = A.shiftWeekend(S.wk, 1); S.openId = null; S.rows = []; loadArrivals(); });
+    $('cityF').addEventListener('change', function () { S.city = this.value; S.openId = null; loadArrivals(); });
+    $('chips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.filter = b.getAttribute('data-f'); renderArrivals(); } });
+    $('kpis').addEventListener('click', function (e) { if (e.target.closest('#openInfo')) openInfo(); });
+    $('sendAll').addEventListener('click', sendAll);
+    $('groups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id')); });
+    $('panel').addEventListener('click', function (e) { var b = e.target.closest('[data-act]'); if (b && !b.disabled) act(b.getAttribute('data-act')); });
+    $('panel').addEventListener('submit', function (e) { e.preventDefault(); saveFx(e.target); });
+    // show/hide a masked code (Access tab and side panel)
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-eye]'); if (!b) return;
+      var inp = b.parentNode.querySelector('input'); var show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password'; b.textContent = show ? 'Hide' : 'Show';
+    });
+    $('accQ').addEventListener('input', function () { if (S.acc) renderAccess(); });
+    $('accCity').addEventListener('change', function () { if (S.acc) renderAccess(); });
+    $('accBody').addEventListener('submit', function (e) { e.preventDefault(); saveAccessForm(e.target); });
+    $('accBody').addEventListener('toggle', function (e) { var d = e.target; if (d.classList && d.classList.contains('bcard')) S.accOpen[d.getAttribute('data-b')] = d.open; }, true);
+    $('accBody').addEventListener('click', function (e) {
+      var g = e.target.closest('[data-goto]');
+      if (g) {
+        var name = g.getAttribute('data-goto'); S.accOpen[name] = true; renderAccess();
+        var el = Array.prototype.filter.call(document.querySelectorAll('.bcard'), function (d) { return d.getAttribute('data-b') === name; })[0];
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      var a = e.target.closest('[data-add]');
+      if (a) {
+        var b = a.getAttribute('data-b'); var n = S.accNew[b] || (S.accNew[b] = { units: 0, rooms: 0 });
+        n[a.getAttribute('data-add')]++; S.accOpen[b] = true; renderAccess();
+      }
+    });
+    $('tplB').addEventListener('change', function () {
+      if (S.tplDirty && !window.confirm('Discard unsaved changes to the ' + S.tpl.building + ' template?')) { this.value = S.tpl.building; return; }
+      S.tplDirty = false; S.tplPick = this.value; S.tpl = null; renderTemplates();
+    });
+    $('tplBody').addEventListener('input', tplInput);
+    $('tplBody').addEventListener('change', tplInput);
+    $('tplBody').addEventListener('submit', function (e) { e.preventDefault(); saveTpl(null); });
+    $('tplBody').addEventListener('click', function (e) {
+      var s = e.target.closest('[data-sec]');
+      if (s && !s.disabled) { var box = s.closest('.sect'); tplSection(s.getAttribute('data-sec'), box ? +box.getAttribute('data-i') : -1); return; }
+      var t = e.target.closest('[data-tpl]');
+      if (t) saveTpl(t.getAttribute('data-tpl') === 'review');
+    });
+    $('modal').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-m]');
+      if (b) closeModal(b.getAttribute('data-m') === '1');
+      else if (e.target === this) closeModal(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if ($('modal').classList.contains('show')) closeModal(false);
+      else if (S.tab === 'arrivals' && S.openId && NARROW.matches) act('close');
+    });
+    window.addEventListener('beforeunload', function (e) { if (S.tplDirty) { e.preventDefault(); e.returnValue = ''; } });
+  }
+
+  boot().catch(function (e) { console.error('[arrivals] boot failed', e); $('groups').innerHTML = '<div class="gate">Something went wrong loading Arrivals. Reload the page.</div>'; });
+})();
+</script>
+</body>
+</html>
