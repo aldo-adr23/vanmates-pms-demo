@@ -489,6 +489,112 @@ function statusChip(a) {
   return { cls: "missing", label: String(s || "Unknown") };
 }
 /* ARR-CORE-END */
+/* CO-CORE-START */
+/* ---- Check-out email (automatic move-out message) -------------------------
+   Pasted by the n8n check-out workflow right AFTER the ARR-CORE paste: it reuses
+   renderEmail, T, escapeHtml, str, firstName, ymdDate, fill, paras, nl2br and the
+   day/month names from there. Input is one checkout_messages_v row (SQL
+   moveout-messages-2026-10-02.sql). Tested by test/moveout-email.test.js. */
+
+var CO_MISSING_ORDER = ["email", "checkout_date", "template"];
+var CO_MISSING_LABEL = { email: "email", checkout_date: "move-out date", template: "check-out template not reviewed" };
+function checkoutMissingLabel(k) { return CO_MISSING_LABEL[k] || String(k); }
+
+// Mirrors SQL _checkout_missing: email, checkout_date, template (absent or not reviewed).
+function checkoutReadiness(row) {
+  var r = row || {}, missing = [];
+  if (!str(r.student_email)) missing.push("email");
+  if (!str(r.checkout_date)) missing.push("checkout_date");
+  if (!(r.template_reviewed === true || r.template_reviewed === "true")) missing.push("template");
+  return { ready: missing.length === 0, missing: missing };
+}
+
+var CO_SUBJECT = "Check-Out Info | {building}";
+var CO_TIME = "10:00 am";
+var CO_SIGNOFF = "Best regards, Customer Care Team";
+
+// "Saturday, 19 September 2026 — before 10:00 am"
+function checkoutWhen(date, time) {
+  var d = ymdDate(date);
+  if (!d) return "";
+  return ARR_DAYS[d.getUTCDay()] + ", " + d.getUTCDate() + " " + ARR_MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear() +
+    " — before " + (str(time) || CO_TIME);
+}
+
+// The plain (unescaped) content of one check-out email.
+function checkoutEmailParts(row) {
+  var r = row || {};
+  var building = str(r.building);
+  var vars = { first_name: firstName(r.student_name) || "there", building: building };
+  var intro = ["Hi " + vars.first_name + ","].concat(paras(fill(r.intro, vars)));
+  var room = str(r.room_label) || str(r.bed);
+  var rows = [
+    ["Move-out date and time", checkoutWhen(r.checkout_date, r.checkout_time)],
+    ["Building", building],
+    ["Unit / room", [str(r.unit), room].filter(Boolean).join(" / ")]
+  ].filter(function (x) { return x[1]; });
+  var sections = [];
+  (Array.isArray(r.sections) ? r.sections : []).forEach(function (s) {
+    if (s && (str(s.title) || str(s.text))) sections.push({ title: str(s.title), text: fill(String(s.text || "").trim(), vars) });
+  });
+  if (str(r.keys_text)) sections.splice(Math.min(1, sections.length), 0, { title: "Returning keys", text: fill(String(r.keys_text).trim(), vars) });
+  var subject = fill(str(r.override_subject) || str(r.subject) || CO_SUBJECT, vars);
+  return {
+    subject: subject, building: building, intro: intro, rows: rows, sections: sections,
+    note: fill(str(r.override_note), vars), closing: paras(fill(r.closing, vars))
+  };
+}
+
+// The renderEmail spec (every value HTML-escaped).
+function checkoutEmailSpec(row) {
+  var p = checkoutEmailParts(row);
+  var body = p.sections.map(function (s) {
+    var title = s.title ? "<strong>" + escapeHtml(s.title) + "</strong>" : "";
+    var text = nl2br(escapeHtml(s.text));
+    return title && text ? title + "<br>" + text : title + text;
+  });
+  if (p.note) body.push('<span style="display:block;border-left:3px solid ' + T.red + ';padding:2px 0 2px 14px">' + nl2br(escapeHtml(p.note)) + "</span>");
+  p.closing.forEach(function (c) { body.push(nl2br(escapeHtml(c))); });
+  return {
+    subject: escapeHtml(p.subject),
+    preheader: escapeHtml("Your check-out details for " + p.building + "."),
+    chip: { tone: "brand", label: "Departure details" },
+    heading: "Your *departure* instructions",
+    intro: p.intro.map(function (x) { return nl2br(escapeHtml(x)); }),
+    rows: p.rows.map(function (x) { return [escapeHtml(x[0]), escapeHtml(x[1])]; }),
+    body: body,
+    signoff: { lead: escapeHtml(CO_SIGNOFF) }
+  };
+}
+
+function checkoutEmailText(p) {
+  var out = ["Your departure instructions", ""];
+  p.intro.forEach(function (x) { out.push(x, ""); });
+  p.rows.forEach(function (x) { out.push(x[0] + ": " + x[1]); });
+  out.push("");
+  p.sections.forEach(function (s) { out.push((s.title ? s.title + "\n" : "") + s.text, ""); });
+  if (p.note) out.push(p.note, "");
+  p.closing.forEach(function (c) { out.push(c, ""); });
+  out.push(CO_SIGNOFF, "— The Vanmates team");
+  return out.join("\n");
+}
+
+// row = one checkout_messages_v row -> { subject, html, text }. opts.pixelBase (e.g. https://…/webhook/checkout-open)
+// adds the open pixel <pixelBase>/<open_token>.gif, exactly like the check-in email.
+function buildCheckoutEmail(row, opts) {
+  var r = row || {}, o = opts || {};
+  var p = checkoutEmailParts(r);
+  var html = renderEmail(checkoutEmailSpec(r));
+  var base = str(o.pixelBase).replace(/\/+$/, "");
+  var token = str(r.open_token);
+  if (base && token) {
+    var src = escapeHtml(base + "/" + encodeURIComponent(token) + ".gif");
+    var k = html.lastIndexOf("</body>");
+    html = html.slice(0, k) + '<img src="' + src + '" width="1" height="1" alt="" style="display:block;border:0">\n' + html.slice(k);
+  }
+  return { subject: p.subject, html: html, text: checkoutEmailText(p) };
+}
+/* CO-CORE-END */
 /* ---- Upload roster: linked-workbook caches --------------------------------
    Outside the ARR-CORE fence on purpose: that fence is pasted verbatim into the
    n8n "Portal - Arrivals Send" workflow (n8n/arrivals/gen.js), which has no use
@@ -531,7 +637,9 @@ var ArrCore = {
   groupByBuilding: groupByBuilding, weekendOf: weekendOf, shiftWeekend: shiftWeekend, inWeekend: inWeekend,
   counts: counts, statusChip: statusChip, batchReady: batchReady, firstName: firstName, escapeHtml: escapeHtml, longDate: longDate,
   MISSING_ORDER: MISSING_ORDER, ARR_NOTICE: ARR_NOTICE,
-  stripExternalLinks: stripExternalLinks, bytesToBase64: bytesToBase64
+  stripExternalLinks: stripExternalLinks, bytesToBase64: bytesToBase64,
+  buildCheckoutEmail: buildCheckoutEmail, checkoutEmailSpec: checkoutEmailSpec, checkoutReadiness: checkoutReadiness,
+  checkoutMissingLabel: checkoutMissingLabel, CO_MISSING_ORDER: CO_MISSING_ORDER
 };
 if (typeof window !== "undefined") window.ArrCore = ArrCore;
 if (typeof module !== "undefined" && module.exports) module.exports = ArrCore;
