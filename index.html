@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-02-arrivals"></script>
+<script src="pms-supabase.js?v=2026-10-02-hostapps2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3285,7 +3285,67 @@ hello@vanmates.com · vanmates.com</textarea>
 
         <!-- ============ HOMESTAY HOSTS ============ -->
     <section class="view" data-view="homestay-hosts">
+      <style>
+        /* Homestay hosts → Applications (HA-APPS-CORE). Neutral chips; terracotta only marks what needs staff. */
+        .ha-tabbar{display:flex;gap:22px;align-items:flex-end;border-bottom:1px solid var(--line);margin:0 0 18px;flex-wrap:wrap}
+        .ha-tab{padding:0 0 11px;border:0;background:none;font:inherit;font-size:13.5px;font-weight:500;color:var(--muted);cursor:pointer}
+        .ha-tab:hover{color:var(--ink)}
+        .ha-tab.on{color:var(--ink);font-weight:700;box-shadow:inset 0 -2px 0 var(--red)}
+        .ha-tab .ha-n{margin-left:6px;font-size:12px;font-weight:600;color:var(--red)}
+        .ha-pills{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+        .ha-pill{border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:6px 14px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+        .ha-pill.on{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+        .ha-pill .ha-pn{margin-left:6px;font-weight:500;opacity:.8}
+        .ha-table{width:100%;border-collapse:collapse}
+        .ha-table th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);padding:14px 14px 10px;white-space:nowrap}
+        .ha-table td{padding:12px 14px;border-top:1px solid var(--cream-2);vertical-align:middle;font-size:13.5px}
+        .ha-row{cursor:pointer}
+        .ha-row:hover td{background:var(--cream)}
+        .ha-sub{color:var(--muted);font-size:12px;margin-top:2px}
+        .ha-need{color:var(--red);font-weight:600}
+        .ha-bar{width:90px;height:6px;border-radius:99px;background:var(--cream-2);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+        .ha-bar > span{display:block;height:100%;background:var(--ink)}
+        .ha-chips{display:flex;gap:4px;flex-wrap:wrap}
+        .ha-chip{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:99px;background:var(--cream-2);color:var(--ink);white-space:nowrap}
+        .ha-chip.miss{background:transparent;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+        .ha-wrap{overflow-x:auto}
+        .ha-panel .ha-kv{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;padding:6px 0;border-top:1px solid var(--cream-2);font-size:13.5px}
+        .ha-panel .ha-kv:first-of-type{border-top:0}
+        .ha-panel .ha-kv > span:first-child{color:var(--muted)}
+        .ha-panel .ha-kv > span:last-child{white-space:pre-line;overflow-wrap:anywhere}
+        .ha-panel .ha-status{min-height:18px;font-size:12.5px;color:var(--muted);margin-bottom:10px}
+        .ha-panel .ha-actions{display:flex;gap:6px;flex-wrap:wrap}
+        .ha-panel .ha-actions .btn{border:1px solid var(--line)}
+        .ha-panel .ha-actions .btn-primary{border-color:transparent}
+        .ha-panel .btn:disabled{opacity:.5;cursor:not-allowed}
+        .ha-panel .ha-inline{margin-top:12px;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+        .ha-panel .ha-inline textarea{width:100%;min-height:90px;margin:8px 0}
+        .ha-panel .ha-line{margin:3px 0;font-size:13px}
+        .ha-photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+        .ha-photos figure{margin:0}
+        .ha-photos img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
+        .ha-photos figcaption{font-size:11.5px;color:var(--muted);margin-top:3px}
+        #panel-meta .ha-meta{font-size:12px;font-weight:600;color:var(--muted);background:var(--cream-2);padding:2px 10px;border-radius:99px}
+        #panel-meta .ha-meta.ha-need{color:var(--red);background:var(--red-soft)}
+        @media (max-width:900px){.ha-tabbar{gap:16px}.ha-panel .ha-kv{grid-template-columns:120px minmax(0,1fr)}}
+      </style>
+      <div class="ha-tabbar" role="tablist">
+        <button type="button" class="ha-tab on" role="tab" data-hh-tab="hosts">Hosts</button>
+        <button type="button" class="ha-tab" role="tab" data-hh-tab="apps">Applications<span class="ha-n" id="ha-tab-n"></span></button>
+      </div>
 
+      <div id="ha-pane" style="display:none">
+        <div class="ha-pills" id="ha-pills"></div>
+        <div class="card">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 14px 0">
+            <span class="card-sub" id="ha-status" style="flex:1"></span>
+            <button type="button" class="btn btn-ghost btn-mini" id="ha-refresh">Refresh</button>
+          </div>
+          <div class="ha-wrap" id="ha-list"></div>
+        </div>
+      </div>
+
+      <div id="hh-hosts-pane">
       <div class="kpi-grid">
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Total hosts</div><div class="kpi-value">6</div><div class="kpi-trend up">▲ 2 added in Q1</div></div>
         <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Total capacity</div><div class="kpi-value" id="hh-kpi-capacity">14<span style="font-size:18px;color:var(--muted)"> guests</span></div><div class="kpi-trend up" id="hh-kpi-occupancy">11/14 currently filled · 79%</div></div>
@@ -3328,6 +3388,7 @@ hello@vanmates.com · vanmates.com</textarea>
       </div>
 
       <div class="prop-grid" id="hh-grid"></div>
+      </div>
     </section>
 
         <!-- ============ HOMESTAY MATCHING ============ -->
@@ -10191,6 +10252,7 @@ function goToView(v, savedView){
   // programmatically (KPI drill-downs, the host panel's back-links).
   if(v === "homestay-hosts" && typeof loadHostPayoutStatus === "function") loadHostPayoutStatus();
   if(v === "homestay-hosts" && typeof loadHostRooms === "function") loadHostRooms();
+  if(v === "homestay-hosts" && typeof haLoad === "function") haLoad();
   if(v === "homestay-finance" && typeof loadHomestayFinanceLive === "function") loadHomestayFinanceLive();
   if(v === "assistants" && typeof asOpen === "function") asOpen();
   if(v === "sales" && typeof renderSales === "function") renderSales();
@@ -20637,20 +20699,40 @@ const HM_MISSING = {
   meal_plan: "Meal plan", consent_to_share: "Consent to share with hosts",
 };
 function hmMissingLabel(code){ return HM_MISSING[code] || code; }
+// Host onboarding (2026-10-02 spec §7): keep HM_DIETS in step with the Worker's DIETS (src/core/apply.ts).
+const HM_CITIES = ["vancouver", "toronto", "montreal"];
+const HM_DIETS = ["vegetarian", "vegan", "halal", "gluten_free", "dairy_free", "kosher"];
+const HM_GENDERS = ["any", "female", "male"];
+// student_genders on the profile: [] = any; one entry = only that gender. The form offers any / female / male.
+function hmGenderChoice(p){
+  const g = (p && p.student_genders) || [];
+  return g.length === 1 && HM_GENDERS.includes(g[0]) ? g[0] : "any";
+}
 function hmProfileFromForm(f){
   const t = v => { const s = String(v == null ? "" : v).trim(); return s || null; };
+  // A blank age is no limit; otherwise a whole number 13–99 (NaN = invalid).
+  const age = v => { const s = String(v == null ? "" : v).trim(); if (!s) return null; const a = Number(s); return Number.isInteger(a) && a >= 13 && a <= 99 ? a : NaN; };
   const n = Number(f.max_students);
   if (!f.host_id) return { ok: false, error: "host" };
-  if (f.city !== "vancouver" && f.city !== "toronto") return { ok: false, error: "city" };
+  if (!HM_CITIES.includes(f.city)) return { ok: false, error: "city" };
   if (!Number.isInteger(n) || n < 1) return { ok: false, error: "max_students" };
   const until = t(f.unavailable_until);
   if (until && !/^\d{4}-\d{2}-\d{2}$/.test(until)) return { ok: false, error: "unavailable_until" };
+  const gender = f.student_genders == null || f.student_genders === "" ? "any" : String(f.student_genders);
+  if (!HM_GENDERS.includes(gender)) return { ok: false, error: "student_genders" };
+  const minAge = age(f.min_age), maxAge = age(f.max_age);
+  if (Number.isNaN(minAge)) return { ok: false, error: "min_age" };
+  if (Number.isNaN(maxAge)) return { ok: false, error: "max_age" };
+  if (minAge != null && maxAge != null && minAge > maxAge) return { ok: false, error: "age_range" };
+  const diets = Array.isArray(f.diets) ? f.diets : [];
   return { ok: true, value: {
     host_id: f.host_id, city: f.city, area: t(f.area), max_students: n,
     languages: String(f.languages || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean),
     has_pets: !!f.has_pets, pets_detail: t(f.pets_detail), accepts_minors: !!f.accepts_minors,
     smoking_household: !!f.smoking_household, email_only: !!f.email_only, matching_active: !!f.matching_active,
     unavailable_until: until, notes: t(f.notes),
+    student_genders: gender === "any" ? [] : [gender], min_age: minAge, max_age: maxAge,
+    diets: HM_DIETS.filter(d => diets.includes(d)), has_children: !!f.has_children, transit: t(f.transit),
   } };
 }
 function hmOrderedShortlist(sl, override){
@@ -20662,21 +20744,36 @@ function hmOrderedShortlist(sl, override){
   const seen = new Set(first.map(e => e.host_id));
   return first.concat(list.filter(e => !seen.has(e.host_id) && !removed.has(e.host_id)));
 }
-// Form values "mandatory" | "preferred" | "" per code; a language adds lang:<name>.
+// Requirement codes the case form shows, each with its own Must / Nice to have picker.
+// Labels match the Worker's hostcopy (2026-10-02 spec §7).
+const HM_REQ_CODES = ["no_pets", "non_smoking", "no_children", "private_bathroom"];
+const HM_REQ_LABEL = { no_pets: "No pets", non_smoking: "Non-smoking", no_children: "No children in the home", private_bathroom: "Private bathroom" };
+const hmDietWord = d => String(d || "").replace(/_/g, "-");
+function hmRequirementLabel(code){
+  const c = String(code || "");
+  if (HM_REQ_LABEL[c]) return HM_REQ_LABEL[c];
+  if (c.startsWith("diet:")) return "Can cook: " + hmDietWord(c.slice(5));
+  if (c.startsWith("lang:")) return "Speaks " + c.slice(5);
+  return c;
+}
+// Form values "mandatory" | "preferred" | "" per code; a language adds lang:<name>; a diet adds diet:<x>.
 function hmRequirementsFromForm(f){
   const out = { mandatory: [], preferred: [] };
-  for (const code of ["no_pets", "non_smoking"]) if (out[f[code]]) out[f[code]].push(code);
+  for (const code of HM_REQ_CODES) if (out[f[code]]) out[f[code]].push(code);
   const lang = String(f.lang || "").trim().toLowerCase();
   if (lang && out[f.lang_level]) out[f.lang_level].push("lang:" + lang);
+  const diet = String(f.diet || "");
+  if (HM_DIETS.includes(diet) && out[f.diet_level]) out[f.diet_level].push("diet:" + diet);
   return out;
 }
-// The form shows no_pets, non_smoking and the first lang:* token only. Every other
-// existing token (area:*, a second language, anything newer) is kept on its side.
+// The form shows HM_REQ_CODES, the first lang:* and the first diet:* token only. Every other
+// existing token (area:*, a second language or diet, anything newer) is kept on its side.
 function hmMergeRequirements(formReq, existing){
   const ex = existing || { mandatory: [], preferred: [] };
   const exM = ex.mandatory || [], exP = ex.preferred || [];
   const firstLang = [...exM, ...exP].find(t => String(t).startsWith("lang:"));
-  const shown = t => t === "no_pets" || t === "non_smoking" || t === firstLang;
+  const firstDiet = [...exM, ...exP].find(t => String(t).startsWith("diet:"));
+  const shown = t => HM_REQ_CODES.includes(t) || t === firstLang || t === firstDiet;
   const out = { mandatory: (formReq.mandatory || []).slice(), preferred: (formReq.preferred || []).slice() };
   for (const [side, list] of [["mandatory", exM], ["preferred", exP]]) {
     for (const t of list) if (!shown(t) && !out.mandatory.includes(t) && !out.preferred.includes(t)) out[side].push(t);
@@ -20893,6 +20990,244 @@ function hmCrcText(p){
   return `On file: ${p.crc_file_name || p.crc_path.split("/").pop()} · uploaded ${hmDay(p.crc_uploaded_at)} by ${p.crc_uploaded_by || "?"}`;
 }
 /* HM-MATCH-CORE-END */
+/* HA-APPS-CORE-START */
+/* Homestay hosts → Applications (spec: vanmates-homestay-matching docs/superpowers/specs/
+   2026-10-02-host-onboarding-design.md §6, §9). Pure: hm_host_applications rows in, display shapes out.
+   Rows are the table's own columns (AppRow); answers = {about, home, household, rooms, amenities, students}. */
+const HA_DAY = 86400000;
+const HA_IDLE_DAYS = 3;
+const HA_DIETS = ["vegetarian", "vegan", "halal", "gluten_free", "dairy_free", "kosher"];
+const HA_STATUS_WORDS = { started: "Started", submitted: "Submitted", under_review: "Under review",
+  changes_requested: "More info asked", approved: "Approved", rejected: "Rejected", withdrawn: "Withdrawn" };
+const HA_FILTERS = [["review", "To review"], ["incomplete", "Incomplete"], ["changes", "More info asked"],
+  ["approved", "Approved"], ["all", "All"]];
+const HA_OPEN = ["started", "submitted", "under_review", "changes_requested"];
+const haMs = iso => { const t = Date.parse(iso || ""); return isNaN(t) ? null : t; };
+const haPct = app => { const p = app && app.progress && Number(app.progress.pct); return Number.isFinite(p) ? Math.max(0, Math.min(100, Math.round(p))) : 0; };
+const haLastActivity = app => (app && (app.last_activity_at || app.updated_at || app.created_at)) || null;
+function haIdleDays(app, now){
+  const t = haMs(haLastActivity(app));
+  return t == null ? 0 : Math.max(0, Math.floor((now - t) / HA_DAY));
+}
+function haBucket(app){
+  const s = app && app.status;
+  if (s === "submitted" || s === "under_review") return "review";
+  if (s === "started") return "incomplete";
+  if (s === "changes_requested") return "changes";
+  if (s === "approved") return "approved";
+  return "closed";
+}
+function haLabel(app, now){
+  const s = app && app.status;
+  if (s === "started") {
+    const idle = haIdleDays(app, now);
+    return idle >= HA_IDLE_DAYS ? `Incomplete ${haPct(app)}% · idle ${idle} day${idle === 1 ? "" : "s"}` : `Started ${haPct(app)}%`;
+  }
+  return HA_STATUS_WORDS[s] || String(s || "?");
+}
+function haName(app){
+  const a = (app && app.answers && app.answers.about) || {};
+  return [a.first_name, a.last_name].map(x => String(x || "").trim()).filter(Boolean).join(" ") || (app && app.email) || "No name";
+}
+const HA_CITY = { vancouver: "Vancouver", toronto: "Toronto", montreal: "Montréal" };
+const haCity = app => { const c = app && app.answers && app.answers.home && app.answers.home.city; return HA_CITY[c] || c || ""; };
+// The four things staff look for before approving. Contract and photos come from the Worker's progress
+// (the agreement section is not done when it is out of date); CRC and payouts from the row itself.
+function haChips(app){
+  const sec = (app && app.progress && app.progress.sections) || {};
+  const done = (k, fallback) => sec[k] && typeof sec[k].done === "boolean" ? sec[k].done : fallback;
+  const agreement = done("agreement", !!(app && app.agreement_signed_at));
+  const photos = done("photos", false);
+  const crc = !!(app && app.crc_path);
+  const payouts = app && app.payouts;
+  return [
+    { key: "agreement", ok: agreement, label: agreement ? "Contract ✓" : (app && app.agreement_signed_at ? "Contract out of date" : "No contract") },
+    { key: "photos", ok: photos, label: photos ? "Photos ✓" : "Photos missing" },
+    { key: "crc", ok: crc, label: crc ? "CRC ✓" : "No CRC" },
+    { key: "payouts", ok: payouts === "complete", label: payouts === "complete" ? "Payouts ✓" : payouts === "started" ? "Payouts started" : "No payouts" },
+  ];
+}
+function haActiveLabel(app, profile){
+  if (!app || app.status !== "approved") return "";
+  return profile && profile.matching_active ? "Active host" : "Inactive";
+}
+const HA_BUCKET_ORDER = { review: 0, incomplete: 1, changes: 2, approved: 3, closed: 4 };
+// To review first (oldest submission first: it has waited longest), then the rest by latest activity.
+function haSort(apps){
+  return (apps || []).slice().sort((a, b) => {
+    const ba = HA_BUCKET_ORDER[haBucket(a)], bb = HA_BUCKET_ORDER[haBucket(b)];
+    if (ba !== bb) return ba - bb;
+    if (ba === 0) return (haMs(a.submitted_at) || 0) - (haMs(b.submitted_at) || 0) || a.id - b.id;
+    return (haMs(haLastActivity(b)) || 0) - (haMs(haLastActivity(a)) || 0) || b.id - a.id;
+  });
+}
+function haFilter(apps, filter){
+  const list = (apps || []).filter(a => filter === "all" || haBucket(a) === filter);
+  return haSort(list);
+}
+function haCounts(apps){
+  const out = { review: 0, incomplete: 0, changes: 0, approved: 0, closed: 0, all: 0 };
+  for (const a of apps || []) { out[haBucket(a)]++; out.all++; }
+  return out;
+}
+// What staff can do from each status (the Worker enforces the same rules).
+function haActions(app){
+  const s = app && app.status;
+  const out = [];
+  if (s === "submitted") out.push("review");
+  if (s === "submitted" || s === "under_review") out.push("changes", "approve");
+  if (HA_OPEN.includes(s)) out.push("send-link", "reject");
+  return out;
+}
+// Shown before Approve (approving still works; the Worker returns the same as warnings).
+function haApproveWarnings(app, now){
+  const out = [];
+  if (!app) return out;
+  if (!app.crc_path) out.push("No criminal record check uploaded.");
+  else if (app.crc_issued_on) {
+    const issued = haMs(app.crc_issued_on + "T00:00:00Z");
+    const limit = new Date(now); limit.setUTCFullYear(limit.getUTCFullYear() - 3);
+    if (issued != null && issued < limit.getTime()) out.push(`The criminal record check is older than 3 years (issued ${app.crc_issued_on}).`);
+  }
+  if (app.payouts !== "complete") out.push(app.payouts === "started" ? "Stripe payouts are started but not finished." : "Stripe payouts are not set up.");
+  const sec = (app.progress && app.progress.sections) || {};
+  if (sec.agreement && sec.agreement.done === false) out.push(app.agreement_signed_at ? "The agreement is out of date (details changed after signing)." : "The agreement is not signed.");
+  if (sec.photos && sec.photos.done === false) out.push("Photos are missing.");
+  return out;
+}
+function haTimeline(app){
+  if (!app) return [];
+  const by = who => who ? ` by ${who}` : "";
+  const items = [
+    [app.created_at, "Application started"],
+    [app.link_sent_at, "Continue link emailed"],
+    [app.crc_uploaded_at, "Criminal record check uploaded"],
+    [app.agreement_signed_at, "Agreement signed"],
+    [app.submitted_at, "Submitted"],
+    [app.reviewed_at, (app.status === "changes_requested" ? "More information asked" : app.status === "rejected" ? "Rejected" : "Review started") + by(app.reviewed_by)],
+    [app.approved_at, "Approved" + by(app.approved_by)],
+    [app.last_reminded_at, `Reminder emailed (${app.reminders_sent || 0} so far)`],
+  ];
+  return items.filter(([at]) => haMs(at) != null).map(([at, text]) => ({ at, text }))
+    .sort((a, b) => haMs(a.at) - haMs(b.at));
+}
+const HA_HOME_TYPE = { house: "House", townhouse: "Townhouse", condo: "Condo / apartment", basement_suite: "Basement suite", other: "Other" };
+const HA_SMOKING = { no: "No", outside: "Outside only", yes: "Yes" };
+const HA_GENDERS = { any: "Any", female: "Female only", male: "Male only" };
+const haDiet = d => String(d || "").replace(/_/g, "-");
+function haRoomText(r){
+  const bits = [r.bed ? `${r.bed} bed` : "", r.bathroom ? `${r.bathroom} bathroom` : "",
+    r.floor ? `${r.floor} floor` : "", r.available_from ? `from ${r.available_from}` : ""].filter(Boolean);
+  return [String(r.name || "").trim() || "Unnamed room", ...bits].join(" · ");
+}
+function haMemberText(m){
+  const name = [m.first_name, m.last_name].map(x => String(x || "").trim()).filter(Boolean).join(" ") || "?";
+  const inner = [String(m.relationship || "").trim(), m.age == null || m.age === "" ? "" : String(m.age)].filter(Boolean).join(", ");
+  return name + (inner ? ` (${inner})` : "") + (m.co_host ? " · co-host" : "");
+}
+// Every answer by section, in the page's order, with words staff use. Values are plain text.
+function haAnswerSections(answers){
+  const A = answers || {};
+  const yn = v => v === true ? "Yes" : v === false ? "No" : "—";
+  const tx = v => { const s = v == null ? "" : String(v).trim(); return s || "—"; };
+  const list = v => Array.isArray(v) && v.length ? v.join(", ") : "—";
+  const ab = A.about || {}, ho = A.home || {}, hh = A.household || {}, ro = A.rooms || {}, am = A.amenities || {}, st = A.students || {};
+  const members = Array.isArray(hh.members) ? hh.members : [];
+  const rooms = Array.isArray(ro.rooms) ? ro.rooms : [];
+  const meals = ["Two meals (standard)"].concat(am.three_meals ? ["Three meals"] : [], am.no_meals ? ["No meals"] : []);
+  const extras = [["wifi", "Wi-Fi"], ["laundry", "Laundry"], ["parking", "Parking"], ["ac", "Air conditioning"], ["study_space", "Quiet study space"]]
+    .filter(([k]) => am[k]).map(([, l]) => l);
+  const ages = st.min_age == null && st.max_age == null ? "Any" : `${st.min_age == null ? "?" : st.min_age} – ${st.max_age == null ? "?" : st.max_age}`;
+  return [
+    { key: "about", title: "About", rows: [["Name", tx([ab.first_name, ab.last_name].filter(Boolean).join(" "))], ["Phone", tx(ab.phone)],
+      ["Adult (19+) confirmed", yn(ab.adult_ack)], ["Texts about students", yn(ab.sms_consent)], ["Heard about us", tx(ab.heard_from)]] },
+    { key: "home", title: "Home", rows: [["Address", tx([ho.unit ? `${ho.unit} - ${ho.street || ""}` : ho.street].filter(Boolean).join(""))],
+      ["City", tx(HA_CITY[ho.city] || ho.city)], ["Postal code", tx(ho.postal_code)], ["Area", tx(ho.area)],
+      ["Home type", tx(HA_HOME_TYPE[ho.home_type] || ho.home_type)], ["Transit stop", tx(ho.transit_stop)],
+      ["Walk to transit", ho.transit_walk_min == null ? "—" : `${ho.transit_walk_min} min`],
+      ["To downtown", ho.downtown_min == null ? "—" : `${ho.downtown_min} min`]] },
+    { key: "household", title: "Household", rows: [["Members", members.length ? members.map(haMemberText).join("; ") : "—"],
+      ["Smoking in the home", tx(HA_SMOKING[hh.smoking] || hh.smoking)], ["Pets", yn(hh.pets)], ["Pets detail", tx(hh.pets_detail)],
+      ["Other students or boarders", yn(hh.boarders)], ["Boarders detail", tx(hh.boarders_detail)], ["Languages at home", list(hh.languages)]] },
+    { key: "rooms", title: "Rooms", rows: rooms.map((r, i) => [`Room ${i + 1}`, haRoomText(r || {})])
+      .concat([["Furnished (contract 5.4)", yn(ro.furnished_ack)], ["Max students at once", tx(ro.max_students)]]) },
+    { key: "amenities", title: "Home & meals", rows: [["Meals offered", meals.join(", ")], ["Amenities", extras.length ? extras.join(", ") : "—"]] },
+    { key: "students", title: "Students", rows: [["Students welcome", tx(HA_GENDERS[st.genders] || st.genders)],
+      ["Accepts under 18", yn(st.accepts_minors)], ["Ages", ages], ["Can cook for", Array.isArray(st.diets) && st.diets.length ? st.diets.map(haDiet).join(", ") : "—"],
+      ["About the family", tx(st.intro)], ["House rules", tx(st.house_rules)]] },
+  ];
+}
+// The progress sections' missing items, flattened for the drawer ("Photos: a photo of the room").
+const HA_SECTION_WORDS = { about: "About", home: "Home", household: "Household", rooms: "Rooms", amenities: "Home & meals",
+  students: "Students", photos: "Photos", documents: "Documents", payouts: "Payouts", agreement: "Agreement" };
+function haMissing(app){
+  const sec = (app && app.progress && app.progress.sections) || {};
+  const out = [];
+  for (const k of Object.keys(HA_SECTION_WORDS)) {
+    const s = sec[k];
+    if (s && !s.done) out.push(`${HA_SECTION_WORDS[k]}: ${(s.missing || []).join(", ") || "not done"}`);
+  }
+  return out;
+}
+// Worker approve/staff API errors in staff words. Approve failures carry the steps that ran.
+const HA_STEP_LABELS = { payout_account: "Payout account", contact: "Contact details", rooms: "Rooms", profile: "Matching profile",
+  photos: "Photos", listing: "Listing", portal_card: "Host card", application: "Application", email: "Email to host",
+  existing_host: "Existing host", crc: "Criminal record check" };
+function haStepLabel(key){ return HA_STEP_LABELS[key] || String(key || "").replace(/_/g, " ").replace(/^./, c => c.toUpperCase()) || "Step"; }
+function haStepsView(steps){
+  return (Array.isArray(steps) ? steps : []).filter(s => s && typeof s === "object").map(s => ({
+    label: haStepLabel(s.step), status: s.status === "skipped" ? "skipped" : "done", detail: s.detail ? String(s.detail) : "" }));
+}
+function haApproveFailure(b){
+  b = b || {};
+  const stepLabel = b.step ? haStepLabel(b.step) : "an earlier step";
+  const msg = String(b.message || b.error || "unknown error").replace(/[.\s]+$/, "");
+  return { steps: haStepsView(b.steps), text: `Stopped at ${stepLabel}: ${msg}. Pressing Approve again finishes the remaining steps.` };
+}
+function haErrorText(b, statusWords){
+  b = b || {};
+  if (b.error === "busy") return "Someone else is approving this application right now \u2014 refresh in a minute.";
+  if (b.error === "verify_email") return "The host hasn't confirmed their email yet.";
+  if (b.error === "bad_status") return `This application is ${(statusWords && statusWords[b.status]) || b.status || "in another state"} now: refresh.`;
+  if (b.error === "bad_note") return "The note must be between 1 and 1,000 characters.";
+  if (b.error === "mail_failed") return "Saved, but the email to the host didn't send \u2014 use Send continue link.";
+  if (b.error === "not_found") return "That application wasn't found: refresh.";
+  return "";
+}
+// Email confirmation chip: neutral styles only (same two looks as the other chips).
+function haEmailChip(app){
+  const ok = !!(app && app.email_verified_at);
+  return { key: "email", ok, label: ok ? "Email confirmed" : "Email not confirmed" };
+}
+// Approve 409s that staff can override. Returns null for anything else. flag = the body field the retry sets.
+function haApproveBlocker(b){
+  b = b || {};
+  if (b.error === "crc_missing") return { flag: "override_crc", text: "No criminal record check on file", button: "Approve without CRC" };
+  if (b.error === "crc_expired") return { flag: "override_crc", text: "The criminal record check is older than 3 years", button: "Approve without CRC" };
+  if (b.error === "existing_host") return { flag: "override_existing", button: "Approve onto existing host",
+    text: `This email belongs to an existing host (${b.host_id || "unknown"}). Approving will add this application's rooms and photos to that host and only fill in empty profile fields.` };
+  return null;
+}
+// Overrides chosen so far travel with every retry; a new one is added on top.
+function haApproveBody(flags, add){
+  const out = {};
+  for (const k of ["override_crc", "override_existing"]) if ((flags && flags[k]) || k === add) out[k] = true;
+  return out;
+}
+function haSendLinkText(out, email){
+  if (out && out.throttled) return "A link was emailed less than 2 minutes ago (or 6 today) \u2014 not sent again.";
+  return `Continue link emailed to ${email}.`;
+}
+function haRejectText(out){
+  if (out && out.emailed === false) return "Rejected. The email to the host didn't send \u2014 contact them directly.";
+  return "Rejected: the host was emailed.";
+}
+// After approve: only payable hosts are listed in Matching -> Host profiles.
+function haHostProfileNote(app, name){
+  if (app && app.payouts === "complete") return { canOpen: true, text: "" };
+  return { canOpen: false, text: `${name || "This host"} will appear in Host profiles once their Stripe payouts are set up (we emailed them the link).` };
+}
+/* HA-APPS-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
    Read when the page is opened. Writes go through the signed-in admin's
    session; RLS and column grants decide (only property_id and *_override on
@@ -31251,6 +31586,8 @@ const HM_FIELD_LABEL = {
   requirements: "requirements (language must be letters only)", consent_to_share: "consent", area_pref: "area wanted",
   shortlist_override: "shortlist order", max_students: "max students", unavailable_until: "unavailable until",
   host: "host", city: "city", notes: "notes", allergies: "allergies", accessibility: "accessibility",
+  student_genders: "students welcome", min_age: "youngest age (a whole number 13–99, or blank)",
+  max_age: "oldest age (a whole number 13–99, or blank)", age_range: "ages (the youngest can't be above the oldest)",
 };
 const hmFieldLabel = f => HM_FIELD_LABEL[f] || String(f || "a field").replace(/_/g, " ");
 // Matching fields (everything hmFormBody sends) are only editable in these statuses;
@@ -31447,6 +31784,15 @@ async function loadHomestayMatching(){
     if (p.error) throw p.error;
     HM.cases = c.data || [];
     HM.profiles = p.data || [];
+    // "Application HA-…" on profiles made by an approval: refs are extra, a read error just shows the id.
+    const appIds = [...new Set(HM.profiles.map(x => x.application_id).filter(x => x != null))];
+    HM.appRefs = new Map();
+    if (appIds.length) {
+      try {
+        const ar = await sb.from("hm_host_applications").select("id,ref").in("id", appIds);
+        if (!ar.error) for (const r of ar.data || []) HM.appRefs.set(Number(r.id), r.ref);
+      } catch (e) { /* keep the ids */ }
+    }
     // Listings are extra: a read error (e.g. the table not there yet) must not blank the cases page.
     HM.listings = l.error ? [] : (l.data || []);
     HM.settings = st.error ? [] : (st.data || []);
@@ -31702,6 +32048,8 @@ async function hmOpenCase(id){
   const level = code => req.mandatory.includes(code) ? "mandatory" : req.preferred.includes(code) ? "preferred" : "";
   const lang = [...req.mandatory, ...req.preferred].find(x => x.startsWith("lang:"));
   const langLevel = lang ? level(lang) : "";
+  const diet = [...req.mandatory, ...req.preferred].find(x => x.startsWith("diet:"));
+  const dietLevel = diet ? level(diet) : "";
   const fieldsLocked = !HM_FIELDS_EDITABLE.includes(c.status);
   const disabled = fieldsLocked ? "disabled" : "";
   // Closed cases (HM_CLOSED) are fully locked server-side — even notes can't be saved.
@@ -31894,6 +32242,9 @@ async function hmOpenCase(id){
       <label>Weekly budget (CAD) <input class="form-input" name="budget" value="${c.budget_weekly_cents == null ? "" : c.budget_weekly_cents / 100}" ${disabled}></label>
       <label>No pets ${sel("no_pets", level("no_pets"))}</label>
       <label>Non-smoking ${sel("non_smoking", level("non_smoking"))}</label>
+      <label>${hmRequirementLabel("no_children")} ${sel("no_children", level("no_children"))}</label>
+      <label>${hmRequirementLabel("private_bathroom")} ${sel("private_bathroom", level("private_bathroom"))}</label>
+      <label>Can cook (diet) <select class="form-input" name="diet" ${disabled}><option value="">—</option>${HM_DIETS.map(d => `<option value="${d}" ${diet === "diet:" + d ? "selected" : ""}>${hmDietWord(d)}</option>`).join("")}</select> ${sel("diet_level", dietLevel)}</label>
       <label>Language <input class="form-input" name="lang" value="${hmEsc(lang ? lang.slice(5) : "")}" ${disabled}> ${sel("lang_level", langLevel)}</label>
       <label>Allergies <input class="form-input" name="allergies" value="${hmEsc(c.allergies)}" ${disabled}></label>
       <label>Accessibility <input class="form-input" name="accessibility" value="${hmEsc(c.accessibility)}" ${disabled}></label>
@@ -31991,6 +32342,7 @@ function hmFormBody(form){
     student_name: v("student_name"), student_email: v("student_email"), student_dob: v("student_dob"),
     city: v("city"), area_pref: v("area_pref"), arrival: v("arrival"), departure: v("departure"),
     meal_plan: v("meal_plan"), budget: v("budget"), no_pets: v("no_pets"), non_smoking: v("non_smoking"),
+    no_children: v("no_children"), private_bathroom: v("private_bathroom"), diet: v("diet"), diet_level: v("diet_level"),
     lang: v("lang"), lang_level: v("lang_level"), allergies: v("allergies"), accessibility: v("accessibility"),
     notes: v("notes"),
   };
@@ -32646,11 +32998,12 @@ function hmRenderProfiles(){
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
         <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}${p.crc_path ? " · criminal record check on file" : ""}</span>
         <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span>
+        ${p.application_id != null ? `<button type="button" class="hb-link" style="font-size:12.5px" data-ha-open-app="${hmEsc(p.application_id)}">Application ${hmEsc((HM.appRefs && HM.appRefs.get(Number(p.application_id))) || "#" + p.application_id)}</button>` : ""}
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px" data-hm-ready-chips="${k}">${hmReadyChips(h)}</div>
         ${card && lc(card.name).trim() !== lc(h.display_name).trim() ? `<div class="card-sub">Host card: ${hmEsc(card.name)} · Payout account: ${hmEsc(h.display_name)}</div>` : ""}</summary>
       <div data-hm-ready-list="${k}" style="margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:8px">${hmReadyList(h)}</div>
       <div class="hm-grid" data-hm-profile="${k}" style="margin-top:8px">
-        <label>City <select class="form-input" name="city"><option value="">—</option>${["vancouver","toronto"].map(x => `<option ${p.city === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+        <label>City <select class="form-input" name="city"><option value="">—</option>${HM_CITIES.map(x => `<option ${p.city === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
         <label>Area <input class="form-input" name="area" value="${hmEsc(p.area)}"></label>
         <label>Phone (for SMS) <input class="form-input" type="tel" maxlength="40" name="phone" value="${hmEsc(h.phone)}" data-hm-phone="${k}">
           <span class="card-sub" data-hm-phone-note="${k}">${hmEsc(hmPhoneNote(h.phone).text)}</span></label>
@@ -32666,6 +33019,13 @@ function hmRenderProfiles(){
         <label><input type="checkbox" name="sms_consent" ${p.sms_consent_at ? "checked" : ""}> Host agreed to SMS
           <span class="card-sub" id="hm-consent-${k}">${hmEsc(hmSmsConsentText(p))}</span></label>
         <label>Unavailable until <input class="form-input" type="date" name="unavailable_until" value="${hmEsc(p.unavailable_until)}"></label>
+        <label>Students welcome <select class="form-input" name="student_genders">${[["any","Any"],["female","Female only"],["male","Male only"]].map(([v, l]) => `<option value="${v}" ${hmGenderChoice(p) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label><input type="checkbox" name="has_children" ${p.has_children ? "checked" : ""}> Children under 13 at home</label>
+        <label>Youngest student age <input class="form-input" name="min_age" inputmode="numeric" placeholder="no limit" value="${hmEsc(p.min_age)}"></label>
+        <label>Oldest student age <input class="form-input" name="max_age" inputmode="numeric" placeholder="no limit" value="${hmEsc(p.max_age)}"></label>
+        <label style="grid-column:1/-1">Transit <input class="form-input" name="transit" placeholder="Nearest stop, walk minutes, minutes to downtown" value="${hmEsc(p.transit)}"></label>
+        <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center"><span class="card-sub" style="font-size:12px">Can cook for</span>
+          ${HM_DIETS.map(d => `<label><input type="checkbox" name="diet_${d}" ${(p.diets || []).includes(d) ? "checked" : ""}> ${hmDietWord(d)}</label>`).join("")}</div>
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
         <div style="grid-column:1/-1"><button class="btn" type="button" data-hm-save-profile="${k}">Save profile</button>
           <span class="card-sub" id="hm-pmsg-${k}"></span></div>
@@ -32700,8 +33060,9 @@ async function hmSaveProfile(hostId){
   }
   const done = m => { out.textContent = [phoneMsg, m].filter(Boolean).join(" "); };
   const f = { host_id: hostId };
-  ["city","area","max_students","languages","pets_detail","unavailable_until","notes"].forEach(n => f[n] = get(n).value);
-  ["has_pets","accepts_minors","smoking_household","email_only","matching_active"].forEach(n => f[n] = get(n).checked);
+  ["city","area","max_students","languages","pets_detail","unavailable_until","notes","student_genders","min_age","max_age","transit"].forEach(n => f[n] = get(n).value);
+  ["has_pets","accepts_minors","smoking_household","email_only","matching_active","has_children"].forEach(n => f[n] = get(n).checked);
+  f.diets = HM_DIETS.filter(d => get("diet_" + d).checked);
   const r = hmProfileFromForm(f);
   if (!r.ok) { done((phoneMsg ? "Profile not saved: check " : "Check ") + hmFieldLabel(r.error)); return; }
   const sb = window.vmDb.sb;
@@ -32864,6 +33225,361 @@ document.addEventListener("click", async (ev) => {
     const out = document.getElementById("hm-crc-msg-" + id);
     if (out) out.textContent = "Error: " + (e.message || e);
   } finally { if (t.isConnected) t.disabled = false; }
+});
+
+/* ---- Homestay hosts → Applications (spec 2026-10-02-host-onboarding-design.md §9) ----------------
+   HA-APPS-CORE decides buckets, labels, chips and which actions show. Rows are read with the staff
+   Supabase session; every change goes through the matching Worker (/staff/applications/:id/:action),
+   which also emails the host. The drawer is the shared #detail-panel. No browser pop-ups. */
+const HA = { apps: [], profiles: new Map(), filter: "review", loading: null, loaded: false, error: null,
+  openId: null, detail: new Map(), form: null, msg: null, result: null, flags: {}, block: null, force: false };
+const haKv = (label, html) => `<div class="ha-kv"><span>${hmEsc(label)}</span><span>${html}</span></div>`;
+const haSection = (title, inner) => `<div class="panel-section"><div class="panel-section-title"><span>${title}</span></div>${inner}</div>`;
+const haLink = (url, text) => /^https:\/\//.test(String(url || "")) ? `<a href="${hmEsc(url)}" target="_blank" rel="noopener">${hmEsc(text)}</a>` : "";
+const haDash = '<span class="ha-sub">—</span>';
+
+function haShowTab(name){
+  document.querySelectorAll("[data-hh-tab]").forEach(b => b.classList.toggle("on", b.dataset.hhTab === name));
+  const apps = document.getElementById("ha-pane"), hosts = document.getElementById("hh-hosts-pane");
+  if (apps) apps.style.display = name === "apps" ? "" : "none";
+  if (hosts) hosts.style.display = name === "apps" ? "none" : "";
+  if (name === "apps") haLoad();
+}
+
+function haLoad(){
+  if (HA.loading) return HA.loading;
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) return Promise.resolve();
+  const status = document.getElementById("ha-status");
+  if (status && !HA.loaded) status.textContent = "Loading…";
+  HA.loading = (async () => {
+    try {
+      const r = await sb.from("hm_host_applications").select("*").order("updated_at", { ascending: false }).limit(500);
+      if (r.error) throw r.error;
+      HA.apps = r.data || [];
+      const ids = [...new Set(HA.apps.filter(a => a.status === "approved" && a.host_id).map(a => a.host_id))];
+      const profiles = new Map();
+      if (ids.length) {
+        const p = await sb.from("hm_host_profiles").select("host_id,matching_active,application_id").in("host_id", ids);
+        if (!p.error) for (const row of p.data || []) profiles.set(row.host_id, row);
+      }
+      HA.profiles = profiles;
+      HA.loaded = true; HA.error = null;
+    } catch (e) {
+      HA.error = (e && e.message) || String(e);
+    } finally {
+      HA.loading = null;
+    }
+    haRender();
+    haRefreshPanel();
+  })();
+  return HA.loading;
+}
+
+function haRender(){
+  const counts = haCounts(HA.apps);
+  const n = document.getElementById("ha-tab-n");
+  if (n) n.textContent = counts.review ? String(counts.review) : "";
+  const pills = document.getElementById("ha-pills");
+  if (pills) pills.innerHTML = HA_FILTERS.map(([k, label]) =>
+    `<button type="button" class="ha-pill${HA.filter === k ? " on" : ""}" data-ha-filter="${k}">${hmEsc(label)}<span class="ha-pn">${counts[k]}</span></button>`).join("");
+  const status = document.getElementById("ha-status"), box = document.getElementById("ha-list");
+  if (!box || !status) return;
+  if (HA.error) {
+    status.textContent = "Could not load applications: " + HA.error;
+    if (!HA.apps.length) box.innerHTML = "";
+    return;
+  }
+  const list = haFilter(HA.apps, HA.filter);
+  status.textContent = `${list.length} application${list.length === 1 ? "" : "s"}`;
+  if (!list.length) { box.innerHTML = '<div class="card-sub" style="padding:14px">No applications here.</div>'; return; }
+  const now = Date.now();
+  box.innerHTML = `<table class="ha-table"><thead><tr><th>Applicant</th><th>City</th><th>Status</th><th>Progress</th><th>Checks</th><th>Last activity</th><th></th></tr></thead><tbody>`
+    + list.map(a => {
+      const active = haActiveLabel(a, HA.profiles.get(a.host_id));
+      const last = haLastActivity(a);
+      const pct = haPct(a);
+      return `<tr class="ha-row" data-ha-open="${hmEsc(a.id)}">
+        <td><div style="font-weight:600">${hmEsc(haName(a))}</div><div class="ha-sub">${hmEsc(a.ref || "")} · ${hmEsc(a.email || "")}</div></td>
+        <td>${hmEsc(haCity(a)) || haDash}</td>
+        <td><span class="${haBucket(a) === "review" ? "ha-need" : ""}">${hmEsc(haLabel(a, now))}</span>${active ? `<div class="ha-sub">${hmEsc(active)}</div>` : ""}</td>
+        <td style="white-space:nowrap"><span class="ha-bar"><span style="width:${pct}%"></span></span>${pct}%</td>
+        <td><div class="ha-chips">${haChips(a).concat([haEmailChip(a)]).map(c => `<span class="ha-chip${c.ok ? "" : " miss"}">${hmEsc(c.label)}</span>`).join("")}</div></td>
+        <td style="white-space:nowrap">${last ? hmEsc(hmElapsed(last, now)) + " ago" : haDash}</td>
+        <td><button type="button" class="btn btn-ghost btn-mini" data-ha-open="${hmEsc(a.id)}">Open</button></td>
+      </tr>`;
+    }).join("") + "</tbody></table>";
+}
+
+/* ---- Drawer ---- */
+function haPanelShowing(){
+  const p = document.getElementById("detail-panel");
+  return !!(HA.openId != null && p && p.classList.contains("open")
+    && document.querySelector(`#panel-body .ha-panel[data-ha-id="${HA.openId}"]`));
+}
+function haOpen(id){
+  id = Number(id);
+  const a = HA.apps.find(x => x.id === id);
+  if (!a) return;
+  // The landlord panel leaves header buttons (and a menu) behind; every opener of the shared panel clears them.
+  document.querySelectorAll(".panel-head .header-edit-btn").forEach(x => x.remove());
+  document.getElementById("ll-more-menu")?.remove();
+  if (HA.openId !== id) { HA.form = null; HA.msg = null; HA.block = null; HA.flags = {}; }
+  HA.openId = id;
+  haRenderPanel(a);
+  document.getElementById("detail-panel").classList.add("open");
+  document.getElementById("detail-panel").setAttribute("aria-hidden", "false");
+  document.getElementById("panel-backdrop").classList.add("open");
+  document.body.style.overflow = "hidden";
+  const close = document.getElementById("panel-close"); if (close) close.focus();
+  haLoadDetail(id);
+}
+// Signed links (photos, CRC, agreement PDF) and refreshed payouts come from the Worker's get.
+async function haLoadDetail(id){
+  HA.detail.set(id, { loading: true });
+  if (HA.openId === id) haRefreshPanel();
+  try {
+    const out = await hmWorker(`/staff/applications/${id}/get`, {});
+    const row = out.app || out.row || out.application || (out.id != null && out.status ? out : null);
+    if (row && Number(row.id) === id) {
+      const i = HA.apps.findIndex(x => x.id === id);
+      const keep = Object.assign({}, row); delete keep.photos; delete keep.crc_url; delete keep.agreement_url;
+      if (i >= 0) HA.apps[i] = Object.assign({}, HA.apps[i], keep);
+    }
+    HA.detail.set(id, { photos: Array.isArray(out.photos) ? out.photos : [], crc_url: out.crc_url || null,
+      agreement_url: out.agreement_url || out.agreement_pdf_url || null });
+  } catch (e) {
+    HA.detail.set(id, { error: (e && e.message) || String(e) });
+  }
+  if (HA.openId === id) { haRender(); haRefreshPanel(); }
+}
+function haRefreshPanel(){
+  if (!haPanelShowing()) return;
+  const a = HA.apps.find(x => x.id === HA.openId);
+  if (a) haRenderPanel(a); else if (typeof closeProperty === "function") closeProperty();
+}
+function haSay(text, bad){
+  HA.msg = text ? { text, bad: !!bad } : null;
+  const el = document.getElementById("ha-panel-status");
+  if (el) { el.textContent = text || ""; el.style.color = bad ? "var(--red)" : ""; }
+}
+const HA_ACTION_WORDS = { review: "Start review", changes: "Ask for changes", "send-link": "Send continue link", approve: "Approve…", reject: "Reject" };
+function haStepText(s){
+  if (s == null) return "";
+  if (typeof s !== "object") return String(s);
+  const state = s.status || (s.done === true || s.ok === true ? "done" : s.skipped ? "skipped" : "");
+  return [s.step || s.name || s.key || s.label, state, s.detail || s.note || s.message].filter(Boolean).join(" — ");
+}
+function haActionsHtml(a){
+  const res = HA.result && HA.result.id === a.id ? HA.result : null;
+  let html = "";
+  if (res) {
+    html += `<div class="ha-inline"><div style="font-weight:700">Approved.</div>
+      ${res.steps.length ? res.steps.map(s => `<div class="ha-line">• ${hmEsc(haStepText(s))}</div>`).join("") : ""}
+      ${res.warnings.length ? `<div class="ha-line" style="margin-top:8px;font-weight:600">Still to do</div>` + res.warnings.map(w => `<div class="ha-line ha-need">${hmEsc(haStepText(w))}</div>`).join("") : ""}
+      <div class="ha-line" style="margin-top:8px">The last manual step is pricing the rooms (Hosts → room rates).</div>
+      ${(() => { const n = haHostProfileNote(a, haName(a)); return n.canOpen ? (res.host_id ? `<div style="margin-top:10px"><button type="button" class="btn btn-ghost btn-mini" data-ha-host-profile="${hmEsc(res.host_id)}">Open in Host profiles</button></div>` : "") : `<div class="ha-line" style="margin-top:8px">${hmEsc(n.text)}</div>`; })()}
+    </div>`;
+  } else if (HA.fail && HA.fail.id === a.id) {
+    html += `<div class="ha-inline">${HA.fail.steps.map(s => `<div class="ha-line">\u2022 ${hmEsc(s.label)} \u2014 ${s.status}${s.detail ? " \u2014 " + hmEsc(s.detail) : ""}</div>`).join("")}
+      <div class="ha-line ha-need" style="margin-top:${HA.fail.steps.length ? 8 : 0}px">${hmEsc(HA.fail.text)}</div></div>`;
+  } else if (a.status === "approved" && a.host_id && haHostProfileNote(a).canOpen) {
+    html += `<div class="ha-actions"><button type="button" class="btn btn-ghost btn-mini" data-ha-host-profile="${hmEsc(a.host_id)}">Open in Host profiles</button></div>`;
+  }
+  const acts = haActions(a);
+  if (!acts.length) return html;
+  const f = HA.form;
+  if (f === "changes" || f === "reject") {
+    const lead = f === "changes"
+      ? "What should the host add or fix? They get this note by email with a link back to their application, and can edit and submit again."
+      : "Why is it not approved? The host gets this note by email.";
+    return html + `<div class="ha-inline"><div class="card-sub">${lead}</div>
+      <textarea class="form-input" id="ha-note" maxlength="1000" placeholder="Note to the host"></textarea>
+      <div class="ha-actions"><button type="button" class="btn btn-primary btn-mini" data-ha-act="${f}">${f === "changes" ? "Send to host" : "Reject application"}</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-ha-cancel>Cancel</button></div></div>`;
+  }
+  if (f === "approve") {
+    const warns = haApproveWarnings(a, Date.now());
+    return html + `<div class="ha-inline">
+      <div class="card-sub">Approving creates (or reuses) the payout account, the rooms, the matching profile, the approved listing and the host card, then emails the host. Safe to press again if it stops halfway.</div>
+      ${HA.block && HA.block.id === a.id ? `<div class="ha-line ha-need" style="margin-top:8px">${hmEsc(HA.block.text)}</div>` : ""}
+      ${warns.length ? `<div class="ha-line" style="margin-top:8px;font-weight:600">Check first</div>` + warns.map(w => `<div class="ha-line ha-need">${hmEsc(w)}</div>`).join("") : ""}
+      <div class="ha-actions" style="margin-top:10px"><button type="button" class="btn btn-primary btn-mini" data-ha-act="approve"${HA.block && HA.block.id === a.id ? ' data-ha-flag="' + hmEsc(HA.block.flag) + '"' : ""}>${HA.block && HA.block.id === a.id ? hmEsc(HA.block.button) : warns.length ? "Approve anyway" : "Approve now"}</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-ha-cancel>Cancel</button></div></div>`;
+  }
+  return html + `<div class="ha-actions" style="margin-top:${html ? 10 : 0}px">` + acts.map(k => {
+    const primary = k === "approve";
+    const attr = k === "changes" || k === "reject" || k === "approve" ? `data-ha-form="${k}"` : `data-ha-act="${k}"`;
+    return `<button type="button" class="btn ${primary ? "btn-primary" : "btn-ghost"} btn-mini" ${attr}>${HA_ACTION_WORDS[k]}</button>`;
+  }).join("") + "</div>";
+}
+function haFilesHtml(a){
+  const d = HA.detail.get(a.id) || {};
+  const reload = `<button type="button" class="btn btn-ghost btn-mini" data-ha-files-reload>Reload links</button>`;
+  const sec = (a.progress && a.progress.sections && a.progress.sections.agreement) || null;
+  const contract = a.agreement_signed_at
+    ? `Signed ${hmEsc(hmDay(a.agreement_signed_at))}${sec && sec.done === false ? ' · <span class="ha-need">out of date: the host must sign again</span>' : ""}`
+      + (d.agreement_url ? " · " + haLink(d.agreement_url, "Open PDF") : "")
+    : '<span class="ha-need">Not signed</span>';
+  const crc = a.crc_path
+    ? `${hmEsc(a.crc_file_name || "On file")}${a.crc_issued_on ? " · issued " + hmEsc(a.crc_issued_on) : ""}${d.crc_url ? " · " + haLink(d.crc_url, "Open") : ""}`
+    : '<span class="ha-need">Not uploaded</span>';
+  const payouts = a.payouts === "complete" ? "Complete" : a.payouts === "started" ? "Started on Stripe, not finished" : "Not set up";
+  let note = "";
+  if (d.loading) note = '<div class="ha-sub">Loading links…</div>';
+  else if (d.error) note = `<div class="ha-sub ha-need">Links couldn't load: ${hmEsc(d.error)} ${reload}</div>`;
+  else if (d.photos) note = `<div class="ha-sub">Links work for 5 minutes. ${reload}</div>`;
+  const photos = d.photos && d.photos.length
+    ? `<div class="ha-photos">${d.photos.map(p => /^https:\/\//.test(String(p.url || p.signed_url || ""))
+        ? `<figure><a href="${hmEsc(p.url || p.signed_url)}" target="_blank" rel="noopener"><img src="${hmEsc(p.url || p.signed_url)}" alt="${hmEsc(p.tag || "photo")}" loading="lazy"></a><figcaption>${hmEsc(String(p.tag || "").replace(/_/g, " "))}</figcaption></figure>` : "").join("")}</div>`
+    : d.photos ? '<div class="card-sub">No photos yet.</div>' : "";
+  return haSection("Contract, <em>documents</em> &amp; payouts",
+      haKv("Host agreement", contract) + haKv("Criminal record check", crc) + haKv("Stripe payouts", hmEsc(payouts))
+      + (a.host_id ? haKv("Payout account", hmEsc(a.host_id)) : "") + note)
+    + haSection("Photos", photos || '<div class="card-sub">Loading…</div>');
+}
+function haRestHtml(a){
+  const missing = a.status === "approved" ? [] : haMissing(a);
+  const timeline = haTimeline(a);
+  return (a.review_note ? haSection("Note to the <em>host</em>", `<div class="ha-line" style="white-space:pre-line">${hmEsc(a.review_note)}</div>`) : "")
+    + (missing.length ? haSection("Still <em>missing</em>", missing.map(m => `<div class="ha-line">• ${hmEsc(m)}</div>`).join("")) : "")
+    + haFilesHtml(a)
+    + haAnswerSections(a.answers).map(s => haSection(hmEsc(s.title), s.rows.map(([l, v]) => haKv(l, hmEsc(v))).join(""))).join("")
+    + haSection("Timeline", timeline.length ? timeline.map(e => haKv(hmWhen(e.at), hmEsc(e.text))).join("") : '<div class="card-sub">—</div>');
+}
+function haRenderPanel(a){
+  const name = haName(a);
+  const initials = String(name).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "HA";
+  const hero = document.getElementById("panel-hero");
+  if (hero) { hero.textContent = initials; hero.style.background = "linear-gradient(135deg,#6b5a4a,#2B211A)"; }
+  document.getElementById("panel-title").textContent = name;
+  document.getElementById("panel-sub").textContent = [a.ref, a.email, haCity(a)].filter(Boolean).join(" · ");
+  const active = haActiveLabel(a, HA.profiles.get(a.host_id));
+  document.getElementById("panel-meta").innerHTML = `<span class="ha-meta${haBucket(a) === "review" ? " ha-need" : ""}">${hmEsc(haLabel(a, Date.now()))}</span>`
+    + (active ? `<span class="ha-meta">${hmEsc(active)}</span>` : "")
+    + `<span class="ha-meta">${haPct(a)}% complete</span>`
+    + `<span class="ha-meta">${hmEsc(haEmailChip(a).label)}</span>`;
+  const body = document.getElementById("panel-body");
+  let root = body.querySelector(`.ha-panel[data-ha-id="${a.id}"]`);
+  if (!root) {
+    body.innerHTML = `<div class="ha-panel" data-ha-id="${hmEsc(a.id)}"><div class="ha-status" id="ha-panel-status"></div>
+      <div id="ha-panel-actions" style="margin-bottom:22px"></div><div id="ha-panel-rest"></div></div>`;
+    root = body.querySelector(".ha-panel");
+    haSay(HA.msg && HA.msg.text, HA.msg && HA.msg.bad);
+  }
+  // An open note form keeps what is being typed: only the rest is redrawn under it.
+  if (HA.force || !HA.form || !root.querySelector("#ha-note, [data-ha-act='approve']")) root.querySelector("#ha-panel-actions").innerHTML = haActionsHtml(a);
+  HA.force = false;
+  root.querySelector("#ha-panel-rest").innerHTML = haRestHtml(a);
+}
+
+const HA_DONE_WORDS = { review: "Review started.", changes: "Sent: the host has the note and a link.",
+  "send-link": "Continue link emailed.", approve: "Approved.", reject: "Rejected: the host was emailed." };
+async function haDo(action, btn){
+  const id = HA.openId;
+  const a = HA.apps.find(x => x.id === id);
+  if (!a) return;
+  let body = {};
+  if (action === "changes" || action === "reject") {
+    const ta = document.getElementById("ha-note");
+    const note = String((ta && ta.value) || "").trim();
+    if (!note) return haSay("Type a note for the host first.", true);
+    if (note.length > 1000) return haSay(`The note is ${note.length} characters: keep it under 1,000.`, true);
+    body = { note };
+  }
+  if (action === "approve") {
+    const add = btn.dataset && btn.dataset.haFlag;
+    body = haApproveBody(HA.flags, add);
+    HA.flags = body;
+  }
+  btn.disabled = true;
+  haSay(action === "approve" ? "Approving… (this can take a little while)" : "Saving…");
+  try {
+    const out = await hmWorker(`/staff/applications/${id}/${action}`, body);
+    HA.form = null; HA.fail = null; HA.block = null; HA.flags = {};
+    if (action === "approve") {
+      HA.result = { id, host_id: (out && out.host_id) || null,
+        steps: Array.isArray(out && out.steps) ? out.steps : [], warnings: Array.isArray(out && out.warnings) ? out.warnings : [] };
+    }
+    haSay(action === "send-link" ? haSendLinkText(out, a.email) : action === "reject" ? haRejectText(out) : HA_DONE_WORDS[action]);
+    await haLoad();
+    if (action === "approve") haLoadDetail(id); // photos were re-keyed to the payout account
+  } catch (e) {
+    const b = (e && e.body) || {};
+    const blocker = action === "approve" ? haApproveBlocker(b) : null;
+    if (blocker) {
+      HA.block = { id, text: blocker.text, flag: blocker.flag, button: blocker.button };
+      HA.fail = null; HA.form = "approve"; HA.force = true;
+      haSay("");
+      haRefreshPanel();
+      return;
+    }
+    if (action === "approve" && b.step && b.error !== "bad_status") {
+      const f = haApproveFailure(b);
+      HA.fail = { id, steps: f.steps, text: f.text };
+      haSay("");
+      haRefreshPanel();
+      if (btn.isConnected) btn.disabled = false;
+      return;
+    }
+    const text = b.error === "bad_status" || b.error === "wrong_status" || b.error === "not_allowed"
+      ? `This application is ${HA_STATUS_WORDS[b.status] || b.status || "in another state"} now: refresh.`
+      : haErrorText(b, HA_STATUS_WORDS) ? haErrorText(b, HA_STATUS_WORDS)
+      : String((e && e.message) || e).startsWith("HTTP 404") ? "The matching Worker doesn't have application routes yet (HTTP 404)."
+      : (e && e.message) || String(e);
+    haSay(text, true);
+    if (btn.isConnected) btn.disabled = false;
+  }
+}
+
+// Approve → "Open in Host profiles": Matching → Host profiles, that host's row opened once it has rendered.
+// (Host profiles lists payable hosts only; a host still finishing Stripe shows up once payouts are complete.)
+function haOpenHostProfile(hostId){
+  if (typeof closeProperty === "function") closeProperty();
+  goToView("homestay-matching");
+  hmShowTab("profiles");
+  hmReadyEnsureRooms();
+  const t0 = Date.now();
+  const tick = () => {
+    const el = document.querySelector(`[data-hm-profile="${CSS.escape(hostId)}"]`);
+    if (el) {
+      const det = el.closest("details");
+      if (det && !det.open) det.open = true;
+      (det || el).scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (Date.now() - t0 < 15000) setTimeout(tick, 300);
+  };
+  setTimeout(tick, 100);
+}
+// Host profiles → "Application HA-…": Homestay hosts → Applications with that application's drawer open.
+async function haOpenFromProfile(appId){
+  appId = Number(appId);
+  goToView("homestay-hosts");
+  haShowTab("apps");
+  await haLoad();
+  const a = HA.apps.find(x => x.id === appId);
+  if (!a) { const s = document.getElementById("ha-status"); if (s) s.textContent = "That application wasn't found."; return; }
+  if (HA.filter !== "all" && haBucket(a) !== HA.filter) { HA.filter = "all"; haRender(); }
+  haOpen(appId);
+}
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hh-tab],[data-ha-filter],[data-ha-open],#ha-refresh,[data-ha-open-app],[data-ha-act],[data-ha-form],[data-ha-cancel],[data-ha-host-profile],[data-ha-files-reload]");
+  if (!t) return;
+  if (t.dataset.hhTab) return haShowTab(t.dataset.hhTab);
+  if (t.dataset.haFilter) { HA.filter = t.dataset.haFilter; return haRender(); }
+  if (t.id === "ha-refresh") return haLoad();
+  if (t.dataset.haOpenApp) { ev.preventDefault(); ev.stopPropagation(); return haOpenFromProfile(t.dataset.haOpenApp); }
+  if (t.dataset.haOpen) return haOpen(t.dataset.haOpen);
+  if (!t.closest(".ha-panel")) return;
+  const a = HA.apps.find(x => x.id === HA.openId);
+  if (!a) return;
+  if (t.dataset.haHostProfile) return haOpenHostProfile(t.dataset.haHostProfile);
+  if (t.hasAttribute("data-ha-files-reload")) return haLoadDetail(a.id);
+  if (t.dataset.haForm) { HA.form = t.dataset.haForm; HA.result = null; HA.fail = null; HA.block = null; HA.flags = {}; haSay(""); haRenderPanel(a); document.getElementById("ha-note")?.focus(); return; }
+  if (t.hasAttribute("data-ha-cancel")) { HA.form = null; HA.block = null; HA.flags = {}; haSay(""); return haRenderPanel(a); }
+  if (t.dataset.haAct) return haDo(t.dataset.haAct, t);
 });
 
 /* ---- Host listings (photos + about us), edited here and approved for clients. Worker: /staff/hosts/:host/listing/:action ---- */
