@@ -118,6 +118,7 @@ a.brand-home:focus-visible { outline: 2px solid var(--red); outline-offset: 2px;
   min-height: 28px; display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .tab:hover { color: var(--ink); }
 .tab.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.tbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); font-size: 11px; font-weight: 800; }
 
 /* ---------- page ---------- */
 .wrap { padding: 0 12px 24px; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
@@ -173,7 +174,11 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
 .st-missing, .st-changed, .st-dropped { background: var(--amber-soft); color: var(--b-amber); }
 .st-sent, .st-opened { background: var(--blue-soft); color: var(--b-blue); }
 .st-failed { background: var(--red-soft); color: var(--red); }
-.st-handled, .st-cancelled { background: var(--cream-2); color: var(--muted); }
+.st-handled, .st-cancelled, .st-held, .st-skipped { background: var(--cream-2); color: var(--muted); }
+.st-scheduled, .st-due { background: var(--green-soft); color: var(--b-green); }
+.seg { display: inline-flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; }
+.seg button { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); min-height: 28px; }
+.seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
 .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
 .empty b { display: block; color: var(--ink); font-family: var(--serif); font-size: 18px; margin-bottom: 4px; }
 
@@ -306,6 +311,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   <div class="ttl"><div class="page-title"><em>Arrivals</em></div></div>
   <div class="tabrow"><nav class="tabs" id="tabs">
     <button class="tab on" data-tab="arrivals">Arrivals</button>
+    <button class="tab" data-tab="moveouts">Move-outs <span class="tbadge" id="moBadge" hidden></span></button>
     <button class="tab" data-tab="access">Access</button>
     <button class="tab" data-tab="templates">Templates</button>
   </nav></div>
@@ -336,6 +342,23 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       <aside class="panel card" id="panel"></aside>
     </div>
   </section>
+  <section id="v-moveouts" hidden>
+    <div class="toolbar">
+      <div class="wkpick">
+        <button type="button" id="moPrev" aria-label="Previous weekend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg></button>
+        <span class="wklabel" id="moLabel">…</span>
+        <button type="button" id="moNext" aria-label="Next weekend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></button>
+      </div>
+      <select class="sel" id="moCity" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
+    </div>
+    <p class="note">Check-out messages send automatically 3 days before move-out at 9:00, 13:00 or 17:00 Toronto time.</p>
+    <div class="kpis" id="moKpis"></div>
+    <div class="chips" id="moChips" style="margin-bottom:10px"></div>
+    <div class="split">
+      <div id="moGroups"><div class="empty">Loading…</div></div>
+      <aside class="panel card" id="moPanel"></aside>
+    </div>
+  </section>
   <section id="v-access" hidden>
     <div class="acc-tools">
       <input class="inp" id="accQ" type="search" placeholder="Search building" autocomplete="off" />
@@ -345,6 +368,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   </section>
   <section id="v-templates" hidden>
     <div class="toolbar">
+      <span id="tplKind"></span>
       <select class="sel" id="tplB" aria-label="Building"></select>
       <span class="muted" id="tplState"></span>
     </div>
@@ -356,7 +380,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-02-tplcopy"></script>
+<script src="arrivals-core.js?v=2026-10-02-hostapps4"></script>
 <script>
 (function () {
   'use strict';
@@ -376,7 +400,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   var NARROW = window.matchMedia('(max-width: 899px)');
 
   var S = { me: null, tab: 'arrivals', wk: A.weekendOf(new Date()), city: '', filter: 'all', rows: [], openId: null, seq: 0, busy: false,
-    acc: null, accSeq: 0, accOpen: {}, accNew: {}, tpl: null, tplDirty: false };
+    acc: null, accSeq: 0, accOpen: {}, accNew: {}, tpl: null, tplDirty: false,
+    mo: { wk: A.weekendOf(new Date()), city: '', filter: 'all', rows: [], nodate: [], openId: null, seq: 0, busy: false, setup: true },
+    tk: 'checkin', cot: null, coTpls: null };
 
   function $(id) { return document.getElementById(id); }
   function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
@@ -463,7 +489,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('meAv').textContent = initials(S.me.name || S.me.email);
     wire();
     var h = (location.hash || '').replace('#', '');
-    setTab(h === 'access' || h === 'templates' ? h : 'arrivals');
+    setTab(h === 'access' || h === 'templates' || h === 'moveouts' ? h : 'arrivals');
+    if (S.tab !== 'moveouts') loadMoBadge();
   }
 
   function setTab(t) {
@@ -473,10 +500,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     document.body.dataset.tab = t;
     Array.prototype.forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === t); });
     $('v-arrivals').hidden = t !== 'arrivals';
+    $('v-moveouts').hidden = t !== 'moveouts';
     $('v-access').hidden = t !== 'access';
     $('v-templates').hidden = t !== 'templates';
     try { history.replaceState(null, '', location.pathname + location.search + (t === 'arrivals' ? '' : '#' + t)); } catch (e) {}
+    document.body.dataset.panel = '';
     if (t === 'arrivals') loadArrivals();
+    else if (t === 'moveouts') loadMoveouts();
     else loadAccess();
   }
 
@@ -809,6 +839,271 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<li>“Not opened 24h” is worth a WhatsApp nudge, not a resend by default.</li></ul>');
   }
 
+  // ───────── Move-outs tab (automatic check-out messages, checkout_messages_v) ─────────
+  var CHECKOUT_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/checkout-send';
+  // The view or table isn't there yet (SQL moveout-messages-2026-10-02.sql not applied): Postgres 42P01 or
+  // PostgREST's schema-cache miss PGRST205.
+  function moSetupMissing(e) {
+    if (!e) return false;
+    if (e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST200') return true;
+    return /(checkout_messages_v|checkout_templates|stay_messages)/.test(String(e.message || '')) && /(does not exist|schema cache|could not find)/i.test(String(e.message || ''));
+  }
+  // end moSetupMissing
+  var MO_MISS = { email: 'email', checkout_date: 'check-out date', template: 'template' };
+  // One checkout_messages_v row -> { cls, label } for the status chip.
+  function moChip(r) {
+    r = r || {};
+    var s = r.live_status || r.status;
+    if (s === 'sent') {
+      if (r.changed_after_send) return { cls: 'changed', label: 'Changed after send' };
+      return r.opened_at ? { cls: 'opened', label: 'Opened ' + clock(r.opened_at) } : { cls: 'sent', label: 'Sent ' + clock(r.sent_at) };
+    }
+    if (s === 'scheduled') return { cls: 'scheduled', label: 'Scheduled · sends ' + shortDate(r.due_date) };
+    if (s === 'due') return { cls: 'due', label: 'Due — sends at the next run (9:00/13:00/17:00)' };
+    if (s === 'needs_attention') {
+      var m = Array.isArray(r.missing) ? r.missing : [];
+      return { cls: 'missing', label: 'Needs attention' + (m.length ? ': ' + m.map(function (k) { return MO_MISS[k] || String(k); }).join(', ') : '') };
+    }
+    if (s === 'held') return { cls: 'held', label: 'Held' };
+    if (s === 'failed') return { cls: 'failed', label: 'Failed' };
+    if (s === 'skipped') {
+      if (r.arrival_status === 'cancelled' || r.arrival_status === 'handled') return { cls: 'skipped', label: 'Skipped (' + r.arrival_status + ')' };
+      return { cls: 'skipped', label: 'Skipped (move-out passed)' };
+    }
+    return { cls: 'held', label: String(s || 'Unknown') };
+  }
+  // end moChip
+  // moving = rows whose arrival is still open; scheduled includes due; sent includes opened.
+  function moCounts(rows) {
+    var c = { moving: 0, scheduled: 0, attention: 0, sent: 0, opened: 0, held: 0 };
+    (rows || []).forEach(function (r) {
+      if (r.arrival_status === 'cancelled' || r.arrival_status === 'handled') return;
+      c.moving++;
+      var s = r.live_status;
+      if (s === 'scheduled' || s === 'due') c.scheduled++;
+      else if (s === 'needs_attention') c.attention++;
+      else if (s === 'held') c.held++;
+      else if (s === 'sent') { c.sent++; if (r.opened_at) c.opened++; }
+    });
+    return c;
+  }
+  // end moCounts
+  var MO_FILTERS = [['all', 'All'], ['needs_attention', 'Needs attention'], ['scheduled', 'Scheduled'], ['held', 'Held'], ['sent', 'Sent'], ['opened', 'Opened'],
+    ['failed', 'Failed'], ['skipped', 'Skipped'], ['nodate', 'No move-out date']];
+  function moMatches(r, f) {
+    if (f === 'all') return true;
+    if (f === 'scheduled') return r.live_status === 'scheduled' || r.live_status === 'due';
+    if (f === 'opened') return r.live_status === 'sent' && !!r.opened_at;
+    return r.live_status === f;
+  }
+  function moById(id) {
+    var all = S.mo.rows.concat(S.mo.nodate);
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  }
+  function moChipHtml(r) { var c = moChip(r); return '<span class="st st-' + esc(c.cls) + '" title="' + esc(c.label) + '">' + esc(c.label) + '</span>'; }
+  function moSetupHtml() { return '<div class="empty card"><b>Check-out messages are being set up</b>They appear here once the move-out messages update is applied.</div>'; }
+
+  async function loadMoveouts() {
+    var seq = ++S.mo.seq;
+    var w = S.mo.wk;
+    $('moLabel').innerHTML = esc(w.title) + '<small>' + esc(w.range) + '</small>';
+    $('moLabel').title = w.label;
+    if (!S.mo.rows.length) $('moGroups').innerHTML = '<div class="empty card">Loading…</div>';
+    var res;
+    try {
+      res = await Promise.all([
+        selectAll('checkout_messages_v', '*', function (q) {
+          q = q.gte('checkout_date', S.mo.wk.start).lte('checkout_date', S.mo.wk.end);
+          if (S.mo.city) q = q.eq('city', S.mo.city);
+          return q.order('checkout_date', { ascending: true }).order('id', { ascending: true });
+        }),
+        selectAll('checkout_messages_v', '*', function (q) {
+          q = q.is('checkout_date', null).neq('live_status', 'skipped');
+          if (S.mo.city) q = q.eq('city', S.mo.city);
+          return q.order('arrival_date', { ascending: true }).order('id', { ascending: true });
+        })
+      ]);
+    } catch (e) {
+      if (seq !== S.mo.seq) return;
+      S.mo.setup = !moSetupMissing(e);
+      $('moKpis').innerHTML = ''; $('moChips').innerHTML = ''; $('moPanel').innerHTML = '';
+      $('moGroups').innerHTML = S.mo.setup ? '<div class="gate card">Could not load move-outs: ' + esc(e && e.message) + '</div>' : moSetupHtml();
+      return;
+    }
+    if (seq !== S.mo.seq) return;
+    S.mo.setup = true;
+    S.mo.rows = res[0]; S.mo.nodate = res[1];
+    if (S.mo.openId && !moById(S.mo.openId)) S.mo.openId = null;
+    renderMoveouts();
+    loadMoBadge();
+  }
+  // Header badge: needs-attention check-out messages moving out in the next 14 days (or with no date at all).
+  async function loadMoBadge() {
+    var el = $('moBadge');
+    try {
+      var to = addDaysYmd(todayYmd(), 14);
+      var rows = await selectAll('checkout_messages_v', 'id,checkout_date', function (q) { return q.eq('live_status', 'needs_attention').order('id'); });
+      var n = rows.filter(function (r) { return !r.checkout_date || String(r.checkout_date).slice(0, 10) <= to; }).length;
+      el.textContent = n; el.hidden = !n; el.title = n + ' check-out message' + (n === 1 ? '' : 's') + ' need attention (next 14 days)';
+    } catch (e) { el.hidden = true; }
+  }
+
+  function renderMoveouts() {
+    var c = moCounts(S.mo.rows);
+    $('moKpis').innerHTML = [['Moving out', c.moving], ['Scheduled', c.scheduled], ['Needs attention', c.attention], ['Sent', c.sent], ['Opened', c.opened, true], ['Held', c.held]]
+      .map(function (k) {
+        return '<div class="kpi card"><div class="k">' + esc(k[0]) + (k[2] ? ' <button type="button" class="ibtn" data-oinfo aria-label="About open tracking" title="About open tracking">' + INFO_SVG + '</button>' : '') + '</div><div class="v">' + esc(k[1]) + '</div></div>';
+      }).join('');
+    $('moChips').innerHTML = MO_FILTERS.map(function (f) {
+      var n = f[0] === 'nodate' ? S.mo.nodate.length : S.mo.rows.filter(function (r) { return moMatches(r, f[0]); }).length;
+      if (f[0] === 'nodate' && !n && S.mo.filter !== 'nodate') return '';
+      return '<button type="button" class="chip' + (S.mo.filter === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + esc(f[1]) + ' <span class="n">' + n + '</span></button>';
+    }).join('');
+    var list = S.mo.filter === 'nodate' ? S.mo.nodate : S.mo.rows.filter(function (r) { return moMatches(r, S.mo.filter); });
+    if (!list.length) {
+      $('moGroups').innerHTML = '<div class="empty card"><b>' + (S.mo.rows.length || S.mo.filter === 'nodate' ? 'Nothing in this filter' : 'No move-outs this weekend') + '</b>' +
+        (S.mo.rows.length ? 'Try another status.' : 'Students from the school rosters show here by their move-out date.') + '</div>';
+    } else {
+      $('moGroups').innerHTML = A.groupByBuilding(list).map(function (g) {
+        var unreviewed = g.arrivals.some(function (r) { return !r.template_reviewed; });
+        var n = g.arrivals.filter(function (r) { return r.arrival_status !== 'cancelled' && r.arrival_status !== 'handled'; }).length;
+        return '<section class="grp card"><div class="ghead"><b>' + esc(g.building) + '</b><span class="muted">' + esc(g.city) + ' · ' + n + ' moving out</span>' +
+          (unreviewed ? '<span class="tag warn">Check-out template not reviewed</span>' : '') + '</div>' +
+          g.arrivals.map(function (r) {
+            return '<button type="button" class="arow' + (r.id === S.mo.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
+              '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + esc(r.school || '—') + '</small></span>' +
+              '<span class="c-room">' + esc(roomText(r)) + '</span>' +
+              '<span class="c-date">' + esc(r.checkout_date ? shortDate(r.checkout_date) : 'No move-out date') + '</span>' +
+              '<span class="c-chip">' + moChipHtml(r) + '</span></button>';
+          }).join('') + '</section>';
+      }).join('');
+    }
+    moRenderPanel();
+  }
+
+  function moRenderPanel() {
+    var r = S.mo.openId ? moById(S.mo.openId) : null;
+    if (S.tab === 'moveouts') document.body.dataset.panel = r ? 'open' : '';
+    if (!r) {
+      $('moPanel').innerHTML = '<div class="empty"><b>Pick a move-out</b>See the check-out email, fix what’s missing, hold or send it.</div>';
+      return;
+    }
+    var miss = Array.isArray(r.missing) ? r.missing : [];
+    var has = function (k) { return miss.indexOf(k) !== -1; };
+    var closed = r.arrival_status === 'cancelled' || r.arrival_status === 'handled';
+    var facts = [
+      ['Moves out', r.checkout_date ? A.longDate(r.checkout_date) : ''],
+      ['Sends', r.status === 'sent' || !r.due_date ? '' : A.longDate(r.due_date) + ' (9:00, 13:00 or 17:00 Toronto)'],
+      ['Arrived', r.arrival_date ? A.longDate(r.arrival_date) : ''],
+      ['Room', str(r.building) + ' · ' + roomText(r)],
+      ['Sent', r.sent_at ? clock(r.sent_at) + (r.sent_by ? ' by ' + r.sent_by : '') : ''],
+      ['Opened', r.opened_at ? clock(r.opened_at) + (r.open_count > 1 ? ' · ' + r.open_count + ' opens, last ' + clock(r.last_opened_at) : '') : (r.status === 'sent' ? 'Not yet' : '')],
+      ['Error', r.status === 'failed' || (r.last_error && r.status === 'sent') ? str(r.last_error) : '']
+    ].filter(function (f) { return str(f[1]); });
+
+    var acts = [];
+    if (r.status !== 'sent' && r.status !== 'skipped' && !closed) {
+      if (!miss.length && r.live_status !== 'skipped') acts.push('<button type="button" class="btn btn-primary" data-mo="send">' + (r.status === 'failed' ? 'Retry now' : 'Send now') + '</button>');
+      if (r.status === 'held') acts.push('<button type="button" class="btn btn-ghost" data-mo="resume">Resume</button>');
+      else acts.push('<button type="button" class="btn btn-ghost" data-mo="hold">Hold</button>');
+    }
+    if (r.status === 'sent') acts.push('<button type="button" class="btn btn-ghost" data-mo="resend">Resend</button>');
+
+    var warn = '';
+    if (closed) warn = '<p class="warnbox">This arrival is ' + esc(r.arrival_status) + ' — no check-out email goes out.</p>';
+    else if (r.live_status === 'skipped') warn = '<p class="warnbox">The move-out date has passed — this message is skipped.</p>';
+    else if (r.changed_after_send) warn = '<p class="warnbox">The move-out date changed after this email was sent. Check the details and resend if needed.</p>';
+    else if (r.status === 'held') warn = '<p class="warnbox">Held — it won’t send automatically until you resume it.</p>';
+    else if (miss.length) warn = '<p class="warnbox">Missing ' + esc(miss.map(A.checkoutMissingLabel).join(', ') + (r.live_status === 'needs_attention' ? '' : ' — fix it before ' + shortDate(r.due_date))) + '. It won’t be sent with blanks.</p>';
+
+    var fx = '';
+    fx += fxBlock('email', 'Student email', has('email'),
+      '<div class="frow"><input class="inp" type="email" name="email" value="' + esc(r.student_email) + '" placeholder="student@example.com" autocomplete="off" /><button class="btn btn-ghost" type="submit">Save</button></div>');
+    fx += fxBlock('checkout_date', 'Move-out date', has('checkout_date'),
+      '<div class="frow"><input class="inp" type="date" name="checkout_date" value="' + esc(str(r.checkout_date).slice(0, 10)) + '" min="' + esc(str(r.arrival_date).slice(0, 10)) + '" /><button class="btn btn-ghost" type="submit">Save</button></div>',
+      'The email is due 3 days before this date.');
+    if (has('template')) {
+      fx += '<div class="fx miss"><div class="fh"><span>Check-out template</span><small>' + (r.template_exists ? 'Not reviewed' : 'None yet') + '</small></div><button type="button" class="btn btn-ghost" data-mo="tpl">Open the ' + esc(r.building) + ' check-out template</button></div>';
+    }
+    if (r.status !== 'skipped' && !closed) {
+      fx += fxBlock('override', 'Edit this message', false,
+        '<div style="display:grid;gap:6px"><input class="inp" name="override_subject" value="' + esc(r.override_subject) + '" placeholder="Subject (blank = the template’s)" />' +
+        '<textarea class="inp" name="override_note" placeholder="Extra note for this student only (added after the sections)">' + esc(r.override_note) + '</textarea>' +
+        '<div><button class="btn btn-ghost" type="submit">Save message</button></div></div>', 'Only for this student. The building template stays as it is.');
+    }
+
+    var mail = A.buildCheckoutEmail(r, { pixelBase: '' });
+    $('moPanel').innerHTML = '<div class="pin"><div class="ph"><div class="who"><div class="pname">' + esc(r.student_name || '(no name)') + '</div>' +
+      '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + moChipHtml(r) + '</div></div>' +
+      '<button type="button" class="pclose" data-mo="close" aria-label="Close">✕</button></div>' +
+      '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
+      warn + '<div class="pact">' + acts.join('') + '</div>' + fx +
+      '<div class="pv-head"><b>Email preview</b><span class="muted" style="font-size:12px">' + esc(r.student_email || 'no email yet') + '</span></div>' +
+      '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
+      '<iframe class="pv" id="moPv" sandbox="" title="Check-out email preview" referrerpolicy="no-referrer"></iframe></div>';
+    $('moPv').srcdoc = mail.html;
+  }
+  function moOpenRow(id) {
+    S.mo.openId = id;
+    Array.prototype.forEach.call(document.querySelectorAll('#moGroups .arow'), function (b) { b.classList.toggle('on', b.getAttribute('data-id') === id); });
+    moRenderPanel();
+    if (!NARROW.matches) $('moPanel').scrollTop = 0;
+  }
+  async function moSaveFx(form) {
+    var r = moById(S.mo.openId); if (!r) return;
+    var kind = form.getAttribute('data-fx');
+    var v = function (n) { var el = form.elements[n]; return el ? el.value.trim() : ''; };
+    var ok = null, btn = form.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
+    try {
+      if (kind === 'email') ok = await rpc('arrivals_save_email', { p_id: r.arrival_id, p_email: v('email') });
+      else if (kind === 'checkout_date') ok = await rpc('arrivals_save_checkout_date', { p_arrival_id: r.arrival_id, p_date: v('checkout_date') || null });
+      else if (kind === 'override') ok = await rpc('checkout_message_override', { p_id: r.id, p_subject: v('override_subject'), p_note: v('override_note') });
+    } finally { if (btn) btn.disabled = false; }
+    if (ok) { toast('Saved'); await loadMoveouts(); }
+  }
+  async function moSendIds(ids, resend) {
+    if (S.mo.busy || !ids.length) return;
+    S.mo.busy = true;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-mo="send"], [data-mo="resend"]'), function (b) { b.disabled = true; });
+    var j = null;
+    try {
+      var tok = await token();
+      if (!tok) { toast('Your session expired — reload the page.'); return; }
+      var res = await fetch(CHECKOUT_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+        body: JSON.stringify({ ids: ids, resend: !!resend }) });
+      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service (HTTP ' + res.status + ').' }; }
+    } catch (e) {
+      toast('Send service unreachable — check your connection and try again.');
+    } finally { S.mo.busy = false; }
+    if (!j) { moRenderPanel(); return; }
+    var results = Array.isArray(j.results) ? j.results : [];
+    var bad = results.filter(function (x) { return !(x && x.ok); })[0];
+    if (!j.ok && !results.length) infoSheet('Not sent', '<p>' + esc(j.error || 'The send service refused the request.') + '</p>');
+    else if (bad) infoSheet('Not sent', '<p>' + esc(SEND_ERR[bad.error] || bad.error || 'Not sent') + '</p>');
+    else toast(resend ? 'Sent again' : 'Sent');
+    await loadMoveouts();
+  }
+  // end moSendIds
+  async function moAct(name) {
+    if (name === 'close') { S.mo.openId = null; renderMoveouts(); return; }
+    var r = moById(S.mo.openId); if (!r) return;
+    if (name === 'send') {
+      if (await confirmSheet('Send the check-out email now?', '<p class="note">It goes to ' + esc(r.student_email) + ' right away instead of ' + (r.due_date ? 'on ' + esc(shortDate(r.due_date)) : 'at the next run') + '.</p>', 'Send now')) await moSendIds([r.id], false);
+      return;
+    }
+    if (name === 'resend') {
+      if (await confirmSheet('Resend the check-out email?', '<p class="note">' + esc(r.student_name || 'This student') + ' already got it' + (r.sent_at ? ' on ' + esc(clock(r.sent_at)) : '') + '. A new copy goes to ' + esc(r.student_email) + '.</p>', 'Resend')) await moSendIds([r.id], true);
+      return;
+    }
+    if (name === 'hold' || name === 'resume') {
+      if (await rpc('checkout_message_set', { p_id: r.id, p_status: name === 'hold' ? 'held' : 'scheduled' })) { toast(name === 'hold' ? 'Held' : 'Resumed'); await loadMoveouts(); }
+      return;
+    }
+    if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkout'; setTab('templates'); }
+  }
+
   // ───────── Access + Templates data ─────────
   async function loadAccess() {
     var seq = ++S.accSeq;
@@ -822,10 +1117,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
           selectAll('access_units', '*', function (q) { return q.order('building').order('unit'); }),
           selectAll('access_rooms', '*', function (q) { return q.order('building').order('room_key'); }),
           selectAll('arrival_templates', '*', function (q) { return q.order('building'); }),
-          selectAll('arrivals_v', 'id,building,city,unit,bed,room_key,arrival_date,status', function (q) { return q.gte('arrival_date', since).order('arrival_date').order('id'); })
+          selectAll('arrivals_v', 'id,building,city,unit,bed,room_key,arrival_date,status', function (q) { return q.gte('arrival_date', since).order('arrival_date').order('id'); }),
+          // null = the move-out messages SQL isn't applied yet (the check-in editor keeps working)
+          selectAll('checkout_templates', '*', function (q) { return q.order('building'); }).catch(function (e) { if (moSetupMissing(e)) return null; throw e; })
         ]);
         if (seq !== S.accSeq) return;
-        S.acc = buildModel(res[0], res[1], res[2], res[3], res[4]);
+        S.coTpls = res[5];
+        S.acc = buildModel(res[0], res[1], res[2], res[3], res[4], res[5] || []);
       } catch (e) {
         if (seq !== S.accSeq) return;
         var msg = '<div class="gate card">Could not load access lists: ' + esc(e && e.message) + '</div>';
@@ -836,11 +1134,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (S.tab === 'access') renderAccess(); else if (S.tab === 'templates') renderTemplates();
   }
   // building → { city, address, house_code, units{}, rooms{}, tpl, upcoming }
-  function buildModel(bs, us, rs, ts, arr) {
+  function buildModel(bs, us, rs, ts, arr, cos) {
     var M = {}, today = todayYmd();
     function B(name, city) {
       name = str(name); if (!name) return null;
-      if (!M[name]) M[name] = { building: name, city: '', address: '', house_code: '', saved: false, units: {}, rooms: {}, tpl: null, upcoming: 0 };
+      if (!M[name]) M[name] = { building: name, city: '', address: '', house_code: '', saved: false, units: {}, rooms: {}, tpl: null, co: null, upcoming: 0 };
       if (city && !M[name].city) M[name].city = city;
       return M[name];
     }
@@ -848,6 +1146,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     us.forEach(function (u) { var m = B(u.building); if (!m) return; m.units[u.unit] = { unit: u.unit, wifi_name: str(u.wifi_name), wifi_password: str(u.wifi_password), saved: true, upcoming: 0 }; });
     rs.forEach(function (r) { var m = B(r.building); if (!m) return; m.rooms[r.room_key] = { room_key: r.room_key, unit: str(r.unit), room_label: str(r.room_label), door_code: str(r.door_code), bed: '', saved: true, upcoming: 0 }; });
     ts.forEach(function (t) { var m = B(t.building, t.city); if (m) m.tpl = t; });
+    (cos || []).forEach(function (t) { var m = B(t.building, t.city); if (m) m.co = t; });
     arr.forEach(function (a) {
       var m = B(a.building, a.city); if (!m) return;
       var up = a.arrival_date >= today && a.status !== 'cancelled' && a.status !== 'handled' ? 1 : 0;
@@ -979,14 +1278,18 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   function renderTemplates() {
     var list = buildingList();
+    $('tplKind').innerHTML = tplKindHtml();
     if (!list.length) { $('tplB').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
-    var pick = S.tplPick || (S.tpl && S.tpl.building) || (list.filter(function (m) { return m.upcoming && !(m.tpl && m.tpl.reviewed); })[0] || list[0]).building;
+    var co = S.tk === 'checkout';
+    var tplOf = function (m) { return co ? m.co : m.tpl; };
+    var pick = S.tplPick || (co ? S.cot && S.cot.building : S.tpl && S.tpl.building) || (list.filter(function (m) { return m.upcoming && !(tplOf(m) && tplOf(m).reviewed); })[0] || list[0]).building;
     S.tplPick = null;
     if (!S.acc[pick]) pick = list[0].building;
     $('tplB').innerHTML = list.map(function (m) {
-      var st = m.tpl && m.tpl.reviewed ? '✓ ' : (m.upcoming ? '• ' : '');
+      var st = tplOf(m) && tplOf(m).reviewed ? '✓ ' : (m.upcoming ? '• ' : '');
       return '<option value="' + esc(m.building) + '"' + (m.building === pick ? ' selected' : '') + '>' + esc(st + m.building + (m.city ? ' (' + m.city + ')' : '')) + '</option>';
     }).join('');
+    if (co) { renderCot(pick); return; }
     if (!S.tpl || S.tpl.building !== pick || !S.tplDirty) { S.tpl = tplFromRow(pick, S.acc[pick].tpl); S.tplDirty = false; }
     renderTplForm();
   }
@@ -1101,6 +1404,128 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     await loadAccess();
   }
 
+  // ───────── Check-out templates (checkout_templates, checkout_template_save) ─────────
+  var CO_DEFAULTS = { subject: 'Check-Out Info | {building}', checkout_time: '10:00 am',
+    keys_text: 'To avoid any additional charges: before leaving, please leave your keys inside your bedroom and close your bedroom door.' };
+  function tplKindHtml() {
+    var co = S.tk === 'checkout';
+    return '<div class="seg" role="group" aria-label="Template kind">' +
+      '<button type="button" data-tk="checkin"' + (co ? '' : ' class="on" aria-pressed="true"') + '>Check-in</button>' +
+      '<button type="button" data-tk="checkout"' + (co ? ' class="on" aria-pressed="true"' : '') + '>Check-out</button></div>';
+  }
+  function setTplKind(k) {
+    if (k === S.tk) return;
+    if (S.tplDirty && !window.confirm('Leave the template without saving?')) return;
+    var b = (S.tk === 'checkout' ? S.cot : S.tpl);
+    S.tplDirty = false; S.tk = k; S.tpl = null; S.cot = null; S.tplPick = b ? b.building : null;
+    renderTemplates();
+  }
+  function cotFromRow(b, t) {
+    var m = S.acc[b] || {};
+    var fresh = !t;
+    t = t || {};
+    return { building: b, city: str(t.city) || m.city || '', subject: fresh ? CO_DEFAULTS.subject : (t.subject || ''), intro: t.intro || '',
+      checkout_time: fresh ? CO_DEFAULTS.checkout_time : (t.checkout_time || ''), keys_text: fresh ? CO_DEFAULTS.keys_text : (t.keys_text || ''),
+      sections: (Array.isArray(t.sections) ? t.sections : []).map(function (s) { return { title: str(s && s.title), text: String((s && s.text) || '') }; }),
+      closing: t.closing || '', reviewed: !!t.reviewed, reviewed_by: t.reviewed_by || '', reviewed_at: t.reviewed_at || '', exists: !fresh };
+  }
+  function renderCot(pick) {
+    if (S.coTpls === null) { $('tplState').textContent = ''; $('tplBody').innerHTML = moSetupHtml(); return; }
+    if (!S.cot || S.cot.building !== pick || !S.tplDirty) { S.cot = cotFromRow(pick, S.acc[pick].co); S.tplDirty = false; }
+    renderCotForm();
+  }
+  function cotCopyPicker(t) {
+    var src = buildingList().filter(function (m) { return m.building !== t.building && m.co; });
+    if (!src.length) return '';
+    return '<label><span>Copy from <small>· fills this form with another building’s check-out template; nothing is saved until you press Save</small></span>' +
+      '<select class="sel" name="cot_copy_from"><option value="">— pick a building —</option>' +
+      src.map(function (m) { return '<option value="' + esc(m.building) + '">' + esc((m.co.reviewed ? '✓ ' : '') + m.building) + '</option>'; }).join('') +
+      '</select></label>';
+  }
+  function renderCotForm() {
+    var t = S.cot;
+    $('tplState').textContent = t.reviewed ? 'Reviewed' + (t.reviewed_by ? ' by ' + t.reviewed_by : '') + (t.reviewed_at ? ', ' + clock(t.reviewed_at) : '') : (t.exists ? 'Not reviewed' : 'No check-out template yet');
+    var banner = t.reviewed ? '<p class="warnbox good">Reviewed — check-out messages for this building send automatically.</p>'
+      : '<p class="warnbox bad">Not reviewed — check-out messages for this building won’t send.</p>';
+    var sec = t.sections.map(function (s, i) {
+      return '<div class="sect" data-i="' + i + '"><div class="sbar"><button type="button" class="sbtn" data-sec="up" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up">↑</button>' +
+        '<button type="button" class="sbtn" data-sec="down" ' + (i === t.sections.length - 1 ? 'disabled' : '') + ' aria-label="Move down">↓</button>' +
+        '<button type="button" class="sbtn" data-sec="del" aria-label="Remove section">Remove</button></div>' +
+        '<input class="inp" data-st="title" value="' + esc(s.title) + '" placeholder="Section title (e.g. Luggage storage)" />' +
+        '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
+    }).join('');
+    $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + banner +
+      '<form class="tf" id="cotForm" autocomplete="off">' + cotCopyPicker(t) +
+      '<label><span>City</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>' +
+      '<label><span>Subject <small>· {first_name} and {building} are filled in</small></span><input class="inp" name="subject" value="' + esc(t.subject) + '" placeholder="' + esc(CO_DEFAULTS.subject) + '" /></label>' +
+      '<label><span>Intro <small>· after “Hi {first_name},” · blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="Thank you for staying with Vanmates! Here is what to do before you leave {building}.">' + esc(t.intro) + '</textarea></label>' +
+      '<label><span>Check-out time <small>· “before …” in the Move-out row</small></span><input class="inp" name="checkout_time" value="' + esc(t.checkout_time) + '" placeholder="10:00 am" /></label>' +
+      '<label><span>Returning keys <small>· shown as its own section, second in the email</small></span><textarea class="inp" name="keys_text" placeholder="' + esc(CO_DEFAULTS.keys_text) + '">' + esc(t.keys_text) + '</textarea></label>' +
+      '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Sections</div><div id="secs" style="display:grid;gap:8px">' + sec + '</div>' +
+      '<button type="button" class="btn btn-ghost addbtn" data-sec="add">+ Add section</button></div>' +
+      '<label><span>Closing <small>· before the sign-off</small></span><textarea class="inp" name="closing" placeholder="We hope you enjoyed your stay!">' + esc(t.closing) + '</textarea></label>' +
+      '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
+      (t.reviewed ? '<button type="button" class="btn btn-ghost" data-cot="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-cot="review">Save &amp; mark reviewed</button>') +
+      '</div></form></div>' +
+      '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample move-out</span></div>' +
+      '<div class="pv-subj" id="cotSubj"></div><iframe class="pv" id="cotPv" sandbox="" title="Check-out template preview" referrerpolicy="no-referrer"></iframe></div></div>';
+    renderCotPreview();
+  }
+  function coSample(t) {
+    var m = S.acc[t.building] || { units: {}, rooms: {} };
+    var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
+    return { student_name: 'Alex Sample', building: t.building, unit: (r && r.unit) || '1203', bed: 'B', room_label: (r && r.room_label) || 'Room B',
+      checkout_date: S.mo.wk.saturday, template_reviewed: true, subject: t.subject, intro: t.intro, checkout_time: t.checkout_time,
+      keys_text: t.keys_text, sections: t.sections, closing: t.closing };
+  }
+  function renderCotPreview() {
+    if (!S.cot || !$('cotPv')) return;
+    var mail = A.buildCheckoutEmail(coSample(S.cot), { pixelBase: '' });
+    $('cotSubj').textContent = 'Subject: ' + mail.subject;
+    $('cotPv').srcdoc = mail.html;
+  }
+  var CO_COPY_FIELDS = ['subject', 'intro', 'checkout_time', 'keys_text', 'closing'];
+  function cotCopyFrom(b) {
+    var m = S.acc[b], t = S.cot; if (!m || !m.co || !t) return;
+    var src = cotFromRow(b, m.co);
+    CO_COPY_FIELDS.forEach(function (k) { t[k] = src[k]; });
+    t.sections = src.sections.map(function (x) { return { title: x.title, text: x.text }; });
+    S.tplDirty = true;
+    renderCotForm();
+    toast('Copied from ' + b + ' — change what differs, then Save');
+  }
+  function cotInput(e) {
+    var el = e.target, t = S.cot; if (!t) return;
+    if (el.name === 'cot_copy_from') { if (e.type === 'change' && el.value) cotCopyFrom(el.value); return; }
+    var sec = el.closest('.sect');
+    if (sec && el.getAttribute('data-st')) t.sections[+sec.getAttribute('data-i')][el.getAttribute('data-st')] = el.value;
+    else if (el.name && el.name in t) t[el.name] = el.value;
+    else return;
+    S.tplDirty = true;
+    clearTimeout(_pvT); _pvT = setTimeout(renderCotPreview, 200);
+  }
+  function cotSection(op, i) {
+    var s = S.cot.sections;
+    if (op === 'add') s.push({ title: '', text: '' });
+    else if (op === 'del') s.splice(i, 1);
+    else if (op === 'up' && i > 0) s.splice(i - 1, 0, s.splice(i, 1)[0]);
+    else if (op === 'down' && i < s.length - 1) s.splice(i + 1, 0, s.splice(i, 1)[0]);
+    S.tplDirty = true;
+    renderCotForm();
+  }
+  async function saveCot(reviewed) {
+    var t = S.cot; if (!t) return;
+    var sections = t.sections.filter(function (s) { return str(s.title) || str(s.text); }).map(function (s) { return { title: str(s.title), text: String(s.text).trim() }; });
+    var ok = await rpc('checkout_template_save', { p_building: t.building, p_city: t.city, p_subject: t.subject.trim(), p_intro: t.intro.trim(),
+      p_checkout_time: t.checkout_time.trim(), p_keys_text: t.keys_text.trim(), p_sections: sections, p_closing: t.closing.trim(), p_reviewed: reviewed });
+    if (!ok) return;
+    toast(reviewed === true ? 'Saved and marked reviewed' : reviewed === false ? 'Marked not reviewed'
+      : ok.unreviewed ? 'Changes saved — mark reviewed again to send' : 'Saved');
+    S.tplDirty = false; S.tplPick = t.building; S.cot = null; S.acc = null;
+    await loadAccess();
+    loadMoBadge();
+  }
+
   // ───────── wiring ─────────
   function wire() {
     $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) setTab(b.getAttribute('data-tab')); });
@@ -1140,18 +1565,31 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         n[a.getAttribute('data-add')]++; S.accOpen[b] = true; renderAccess();
       }
     });
+    $('moPrev').addEventListener('click', function () { S.mo.wk = A.shiftWeekend(S.mo.wk, -1); S.mo.openId = null; S.mo.rows = []; loadMoveouts(); });
+    $('moNext').addEventListener('click', function () { S.mo.wk = A.shiftWeekend(S.mo.wk, 1); S.mo.openId = null; S.mo.rows = []; loadMoveouts(); });
+    $('moCity').addEventListener('change', function () { S.mo.city = this.value; S.mo.openId = null; loadMoveouts(); });
+    $('moChips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.mo.filter = b.getAttribute('data-f'); renderMoveouts(); } });
+    $('moKpis').addEventListener('click', function (e) { if (e.target.closest('[data-oinfo]')) openInfo(); });
+    $('moGroups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) moOpenRow(b.getAttribute('data-id')); });
+    $('moPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-mo]'); if (b && !b.disabled) moAct(b.getAttribute('data-mo')); });
+    $('moPanel').addEventListener('submit', function (e) { e.preventDefault(); moSaveFx(e.target); });
     $('tplB').addEventListener('change', function () {
-      if (S.tplDirty && !window.confirm('Discard unsaved changes to the ' + S.tpl.building + ' template?')) { this.value = S.tpl.building; return; }
-      S.tplDirty = false; S.tplPick = this.value; S.tpl = null; renderTemplates();
+      var cur = S.tk === 'checkout' ? S.cot : S.tpl;
+      if (S.tplDirty && cur && !window.confirm('Discard unsaved changes to the ' + cur.building + ' template?')) { this.value = cur.building; return; }
+      S.tplDirty = false; S.tplPick = this.value; S.tpl = null; S.cot = null; renderTemplates();
     });
-    $('tplBody').addEventListener('input', tplInput);
-    $('tplBody').addEventListener('change', tplInput);
-    $('tplBody').addEventListener('submit', function (e) { e.preventDefault(); saveTpl(null); });
+    $('tplKind').addEventListener('click', function (e) { var b = e.target.closest('[data-tk]'); if (b) setTplKind(b.getAttribute('data-tk')); });
+    var tplIn = function (e) { if (S.tk === 'checkout') cotInput(e); else tplInput(e); };
+    $('tplBody').addEventListener('input', tplIn);
+    $('tplBody').addEventListener('change', tplIn);
+    $('tplBody').addEventListener('submit', function (e) { e.preventDefault(); if (S.tk === 'checkout') saveCot(null); else saveTpl(null); });
     $('tplBody').addEventListener('click', function (e) {
       var s = e.target.closest('[data-sec]');
-      if (s && !s.disabled) { var box = s.closest('.sect'); tplSection(s.getAttribute('data-sec'), box ? +box.getAttribute('data-i') : -1); return; }
+      if (s && !s.disabled) { var box = s.closest('.sect'); (S.tk === 'checkout' ? cotSection : tplSection)(s.getAttribute('data-sec'), box ? +box.getAttribute('data-i') : -1); return; }
       var t = e.target.closest('[data-tpl]');
-      if (t) saveTpl(t.getAttribute('data-tpl') === 'review');
+      if (t) { saveTpl(t.getAttribute('data-tpl') === 'review'); return; }
+      var c = e.target.closest('[data-cot]');
+      if (c) saveCot(c.getAttribute('data-cot') === 'review');
     });
     $('modal').addEventListener('click', function (e) {
       var b = e.target.closest('[data-m]');
@@ -1162,6 +1600,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (e.key !== 'Escape') return;
       if ($('modal').classList.contains('show')) closeModal(false);
       else if (S.tab === 'arrivals' && S.openId && NARROW.matches) act('close');
+      else if (S.tab === 'moveouts' && S.mo.openId && NARROW.matches) moAct('close');
     });
     window.addEventListener('beforeunload', function (e) { if (S.tplDirty) { e.preventDefault(); e.returnValue = ''; } });
   }
