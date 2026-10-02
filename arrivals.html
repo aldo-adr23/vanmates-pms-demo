@@ -324,7 +324,10 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       </div>
       <select class="sel" id="cityF" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
       <span class="sp"></span>
+      <button type="button" class="btn btn-ghost" id="uploadRefresh" hidden>Refresh</button>
+      <button type="button" class="btn btn-ghost" id="uploadRoster">Upload roster</button>
       <button type="button" class="btn btn-primary" id="sendAll" disabled>Send all ready (0)</button>
+      <input type="file" id="rosterFile" accept=".xlsx,.xls,.csv" hidden />
     </div>
     <div class="kpis" id="kpis"></div>
     <div class="chips" id="chips" style="margin-bottom:10px"></div>
@@ -353,13 +356,15 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-02-hostapps2"></script>
+<script src="arrivals-core.js?v=2026-10-02-arrivals3"></script>
 <script>
 (function () {
   'use strict';
   var A = window.ArrCore;
   var esc = A.escapeHtml;
   var ARRIVALS_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/arrivals-send';
+  var ARRIVALS_UPLOAD_URL = 'https://adr23.app.n8n.cloud/webhook/arrivals-upload';
+  var UPLOAD_MAX_BYTES = 2200000;   // base64 of it stays under Roster Actions' 3,000,000-char limit
   var CITIES = ['Toronto', 'Vancouver', 'Montréal'];
   var PAGE = 1000;   // PostgREST answers with at most 1,000 rows per request
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
@@ -729,6 +734,57 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (name === 'tpl') { S.tplPick = r.building; setTab('templates'); }
   }
+  // ───────── Upload roster (n8n Portal - Arrivals Upload -> Limpio Roster Actions manual_upload) ─────────
+  function rosterFileError(file) {
+    if (!file) return 'Choose a roster file.';
+    if (!/\.(xlsx|xls|csv)$/i.test(String(file.name || ''))) return 'Choose an .xlsx, .xls or .csv roster.';
+    if (!(file.size > 0)) return 'The file is empty.';
+    if (file.size > UPLOAD_MAX_BYTES) return 'File too large (2 MB max)';
+    return '';
+  }
+  // end rosterFileError
+  function readBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result || '').replace(/^data:[^,]*,/, '')); };
+      fr.onerror = function () { reject(fr.error || new Error('read failed')); };
+      fr.readAsDataURL(file);
+    });
+  }
+  async function uploadRoster(file) {
+    var bad = rosterFileError(file);
+    if (bad) { infoSheet('Upload failed', '<p>' + esc(bad) + '</p>'); return; }
+    if (S.uploading) return;
+    S.uploading = true;
+    var btn = $('uploadRoster');
+    btn.disabled = true; btn.textContent = 'Uploading…';
+    var j = null, err = '';
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, 95000);
+    try {
+      var b64 = await readBase64(file);
+      var tok = await token();
+      if (!tok) { err = 'Your session expired — reload the page.'; }
+      else {
+        var res = await fetch(ARRIVALS_UPLOAD_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+          body: JSON.stringify({ file_b64: b64, filename: file.name }), signal: ctl.signal });
+        try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the upload service (HTTP ' + res.status + ').' }; }
+      }
+    } catch (e) {
+      err = e && e.name === 'AbortError' ? 'The upload took too long. It may still go through — refresh in a minute before trying again.'
+        : 'Upload service unreachable — check your connection and try again.';
+    } finally {
+      clearTimeout(timer);
+      S.uploading = false; btn.disabled = false; btn.textContent = 'Upload roster';
+    }
+    if (!err && (!j || j.ok !== true)) err = (j && j.error) || 'The upload service refused the file.';
+    if (err) { infoSheet('Upload failed', '<p>' + esc(err) + '</p>'); return; }
+    if (j.unreadable) infoSheet('Roster saved, not read', '<p>The file was saved, but Limpio could not read it as a school roster. Check it in Limpio’s roster uploads.</p>');
+    else toast('Roster uploaded — arrivals appear in about a minute');
+    $('uploadRefresh').hidden = false;
+    clearTimeout(S.uploadReload);
+    S.uploadReload = setTimeout(function () { $('uploadRefresh').hidden = true; loadArrivals(); }, 20000);
+  }
   function openInfo() {
     infoSheet('About “opened”', '<p>Opens are counted with a tiny image in the email. It’s a hint, not proof:</p><ul style="padding-left:18px;margin:0">' +
       '<li>Apple Mail (Privacy Protection) loads images on its own, so some emails show as opened when nobody read them.</li>' +
@@ -1009,6 +1065,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('chips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.filter = b.getAttribute('data-f'); renderArrivals(); } });
     $('kpis').addEventListener('click', function (e) { if (e.target.closest('#openInfo')) openInfo(); });
     $('sendAll').addEventListener('click', sendAll);
+    $('uploadRoster').addEventListener('click', function () { if (!S.uploading) $('rosterFile').click(); });
+    $('rosterFile').addEventListener('change', function () { var f = this.files && this.files[0]; $('rosterFile').value = ''; if (f) uploadRoster(f); });
+    $('uploadRefresh').addEventListener('click', function () { clearTimeout(S.uploadReload); $('uploadRefresh').hidden = true; loadArrivals(); });
     $('groups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id')); });
     $('panel').addEventListener('click', function (e) { var b = e.target.closest('[data-act]'); if (b && !b.disabled) act(b.getAttribute('data-act')); });
     $('panel').addEventListener('submit', function (e) { e.preventDefault(); saveFx(e.target); });
