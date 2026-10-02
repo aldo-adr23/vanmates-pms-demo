@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-02-tplcopy"></script>
+<script src="pms-supabase.js?v=2026-10-02-hostapps4"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21175,7 +21175,7 @@ function haMissing(app){
 // Worker approve/staff API errors in staff words. Approve failures carry the steps that ran.
 const HA_STEP_LABELS = { payout_account: "Payout account", contact: "Contact details", rooms: "Rooms", profile: "Matching profile",
   photos: "Photos", listing: "Listing", portal_card: "Host card", application: "Application", email: "Email to host",
-  existing_host: "Existing host", crc: "Criminal record check" };
+  existing_host: "Existing host", crc: "Criminal record check", geo: "Travel times" };
 function haStepLabel(key){ return HA_STEP_LABELS[key] || String(key || "").replace(/_/g, " ").replace(/^./, c => c.toUpperCase()) || "Step"; }
 function haStepsView(steps){
   return (Array.isArray(steps) ? steps : []).filter(s => s && typeof s === "object").map(s => ({
@@ -21229,6 +21229,42 @@ function haRejectText(out){
 function haHostProfileNote(app, name){
   if (app && app.payouts === "complete") return { canOpen: true, text: "" };
   return { canOpen: false, text: `${name || "This host"} will appear in Host profiles once their Stripe payouts are set up (we emailed them the link).` };
+}
+
+// Getting around (Worker app.geo, shown as stored). Everything returned as HTML is escaped here.
+const haGeoEsc = v => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const haGeoMin = n => { const v = Number(n); return n != null && n !== "" && Number.isFinite(v) ? Math.round(v) : null; };
+function haGeoView(geo){
+  if (!geo || typeof geo !== "object" || Array.isArray(geo)) return { ok: false, reason: "" , rows: [] };
+  if (geo.status !== "ok") {
+    const reason = geo.status === "not_found" ? "The address wasn't found on the map." : geo.status === "unavailable" ? "The maps service was unavailable." : "";
+    return { ok: false, reason: [reason, geo.error ? String(geo.error) : ""].filter(Boolean).join(" "), rows: [] };
+  }
+  const rows = [];
+  const stop = geo.stop && geo.stop.name ? geo.stop : null, st = geo.station && geo.station.name ? geo.station : null;
+  const walk = x => { const m = haGeoMin(x.walk_min); return m == null ? "" : ` \u2014 ${m} min walk`; };
+  if (stop) rows.push(["Nearest transit", `${stop.name}${walk(stop)}`]);
+  if (st && !(stop && st.name === stop.name)) rows.push(["Nearest station", `${st.name}${walk(st)}`]);
+  const dt = geo.downtown && haGeoMin(geo.downtown.minutes) != null ? geo.downtown : null;
+  if (dt) rows.push(["Downtown by transit", `${haGeoMin(dt.minutes)} min${dt.summary ? " (" + dt.summary + ")" : ""}`]);
+  rows.push(["Home confirmed by host", geo.confirmed_at ? "Yes" : "Not confirmed yet"]);
+  if (geo.formatted_address) rows.push(["Address", String(geo.formatted_address)]);
+  if (geo.computed_at) rows.push(["Calculated", String(geo.computed_at)]);
+  return { ok: true, reason: "", rows };
+}
+const haGeoCanSkip = geo => !geo || typeof geo !== "object" || geo.status === "not_found";
+function haLocateError(code, text){
+  if (code === "busy") return "Already calculating \u2014 try again in a few seconds.";
+  if (code === "no_address") return "This application has no address yet.";
+  if (code === "bad_status") return "Travel times can't be calculated at this status.";
+  return "Couldn't calculate: " + (text || code || "unknown error");
+}
+// whenFmt turns the stored ISO time into display text (passed in; defaults to the raw value).
+function haGeoHtml(geo, whenFmt){
+  const v = haGeoView(geo);
+  if (!v.ok) return `<div class="ha-line ha-need">Travel times: not calculated</div>` + (v.reason ? `<div class="ha-sub">${haGeoEsc(v.reason)}</div>` : "");
+  return (geo.partial ? `<div class="ha-sub ha-need">Google matched this address approximately \u2014 check it.</div>` : "")
+    + v.rows.map(([l, t]) => `<div class="ha-kv"><span>${haGeoEsc(l)}</span><span>${haGeoEsc(l === "Calculated" && whenFmt ? whenFmt(t) : t)}</span></div>`).join("");
 }
 /* HA-APPS-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
@@ -33026,7 +33062,7 @@ function hmRenderProfiles(){
         <label><input type="checkbox" name="has_children" ${p.has_children ? "checked" : ""}> Children under 13 at home</label>
         <label>Youngest student age <input class="form-input" name="min_age" inputmode="numeric" placeholder="no limit" value="${hmEsc(p.min_age)}"></label>
         <label>Oldest student age <input class="form-input" name="max_age" inputmode="numeric" placeholder="no limit" value="${hmEsc(p.max_age)}"></label>
-        <label style="grid-column:1/-1">Transit <input class="form-input" name="transit" placeholder="Nearest stop, walk minutes, minutes to downtown" value="${hmEsc(p.transit)}"></label>
+        <div style="grid-column:1/-1"><span class="card-sub" style="font-size:12px">Getting around (Google Maps)</span><div class="card-sub" data-hm-transit="${k}">${p.transit ? hmEsc(p.transit) : "Not calculated yet"}</div><input type="hidden" name="transit" value="${hmEsc(p.transit)}"></div>
         <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center"><span class="card-sub" style="font-size:12px">Can cook for</span>
           ${HM_DIETS.map(d => `<label><input type="checkbox" name="diet_${d}" ${(p.diets || []).includes(d) ? "checked" : ""}> ${hmDietWord(d)}</label>`).join("")}</div>
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
@@ -33441,11 +33477,39 @@ function haFilesHtml(a){
       + (a.host_id ? haKv("Payout account", hmEsc(a.host_id)) : "") + note)
     + haSection("Photos", photos || '<div class="card-sub">Loading…</div>');
 }
+function haGettingAroundHtml(a){
+  const skip = haGeoCanSkip(a.geo);
+  const confirming = HA.skipId === a.id;
+  const btns = `<button type="button" class="btn btn-ghost btn-mini" data-ha-locate>Recalculate travel times</button>`
+    + (skip && !confirming ? ` <button type="button" class="btn btn-ghost btn-mini" data-ha-skip-ask>Skip travel times for this host</button>` : "");
+  const confirm = skip && confirming
+    ? `<div class="ha-inline" style="margin-top:8px"><div class="card-sub">This lets the host continue without travel times. Skip?</div>
+        <div class="ha-actions"><button type="button" class="btn btn-primary btn-mini" data-ha-skip-do>Skip</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-ha-skip-cancel>Cancel</button></div></div>` : "";
+  return haSection("Getting <em>around</em>", haGeoHtml(a.geo, t => { try { return hmWhen(t); } catch (e) { return t; } })
+    + `<div class="ha-actions" style="margin-top:8px">${btns}</div>${confirm}<div class="ha-sub" id="ha-locate-msg"></div>`);
+}
+async function haLocate(id, skip){
+  const m = document.getElementById("ha-locate-msg");
+  const say = (t, bad) => { if (m) { m.textContent = t; m.style.color = bad ? "var(--red)" : ""; } };
+  say(skip ? "Skipping\u2026" : "Calculating\u2026");
+  try {
+    const out = await hmWorker(`/staff/applications/${id}/locate`, skip ? { skip: true } : {});
+    HA.skipId = null;
+    const i = HA.apps.findIndex(x => x.id === id);
+    if (i >= 0 && out && out.geo) HA.apps[i] = Object.assign({}, HA.apps[i], { geo: out.geo });
+    if (HA.openId === id) haRefreshPanel();
+    haRender();
+  } catch (e) {
+    say(haLocateError(e && e.body && e.body.error, e && e.message), true);
+  }
+}
 function haRestHtml(a){
   const missing = a.status === "approved" ? [] : haMissing(a);
   const timeline = haTimeline(a);
   return (a.review_note ? haSection("Note to the <em>host</em>", `<div class="ha-line" style="white-space:pre-line">${hmEsc(a.review_note)}</div>`) : "")
     + (missing.length ? haSection("Still <em>missing</em>", missing.map(m => `<div class="ha-line">• ${hmEsc(m)}</div>`).join("")) : "")
+    + haGettingAroundHtml(a)
     + haFilesHtml(a)
     + haAnswerSections(a.answers).map(s => haSection(hmEsc(s.title), s.rows.map(([l, v]) => haKv(l, hmEsc(v))).join(""))).join("")
     + haSection("Timeline", timeline.length ? timeline.map(e => haKv(hmWhen(e.at), hmEsc(e.text))).join("") : '<div class="card-sub">—</div>');
@@ -33568,7 +33632,7 @@ async function haOpenFromProfile(appId){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest && ev.target.closest("[data-hh-tab],[data-ha-filter],[data-ha-open],#ha-refresh,[data-ha-open-app],[data-ha-act],[data-ha-form],[data-ha-cancel],[data-ha-host-profile],[data-ha-files-reload]");
+  const t = ev.target.closest && ev.target.closest("[data-hh-tab],[data-ha-filter],[data-ha-open],#ha-refresh,[data-ha-open-app],[data-ha-act],[data-ha-form],[data-ha-cancel],[data-ha-host-profile],[data-ha-files-reload],[data-ha-locate],[data-ha-skip-ask],[data-ha-skip-cancel],[data-ha-skip-do]");
   if (!t) return;
   if (t.dataset.hhTab) return haShowTab(t.dataset.hhTab);
   if (t.dataset.haFilter) { HA.filter = t.dataset.haFilter; return haRender(); }
@@ -33580,6 +33644,10 @@ document.addEventListener("click", async (ev) => {
   if (!a) return;
   if (t.dataset.haHostProfile) return haOpenHostProfile(t.dataset.haHostProfile);
   if (t.hasAttribute("data-ha-files-reload")) return haLoadDetail(a.id);
+  if (t.hasAttribute("data-ha-locate")) return haLocate(a.id);
+  if (t.hasAttribute("data-ha-skip-ask")) { HA.skipId = a.id; return haRefreshPanel(); }
+  if (t.hasAttribute("data-ha-skip-cancel")) { HA.skipId = null; return haRefreshPanel(); }
+  if (t.hasAttribute("data-ha-skip-do")) return haLocate(a.id, true);
   if (t.dataset.haForm) { HA.form = t.dataset.haForm; HA.result = null; HA.fail = null; HA.block = null; HA.flags = {}; haSay(""); haRenderPanel(a); document.getElementById("ha-note")?.focus(); return; }
   if (t.hasAttribute("data-ha-cancel")) { HA.form = null; HA.block = null; HA.flags = {}; haSay(""); return haRenderPanel(a); }
   if (t.dataset.haAct) return haDo(t.dataset.haAct, t);
