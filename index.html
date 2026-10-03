@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-03-leadmail"></script>
+<script src="pms-supabase.js?v=2026-10-03-leadmail2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -29472,6 +29472,14 @@ const LEAD_MAIL_ERRORS = {
   unauthorized: 'Your portal session expired. Reload the page.',
   forbidden: 'Your portal account cannot send email.',
 };
+// Open status of one sent email (from the tracking image). Apple Mail loads
+// images on its own, so those opens are only "possibly" a person.
+function leadMailOpenLabel(e, fmtWhen){
+  const when = fmtWhen || (x => x);
+  if(e && e.open_count > 0) return { tone: 'good', text: 'Opened ' + when(e.last_opened_at) + (e.open_count > 1 ? ' (' + e.open_count + '×)' : '') };
+  if(e && e.auto_open_count > 0) return { tone: 'maybe', text: 'Possibly opened (Apple Mail loads images automatically)' };
+  return { tone: 'none', text: 'Not opened yet' };
+}
 function leadMailErrorText(code){
   return LEAD_MAIL_ERRORS[code] || ('Not sent (' + (code || 'unknown error') + ').');
 }
@@ -29550,7 +29558,8 @@ function leadMailHistoryHtml(){
   return `<details style="margin-top:10px" ${LEAD_MAIL.open ? '' : 'open'}><summary class="name-sub" style="cursor:pointer;font-size:12px">Emails sent from the portal (${h.length})</summary>
     <div style="display:flex;flex-direction:column;gap:6px;padding:6px 0 0">${h.map(e => `
       <details style="border:1px solid var(--line, #E4DBC9);border-radius:8px;padding:8px 10px">
-        <summary style="cursor:pointer;font-size:13px"><b>${esc(e.subject)}</b> <span class="name-sub" style="font-size:12px">· ${esc(when(e.sent_at))} · from ${esc(e.from_email)}</span></summary>
+        <summary style="cursor:pointer;font-size:13px"><b>${esc(e.subject)}</b> <span class="name-sub" style="font-size:12px">· ${esc(when(e.sent_at))} · from ${esc(e.from_email)}</span>
+          ${(o => `<span class="name-sub" style="font-size:12px;${o.tone === 'good' ? 'color:var(--ink, #2B211A);font-weight:600' : ''}">· ${esc(o.text)}</span>`)(leadMailOpenLabel(e, when))}</summary>
         <div style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(e.body)}</div>
       </details>`).join('')}</div></details>`;
 }
