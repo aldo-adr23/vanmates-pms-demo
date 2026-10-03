@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-02-hostapps4"></script>
+<script src="pms-supabase.js?v=2026-10-02-addhost"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3420,8 +3420,29 @@ hello@vanmates.com · vanmates.com</textarea>
         <div class="card card-pad"><div id="hm-case"><div class="card-sub">Pick a case on the left</div></div></div>
       </div>
       <div id="hm-profiles-pane" class="card card-pad" style="display:none">
-        <div class="card-title">Host <em>profiles</em></div>
-        <div class="card-sub">What matching knows about each host. Hosts without an active profile are never shortlisted.</div>
+        <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <div class="card-title">Host <em>profiles</em></div>
+            <div class="card-sub">What matching knows about each host. Hosts without an active profile are never shortlisted.</div>
+          </div>
+          <button class="btn btn-primary" type="button" id="hm-add-host-btn">+ Add host</button>
+        </div>
+        <div id="hm-add-host" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px">
+          <div class="card-title" style="font-size:15px">Add a host</div>
+          <div class="card-sub">We email them the become-a-host application link. Once you approve the application in Homestay hosts → Applications and their payouts are set up, they show here.</div>
+          <div class="hm-grid" style="margin-top:8px">
+            <label>First name <input class="form-input" name="first_name" maxlength="80" autocomplete="off"></label>
+            <label>Last name <input class="form-input" name="last_name" maxlength="80" autocomplete="off"></label>
+            <label>Email <input class="form-input" type="email" name="email" maxlength="254" autocomplete="off"></label>
+            <label>Phone <span class="card-sub">(optional)</span> <input class="form-input" type="tel" name="phone" maxlength="40" autocomplete="off"></label>
+            <label>City <select class="form-input" name="city"><option value="">—</option><option value="vancouver">Vancouver</option><option value="toronto">Toronto</option><option value="montreal">Montréal</option></select></label>
+            <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn btn-primary" type="button" data-hm-add-send>Send application link</button>
+              <button class="btn btn-ghost" type="button" data-hm-add-cancel>Cancel</button>
+            </div>
+            <div style="grid-column:1/-1" id="hm-add-msg"></div>
+          </div>
+        </div>
         <div id="hm-profiles" style="margin-top:12px"></div>
       </div>
       <div id="hm-offers-pane" style="display:none">
@@ -33264,6 +33285,91 @@ document.addEventListener("click", async (ev) => {
     const out = document.getElementById("hm-crc-msg-" + id);
     if (out) out.textContent = "Error: " + (e.message || e);
   } finally { if (t.isConnected) t.disabled = false; }
+});
+
+/* ---- Host profiles → Add host: starts a become-a-host application for the host (Worker
+   /staff/applications/invite emails them the link). A host only reaches this list after approval + payouts,
+   so an email that already belongs to a host opens that host instead of starting a duplicate. ---- */
+/* HM-ADD-HOST-CORE-START */
+const HM_ADD_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// form: { first_name, last_name, email, phone, city }; hosts: the hosts-list rows (HM.hosts).
+// → { error: [labels] } | { kind: "open", host, body } (payable: already in this list) |
+//   { kind: "unpayable", host, body } (an n8n host still finishing payouts) | { kind: "invite", body }
+function hmAddHostCheck(form, hosts){
+  const t = v => String(v == null ? "" : v).trim();
+  const body = { first_name: t(form.first_name), last_name: t(form.last_name), email: t(form.email).toLowerCase(),
+    phone: t(form.phone), city: t(form.city) };
+  const bad = [];
+  if (!body.first_name) bad.push("First name");
+  if (!body.last_name) bad.push("Last name");
+  if (!HM_ADD_EMAIL_RE.test(body.email) || body.email.length > 254) bad.push("Email");
+  if (!["vancouver", "toronto", "montreal"].includes(body.city)) bad.push("City");
+  if (bad.length) return { error: bad };
+  const host = (hosts || []).find(h => String(h.email || "").trim().toLowerCase() === body.email);
+  if (host) return { kind: host.payable === true ? "open" : "unpayable", host, body };
+  return { kind: "invite", body };
+}
+// The Worker's answer → what the staff member reads.
+function hmAddHostResult(out, email){
+  const who = String(email || "");
+  if (out.existing) {
+    const state = { started: "in progress", submitted: "submitted", under_review: "under review", changes_requested: "waiting on changes" }[out.status] || out.status;
+    return `${who} already has application ${out.ref} (${state}). `
+      + (out.emailed ? "We emailed them their link again." : "No email this time (a link went out in the last 2 minutes, or 6 today): share the link below.");
+  }
+  return `Application ${out.ref} started. ` + (out.emailed ? `The application link is on its way to ${who}.` : `The email to ${who} did not go out: share the link below.`);
+}
+/* HM-ADD-HOST-CORE-END */
+
+function hmAddHostForm(){ return document.getElementById("hm-add-host"); }
+function hmAddHostToggle(show){
+  const f = hmAddHostForm();
+  if (!f) return;
+  f.style.display = show ? "" : "none";
+  if (show) {
+    document.getElementById("hm-add-msg").innerHTML = "";
+    f.querySelectorAll("input,select").forEach(x => { x.value = ""; });
+    f.querySelector('[name="first_name"]').focus();
+  }
+}
+function hmAddHostMsg(html){ const m = document.getElementById("hm-add-msg"); if (m) m.innerHTML = html; }
+async function hmAddHostSend(force){
+  const f = hmAddHostForm();
+  const get = n => f.querySelector(`[name="${n}"]`).value;
+  const form = { first_name: get("first_name"), last_name: get("last_name"), email: get("email"), phone: get("phone"), city: get("city") };
+  const chk = hmAddHostCheck(form, HM.hosts);
+  if (chk.error) return hmAddHostMsg(`<div class="card-sub" style="color:var(--red-dark)">Check: ${hmEsc(chk.error.join(", "))}</div>`);
+  if (!force && chk.kind === "open") return hmAddHostMsg(`<div class="card-sub">${hmEsc(chk.host.display_name)} is already a host with that email.
+      <button class="btn btn-ghost" type="button" data-hm-add-open="${hmEsc(chk.host.host_id)}">Open their profile</button></div>`);
+  if (!force && chk.kind === "unpayable") return hmAddHostMsg(`<div class="card-sub">${hmEsc(chk.host.display_name)} is already a host with that email, but hasn't finished payout setup, so they aren't listed here yet. Use Send payout setup on their card in Homestay hosts, or start an application anyway.
+      <button class="btn btn-ghost" type="button" data-hm-add-force>Start an application anyway</button></div>`);
+  const body = Object.assign({}, chk.body, force ? { force: true } : {});
+  const btn = f.querySelector("[data-hm-add-send]");
+  btn.disabled = true;
+  hmAddHostMsg('<div class="card-sub">Sending…</div>');
+  try {
+    const out = await hmWorker("/staff/applications/invite", body);
+    hmAddHostMsg(`<div class="card-sub" style="color:var(--ink)">${hmEsc(hmAddHostResult(out, body.email))}</div>
+      <div class="card-sub" style="margin-top:6px">Application link (no sign-in; anyone with it can edit the application):</div>
+      <div class="card-sub" style="user-select:all;word-break:break-all;color:var(--ink)">${hmEsc(out.url || "")}</div>
+      <div style="margin-top:8px"><button class="btn btn-ghost" type="button" data-ha-open-app="${hmEsc(out.id)}">Open application ${hmEsc(out.ref)}</button></div>`);
+    if (typeof HA !== "undefined") HA.loaded = false;
+  } catch (e) {
+    const b = e.body || {};
+    if (b.error === "host_exists") hmAddHostMsg(`<div class="card-sub">${hmEsc(b.display_name || "A host")} already uses that email${b.payable ? "" : " (payouts not finished)"}.
+      ${b.payable ? `<button class="btn btn-ghost" type="button" data-hm-add-open="${hmEsc(b.host_id)}">Open their profile</button>` : `<button class="btn btn-ghost" type="button" data-hm-add-force>Start an application anyway</button>`}</div>`);
+    else if (b.error === "bad_request" && Array.isArray(b.fields)) hmAddHostMsg(`<div class="card-sub" style="color:var(--red-dark)">Check: ${hmEsc(b.fields.join(", "))}</div>`);
+    else hmAddHostMsg(`<div class="card-sub" style="color:var(--red-dark)">Error: ${hmEsc(e.message || e)}</div>`);
+  } finally { btn.disabled = false; }
+}
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest && ev.target.closest("#hm-add-host-btn,[data-hm-add-send],[data-hm-add-cancel],[data-hm-add-force],[data-hm-add-open]");
+  if (!t) return;
+  if (t.id === "hm-add-host-btn") return hmAddHostToggle(hmAddHostForm().style.display === "none");
+  if (t.dataset.hmAddCancel !== undefined) return hmAddHostToggle(false);
+  if (t.dataset.hmAddSend !== undefined) return hmAddHostSend(false);
+  if (t.dataset.hmAddForce !== undefined) return hmAddHostSend(true);
+  if (t.dataset.hmAddOpen) { hmAddHostToggle(false); return haOpenHostProfile(t.dataset.hmAddOpen); }
 });
 
 /* ---- Homestay hosts → Applications (spec 2026-10-02-host-onboarding-design.md §9) ----------------
