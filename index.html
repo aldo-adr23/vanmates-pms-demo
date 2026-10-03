@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-03-addhost2"></script>
+<script src="pms-supabase.js?v=2026-10-03-leadmail"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4013,6 +4013,7 @@ hello@vanmates.com · vanmates.com</textarea>
           <pre id="lead-payload-raw"></pre>
         </details>
       </div>
+      <div id="lead-mail" style="display:none;margin-top:14px"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
         <button class="btn btn-ghost" id="lead-email-btn" type="button">Email lead</button>
         <button class="btn btn-wa" id="lead-wa-btn" type="button">
@@ -29412,6 +29413,297 @@ function fillLeadFields(l){
   renderLeadClaimBlock(l);
 }
 
+/* === Email a lead from the drawer, as the rep, through their own Gmail ===
+   The rep connects Gmail once (Google sign-in in a popup, send-only
+   permission); the Worker vanmates-lead-mail keeps the sealed token and sends.
+   Replies land in the rep's normal Gmail inbox. Sending moves a new lead to
+   contacted (record_lead_email, lead-gmail-2026-10-03.sql). */
+const LEAD_MAIL_WORKER = "https://vanmates-lead-mail.talatcan.workers.dev";
+/* LEAD-MAIL-CORE-START */
+// First usable address in a lead's email field ("a@x.com / b@y.com" happens).
+function leadMailAddress(s){
+  for(const part of String(s || '').split(/[\s,;/]+/)){
+    const p = part.replace(/^[<(]+|[>)]+$/g, '').trim().toLowerCase();
+    if(/^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/.test(p)) return p;
+  }
+  return '';
+}
+// What the compose area shows. gmail: null while loading, {error} when the
+// status call failed, else the Worker's {connected, needs_reconnect, email}.
+// Mirrors the Worker's rule: the claimant, or an admin, may email a lead.
+function leadMailMode(lead, viewer, gmail){
+  if(!lead) return 'none';
+  if(!leadMailAddress(lead.email)) return 'no-email';
+  const by = String(lead.claimed_by || '').trim().toLowerCase();
+  const me = String((viewer && viewer.email) || '').trim().toLowerCase();
+  const admin = !!(viewer && viewer.role === 'admin');
+  if(!admin && !by) return 'claim';
+  if(!admin && by !== me) return 'other';
+  if(!gmail) return 'loading';
+  if(gmail.error) return 'error';
+  if(gmail.needs_reconnect) return 'reconnect';
+  if(!gmail.connected) return 'connect';
+  return 'compose';
+}
+// "Hi Ana," — the greeting the email opens with (the Worker writes the same).
+function leadMailGreeting(name){
+  const n = String(name || '').replace(/[*\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
+  if(!n || /@/.test(n)) return 'Hi there,';
+  const parts = n.split(/\s*(?:&|\band\b|\by\b|\/)\s*/i).map(p => p.split(' ')[0]).filter(Boolean);
+  return 'Hi ' + (parts.slice(0, 2).join(' & ') || 'there') + ',';
+}
+const LEAD_MAIL_ERRORS = {
+  not_connected: 'Connect your Gmail first.',
+  reconnect: 'Your Gmail connection stopped working. Connect it again.',
+  claim_first: 'Claim this lead first.',
+  not_your_lead: 'Only the person who claimed this lead can email it.',
+  lead_not_found: 'This lead no longer exists.',
+  lead_has_no_email: 'This lead has no usable email address.',
+  bad_recipient: 'This lead has no usable email address.',
+  subject_required: 'Add a subject.',
+  bad_subject: 'The subject must be one line, under 200 characters.',
+  message_required: 'Write a message.',
+  message_too_long: 'The message is too long (10,000 characters max).',
+  send_failed: 'Gmail refused to send it. Try again in a minute.',
+  may_have_sent: 'No answer from Gmail: the email MAY have gone out. Check your Gmail Sent folder before sending again.',
+  already_sent: 'This email was already sent. Check your Gmail Sent folder.',
+  rate_limited: 'Gmail is limiting how fast you can send. Wait a few minutes and try again.',
+  google_unavailable: 'Google did not answer. Try again in a minute.',
+  unauthorized: 'Your portal session expired. Reload the page.',
+  forbidden: 'Your portal account cannot send email.',
+};
+function leadMailErrorText(code){
+  return LEAD_MAIL_ERRORS[code] || ('Not sent (' + (code || 'unknown error') + ').');
+}
+/* LEAD-MAIL-CORE-END */
+
+const LEAD_MAIL = { gmail: null, open: false, history: null, historyFor: null, sending: false, sendKey: '' };
+// The Worker acts as the signed-in user, so "view as" must not change who the
+// drawer says the email comes from.
+function leadMailViewer(){ return (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || activeRole() || {}; }
+function leadMailNewKey(){
+  try { return crypto.randomUUID().replace(/-/g, ''); }
+  catch(_){ return (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 40); }
+}
+
+async function leadMailToken(refresh){
+  const sb = window.vmDb && window.vmDb.sb; if(!sb) return '';
+  if(refresh){ try { await sb.auth.refreshSession(); } catch(_){} }
+  try { const { data } = await sb.auth.getSession(); return (data && data.session && data.session.access_token) || ''; } catch(_){ return ''; }
+}
+// One call to the Worker; retries once on an expired session. Returns {ok, status, body}.
+async function leadMailCall(method, path, body){
+  const go = tok => fetch(LEAD_MAIL_WORKER + path, {
+    method, headers: Object.assign({ Authorization: 'Bearer ' + tok }, body ? { 'Content-Type': 'application/json' } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let tok = await leadMailToken(false);
+  if(!tok) return { ok: false, status: 401, body: { error: 'unauthorized' } };
+  let res;
+  try {
+    res = await go(tok);
+    if(res.status === 401){ tok = await leadMailToken(true); if(tok) res = await go(tok); }
+  } catch(_){ return { ok: false, status: 0, body: { error: 'google_unavailable' } }; }
+  let out = {}; try { out = await res.json(); } catch(_){}
+  return { ok: res.ok, status: res.status, body: out || {} };
+}
+
+async function leadMailLoadStatus(){
+  const r = await leadMailCall('GET', '/api/gmail/status');
+  LEAD_MAIL.gmail = r.ok ? r.body : { error: (r.body && r.body.error) || 'status_failed' };
+}
+
+async function leadMailLoadHistory(l){
+  LEAD_MAIL.historyFor = l.id;
+  const r = await leadMailCall('GET', '/api/leads/emails?lead_id=' + encodeURIComponent(l.id));
+  if(LEAD_MAIL.historyFor !== l.id) return;
+  LEAD_MAIL.history = r.ok ? (r.body.emails || []) : [];
+}
+
+// Called from openLead: closes the composer and fetches what the drawer needs.
+function leadMailReset(l){
+  LEAD_MAIL.open = false; LEAD_MAIL.history = null; LEAD_MAIL.historyFor = l ? l.id : null;
+  LEAD_MAIL.draftSubject = ""; LEAD_MAIL.draftBody = ""; LEAD_MAIL.sendKey = "";
+  LEAD_MAIL.gmail = null;   // re-checked when the composer opens (connected in another tab, revoked…)
+  const box = document.getElementById('lead-mail');
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+  if(!l) return;
+  const mode = leadMailMode(l, leadMailViewer(), { connected: true });
+  if(mode !== 'compose') return;          // not theirs to email: no history either
+  leadMailLoadHistory(l).then(() => { if(String(_editingLeadId) === String(l.id)) leadMailRender(l); });
+}
+
+async function leadMailToggle(l){
+  LEAD_MAIL.open = !LEAD_MAIL.open;
+  leadMailRender(l);
+  if(LEAD_MAIL.open && !LEAD_MAIL.gmail){
+    await leadMailLoadStatus();
+    if(String(_editingLeadId) === String(l.id)) leadMailRender(l);
+  }
+  if(LEAD_MAIL.open){ const s = document.getElementById('lead-mail-subject'); if(s && !s.value) s.focus(); }
+}
+
+function leadMailHistoryHtml(){
+  const h = LEAD_MAIL.history;
+  if(!h || !h.length) return '';
+  const when = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); };
+  return `<details style="margin-top:10px" ${LEAD_MAIL.open ? '' : 'open'}><summary class="name-sub" style="cursor:pointer;font-size:12px">Emails sent from the portal (${h.length})</summary>
+    <div style="display:flex;flex-direction:column;gap:6px;padding:6px 0 0">${h.map(e => `
+      <details style="border:1px solid var(--line, #E4DBC9);border-radius:8px;padding:8px 10px">
+        <summary style="cursor:pointer;font-size:13px"><b>${esc(e.subject)}</b> <span class="name-sub" style="font-size:12px">· ${esc(when(e.sent_at))} · from ${esc(e.from_email)}</span></summary>
+        <div style="white-space:pre-wrap;font-size:13px;margin-top:6px">${esc(e.body)}</div>
+      </details>`).join('')}</div></details>`;
+}
+
+function leadMailRender(l){
+  const box = document.getElementById('lead-mail');
+  if(!box || !l) return;
+  const hist = leadMailHistoryHtml();
+  if(!LEAD_MAIL.open){
+    box.style.display = hist ? '' : 'none';
+    box.innerHTML = hist;
+    return;
+  }
+  box.style.display = '';
+  const mode = leadMailMode(l, leadMailViewer(), LEAD_MAIL.gmail);
+  const panel = inner => `<div style="padding:12px 14px;border:1px solid var(--line, #E4DBC9);background:var(--cream-2);border-radius:10px">${inner}</div>`;
+  const line = (title, sub, btn) => panel(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div><div class="name-main">${title}</div><div class="name-sub">${sub}</div></div>${btn || ''}</div>`);
+  const me = leadMailViewer().email || '';
+  let html;
+  if(mode === 'no-email') html = line('No email address', 'This lead has no usable email address. Use WhatsApp, or add the address to the notes.');
+  else if(mode === 'claim') html = line('Claim this lead first', 'You can email a lead once it is yours.');
+  else if(mode === 'other') html = line('Not your lead', 'Only the person who claimed this lead can email it from the portal.');
+  else if(mode === 'loading') html = line('Checking your Gmail…', '&nbsp;');
+  else if(mode === 'error') html = line('Could not reach the email service', esc(leadMailErrorText(LEAD_MAIL.gmail.error)), `<button class="btn" type="button" id="lead-mail-retry">Try again</button>`);
+  else if(mode === 'connect' || mode === 'reconnect') html = line(
+      mode === 'reconnect' ? 'Reconnect your Gmail' : 'Connect your Gmail',
+      (mode === 'reconnect' ? 'Google stopped accepting the connection (password change or access removed). ' : '') +
+      `Emails go out from <b>${esc(me)}</b> and replies come back to your normal Gmail inbox. The portal can only send, never read your mail.`,
+      `<button class="btn btn-primary" type="button" id="lead-mail-connect">${mode === 'reconnect' ? 'Reconnect Gmail' : 'Connect Gmail'}</button>`);
+  else {
+    const to = leadMailAddress(l.email);
+    const claimNote = String(l.claimed_by || '').toLowerCase() !== String(me).toLowerCase()
+      ? `<div class="name-sub lead-sub-warn" style="margin-bottom:8px">Admin: this lead is ${l.claimed_by ? 'claimed by ' + esc(l.claimed_by) : 'unclaimed'}. It goes out from your Gmail.</div>` : '';
+    html = panel(`
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div class="name-sub">From <b>${esc(LEAD_MAIL.gmail.email || me)}</b> to <b>${esc(to)}</b></div>
+        <button class="btn btn-ghost btn-mini" type="button" id="lead-mail-disconnect" title="Remove the portal's permission to send from your Gmail">Disconnect Gmail</button>
+      </div>
+      ${claimNote}
+      <div class="form-field"><label>Subject</label><input class="form-input" id="lead-mail-subject" maxlength="200" value="${esc(LEAD_MAIL.draftSubject || 'Your Vanmates enquiry')}" /></div>
+      <div class="form-field"><label>Message</label>
+        <div class="name-sub" style="margin-bottom:4px">Starts with “${esc(leadMailGreeting(l.name))}” and ends with your name. It goes out in the Vanmates email design.</div>
+        <textarea class="form-input" id="lead-mail-body" rows="7" maxlength="10000" placeholder="Write your message…">${esc(LEAD_MAIL.draftBody || '')}</textarea></div>
+      <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none;margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" type="button" id="lead-mail-cancel">Cancel</button>
+        <button class="btn btn-primary" type="button" id="lead-mail-send">Send email</button>
+      </div>`);
+  }
+  box.innerHTML = html + hist;
+  const on = (id, fn) => { const el = document.getElementById(id); if(el) el.addEventListener('click', fn); };
+  on('lead-mail-retry', async () => { LEAD_MAIL.gmail = null; leadMailRender(l); await leadMailLoadStatus(); leadMailRender(l); });
+  on('lead-mail-connect', () => leadMailConnect(l));
+  on('lead-mail-disconnect', () => leadMailDisconnect(l));
+  on('lead-mail-cancel', () => { LEAD_MAIL.open = false; leadMailRender(l); });
+  on('lead-mail-send', () => leadMailSend(l));
+  const sub = document.getElementById('lead-mail-subject'), bod = document.getElementById('lead-mail-body');
+  if(sub) sub.addEventListener('input', () => { LEAD_MAIL.draftSubject = sub.value; });
+  if(bod) bod.addEventListener('input', () => { LEAD_MAIL.draftBody = bod.value; });
+}
+
+// The popup must open inside the click (popup blockers), so it opens blank and
+// is pointed at Google once the Worker hands back the signed link.
+// Google's pages can cut the popup off from this window (opener policy), so
+// postMessage is only the fast path: when the popup closes, or this window gets
+// focus back, the status is fetched again.
+async function leadMailConnect(l){
+  const win = window.open('', 'vm-gmail-connect', 'width=520,height=700');
+  const r = await leadMailCall('POST', '/api/gmail/start');
+  if(!r.ok || !r.body.url){ if(win) win.close(); showToast(leadMailErrorText(r.body && r.body.error)); return; }
+  if(!win){ window.location.href = r.body.url; return; }   // popups blocked: the result page links back
+  win.location.href = r.body.url;
+  const timer = setInterval(() => {
+    let closed = true; try { closed = win.closed; } catch(_){}
+    if(!closed) return;
+    clearInterval(timer);
+    leadMailRefresh();
+  }, 600);
+}
+async function leadMailRefresh(){
+  if(!LEAD_MAIL.open || LEAD_MAIL.sending) return;
+  await leadMailLoadStatus();
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  if(l) leadMailRender(l);
+}
+window.addEventListener('focus', () => {
+  if(LEAD_MAIL.open && LEAD_MAIL.gmail && !LEAD_MAIL.gmail.connected) leadMailRefresh();
+});
+
+window.addEventListener('message', async (ev) => {
+  if(ev.origin !== LEAD_MAIL_WORKER || !ev.data || ev.data.source !== 'vm-lead-mail') return;
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  if(ev.data.ok){
+    showToast('Gmail connected: ' + ev.data.email);
+    LEAD_MAIL.gmail = { connected: true, needs_reconnect: false, email: ev.data.email };
+  } else {
+    await leadMailLoadStatus();
+  }
+  if(l) leadMailRender(l);
+});
+
+async function leadMailDisconnect(l){
+  const r = await leadMailCall('POST', '/api/gmail/disconnect');
+  if(!r.ok){ showToast(leadMailErrorText(r.body && r.body.error)); return; }
+  LEAD_MAIL.gmail = { connected: false, needs_reconnect: false, email: null };
+  showToast('Gmail disconnected');
+  leadMailRender(l);
+}
+
+async function leadMailSend(l){
+  if(LEAD_MAIL.sending) return;
+  const subject = (document.getElementById('lead-mail-subject') || {}).value || '';
+  const message = (document.getElementById('lead-mail-body') || {}).value || '';
+  const err = document.getElementById('lead-mail-err'), btn = document.getElementById('lead-mail-send');
+  const fail = code => { if(err){ err.textContent = leadMailErrorText(code); err.style.display = ''; } };
+  if(!subject.trim()) return fail('subject_required');
+  if(!message.trim()) return fail('message_required');
+  // "Send anyway" after an ambiguous result is a deliberate second email: new key.
+  if(!LEAD_MAIL.sendKey || LEAD_MAIL.sendAnyway){ LEAD_MAIL.sendKey = leadMailNewKey(); LEAD_MAIL.sendAnyway = false; }
+  LEAD_MAIL.sending = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  const r = await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey });
+  LEAD_MAIL.sending = false;
+  if(!r.ok){
+    if(btn){ btn.disabled = false; btn.textContent = 'Send email'; }
+    let code = r.body && r.body.error;
+    // No answer at all: the Worker may have sent it. Keep the key, so pressing
+    // Send again can never email the lead twice.
+    if(r.status === 0) code = 'may_have_sent';
+    if(code === 'may_have_sent' || code === 'already_sent'){
+      if(btn) btn.textContent = 'Send anyway';
+      LEAD_MAIL.sendAnyway = true;
+    }
+    if(code === 'reconnect' || code === 'not_connected'){ await leadMailLoadStatus(); leadMailRender(l); }
+    return fail(code);
+  }
+  LEAD_MAIL.draftSubject = ''; LEAD_MAIL.draftBody = ''; LEAD_MAIL.open = false; LEAD_MAIL.sendKey = '';
+  // Mirror what record_lead_email wrote into `data`, so a drawer save before
+  // realtime lands does not drop it.
+  if(r.body.recorded !== false){ l.last_touched_at = r.body.sent_at; l.last_emailed_at = r.body.sent_at; }
+  // The server moved new → contacted; mirror it so the drawer and table agree before realtime lands.
+  if(r.body.status && r.body.status !== l.status){
+    l.status = r.body.status;
+    const st = document.getElementById('lead-status');
+    if(st){ st.value = r.body.status; st.dataset.prev = r.body.status; }
+    if(typeof renderLeads === 'function') renderLeads();
+  }
+  showToast(r.body.recorded === false ? 'Email sent (but it could not be logged on the lead)' : 'Email sent to ' + r.body.to);
+  await leadMailLoadHistory(l);
+  if(String(_editingLeadId) === String(l.id)) leadMailRender(l);
+}
+
 function openLead(id){
   const l = leads.find(x => String(x.id) === String(id));
   if(!l) return;
@@ -29419,6 +29711,7 @@ function openLead(id){
   fillLeadFields(l);
   if(typeof renderJLeadCustomer === 'function') renderJLeadCustomer(l);
   if(typeof renderJLeadChat === 'function') renderJLeadChat(l);
+  if(typeof leadMailReset === 'function') leadMailReset(l);
   document.getElementById('lead-modal-backdrop').classList.add('open');
 }
 
@@ -29513,7 +29806,7 @@ document.getElementById('lead-status') && document.getElementById('lead-status')
 });
 document.getElementById('lead-email-btn')     && document.getElementById('lead-email-btn').addEventListener('click', () => {
   const l = leads.find(x => String(x.id) === String(_editingLeadId));
-  if(l && l.email) window.location.href = safeHref('mailto:' + l.email);
+  if(l) leadMailToggle(l);
 });
 document.getElementById('lead-modal-backdrop')&& document.getElementById('lead-modal-backdrop').addEventListener('click', e => { if(e.target.id === 'lead-modal-backdrop') closeLeadModal(); });
 document.addEventListener('keydown', e => {
