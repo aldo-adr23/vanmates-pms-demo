@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-03-leadmail4"></script>
+<script src="pms-supabase.js?v=2026-10-04-leadmail5"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4074,6 +4074,10 @@ textarea.lm-input{resize:vertical;min-height:72px}
 .lm-tool:hover{color:var(--red)}
 .lm-kbd{font-size:11px}
 .lm-row-end{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.lm-lang{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:2px 4px}
+.lm-tabs{display:flex;gap:6px;margin-top:2px}
+.lm-tab{font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.lm-tab.on{background:var(--ink);color:var(--surface);border-color:var(--ink)}
 @media (max-width:640px){.lm-msg{max-width:94%}.lm-kbd{display:none}}
 </style>
 <!-- ============ ADD LEAD MODAL ============ -->
@@ -29496,11 +29500,28 @@ function leadMailMode(lead, viewer, gmail){
   return 'compose';
 }
 // "Hi Ana," — the greeting the email opens with (the Worker writes the same).
-function leadMailGreeting(name){
+// lang: en (default), es, ja — the Worker writes the same greeting.
+function leadMailGreeting(name, lang){
   const n = String(name || '').replace(/[*\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
-  if(!n || /@/.test(n)) return 'Hi there,';
-  const parts = n.split(/\s*(?:&|\band\b|\by\b|\/)\s*/i).map(p => p.split(' ')[0]).filter(Boolean);
-  return 'Hi ' + (parts.slice(0, 2).join(' & ') || 'there') + ',';
+  const parts = (!n || /@/.test(n)) ? [] : n.split(/\s*(?:&|\band\b|\by\b|\/)\s*/i).map(p => p.split(' ')[0]).filter(Boolean);
+  const first = parts.slice(0, 2).join(' & ');
+  if(lang === 'es') return first ? 'Hola ' + first + ',' : 'Hola,';
+  if(lang === 'ja') return first ? first + '様' : 'お客様';
+  return 'Hi ' + (first || 'there') + ',';
+}
+const LEAD_MAIL_LANGS = { en: 'English', es: 'Español', ja: '日本語' };
+// The lead's language for emails and follow-ups, from what the intake recorded:
+// language / raw.language ("Japanese", "es"…), else LINE leads are Japanese and
+// the /es/ site's leads Spanish. Everything else is English.
+function leadMailLang(lead){
+  const l = lead || {};
+  const v = String(l.language || (l.raw && l.raw.language) || l.lang || '').trim().toLowerCase();
+  if(/^(ja|jp|japanese|日本語)/.test(v)) return 'ja';
+  if(/^(es|spanish|español|espanol)/.test(v)) return 'es';
+  if(v) return 'en';
+  if(l.source === 'line-maya') return 'ja';
+  if(/vanmates\.com\/es(\/|$)/.test(String(l.source_page || '') + String(l.landing_page || ''))) return 'es';
+  return 'en';
 }
 const LEAD_MAIL_ERRORS = {
   not_connected: 'Connect your Gmail first.',
@@ -29579,6 +29600,7 @@ Object.assign(LEAD_MAIL_ERRORS, {
   not_your_followups: 'Only the person who started these follow-ups (or an admin) can change them.',
   sequence_finished: 'All follow-ups were already sent.',
   admins_only: 'Only admins can edit the follow-up templates.',
+  bad_lang: 'Pick English, Spanish or Japanese.',
 });
 // The same limits the Worker enforces, checked before upload.
 const LEAD_MAIL_FILES = { max: 10, fileBytes: 10 * 1024 * 1024, totalBytes: 10 * 1024 * 1024,
@@ -29616,7 +29638,7 @@ function leadMailFollowupState(fu){
 const LEAD_MAIL = {
   gmail: null, history: null, historyFor: null, emails: [], needsRead: [], followup: null, templates: [],
   sending: false, sendKey: '', sendAnyway: false, files: [], draftSubject: '', draftBody: '',
-  newMode: false, autoFollow: true, editFollow: false, editTemplates: false, loading: false,
+  newMode: false, autoFollow: true, editFollow: false, editTemplates: false, loading: false, lang: 'en', tplLang: 'en',
 };
 // The Worker acts as the signed-in user, so "view as" must not change who the
 // drawer says the email comes from.
@@ -29681,6 +29703,7 @@ function leadMailReset(l){
   const pre = leadMailMode(l, leadMailViewer(), { connected: true });
   // Follow-ups only make sense for your own lead (they stop when someone else holds it).
   LEAD_MAIL.autoFollow = String(l.claimed_by || '').toLowerCase() === String(leadMailViewer().email || '').toLowerCase();
+  LEAD_MAIL.lang = leadMailLang(l);
   if(pre !== 'compose'){ LEAD_MAIL.loading = false; leadMailRender(l); return; }
   leadMailRender(l);
   Promise.all([leadMailLoadStatus(), leadMailLoadHistory(l)]).then(() => {
@@ -29758,7 +29781,8 @@ function leadMailFollowupHtml(l, me){
     return `<div class="lm-strip lm-strip-quiet">${LM_ICON.clock}<span>${esc(st.text)}</span>
       ${st.canResume && owner ? `<button type="button" class="lm-link" data-lm-fu="resume">Resume</button>` : ''}${tplLink}</div>`;
   }
-  const tpl = (LEAD_MAIL.templates || []).find(t => t.step === st.step);
+  const fuLang = LEAD_MAIL.followup.lang || 'en';
+  const tpl = (LEAD_MAIL.templates || []).find(t => t.step === st.step && (t.lang || 'en') === fuLang);
   const ov = LEAD_MAIL.followup.overrides && LEAD_MAIL.followup.overrides[String(st.step)];
   const text = (ov && String(ov).trim()) || (tpl && tpl.body) || '';
   if(LEAD_MAIL.editFollow){
@@ -29769,19 +29793,31 @@ function leadMailFollowupHtml(l, me){
     </div>`;
   }
   return `<div class="lm-strip lm-strip-on">
-    ${LM_ICON.clock}<div style="flex:1;min-width:0"><b>Follow-up ${esc(st.step)} of 3</b> <span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} if no reply</span>
-      <div class="lm-preview">${esc(leadMailGreeting(l.name).replace(/,$/, ''))}, ${esc(text)}</div></div>
+    ${LM_ICON.clock}<div style="flex:1;min-width:0"><b>Follow-up ${esc(st.step)} of 3</b> <span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} if no reply ·</span>
+      ${owner ? `<select class="lm-lang" id="lm-fu-lang" aria-label="Follow-up language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === fuLang ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<span class="lm-dim">${esc(LEAD_MAIL_LANGS[fuLang] || fuLang)}</span>`}
+      <div class="lm-preview">${esc(leadMailGreeting(l.name, fuLang))} ${esc(text)}</div></div>
     ${owner ? `<span class="lm-strip-actions"><button type="button" class="lm-link" id="lm-fu-edit">Edit</button><button type="button" class="lm-link" data-lm-fu="skip">Skip</button><button type="button" class="lm-link" data-lm-fu="stop">Stop</button></span>` : ''}
   </div>${tplLink ? `<div style="text-align:right;margin-top:-4px">${tplLink}</div>` : ''}`;
 }
 
+// The template editor edits one language at a time; drafts of the others are kept until Save.
+function leadMailKeepTemplateDrafts(){
+  LEAD_MAIL.tplDrafts = LEAD_MAIL.tplDrafts || {};
+  document.querySelectorAll('[data-lm-tpl-body]').forEach(el => { LEAD_MAIL.tplDrafts[LEAD_MAIL.tplLang + ':' + el.getAttribute('data-lm-tpl-body')] = el.value; });
+  document.querySelectorAll('[data-lm-tpl-days]').forEach(el => { LEAD_MAIL.tplDrafts['days:' + el.getAttribute('data-lm-tpl-days')] = el.value; });
+}
 function leadMailTemplatesHtml(){
-  const t = LEAD_MAIL.templates.length ? LEAD_MAIL.templates : [1, 2, 3].map(step => ({ step, delay_days: [2, 3, 5][step - 1], body: '' }));
+  const lang = LEAD_MAIL.tplLang || 'en', drafts = LEAD_MAIL.tplDrafts || {};
+  const all = LEAD_MAIL.templates || [];
+  const row = (lg, step) => all.find(t => (t.lang || 'en') === lg && t.step === step) || { lang: lg, step, delay_days: [2, 3, 5][step - 1], body: '' };
+  const tabs = Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<button type="button" class="lm-tab ${k === lang ? 'on' : ''}" data-lm-tpl-lang="${k}">${v}</button>`).join('');
   return `<div class="lm-strip lm-strip-on" style="display:block">
-    <div class="lm-strip-head">${LM_ICON.clock}<b>Follow-up templates</b><span class="lm-dim">· for everyone · each email starts "Hi {first name}," and ends with the rep's name</span></div>
-    ${t.map(x => `<div style="margin-top:8px"><label class="lm-dim" style="display:flex;gap:6px;align-items:center">Follow-up ${x.step}: send
-      <input class="form-input" type="number" min="1" max="30" value="${esc(x.delay_days)}" data-lm-tpl-days="${x.step}" style="width:64px;padding:4px 6px"> days after the previous email</label>
-      <textarea class="form-input lm-input" rows="2" maxlength="4000" data-lm-tpl-body="${x.step}">${esc(x.body)}</textarea></div>`).join('')}
+    <div class="lm-strip-head">${LM_ICON.clock}<b>Follow-up templates</b><span class="lm-dim">· for everyone · each email starts with the greeting in its language (“Hi Ana,” · “Hola Ana,” · “Ana様”) and ends with the rep's name</span></div>
+    <div class="lm-tabs">${tabs}</div>
+    ${[1, 2, 3].map(step => { const x = row(lang, step); const days = drafts['days:' + step] != null ? drafts['days:' + step] : row('en', step).delay_days; const body = drafts[lang + ':' + step] != null ? drafts[lang + ':' + step] : x.body;
+      return `<div style="margin-top:8px"><label class="lm-dim" style="display:flex;gap:6px;align-items:center">Follow-up ${step}: send
+      <input class="form-input" type="number" min="1" max="30" value="${esc(days)}" data-lm-tpl-days="${step}" style="width:64px;padding:4px 6px"> days after the previous email <span class="lm-dim">(same for every language)</span></label>
+      <textarea class="form-input lm-input" rows="2" maxlength="4000" data-lm-tpl-body="${step}">${esc(body)}</textarea></div>`; }).join('')}
     <div id="lm-tpl-err" class="name-sub lead-sub-warn" style="display:none"></div>
     <div class="lm-row-end"><button class="btn btn-ghost btn-mini" type="button" id="lm-tpl-cancel">Cancel</button><button class="btn btn-primary btn-mini" type="button" id="lm-tpl-save">Save templates</button></div>
   </div>`;
@@ -29796,12 +29832,13 @@ function leadMailComposerHtml(l, me){
   return `<div class="lm-compose">
     ${reply
       ? `<div class="lm-compose-head"><span class="lm-dim">Reply in this conversation · to ${esc(leadMailAddress(l.email))}</span>${thread ? `<button type="button" class="lm-link" id="lm-new">New email</button>` : ''}</div>`
-      : `<div class="lm-compose-head"><span class="lm-dim">New email to ${esc(leadMailAddress(l.email))} · starts with “${esc(leadMailGreeting(l.name))}”</span>${thread && !needMe ? `<button type="button" class="lm-link" id="lm-reply-mode">Reply instead</button>` : ''}</div>
+      : `<div class="lm-compose-head"><span class="lm-dim">New email to ${esc(leadMailAddress(l.email))} · starts with “${esc(leadMailGreeting(l.name, LEAD_MAIL.lang))}”</span>${thread && !needMe ? `<button type="button" class="lm-link" id="lm-reply-mode">Reply instead</button>` : ''}</div>
          <input class="form-input lm-input" id="lead-mail-subject" maxlength="200" placeholder="Subject" value="${esc(LEAD_MAIL.draftSubject || 'Your Vanmates enquiry')}">`}
     <textarea class="form-input lm-input" id="lead-mail-body" rows="3" maxlength="10000" placeholder="${reply ? 'Write a reply…' : 'Write your message…'}">${esc(LEAD_MAIL.draftBody || '')}</textarea>
     ${files ? `<div class="lm-files">${files}</div>` : ''}
     <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none"></div>
     <div class="lm-toolbar">
+      <select class="lm-lang" id="lm-lang" title="Language of the greeting and of the automatic follow-ups" aria-label="Email language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === LEAD_MAIL.lang ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <label class="lm-tool" title="Attach photos or documents (10 MB total)">${LM_ICON.clip}<span>Attach</span><input type="file" id="lm-file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
       ${fu && reply ? `<span class="lm-dim" style="font-size:12px">Follow-ups re-time after your reply</span>`
         : `<label class="lm-tool" title="Up to 3 short follow-ups in this conversation (2, 5 and 10 days later, weekdays 9:00-16:45 Vancouver). They stop when the lead replies."><input type="checkbox" id="lm-auto" ${LEAD_MAIL.autoFollow ? 'checked' : ''}><span>Follow up automatically if no reply</span></label>`}
@@ -29866,7 +29903,7 @@ function leadMailWire(l){
   on('lm-fu-cancel', () => { LEAD_MAIL.editFollow = false; leadMailRender(l); });
   on('lm-fu-save', () => leadMailFollowup(l, 'edit', (document.getElementById('lm-fu-text') || {}).value || ''));
   on('lm-tpl-open', () => { LEAD_MAIL.editTemplates = true; leadMailRender(l); });
-  on('lm-tpl-cancel', () => { LEAD_MAIL.editTemplates = false; leadMailRender(l); });
+  on('lm-tpl-cancel', () => { LEAD_MAIL.editTemplates = false; LEAD_MAIL.tplDrafts = {}; leadMailRender(l); });
   on('lm-tpl-save', () => leadMailSaveTemplates(l));
   document.querySelectorAll('[data-lm-fu]').forEach(b => b.addEventListener('click', () => leadMailFollowup(l, b.getAttribute('data-lm-fu'))));
   document.querySelectorAll('[data-lm-rm]').forEach(b => b.addEventListener('click', () => {
@@ -29884,6 +29921,11 @@ function leadMailWire(l){
   }
   const auto = document.getElementById('lm-auto');
   if(auto) auto.addEventListener('change', () => { LEAD_MAIL.autoFollow = auto.checked; });
+  const lang = document.getElementById('lm-lang');
+  if(lang) lang.addEventListener('change', () => { LEAD_MAIL.lang = lang.value; LEAD_MAIL.draftBody = (document.getElementById('lead-mail-body') || {}).value || LEAD_MAIL.draftBody; leadMailRender(l); });
+  const fuLang = document.getElementById('lm-fu-lang');
+  if(fuLang) fuLang.addEventListener('change', () => leadMailFollowup(l, 'lang', fuLang.value));
+  document.querySelectorAll('[data-lm-tpl-lang]').forEach(b => b.addEventListener('click', () => { leadMailKeepTemplateDrafts(); LEAD_MAIL.tplLang = b.getAttribute('data-lm-tpl-lang'); leadMailRender(l); }));
   const file = document.getElementById('lm-file');
   if(file) file.addEventListener('change', () => { leadMailAddFiles(l, file.files); file.value = ''; });
 }
@@ -29958,24 +30000,29 @@ async function leadMailFollowup(l, action, text){
   if(!r.ok){ showToast(leadMailErrorText(r.body && r.body.error)); return; }
   LEAD_MAIL.followup = r.body.followup || null;
   LEAD_MAIL.editFollow = false;
-  showToast({ stop: 'Follow-ups stopped', resume: 'Follow-ups resumed', skip: 'Skipped that follow-up', edit: 'Follow-up saved' }[action] || 'Saved');
+  showToast({ stop: 'Follow-ups stopped', resume: 'Follow-ups resumed', skip: 'Skipped that follow-up', edit: 'Follow-up saved', lang: 'Follow-ups will be sent in ' + (LEAD_MAIL_LANGS[text] || text) }[action] || 'Saved');
   leadMailRender(l);
 }
 
 async function leadMailSaveTemplates(l){
-  const templates = [1, 2, 3].map(step => ({
-    step,
-    delay_days: Number((document.querySelector(`[data-lm-tpl-days="${step}"]`) || {}).value || 0),
-    body: String((document.querySelector(`[data-lm-tpl-body="${step}"]`) || {}).value || '').trim(),
+  leadMailKeepTemplateDrafts();
+  const drafts = LEAD_MAIL.tplDrafts || {}, all = LEAD_MAIL.templates || [];
+  const templates = [];
+  Object.keys(LEAD_MAIL_LANGS).forEach(lang => [1, 2, 3].forEach(step => {
+    const cur = all.find(t => (t.lang || 'en') === lang && t.step === step) || {};
+    const en = all.find(t => (t.lang || 'en') === 'en' && t.step === step) || {};
+    templates.push({ lang, step,
+      delay_days: Number(drafts['days:' + step] != null ? drafts['days:' + step] : (en.delay_days || [2, 3, 5][step - 1])),
+      body: String(drafts[lang + ':' + step] != null ? drafts[lang + ':' + step] : (cur.body || '')).trim() });
   }));
   const r = await leadMailCall('POST', '/api/followup-templates', { templates });
   if(!r.ok){
     const e = document.getElementById('lm-tpl-err');
-    if(e){ e.textContent = r.body && r.body.error === 'bad_templates' ? 'Each follow-up needs text and 1 to 30 days.' : leadMailErrorText(r.body && r.body.error); e.style.display = ''; }
+    if(e){ e.textContent = r.body && r.body.error === 'bad_templates' ? 'Every follow-up in every language needs text, and 1 to 30 days.' : leadMailErrorText(r.body && r.body.error); e.style.display = ''; }
     return;
   }
   LEAD_MAIL.templates = r.body.templates || templates;
-  LEAD_MAIL.editTemplates = false;
+  LEAD_MAIL.editTemplates = false; LEAD_MAIL.tplDrafts = {};
   showToast('Follow-up templates saved');
   leadMailRender(l);
 }
@@ -30000,8 +30047,8 @@ async function leadMailSend(l){
   if(btn){ btn.disabled = true; btn.textContent = LEAD_MAIL.files.length ? 'Uploading…' : 'Sending…'; }
   const attachments = LEAD_MAIL.files.map(f => ({ name: f.name, type: f.type, data: f.data }));
   const r = reply
-    ? await leadMailCall('POST', '/api/leads/reply', { lead_id: l.id, thread_id: thread, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: followUp })
-    : await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: !!followUp });
+    ? await leadMailCall('POST', '/api/leads/reply', { lead_id: l.id, thread_id: thread, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: followUp, lang: LEAD_MAIL.lang })
+    : await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: !!followUp, lang: LEAD_MAIL.lang });
   LEAD_MAIL.sending = false;
   if(!r.ok){
     if(btn){ btn.disabled = false; btn.textContent = reply ? 'Send reply' : 'Send email'; }
