@@ -595,6 +595,157 @@ function buildCheckoutEmail(row, opts) {
   return { subject: p.subject, html: html, text: checkoutEmailText(p) };
 }
 /* CO-CORE-END */
+/* FU-CORE-START */
+/* ---- Follow-up email (scheduled after-hours check-in update) --------------
+   Pasted by the n8n follow-up workflow right AFTER the ARR-CORE paste: it reuses
+   renderEmail, T, escapeHtml, str, firstName, safeUrl, fill, paras, nl2br,
+   ARR_NOTICE, ARR_KEYS_ONLY and ARR_CTA from there. Input is one
+   followup_messages_v row (SQL checkin-followups-2026-10-04.sql). The secret
+   (e.g. the lockbox code) is never printed: only a time-limited link to it.
+   Tested by test/followup-email.test.js. */
+
+var FU_MISSING_ORDER = ["email", "template", "disabled", "secret"];
+var FU_MISSING_LABEL = { email: "email", template: "follow-up not reviewed", disabled: "follow-up is off", secret: "code not set" };
+function followupMissingLabel(k, row) {
+  if (k === "secret" && row && str(row.secret_label)) return str(row.secret_label).toLowerCase() + " not set";
+  return FU_MISSING_LABEL[k] || String(k);
+}
+
+function fuTrue(v) { return v === true || v === "true"; }
+
+// Mirrors SQL _followup_missing: email, template (not reviewed), disabled (rule off), secret (label without a value;
+// the view carries secret_set, never the value).
+function followupReadiness(row) {
+  var r = row || {}, missing = [];
+  if (!str(r.student_email)) missing.push("email");
+  if (!fuTrue(r.template_reviewed)) missing.push("template");
+  if (!fuTrue(r.followup_enabled)) missing.push("disabled");
+  if (str(r.secret_label) && !fuTrue(r.secret_set)) missing.push("secret");
+  return { ready: missing.length === 0, missing: missing };
+}
+
+var FU_CHIP = "Check-in update";
+
+// "After-hours check-in" -> "After-hours *check-in*" (the last word is the italic red clause). Escaped; an asterisk
+// in the name can't open an emphasis.
+function followupHeading(name) {
+  var s = escapeHtml(str(name)).replace(/\*/g, "&#42;");
+  if (!s) return "Check-in *update*";
+  var k = s.lastIndexOf(" ");
+  return k < 0 ? "*" + s + "*" : s.slice(0, k) + " *" + s.slice(k + 1) + "*";
+}
+
+// The plain (unescaped) content of one follow-up email. opts.secretBase: the n8n page that shows the secret.
+function followupEmailParts(row, opts) {
+  var r = row || {}, o = opts || {};
+  var building = str(r.building);
+  var name = str(r.followup_name);
+  var vars = { first_name: firstName(r.student_name) || "there", building: building };
+  var intro = ["Hi " + vars.first_name + ","].concat(paras(fill(r.intro, vars)));
+  var rows = [];
+  if (fuTrue(r.show_codes)) {
+    rows = [
+      ["Address", str(r.address)],
+      ["Apartment", str(r.unit)],
+      ["Room", str(r.room_label) || str(r.bed)],
+      ["Bedroom door code", fuTrue(r.keys_only) ? ARR_KEYS_ONLY : str(r.door_code)],
+      ["House code", str(r.house_code)],
+      ["Wi-Fi network", str(r.wifi_name)],
+      ["Wi-Fi password", str(r.wifi_password)]
+    ].filter(function (x) { return x[1]; });
+  }
+  var sections = [];
+  (Array.isArray(r.sections) ? r.sections : []).forEach(function (s) {
+    if (s && (str(s.title) || str(s.text))) sections.push({ title: str(s.title), text: fill(String(s.text || "").trim(), vars) });
+  });
+  var label = str(r.secret_label);
+  var base = str(o.secretBase).replace(/\/+$/, "");
+  var token = str(r.secret_token);
+  var secretUrl = label && base && token ? base + "/" + encodeURIComponent(token) : "";
+  var hours = parseInt(r.secret_valid_hours, 10);
+  if (!(hours > 0)) hours = 24;
+  var subject = fill(str(r.subject), vars) || ((name || "Check-in update") + " | " + building);
+  return {
+    subject: subject, name: name || "Check-in update", building: building, intro: intro, rows: rows, sections: sections,
+    rulesUrl: safeUrl(r.rules_url), docsUrl: safeUrl(r.docs_url),
+    secretLabel: label, secretUrl: secretUrl,
+    secretCta: secretUrl ? "Show my " + label.toLowerCase() : "",
+    secretNote: secretUrl ? "This link works for " + hours + (hours === 1 ? " hour" : " hours") + " from this email." : ""
+  };
+}
+
+function fuLink(label, url) {
+  var u = escapeHtml(url);
+  return escapeHtml(label) + ': <a href="' + u + '" style="color:' + T.red + '">' + u + "</a>";
+}
+
+// The renderEmail spec (every value HTML-escaped).
+function followupEmailSpec(row, opts) {
+  var p = followupEmailParts(row, opts);
+  var body = p.sections.map(function (s) {
+    var title = s.title ? "<strong>" + escapeHtml(s.title) + "</strong>" : "";
+    var text = nl2br(escapeHtml(s.text));
+    return title && text ? title + "<br>" + text : title + text;
+  });
+  if (p.docsUrl) body.push(fuLink("Building documents", p.docsUrl));
+  var spec = {
+    subject: escapeHtml(p.subject),
+    preheader: escapeHtml(p.name + " for " + p.building + "."),
+    chip: { tone: "brand", label: FU_CHIP },
+    heading: followupHeading(p.name),
+    intro: p.intro.map(function (x) { return nl2br(escapeHtml(x)); }),
+    rows: p.rows.map(function (x) { return [escapeHtml(x[0]), escapeHtml(x[1])]; }),
+    body: body
+  };
+  if (p.rows.length || p.secretUrl) spec.notice = { tone: "warn", text: escapeHtml(ARR_NOTICE) };
+  if (p.secretUrl) {
+    spec.cta = { label: escapeHtml(p.secretCta), url: escapeHtml(p.secretUrl) };
+    spec.footnote = escapeHtml(p.secretNote);
+    if (p.rulesUrl) body.push(fuLink("House rules", p.rulesUrl));
+  } else if (p.rulesUrl) {
+    spec.cta = { label: escapeHtml(ARR_CTA), url: escapeHtml(p.rulesUrl) };
+  }
+  return spec;
+}
+
+function followupEmailText(p) {
+  var out = [p.name, ""];
+  p.intro.forEach(function (x) { out.push(x, ""); });
+  if (p.rows.length) {
+    p.rows.forEach(function (x) { out.push(x[0] + ": " + x[1]); });
+    out.push("");
+  }
+  p.sections.forEach(function (s) { out.push((s.title ? s.title + "\n" : "") + s.text, ""); });
+  if (p.docsUrl) out.push("Building documents: " + p.docsUrl, "");
+  if (p.rows.length || p.secretUrl) out.push(ARR_NOTICE, "");
+  if (p.secretUrl) {
+    out.push(p.secretCta + ": " + p.secretUrl + "\n" + p.secretNote, "");
+    if (p.rulesUrl) out.push("House rules: " + p.rulesUrl, "");
+  } else if (p.rulesUrl) {
+    out.push(ARR_CTA + ": " + p.rulesUrl, "");
+  }
+  out.push("If anything looks wrong, just reply to this email.", "— The Vanmates team");
+  return out.join("\n");
+}
+
+// row = one followup_messages_v row -> { subject, html, text, secretUrl }. opts.pixelBase (…/webhook/followup-open) adds
+// the open pixel <pixelBase>/<open_token>.gif; opts.secretBase (…/webhook/followup-code) builds the secret link
+// <secretBase>/<secret_token>. secretUrl is '' when the rule has a secret label but no link could be built — the
+// sender must not send such an email.
+function buildFollowupEmail(row, opts) {
+  var r = row || {}, o = opts || {};
+  var p = followupEmailParts(r, o);
+  var html = renderEmail(followupEmailSpec(r, o));
+  var base = str(o.pixelBase).replace(/\/+$/, "");
+  var token = str(r.open_token);
+  if (base && token) {
+    var src = escapeHtml(base + "/" + encodeURIComponent(token) + ".gif");
+    var k = html.lastIndexOf("</body>");
+    html = html.slice(0, k) + '<img src="' + src + '" width="1" height="1" alt="" style="display:block;border:0">\n' + html.slice(k);
+  }
+  return { subject: p.subject, html: html, text: followupEmailText(p), secretUrl: p.secretUrl };
+}
+/* FU-CORE-END */
 /* ---- Upload roster: linked-workbook caches --------------------------------
    Outside the ARR-CORE fence on purpose: that fence is pasted verbatim into the
    n8n "Portal - Arrivals Send" workflow (n8n/arrivals/gen.js), which has no use
@@ -639,7 +790,9 @@ var ArrCore = {
   MISSING_ORDER: MISSING_ORDER, ARR_NOTICE: ARR_NOTICE,
   stripExternalLinks: stripExternalLinks, bytesToBase64: bytesToBase64,
   buildCheckoutEmail: buildCheckoutEmail, checkoutEmailSpec: checkoutEmailSpec, checkoutReadiness: checkoutReadiness,
-  checkoutMissingLabel: checkoutMissingLabel, CO_MISSING_ORDER: CO_MISSING_ORDER
+  checkoutMissingLabel: checkoutMissingLabel, CO_MISSING_ORDER: CO_MISSING_ORDER,
+  buildFollowupEmail: buildFollowupEmail, followupEmailSpec: followupEmailSpec, followupReadiness: followupReadiness,
+  followupMissingLabel: followupMissingLabel, FU_MISSING_ORDER: FU_MISSING_ORDER
 };
 if (typeof window !== "undefined") window.ArrCore = ArrCore;
 if (typeof module !== "undefined" && module.exports) module.exports = ArrCore;
