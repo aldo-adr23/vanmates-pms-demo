@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-03-leadmail3"></script>
+<script src="pms-supabase.js?v=2026-10-03-leadmail4"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4004,6 +4004,7 @@ hello@vanmates.com · vanmates.com</textarea>
           <div id="lead-deal-row" style="display:none;margin:-6px 0 12px"><button class="btn btn-ghost btn-mini" id="lead-deal-btn" type="button">Edit deal</button> <span class="card-sub" id="lead-deal-sum"></span>
           </div>
       <div class="form-field"><label>Contact</label><div id="lead-contact" style="font-size:13px"></div></div>
+      <div id="lead-mail" style="display:none;margin:4px 0 14px"></div>
       <div class="form-field"><label>Notes</label><textarea class="form-input" id="lead-notes" rows="3" placeholder="Internal notes…"></textarea></div>
       <div class="form-field">
         <label>Submission</label>
@@ -4013,7 +4014,6 @@ hello@vanmates.com · vanmates.com</textarea>
           <pre id="lead-payload-raw"></pre>
         </details>
       </div>
-      <div id="lead-mail" style="display:none;margin-top:14px"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
         <button class="btn btn-ghost" id="lead-email-btn" type="button">Email lead</button>
         <button class="btn btn-wa" id="lead-wa-btn" type="button">
@@ -4026,6 +4026,56 @@ hello@vanmates.com · vanmates.com</textarea>
   </div>
 </div>
 
+<style>
+/* Lead drawer: email conversation card (leadMailRender) */
+.lm-card{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+.lm-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--cream-2)}
+.lm-title{font-family:var(--serif, 'Playfair Display', Georgia, serif);font-size:16px;font-weight:600;color:var(--ink)}
+.lm-head-right{display:flex;align-items:center;gap:12px;font-size:12px;min-width:0}
+.lm-dim{color:var(--muted);font-size:12px}
+.lm-link{background:none;border:0;padding:0;color:var(--red);font:inherit;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px;text-decoration:none}
+.lm-link:hover{text-decoration:underline}
+.lm-more{position:relative}.lm-more summary{list-style:none;cursor:pointer;color:var(--muted);font-size:16px;line-height:1;padding:0 2px}
+.lm-more summary::-webkit-details-marker{display:none}
+.lm-more>div{position:absolute;right:0;top:20px;z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.08)}
+.lm-note{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px}
+.lm-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
+.lm-strip svg{flex:none;color:var(--muted)}
+.lm-strip-on{background:var(--surface-2)}
+.lm-strip-quiet{color:var(--muted)}
+.lm-strip-warn{background:var(--amber-soft)}
+.lm-strip-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.lm-strip-actions{display:flex;gap:12px}
+.lm-preview{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lm-thread{max-height:420px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:var(--surface-2)}
+.lm-empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 0}
+.lm-day{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.lm-day::before,.lm-day::after{content:"";flex:1;border-top:1px solid var(--line)}
+.lm-msg{display:flex;flex-direction:column;max-width:86%}
+.lm-in{align-self:flex-start}.lm-other{align-self:flex-start;opacity:.8}.lm-out{align-self:flex-end;align-items:flex-end}
+.lm-bubble{border-radius:14px;padding:9px 12px;font-size:13.5px;line-height:1.5;color:var(--ink);word-break:break-word}
+.lm-in .lm-bubble{background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px}
+.lm-other .lm-bubble{background:var(--cream-2);border:1px dashed var(--line);font-style:italic}
+.lm-out .lm-bubble{background:var(--red-soft);border-bottom-right-radius:4px}
+.lm-subj{font-weight:700;font-size:12.5px;margin-bottom:3px}
+.lm-meta{font-size:11.5px;color:var(--muted);margin-top:3px;padding:0 4px}
+.lm-opened{color:var(--ink);font-weight:600}
+.lm-tag{display:inline-block;padding:0 6px;border-radius:999px;background:var(--cream-2);border:1px solid var(--line);font-size:10.5px}
+.lm-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.lm-file{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:8px;background:var(--surface);border:1px solid var(--line);font-size:12px;max-width:100%}
+.lm-chip img{width:22px;height:22px;object-fit:cover;border-radius:4px}
+.lm-chip button{background:none;border:0;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 0 0 2px}
+.lm-compose{padding:12px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.lm-compose-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.lm-input{display:block;width:100%;box-sizing:border-box}
+textarea.lm-input{resize:vertical;min-height:72px}
+.lm-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.lm-tool{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);cursor:pointer}
+.lm-tool:hover{color:var(--red)}
+.lm-kbd{font-size:11px}
+.lm-row-end{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+@media (max-width:640px){.lm-msg{max-width:94%}.lm-kbd{display:none}}
+</style>
 <!-- ============ ADD LEAD MODAL ============ -->
 <div class="modal-backdrop" id="lead-add-backdrop" aria-hidden="true">
   <div class="modal-dialog" role="dialog" aria-labelledby="lead-add-title">
@@ -29494,12 +29544,16 @@ function leadMailTimeline(emails, messages){
     seen[m.gmail_message_id] = true;
     const e = byGmail[m.gmail_message_id];
     return { dir: m.direction, from: m.from_name || m.from_email, fromEmail: m.from_email, subject: m.subject || '',
-             body: m.body_text || '', at: m.sent_at, threadId: m.thread_id, email: e || null };
+             // A portal email shows what the rep typed, not Gmail's copy with greeting and signature.
+             body: (e && e.body) || m.body_text || '', at: m.sent_at, threadId: m.thread_id, email: e || null,
+             files: (m.attachments && m.attachments.length ? m.attachments : (e && e.attachments) || []),
+             auto: !!(e && e.followup_step), step: (e && e.followup_step) || null };
   });
   (emails || []).forEach(e => {
     if(e.gmail_id && seen[e.gmail_id]) return;
     items.push({ dir: 'out', from: e.from_email, fromEmail: e.from_email, subject: e.subject || '', body: e.body || '',
-                 at: e.sent_at, threadId: e.gmail_thread_id || '', email: e });
+                 at: e.sent_at, threadId: e.gmail_thread_id || '', email: e, files: e.attachments || [],
+                 auto: !!e.followup_step, step: e.followup_step || null });
   });
   items.sort((a, b) => String(a.at) < String(b.at) ? -1 : String(a.at) > String(b.at) ? 1 : 0);
   return items;
@@ -29515,9 +29569,55 @@ function leadMailReplyThread(emails, viewerEmail){
 function leadMailErrorText(code){
   return LEAD_MAIL_ERRORS[code] || ('Not sent (' + (code || 'unknown error') + ').');
 }
+Object.assign(LEAD_MAIL_ERRORS, {
+  attachments_too_large: 'Attachments are too big: 10 MB in total per email.',
+  file_too_large: 'One file is over 10 MB.',
+  file_type_not_allowed: 'Attach photos, PDFs, Word, Excel, PowerPoint or text files.',
+  too_many_files: 'Up to 10 files per email.',
+  bad_attachments: 'One of the files could not be read. Remove it and attach it again.',
+  no_followups: 'This lead has no automatic follow-ups.',
+  not_your_followups: 'Only the person who started these follow-ups (or an admin) can change them.',
+  sequence_finished: 'All follow-ups were already sent.',
+  admins_only: 'Only admins can edit the follow-up templates.',
+});
+// The same limits the Worker enforces, checked before upload.
+const LEAD_MAIL_FILES = { max: 10, fileBytes: 10 * 1024 * 1024, totalBytes: 10 * 1024 * 1024,
+  types: /^(image\/(jpeg|png|gif|webp|heic|heif)|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)|application\/vnd\.ms-excel|text\/plain|text\/csv)$/ };
+// "" when the files can be attached, else the error code. files: [{name,type,size}]
+function leadMailFilesProblem(files){
+  const list = files || [];
+  if(list.length > LEAD_MAIL_FILES.max) return 'too_many_files';
+  let total = 0;
+  for(const f of list){
+    if(!LEAD_MAIL_FILES.types.test(String(f.type || '').toLowerCase())) return 'file_type_not_allowed';
+    if(f.size > LEAD_MAIL_FILES.fileBytes) return 'file_too_large';
+    total += f.size;
+  }
+  return total > LEAD_MAIL_FILES.totalBytes ? 'attachments_too_large' : '';
+}
+function leadMailSize(n){
+  n = Number(n) || 0;
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+const LEAD_MAIL_STOP_REASONS = { replied: 'the lead replied', manual: 'stopped by hand', off: 'turned off when sending',
+  lead_won: 'the lead was won', lead_lost: 'the lead was lost', reassigned: 'the lead changed hands',
+  gmail_disconnected: 'Gmail was disconnected', lead_deleted: 'the lead was deleted', rep_removed: 'the rep left the team',
+  thread_deleted: 'the email was deleted in Gmail', google_unavailable: 'Google kept failing', send_failed: 'Gmail kept refusing to send', error: 'sending kept failing' };
+// What the follow-up strip says for a lead's sequence row (or null).
+function leadMailFollowupState(fu){
+  if(!fu) return { kind: 'none' };
+  if(fu.status === 'done') return { kind: 'done', text: 'All 3 automatic follow-ups were sent.' };
+  if(fu.status === 'stopped') return { kind: 'stopped', canResume: ['manual', 'off'].includes(fu.stop_reason) && fu.step <= 3,
+    text: 'Automatic follow-ups stopped: ' + (LEAD_MAIL_STOP_REASONS[fu.stop_reason] || fu.stop_reason || 'stopped') + '.' };
+  return { kind: 'active', step: fu.step, at: fu.next_at };
+}
 /* LEAD-MAIL-CORE-END */
 
-const LEAD_MAIL = { gmail: null, open: false, history: null, historyFor: null, sending: false, sendKey: '' };
+const LEAD_MAIL = {
+  gmail: null, history: null, historyFor: null, emails: [], needsRead: [], followup: null, templates: [],
+  sending: false, sendKey: '', sendAnyway: false, files: [], draftSubject: '', draftBody: '',
+  newMode: false, autoFollow: true, editFollow: false, editTemplates: false, loading: false,
+};
 // The Worker acts as the signed-in user, so "view as" must not change who the
 // drawer says the email comes from.
 function leadMailViewer(){ return (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || activeRole() || {}; }
@@ -29561,7 +29661,8 @@ async function leadMailLoadHistory(l){
   LEAD_MAIL.emails = r.ok ? (r.body.emails || []) : [];
   LEAD_MAIL.history = r.ok ? leadMailTimeline(r.body.emails, r.body.messages) : [];
   LEAD_MAIL.needsRead = r.ok ? (r.body.needs_read || []) : [];
-  // The Worker's sync updated the lead's reply flags; mirror them for the table.
+  LEAD_MAIL.followup = r.ok ? (r.body.followup || null) : null;
+  LEAD_MAIL.templates = r.ok ? (r.body.templates || []) : [];
   const last = LEAD_MAIL.history.filter(m => m.dir !== 'other').pop();
   if(last && l){
     const waiting = last.dir === 'in';
@@ -29569,170 +29670,249 @@ async function leadMailLoadHistory(l){
   }
 }
 
-// Called from openLead: closes the composer and fetches what the drawer needs.
+// Called from openLead: resets the card and loads what it needs.
 function leadMailReset(l){
-  LEAD_MAIL.open = false; LEAD_MAIL.history = null; LEAD_MAIL.historyFor = l ? l.id : null;
-  LEAD_MAIL.draftSubject = ""; LEAD_MAIL.draftBody = ""; LEAD_MAIL.sendKey = "";
-  LEAD_MAIL.draftReply = ""; LEAD_MAIL.replyKey = ""; LEAD_MAIL.emails = []; LEAD_MAIL.needsRead = [];
-  LEAD_MAIL.gmail = null;   // re-checked when the composer opens (connected in another tab, revoked…)
+  Object.assign(LEAD_MAIL, { history: null, historyFor: l ? l.id : null, emails: [], needsRead: [], followup: null,
+    sendKey: '', sendAnyway: false, files: [], draftSubject: '', draftBody: '', newMode: false, autoFollow: true,
+    editFollow: false, editTemplates: false, gmail: null, loading: true });
   const box = document.getElementById('lead-mail');
-  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
-  if(!l) return;
-  const mode = leadMailMode(l, leadMailViewer(), { connected: true });
-  if(mode !== 'compose') return;          // not theirs to email: no history either
-  leadMailLoadHistory(l).then(() => { if(String(_editingLeadId) === String(l.id)) leadMailRender(l); });
-}
-
-async function leadMailToggle(l){
-  LEAD_MAIL.open = !LEAD_MAIL.open;
+  if(!box) return;
+  if(!l){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  const pre = leadMailMode(l, leadMailViewer(), { connected: true });
+  // Follow-ups only make sense for your own lead (they stop when someone else holds it).
+  LEAD_MAIL.autoFollow = String(l.claimed_by || '').toLowerCase() === String(leadMailViewer().email || '').toLowerCase();
+  if(pre !== 'compose'){ LEAD_MAIL.loading = false; leadMailRender(l); return; }
   leadMailRender(l);
-  if(LEAD_MAIL.open && !LEAD_MAIL.gmail){
-    await leadMailLoadStatus();
-    if(String(_editingLeadId) === String(l.id)) leadMailRender(l);
-  }
-  if(LEAD_MAIL.open){ const s = document.getElementById('lead-mail-subject'); if(s && !s.value) s.focus(); }
+  Promise.all([leadMailLoadStatus(), leadMailLoadHistory(l)]).then(() => {
+    LEAD_MAIL.loading = false;
+    if(String(_editingLeadId) === String(l.id)) leadMailRender(l, { scroll: true });
+  });
 }
 
-function leadMailHistoryHtml(l){
-  const h = LEAD_MAIL.history;
-  if(!h || !h.length) return '';
-  const when = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); };
-  const me = String(leadMailViewer().email || '').toLowerCase();
-  const items = h.map((m, i) => {
-    const inbound = m.dir === 'in', other = m.dir === 'other';
-    const open = m.dir === 'out' && m.email ? leadMailOpenLabel(m.email, when) : null;
-    const who = inbound || other ? esc(m.from || m.fromEmail || 'Unknown') : (String(m.fromEmail || '').toLowerCase() === me ? 'You' : esc(m.from));
-    // Long messages start folded except the newest one.
-    const isLast = i === h.length - 1;
-    return `<div style="border:1px solid var(--line, #E4DBC9);border-left:3px solid ${inbound ? 'var(--accent, #B94A3F)' : 'var(--line, #E4DBC9)'};border-radius:8px;padding:8px 10px;background:${inbound ? 'var(--cream-2)' : 'transparent'}">
-        <div style="font-size:12px" class="name-sub"><b style="color:var(--ink, #2B211A)">${who}</b>${inbound ? ' replied' : other ? ' (automatic reply or someone other than the lead)' : ''} · ${esc(when(m.at))}${open ? ` · <span style="${open.tone === 'good' ? 'color:var(--ink, #2B211A);font-weight:600' : ''}">${esc(open.text)}</span>` : ''}</div>
-        ${i === 0 || (m.subject && h[i - 1] && m.subject.replace(/^re:\s*/i, '') !== h[i - 1].subject.replace(/^re:\s*/i, '')) ? `<div style="font-size:13px;font-weight:600;margin-top:3px">${esc(m.subject)}</div>` : ''}
-        <div style="white-space:pre-wrap;font-size:13px;margin-top:4px;${isLast ? '' : 'max-height:7.5em;overflow:hidden'}">${esc(m.body)}</div>
-      </div>`;
-  }).join('');
-  const needs = LEAD_MAIL.needsRead || [];
-  const needMe = needs.some(e => String(e).toLowerCase() === me);
-  const needOthers = needs.filter(e => String(e).toLowerCase() !== me);
-  const banner = needMe
-    ? `<div class="name-sub lead-sub-warn" style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">Replies to your emails show here once you reconnect Gmail with read access.<button class="btn btn-mini" type="button" id="lead-mail-upgrade">Reconnect Gmail</button></div>`
-    : needOthers.length ? `<div class="name-sub">Replies to emails from ${needOthers.map(esc).join(', ')} show once they reconnect Gmail.</div>` : '';
-  const thread = leadMailReplyThread(LEAD_MAIL.emails, me);
-  const canReply = !!(thread && !needMe);
-  const last = h.filter(m => m.dir !== 'other').pop();
-  const reply = canReply ? `
-      <div style="margin-top:4px">
-        ${last && last.dir === 'in' ? `<div class="name-sub" style="font-size:12px;margin-bottom:4px"><b style="color:var(--ink, #2B211A)">Waiting for your reply.</b></div>` : ''}
-        <textarea class="form-input" id="lead-mail-reply" rows="3" maxlength="10000" placeholder="Reply in this conversation…">${esc(LEAD_MAIL.draftReply || '')}</textarea>
-        <div id="lead-mail-reply-err" class="name-sub lead-sub-warn" style="display:none;margin-top:4px"></div>
-        <div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn btn-primary btn-mini" type="button" id="lead-mail-reply-send">Send reply</button></div>
-      </div>` : '';
-  return `<div style="margin-top:10px">
-    <div class="name-sub" style="font-size:12px;margin-bottom:6px">Conversation (${h.length}) · replies also arrive in Gmail</div>
-    <div style="display:flex;flex-direction:column;gap:6px">${items}</div>
-    ${banner ? `<div style="margin-top:6px">${banner}</div>` : ''}
-    ${reply}
+// The footer "Email lead" button: bring the card into view and put the cursor in it.
+function leadMailToggle(l){
+  const box = document.getElementById('lead-mail');
+  if(!box) return;
+  if(box.style.display === 'none') leadMailRender(l);
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => { const t = document.getElementById('lead-mail-body'); if(t) t.focus(); }, 300);
+}
+
+function leadMailWhen(iso, withDay){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  return withDay ? d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                 : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+function leadMailDay(iso){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const today = new Date(), y = new Date(Date.now() - 86400000);
+  if(d.toDateString() === today.toDateString()) return 'Today';
+  if(d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+const LM_ICON = {
+  clip: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>',
+  ext: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>',
+  file: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+};
+
+function leadMailBubble(m, me){
+  const inbound = m.dir === 'in', other = m.dir === 'other', mine = m.dir === 'out';
+  const who = mine ? (String(m.fromEmail || '').toLowerCase() === me ? 'You' : esc(m.from)) : esc(m.from || m.fromEmail || 'Unknown');
+  const open = mine && m.email ? leadMailOpenLabel(m.email, x => leadMailWhen(x, true)) : null;
+  const files = (m.files || []).map(f => `<span class="lm-file">${LM_ICON.file}${esc(f.name)}${f.size ? ` <span class="lm-dim">${esc(leadMailSize(f.size))}</span>` : ''}</span>`).join('');
+  const tag = m.auto ? `<span class="lm-tag">Auto follow-up${m.step ? ' ' + esc(m.step) : ''}</span>` : other ? `<span class="lm-tag">Automatic reply or not the lead</span>` : '';
+  return `<div class="lm-msg ${mine ? 'lm-out' : other ? 'lm-other' : 'lm-in'}">
+    <div class="lm-bubble">
+      ${m.subject && m.showSubject ? `<div class="lm-subj">${esc(m.subject)}</div>` : ''}
+      <div class="lm-text">${esc(m.body).replace(/\n/g, '<br>')}</div>
+      ${files ? `<div class="lm-files">${files}</div>` : ''}
+    </div>
+    <div class="lm-meta">${who}${inbound ? ' replied' : ''} · ${esc(leadMailWhen(m.at))}${tag ? ' · ' + tag : ''}${open ? ` · <span class="${open.tone === 'good' ? 'lm-opened' : ''}">${esc(open.text)}</span>` : ''}</div>
   </div>`;
 }
 
-function leadMailRender(l){
+function leadMailThreadHtml(me){
+  const h = LEAD_MAIL.history || [];
+  if(!h.length) return `<div class="lm-empty">${LEAD_MAIL.loading ? 'Loading the conversation…' : 'No emails with this lead yet. Write the first one below.'}</div>`;
+  let day = '', prevSubj = '';
+  return h.map(m => {
+    const d = leadMailDay(m.at), base = String(m.subject || '').replace(/^(re|aw|res|rv)\s*:\s*/i, '');
+    const sep = d !== day ? `<div class="lm-day"><span>${esc(d)}</span></div>` : '';
+    day = d;
+    m.showSubject = !!base && base !== prevSubj;
+    if(base) prevSubj = base;
+    return sep + leadMailBubble(m, me);
+  }).join('');
+}
+
+function leadMailFollowupHtml(l, me){
+  const st = leadMailFollowupState(LEAD_MAIL.followup);
+  const admin = leadMailViewer().role === 'admin';
+  const owner = LEAD_MAIL.followup && (admin || String((leadMailViewer().id) || '') === String(LEAD_MAIL.followup.member_id) || String(l.claimed_by || '').toLowerCase() === me);
+  const tplLink = admin ? `<button type="button" class="lm-link" id="lm-tpl-open">Edit templates</button>` : '';
+  if(LEAD_MAIL.editTemplates) return leadMailTemplatesHtml();
+  if(st.kind === 'none') return tplLink ? `<div class="lm-strip lm-strip-quiet">${LM_ICON.clock}<span>Automatic follow-ups start when you send with the box ticked.</span>${tplLink}</div>` : '';
+  if(st.kind !== 'active'){
+    return `<div class="lm-strip lm-strip-quiet">${LM_ICON.clock}<span>${esc(st.text)}</span>
+      ${st.canResume && owner ? `<button type="button" class="lm-link" data-lm-fu="resume">Resume</button>` : ''}${tplLink}</div>`;
+  }
+  const tpl = (LEAD_MAIL.templates || []).find(t => t.step === st.step);
+  const ov = LEAD_MAIL.followup.overrides && LEAD_MAIL.followup.overrides[String(st.step)];
+  const text = (ov && String(ov).trim()) || (tpl && tpl.body) || '';
+  if(LEAD_MAIL.editFollow){
+    return `<div class="lm-strip lm-strip-on" style="display:block">
+      <div class="lm-strip-head">${LM_ICON.clock}<b>Edit follow-up ${esc(st.step)} of 3</b><span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} · only for this lead</span></div>
+      <textarea class="form-input lm-input" id="lm-fu-text" rows="3" maxlength="4000">${esc(text)}</textarea>
+      <div class="lm-row-end"><button class="btn btn-ghost btn-mini" type="button" id="lm-fu-cancel">Cancel</button><button class="btn btn-primary btn-mini" type="button" id="lm-fu-save">Save</button></div>
+    </div>`;
+  }
+  return `<div class="lm-strip lm-strip-on">
+    ${LM_ICON.clock}<div style="flex:1;min-width:0"><b>Follow-up ${esc(st.step)} of 3</b> <span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} if no reply</span>
+      <div class="lm-preview">${esc(leadMailGreeting(l.name).replace(/,$/, ''))}, ${esc(text)}</div></div>
+    ${owner ? `<span class="lm-strip-actions"><button type="button" class="lm-link" id="lm-fu-edit">Edit</button><button type="button" class="lm-link" data-lm-fu="skip">Skip</button><button type="button" class="lm-link" data-lm-fu="stop">Stop</button></span>` : ''}
+  </div>${tplLink ? `<div style="text-align:right;margin-top:-4px">${tplLink}</div>` : ''}`;
+}
+
+function leadMailTemplatesHtml(){
+  const t = LEAD_MAIL.templates.length ? LEAD_MAIL.templates : [1, 2, 3].map(step => ({ step, delay_days: [2, 3, 5][step - 1], body: '' }));
+  return `<div class="lm-strip lm-strip-on" style="display:block">
+    <div class="lm-strip-head">${LM_ICON.clock}<b>Follow-up templates</b><span class="lm-dim">· for everyone · each email starts "Hi {first name}," and ends with the rep's name</span></div>
+    ${t.map(x => `<div style="margin-top:8px"><label class="lm-dim" style="display:flex;gap:6px;align-items:center">Follow-up ${x.step}: send
+      <input class="form-input" type="number" min="1" max="30" value="${esc(x.delay_days)}" data-lm-tpl-days="${x.step}" style="width:64px;padding:4px 6px"> days after the previous email</label>
+      <textarea class="form-input lm-input" rows="2" maxlength="4000" data-lm-tpl-body="${x.step}">${esc(x.body)}</textarea></div>`).join('')}
+    <div id="lm-tpl-err" class="name-sub lead-sub-warn" style="display:none"></div>
+    <div class="lm-row-end"><button class="btn btn-ghost btn-mini" type="button" id="lm-tpl-cancel">Cancel</button><button class="btn btn-primary btn-mini" type="button" id="lm-tpl-save">Save templates</button></div>
+  </div>`;
+}
+
+function leadMailComposerHtml(l, me){
+  const thread = leadMailReplyThread(LEAD_MAIL.emails, me);
+  const needMe = (LEAD_MAIL.needsRead || []).some(e => String(e).toLowerCase() === me);
+  const reply = !!thread && !needMe && !LEAD_MAIL.newMode;
+  const fu = LEAD_MAIL.followup && LEAD_MAIL.followup.status === 'active';
+  const files = LEAD_MAIL.files.map((f, i) => `<span class="lm-file lm-chip">${f.thumb ? `<img src="${f.thumb}" alt="">` : LM_ICON.file}${esc(f.name)} <span class="lm-dim">${esc(leadMailSize(f.size))}</span><button type="button" aria-label="Remove ${esc(f.name)}" data-lm-rm="${i}">×</button></span>`).join('');
+  return `<div class="lm-compose">
+    ${reply
+      ? `<div class="lm-compose-head"><span class="lm-dim">Reply in this conversation · to ${esc(leadMailAddress(l.email))}</span>${thread ? `<button type="button" class="lm-link" id="lm-new">New email</button>` : ''}</div>`
+      : `<div class="lm-compose-head"><span class="lm-dim">New email to ${esc(leadMailAddress(l.email))} · starts with “${esc(leadMailGreeting(l.name))}”</span>${thread && !needMe ? `<button type="button" class="lm-link" id="lm-reply-mode">Reply instead</button>` : ''}</div>
+         <input class="form-input lm-input" id="lead-mail-subject" maxlength="200" placeholder="Subject" value="${esc(LEAD_MAIL.draftSubject || 'Your Vanmates enquiry')}">`}
+    <textarea class="form-input lm-input" id="lead-mail-body" rows="3" maxlength="10000" placeholder="${reply ? 'Write a reply…' : 'Write your message…'}">${esc(LEAD_MAIL.draftBody || '')}</textarea>
+    ${files ? `<div class="lm-files">${files}</div>` : ''}
+    <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none"></div>
+    <div class="lm-toolbar">
+      <label class="lm-tool" title="Attach photos or documents (10 MB total)">${LM_ICON.clip}<span>Attach</span><input type="file" id="lm-file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
+      ${fu && reply ? `<span class="lm-dim" style="font-size:12px">Follow-ups re-time after your reply</span>`
+        : `<label class="lm-tool" title="Up to 3 short follow-ups in this conversation (2, 5 and 10 days later, weekdays 9:00-16:45 Vancouver). They stop when the lead replies."><input type="checkbox" id="lm-auto" ${LEAD_MAIL.autoFollow ? 'checked' : ''}><span>Follow up automatically if no reply</span></label>`}
+      <span style="flex:1"></span>
+      <span class="lm-dim lm-kbd">⌘↵</span>
+      <button class="btn btn-primary" type="button" id="lead-mail-send">${LEAD_MAIL.sendAnyway ? 'Send anyway' : reply ? 'Send reply' : 'Send email'}</button>
+    </div>
+  </div>`;
+}
+
+function leadMailRender(l, opts){
   const box = document.getElementById('lead-mail');
   if(!box || !l) return;
-  const hist = leadMailHistoryHtml(l);
-  if(!LEAD_MAIL.open){
-    box.style.display = hist ? '' : 'none';
-    box.innerHTML = hist;
-    leadMailWireConversation(l);
-    return;
-  }
+  const me = String(leadMailViewer().email || '').toLowerCase();
+  const mode = leadMailMode(l, leadMailViewer(), LEAD_MAIL.gmail || (LEAD_MAIL.loading ? null : { connected: false }));
   box.style.display = '';
-  const mode = leadMailMode(l, leadMailViewer(), LEAD_MAIL.gmail);
-  const panel = inner => `<div style="padding:12px 14px;border:1px solid var(--line, #E4DBC9);background:var(--cream-2);border-radius:10px">${inner}</div>`;
-  const line = (title, sub, btn) => panel(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div><div class="name-main">${title}</div><div class="name-sub">${sub}</div></div>${btn || ''}</div>`);
-  const me = leadMailViewer().email || '';
-  let html;
-  if(mode === 'no-email') html = line('No email address', 'This lead has no usable email address. Use WhatsApp, or add the address to the notes.');
-  else if(mode === 'claim') html = line('Claim this lead first', 'You can email a lead once it is yours.');
-  else if(mode === 'other') html = line('Not your lead', 'Only the person who claimed this lead can email it from the portal.');
-  else if(mode === 'loading') html = line('Checking your Gmail…', '&nbsp;');
-  else if(mode === 'error') html = line('Could not reach the email service', esc(leadMailErrorText(LEAD_MAIL.gmail.error)), `<button class="btn" type="button" id="lead-mail-retry">Try again</button>`);
-  else if(mode === 'connect' || mode === 'reconnect') html = line(
-      mode === 'reconnect' ? 'Reconnect your Gmail' : 'Connect your Gmail',
+  const head = (right) => `<div class="lm-head"><div class="lm-title">Email</div><div class="lm-head-right">${right || ''}</div></div>`;
+  const note = (title, sub, btn) => `<div class="lm-card">${head()}<div class="lm-note"><div><div class="name-main">${title}</div><div class="name-sub">${sub}</div></div>${btn || ''}</div></div>`;
+  if(mode === 'no-email'){ box.innerHTML = note('No email address', 'This lead has no usable email address. Use WhatsApp, or add the address to the notes.'); return; }
+  if(mode === 'claim'){ box.innerHTML = note('Claim this lead to email it', 'Once it is yours you can email the lead from here, from your own Gmail.'); return; }
+  if(mode === 'other'){ box.innerHTML = note('Not your lead', 'Only the person who claimed this lead can email it from the portal.'); return; }
+  if(mode === 'error'){ box.innerHTML = note('Could not reach the email service', esc(leadMailErrorText(LEAD_MAIL.gmail.error)), `<button class="btn" type="button" id="lead-mail-retry">Try again</button>`); leadMailWire(l); return; }
+  if(mode === 'connect' || mode === 'reconnect'){
+    box.innerHTML = note(mode === 'reconnect' ? 'Reconnect your Gmail' : 'Connect your Gmail',
       (mode === 'reconnect' ? 'Google stopped accepting the connection (password change or access removed). ' : '') +
-      `Emails go out from <b>${esc(me)}</b> and replies come back to your normal Gmail inbox. The portal can only send, never read your mail.`,
+      `Emails go out from <b>${esc(leadMailViewer().email || '')}</b>, replies show here and in your Gmail inbox. The portal only opens conversations it started.`,
       `<button class="btn btn-primary" type="button" id="lead-mail-connect">${mode === 'reconnect' ? 'Reconnect Gmail' : 'Connect Gmail'}</button>`);
-  else {
-    const to = leadMailAddress(l.email);
-    const claimNote = String(l.claimed_by || '').toLowerCase() !== String(me).toLowerCase()
-      ? `<div class="name-sub lead-sub-warn" style="margin-bottom:8px">Admin: this lead is ${l.claimed_by ? 'claimed by ' + esc(l.claimed_by) : 'unclaimed'}. It goes out from your Gmail.</div>` : '';
-    html = panel(`
-      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <div class="name-sub">From <b>${esc(LEAD_MAIL.gmail.email || me)}</b> to <b>${esc(to)}</b></div>
-        <button class="btn btn-ghost btn-mini" type="button" id="lead-mail-disconnect" title="Remove the portal's permission to send from your Gmail">Disconnect Gmail</button>
-      </div>
-      ${claimNote}
-      <div class="form-field"><label>Subject</label><input class="form-input" id="lead-mail-subject" maxlength="200" value="${esc(LEAD_MAIL.draftSubject || 'Your Vanmates enquiry')}" /></div>
-      <div class="form-field"><label>Message</label>
-        <div class="name-sub" style="margin-bottom:4px">Starts with “${esc(leadMailGreeting(l.name))}” and ends with your name. It goes out in the Vanmates email design.</div>
-        <textarea class="form-input" id="lead-mail-body" rows="7" maxlength="10000" placeholder="Write your message…">${esc(LEAD_MAIL.draftBody || '')}</textarea></div>
-      <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none;margin-bottom:8px"></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-ghost" type="button" id="lead-mail-cancel">Cancel</button>
-        <button class="btn btn-primary" type="button" id="lead-mail-send">Send email</button>
-      </div>`);
+    leadMailWire(l); return;
   }
-  box.innerHTML = html + hist;
+  const thread = leadMailReplyThread(LEAD_MAIL.emails, me);
+  const gmailLink = thread ? `<a class="lm-link" href="https://mail.google.com/mail/u/?authuser=${encodeURIComponent(me)}#all/${encodeURIComponent(thread)}" target="_blank" rel="noopener">${LM_ICON.ext} Open in Gmail</a>` : '';
+  const from = LEAD_MAIL.gmail && LEAD_MAIL.gmail.email ? `<span class="lm-dim">${esc(LEAD_MAIL.gmail.email)}</span>` : '';
+  const needs = LEAD_MAIL.needsRead || [];
+  const needMe = needs.some(e => String(e).toLowerCase() === me);
+  const others = needs.filter(e => String(e).toLowerCase() !== me);
+  const banner = needMe
+    ? `<div class="lm-strip lm-strip-warn"><span style="flex:1">Reconnect Gmail once so replies show here (Google now also asks for read access).</span><button class="btn btn-mini" type="button" id="lead-mail-connect">Reconnect Gmail</button></div>`
+    : others.length ? `<div class="lm-strip lm-strip-quiet"><span>Replies to emails from ${others.map(esc).join(', ')} show once they reconnect Gmail.</span></div>` : '';
+  const claimNote = String(l.claimed_by || '').toLowerCase() !== me
+    ? `<div class="lm-strip lm-strip-warn"><span>Admin: this lead is ${l.claimed_by ? 'claimed by ' + esc(l.claimed_by) : 'unclaimed'}. Emails go out from your Gmail.</span></div>` : '';
+  const prevScroll = (document.getElementById('lm-thread') || {}).scrollTop;
+  box.innerHTML = `<div class="lm-card">
+    ${head(`${from}${gmailLink}<details class="lm-more"><summary aria-label="More">⋯</summary><div><button type="button" class="lm-link" id="lead-mail-disconnect">Disconnect Gmail</button></div></details>`)}
+    ${banner}${claimNote}${leadMailFollowupHtml(l, me)}
+    <div class="lm-thread" id="lm-thread">${leadMailThreadHtml(me)}</div>
+    ${leadMailComposerHtml(l, me)}
+  </div>`;
+  const t = document.getElementById('lm-thread');
+  if(t) t.scrollTop = (opts && opts.scroll) || prevScroll == null ? t.scrollHeight : prevScroll;
+  leadMailWire(l);
+}
+
+function leadMailWire(l){
   const on = (id, fn) => { const el = document.getElementById(id); if(el) el.addEventListener('click', fn); };
-  on('lead-mail-retry', async () => { LEAD_MAIL.gmail = null; leadMailRender(l); await leadMailLoadStatus(); leadMailRender(l); });
+  on('lead-mail-retry', async () => { LEAD_MAIL.gmail = null; LEAD_MAIL.loading = true; leadMailRender(l); await leadMailLoadStatus(); LEAD_MAIL.loading = false; leadMailRender(l); });
   on('lead-mail-connect', () => leadMailConnect(l));
   on('lead-mail-disconnect', () => leadMailDisconnect(l));
-  on('lead-mail-cancel', () => { LEAD_MAIL.open = false; leadMailRender(l); });
   on('lead-mail-send', () => leadMailSend(l));
+  on('lm-new', () => { LEAD_MAIL.newMode = true; leadMailRender(l); });
+  on('lm-reply-mode', () => { LEAD_MAIL.newMode = false; leadMailRender(l); });
+  on('lm-fu-edit', () => { LEAD_MAIL.editFollow = true; leadMailRender(l); });
+  on('lm-fu-cancel', () => { LEAD_MAIL.editFollow = false; leadMailRender(l); });
+  on('lm-fu-save', () => leadMailFollowup(l, 'edit', (document.getElementById('lm-fu-text') || {}).value || ''));
+  on('lm-tpl-open', () => { LEAD_MAIL.editTemplates = true; leadMailRender(l); });
+  on('lm-tpl-cancel', () => { LEAD_MAIL.editTemplates = false; leadMailRender(l); });
+  on('lm-tpl-save', () => leadMailSaveTemplates(l));
+  document.querySelectorAll('[data-lm-fu]').forEach(b => b.addEventListener('click', () => leadMailFollowup(l, b.getAttribute('data-lm-fu'))));
+  document.querySelectorAll('[data-lm-rm]').forEach(b => b.addEventListener('click', () => {
+    const f = LEAD_MAIL.files.splice(Number(b.getAttribute('data-lm-rm')), 1)[0];
+    if(f && f.thumb) URL.revokeObjectURL(f.thumb);
+    leadMailRender(l);
+  }));
   const sub = document.getElementById('lead-mail-subject'), bod = document.getElementById('lead-mail-body');
   if(sub) sub.addEventListener('input', () => { LEAD_MAIL.draftSubject = sub.value; });
-  if(bod) bod.addEventListener('input', () => { LEAD_MAIL.draftBody = bod.value; });
-  leadMailWireConversation(l);
-}
-
-function leadMailWireConversation(l){
-  const up = document.getElementById('lead-mail-upgrade');
-  if(up) up.addEventListener('click', () => { LEAD_MAIL.open = true; LEAD_MAIL.gmail = LEAD_MAIL.gmail || { connected: true }; leadMailConnect(l); });
-  const ta = document.getElementById('lead-mail-reply');
-  if(ta) ta.addEventListener('input', () => { LEAD_MAIL.draftReply = ta.value; });
-  const go = document.getElementById('lead-mail-reply-send');
-  if(go) go.addEventListener('click', () => leadMailReply(l));
-}
-
-async function leadMailReply(l){
-  if(LEAD_MAIL.sending) return;
-  const ta = document.getElementById('lead-mail-reply'), err = document.getElementById('lead-mail-reply-err'), btn = document.getElementById('lead-mail-reply-send');
-  const message = ta ? ta.value : '';
-  const fail = code => { if(err){ err.textContent = leadMailErrorText(code); err.style.display = ''; } };
-  if(!message.trim()) return fail('message_required');
-  const thread = leadMailReplyThread(LEAD_MAIL.emails, leadMailViewer().email);
-  if(!thread) return fail('thread_not_found');
-  if(!LEAD_MAIL.replyKey || LEAD_MAIL.replyAnyway){ LEAD_MAIL.replyKey = leadMailNewKey(); LEAD_MAIL.replyAnyway = false; }
-  LEAD_MAIL.sending = true;
-  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
-  const r = await leadMailCall('POST', '/api/leads/reply', { lead_id: l.id, thread_id: thread, message, send_key: LEAD_MAIL.replyKey });
-  LEAD_MAIL.sending = false;
-  if(!r.ok){
-    if(btn){ btn.disabled = false; btn.textContent = 'Send reply'; }
-    let code = r.body && r.body.error;
-    if(r.status === 0) code = 'may_have_sent';
-    if(code === 'may_have_sent' || code === 'already_sent') LEAD_MAIL.replyAnyway = true;
-    return fail(code);
+  if(bod){
+    const grow = () => { bod.style.height = 'auto'; bod.style.height = Math.min(320, bod.scrollHeight + 2) + 'px'; };
+    bod.addEventListener('input', () => { LEAD_MAIL.draftBody = bod.value; grow(); });
+    bod.addEventListener('keydown', e => { if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); leadMailSend(l); } });
+    if(bod.value) grow();
   }
-  LEAD_MAIL.draftReply = ''; LEAD_MAIL.replyKey = '';
-  l.reply_waiting = false; l.last_touched_at = r.body.sent_at; l.last_emailed_at = r.body.sent_at;
-  if(typeof renderLeads === 'function') renderLeads();
-  showToast('Reply sent to ' + r.body.to);
-  await leadMailLoadHistory(l);
-  if(String(_editingLeadId) === String(l.id)) leadMailRender(l);
+  const auto = document.getElementById('lm-auto');
+  if(auto) auto.addEventListener('change', () => { LEAD_MAIL.autoFollow = auto.checked; });
+  const file = document.getElementById('lm-file');
+  if(file) file.addEventListener('change', () => { leadMailAddFiles(l, file.files); file.value = ''; });
 }
 
-// The popup must open inside the click (popup blockers), so it opens blank and
-// is pointed at Google once the Worker hands back the signed link.
+// Files are base64-encoded here (wrapped at 76 columns), so the Worker only
+// has to splice them into the email.
+function leadMailReadFile(f){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result || ''); resolve(s.slice(s.indexOf(',') + 1).replace(/.{76}/g, '$&\r\n')); };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(f);
+  });
+}
+async function leadMailAddFiles(l, list){
+  const incoming = Array.from(list || []).map(f => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size, file: f }));
+  const err = leadMailFilesProblem(LEAD_MAIL.files.concat(incoming));
+  if(err){ showToast(leadMailErrorText(err)); return; }
+  for(const x of incoming){
+    try {
+      x.data = await leadMailReadFile(x.file);
+      if(/^image\//.test(x.type)) x.thumb = URL.createObjectURL(x.file);
+      delete x.file;
+      LEAD_MAIL.files.push(x);
+    } catch(_){ showToast('Could not read ' + x.name); }
+  }
+  leadMailRender(l);
+}
+
 // Google's pages can cut the popup off from this window (opener policy), so
 // postMessage is only the fast path: when the popup closes, or this window gets
 // focus back, the status is fetched again.
@@ -29750,25 +29930,19 @@ async function leadMailConnect(l){
   }, 600);
 }
 async function leadMailRefresh(){
-  if(!LEAD_MAIL.open || LEAD_MAIL.sending) return;
-  await leadMailLoadStatus();
   const l = leads.find(x => String(x.id) === String(_editingLeadId));
-  if(l) leadMailRender(l);
+  if(!l || LEAD_MAIL.sending) return;
+  await leadMailLoadStatus();
+  await leadMailLoadHistory(l);
+  if(String(_editingLeadId) === String(l.id)) leadMailRender(l, { scroll: true });
 }
 window.addEventListener('focus', () => {
-  if(LEAD_MAIL.open && LEAD_MAIL.gmail && !LEAD_MAIL.gmail.connected) leadMailRefresh();
+  if(_editingLeadId && LEAD_MAIL.gmail && (!LEAD_MAIL.gmail.connected || (LEAD_MAIL.needsRead || []).length)) leadMailRefresh();
 });
-
 window.addEventListener('message', async (ev) => {
   if(ev.origin !== LEAD_MAIL_WORKER || !ev.data || ev.data.source !== 'vm-lead-mail') return;
-  const l = leads.find(x => String(x.id) === String(_editingLeadId));
-  if(ev.data.ok){
-    showToast('Gmail connected: ' + ev.data.email);
-    LEAD_MAIL.gmail = { connected: true, needs_reconnect: false, email: ev.data.email };
-  } else {
-    await leadMailLoadStatus();
-  }
-  if(l) leadMailRender(l);
+  if(ev.data.ok) showToast('Gmail connected: ' + ev.data.email);
+  leadMailRefresh();
 });
 
 async function leadMailDisconnect(l){
@@ -29779,47 +29953,81 @@ async function leadMailDisconnect(l){
   leadMailRender(l);
 }
 
+async function leadMailFollowup(l, action, text){
+  const r = await leadMailCall('POST', '/api/leads/followup', { lead_id: l.id, action, text });
+  if(!r.ok){ showToast(leadMailErrorText(r.body && r.body.error)); return; }
+  LEAD_MAIL.followup = r.body.followup || null;
+  LEAD_MAIL.editFollow = false;
+  showToast({ stop: 'Follow-ups stopped', resume: 'Follow-ups resumed', skip: 'Skipped that follow-up', edit: 'Follow-up saved' }[action] || 'Saved');
+  leadMailRender(l);
+}
+
+async function leadMailSaveTemplates(l){
+  const templates = [1, 2, 3].map(step => ({
+    step,
+    delay_days: Number((document.querySelector(`[data-lm-tpl-days="${step}"]`) || {}).value || 0),
+    body: String((document.querySelector(`[data-lm-tpl-body="${step}"]`) || {}).value || '').trim(),
+  }));
+  const r = await leadMailCall('POST', '/api/followup-templates', { templates });
+  if(!r.ok){
+    const e = document.getElementById('lm-tpl-err');
+    if(e){ e.textContent = r.body && r.body.error === 'bad_templates' ? 'Each follow-up needs text and 1 to 30 days.' : leadMailErrorText(r.body && r.body.error); e.style.display = ''; }
+    return;
+  }
+  LEAD_MAIL.templates = r.body.templates || templates;
+  LEAD_MAIL.editTemplates = false;
+  showToast('Follow-up templates saved');
+  leadMailRender(l);
+}
+
 async function leadMailSend(l){
   if(LEAD_MAIL.sending) return;
-  const subject = (document.getElementById('lead-mail-subject') || {}).value || '';
+  const me = String(leadMailViewer().email || '').toLowerCase();
+  const thread = LEAD_MAIL.newMode ? '' : leadMailReplyThread(LEAD_MAIL.emails, me);
+  const needMe = (LEAD_MAIL.needsRead || []).some(e => String(e).toLowerCase() === me);
+  const reply = !!thread && !needMe;
+  const subject = reply ? '' : ((document.getElementById('lead-mail-subject') || {}).value || '');
   const message = (document.getElementById('lead-mail-body') || {}).value || '';
   const err = document.getElementById('lead-mail-err'), btn = document.getElementById('lead-mail-send');
   const fail = code => { if(err){ err.textContent = leadMailErrorText(code); err.style.display = ''; } };
-  if(!subject.trim()) return fail('subject_required');
+  if(!reply && !subject.trim()) return fail('subject_required');
   if(!message.trim()) return fail('message_required');
   // "Send anyway" after an ambiguous result is a deliberate second email: new key.
   if(!LEAD_MAIL.sendKey || LEAD_MAIL.sendAnyway){ LEAD_MAIL.sendKey = leadMailNewKey(); LEAD_MAIL.sendAnyway = false; }
+  const autoEl = document.getElementById('lm-auto');
+  const followUp = autoEl ? !!autoEl.checked : undefined;
   LEAD_MAIL.sending = true;
-  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
-  const r = await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey });
+  if(btn){ btn.disabled = true; btn.textContent = LEAD_MAIL.files.length ? 'Uploading…' : 'Sending…'; }
+  const attachments = LEAD_MAIL.files.map(f => ({ name: f.name, type: f.type, data: f.data }));
+  const r = reply
+    ? await leadMailCall('POST', '/api/leads/reply', { lead_id: l.id, thread_id: thread, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: followUp })
+    : await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: !!followUp });
   LEAD_MAIL.sending = false;
   if(!r.ok){
-    if(btn){ btn.disabled = false; btn.textContent = 'Send email'; }
+    if(btn){ btn.disabled = false; btn.textContent = reply ? 'Send reply' : 'Send email'; }
     let code = r.body && r.body.error;
     // No answer at all: the Worker may have sent it. Keep the key, so pressing
     // Send again can never email the lead twice.
     if(r.status === 0) code = 'may_have_sent';
-    if(code === 'may_have_sent' || code === 'already_sent'){
-      if(btn) btn.textContent = 'Send anyway';
-      LEAD_MAIL.sendAnyway = true;
-    }
+    if(r.status === 413) code = 'attachments_too_large';
+    if(code === 'may_have_sent' || code === 'already_sent'){ LEAD_MAIL.sendAnyway = true; if(btn) btn.textContent = 'Send anyway'; }
     if(code === 'reconnect' || code === 'not_connected'){ await leadMailLoadStatus(); leadMailRender(l); }
     return fail(code);
   }
-  LEAD_MAIL.draftSubject = ''; LEAD_MAIL.draftBody = ''; LEAD_MAIL.open = false; LEAD_MAIL.sendKey = '';
-  // Mirror what record_lead_email wrote into `data`, so a drawer save before
-  // realtime lands does not drop it.
-  if(r.body.recorded !== false){ l.last_touched_at = r.body.sent_at; l.last_emailed_at = r.body.sent_at; }
-  // The server moved new → contacted; mirror it so the drawer and table agree before realtime lands.
+  LEAD_MAIL.files.forEach(f => f.thumb && URL.revokeObjectURL(f.thumb));
+  Object.assign(LEAD_MAIL, { draftSubject: '', draftBody: '', sendKey: '', files: [], newMode: false });
+  // Mirror what the server wrote, so the drawer and table agree before realtime lands.
   if(r.body.status && r.body.status !== l.status){
     l.status = r.body.status;
     const st = document.getElementById('lead-status');
     if(st){ st.value = r.body.status; st.dataset.prev = r.body.status; }
-    if(typeof renderLeads === 'function') renderLeads();
   }
-  showToast(r.body.recorded === false ? 'Email sent (but it could not be logged on the lead)' : 'Email sent to ' + r.body.to);
+  if(r.body.recorded !== false){ l.last_touched_at = r.body.sent_at; l.last_emailed_at = r.body.sent_at; }
+  l.reply_waiting = false;
+  if(typeof renderLeads === 'function') renderLeads();
+  showToast(r.body.recorded === false ? 'Email sent (but it could not be logged on the lead)' : (reply ? 'Reply sent to ' : 'Email sent to ') + r.body.to);
   await leadMailLoadHistory(l);
-  if(String(_editingLeadId) === String(l.id)) leadMailRender(l);
+  if(String(_editingLeadId) === String(l.id)) leadMailRender(l, { scroll: true });
 }
 
 function openLead(id){
