@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-04-afterhours2"></script>
+<script src="pms-supabase.js?v=2026-10-04-leadmail6"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2187,6 +2187,7 @@
           <option value="open" selected>Open (new · contacted · qualified)</option>
           <option value="">All statuses</option>
           <option value="unassigned">Unassigned</option>
+          <option value="replied">Replied, waiting for you</option>
           <option value="new">New</option>
           <option value="contacted">Contacted</option>
           <option value="qualified">Qualified</option>
@@ -4074,6 +4075,11 @@ textarea.lm-input{resize:vertical;min-height:72px}
 .lm-tool:hover{color:var(--red)}
 .lm-kbd{font-size:11px}
 .lm-row-end{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
+.lm-tool-taylor{color:var(--red);font-weight:600}
+.lm-taylor{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--red-soft)}
+.lm-taylor .form-input{flex:1;min-width:0;padding:6px 8px}
+.lm-taylor-mark{color:var(--red);display:inline-flex}
 .lm-lang{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:2px 4px}
 .lm-tabs{display:flex;gap:6px;margin-top:2px}
 .lm-tab{font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
@@ -27976,6 +27982,8 @@ function leadStatusFilterMatches(lead, filter){
   const st = (lead && lead.status) || 'new';
   if(filter === 'open') return LEAD_OPEN_STATUSES.indexOf(st) >= 0;
   if(filter === 'unassigned') return !(lead && lead.claimed_at);
+  // The lead answered an email and nobody has replied yet (set by the email sync).
+  if(filter === 'replied') return !!(lead && lead.reply_waiting);
   return st === filter;
 }
 /* LEAD-CLAIM-CORE-END */
@@ -29639,6 +29647,7 @@ const LEAD_MAIL = {
   gmail: null, history: null, historyFor: null, emails: [], needsRead: [], followup: null, templates: [],
   sending: false, sendKey: '', sendAnyway: false, files: [], draftSubject: '', draftBody: '',
   newMode: false, autoFollow: true, editFollow: false, editTemplates: false, loading: false, lang: 'en', tplLang: 'en',
+  taylorOpen: false, taylorBusy: false, taylorAsk: '', prevDraft: null, prevSubject: null, taylorRooms: false,
 };
 // The Worker acts as the signed-in user, so "view as" must not change who the
 // drawer says the email comes from.
@@ -29704,6 +29713,7 @@ function leadMailReset(l){
   // Follow-ups only make sense for your own lead (they stop when someone else holds it).
   LEAD_MAIL.autoFollow = String(l.claimed_by || '').toLowerCase() === String(leadMailViewer().email || '').toLowerCase();
   LEAD_MAIL.lang = leadMailLang(l);
+  Object.assign(LEAD_MAIL, { taylorOpen: false, taylorBusy: false, taylorAsk: '', prevDraft: null, prevSubject: null, taylorRooms: false });
   if(pre !== 'compose'){ LEAD_MAIL.loading = false; leadMailRender(l); return; }
   leadMailRender(l);
   Promise.all([leadMailLoadStatus(), leadMailLoadHistory(l)]).then(() => {
@@ -29737,6 +29747,7 @@ const LM_ICON = {
   clip: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>',
   ext: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>',
   file: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>',
+  spark: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.9L19 9.7l-4.9 1.8L12 16.4l-1.8-4.9L5.3 9.7l4.9-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>',
   clock: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
 };
 
@@ -29834,11 +29845,19 @@ function leadMailComposerHtml(l, me){
       ? `<div class="lm-compose-head"><span class="lm-dim">Reply in this conversation · to ${esc(leadMailAddress(l.email))}</span>${thread ? `<button type="button" class="lm-link" id="lm-new">New email</button>` : ''}</div>`
       : `<div class="lm-compose-head"><span class="lm-dim">New email to ${esc(leadMailAddress(l.email))} · starts with “${esc(leadMailGreeting(l.name, LEAD_MAIL.lang))}”</span>${thread && !needMe ? `<button type="button" class="lm-link" id="lm-reply-mode">Reply instead</button>` : ''}</div>
          <input class="form-input lm-input" id="lead-mail-subject" maxlength="200" placeholder="Subject" value="${esc(LEAD_MAIL.draftSubject || 'Your Vanmates enquiry')}">`}
+    ${LEAD_MAIL.taylorOpen ? `<div class="lm-taylor">
+      <span class="lm-taylor-mark">${LM_ICON.spark}</span>
+      <input class="form-input" id="lm-taylor-ask" maxlength="500" placeholder="Anything to include? e.g. offer a video call Thursday (optional)" value="${esc(LEAD_MAIL.taylorAsk || '')}" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>
+      <button class="btn btn-primary btn-mini" type="button" id="lm-taylor-go" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>${LEAD_MAIL.taylorBusy ? 'Taylor is writing…' : 'Write draft'}</button>
+      <button class="lm-link" type="button" id="lm-taylor-close" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>Close</button>
+    </div>` : ''}
+    ${LEAD_MAIL.prevDraft != null ? `<div class="lm-dim" style="font-size:12px">Taylor wrote this draft${LEAD_MAIL.taylorRooms ? ' (with a room search)' : ''}: read it and edit before sending. <button class="lm-link" type="button" id="lm-taylor-undo">Undo</button></div>` : ''}
     <textarea class="form-input lm-input" id="lead-mail-body" rows="3" maxlength="10000" placeholder="${reply ? 'Write a reply…' : 'Write your message…'}">${esc(LEAD_MAIL.draftBody || '')}</textarea>
     ${files ? `<div class="lm-files">${files}</div>` : ''}
     <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none"></div>
     <div class="lm-toolbar">
       <select class="lm-lang" id="lm-lang" title="Language of the greeting and of the automatic follow-ups" aria-label="Email language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === LEAD_MAIL.lang ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <button type="button" class="lm-tool lm-tool-taylor" id="lm-taylor" title="Taylor writes a draft from the lead's details and the conversation, with matching rooms. Nothing is sent until you press Send.">${LM_ICON.spark}<span>Draft with Taylor</span></button>
       <label class="lm-tool" title="Attach photos or documents (10 MB total)">${LM_ICON.clip}<span>Attach</span><input type="file" id="lm-file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
       ${fu && reply ? `<span class="lm-dim" style="font-size:12px">Follow-ups re-time after your reply</span>`
         : `<label class="lm-tool" title="Up to 3 short follow-ups in this conversation (2, 5 and 10 days later, weekdays 9:00-16:45 Vancouver). They stop when the lead replies."><input type="checkbox" id="lm-auto" ${LEAD_MAIL.autoFollow ? 'checked' : ''}><span>Follow up automatically if no reply</span></label>`}
@@ -29921,6 +29940,15 @@ function leadMailWire(l){
   }
   const auto = document.getElementById('lm-auto');
   if(auto) auto.addEventListener('change', () => { LEAD_MAIL.autoFollow = auto.checked; });
+  on('lm-taylor', () => { LEAD_MAIL.taylorOpen = true; leadMailKeepDraft(); leadMailRender(l); const a = document.getElementById('lm-taylor-ask'); if(a) a.focus(); });
+  on('lm-taylor-close', () => { LEAD_MAIL.taylorOpen = false; leadMailKeepDraft(); leadMailRender(l); });
+  on('lm-taylor-go', () => leadMailTaylor(l));
+  on('lm-taylor-undo', () => { LEAD_MAIL.draftBody = LEAD_MAIL.prevDraft || ''; if(LEAD_MAIL.prevSubject != null) LEAD_MAIL.draftSubject = LEAD_MAIL.prevSubject; LEAD_MAIL.prevDraft = null; LEAD_MAIL.prevSubject = null; leadMailRender(l); });
+  const ask = document.getElementById('lm-taylor-ask');
+  if(ask){
+    ask.addEventListener('input', () => { LEAD_MAIL.taylorAsk = ask.value; });
+    ask.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); leadMailTaylor(l); } });
+  }
   const lang = document.getElementById('lm-lang');
   if(lang) lang.addEventListener('change', () => { LEAD_MAIL.lang = lang.value; LEAD_MAIL.draftBody = (document.getElementById('lead-mail-body') || {}).value || LEAD_MAIL.draftBody; leadMailRender(l); });
   const fuLang = document.getElementById('lm-fu-lang');
@@ -30027,6 +30055,40 @@ async function leadMailSaveTemplates(l){
   leadMailRender(l);
 }
 
+// Keep what the rep typed across a re-render of the card.
+function leadMailKeepDraft(){
+  const b = document.getElementById('lead-mail-body'), s = document.getElementById('lead-mail-subject');
+  if(b) LEAD_MAIL.draftBody = b.value;
+  if(s) LEAD_MAIL.draftSubject = s.value;
+}
+// "Draft with Taylor": Taylor writes the email into the composer; the rep reads,
+// edits and sends it. The previous text is kept for Undo.
+async function leadMailTaylor(l){
+  if(LEAD_MAIL.taylorBusy) return;
+  leadMailKeepDraft();
+  const me = String(leadMailViewer().email || '').toLowerCase();
+  const thread = LEAD_MAIL.newMode ? '' : leadMailReplyThread(LEAD_MAIL.emails, me);
+  LEAD_MAIL.taylorBusy = true;
+  leadMailRender(l);
+  const r = await leadMailCall('POST', '/api/leads/draft', { lead_id: l.id, lang: LEAD_MAIL.lang, instruction: LEAD_MAIL.taylorAsk || '', mode: thread ? 'reply' : 'first' });
+  LEAD_MAIL.taylorBusy = false;
+  if(String(_editingLeadId) !== String(l.id)) return;
+  if(!r.ok || !r.body.body){
+    showToast(r.body && r.body.error === 'drafts_unavailable' ? 'Taylor drafts are not switched on yet.' : 'Taylor could not write a draft. Try again in a minute.');
+    leadMailRender(l);
+    return;
+  }
+  LEAD_MAIL.prevDraft = LEAD_MAIL.draftBody || '';
+  LEAD_MAIL.prevSubject = r.body.subject && !thread ? (LEAD_MAIL.draftSubject || '') : null;
+  LEAD_MAIL.draftBody = r.body.body;
+  if(r.body.subject && !thread) LEAD_MAIL.draftSubject = r.body.subject;
+  LEAD_MAIL.taylorRooms = !!r.body.rooms_link;
+  LEAD_MAIL.taylorOpen = false;
+  leadMailRender(l);
+  const b = document.getElementById('lead-mail-body');
+  if(b){ b.focus(); b.setSelectionRange(0, 0); b.scrollTop = 0; }
+}
+
 async function leadMailSend(l){
   if(LEAD_MAIL.sending) return;
   const me = String(leadMailViewer().email || '').toLowerCase();
@@ -30062,7 +30124,7 @@ async function leadMailSend(l){
     return fail(code);
   }
   LEAD_MAIL.files.forEach(f => f.thumb && URL.revokeObjectURL(f.thumb));
-  Object.assign(LEAD_MAIL, { draftSubject: '', draftBody: '', sendKey: '', files: [], newMode: false });
+  Object.assign(LEAD_MAIL, { draftSubject: '', draftBody: '', sendKey: '', files: [], newMode: false, prevDraft: null, prevSubject: null, taylorAsk: '' });
   // Mirror what the server wrote, so the drawer and table agree before realtime lands.
   if(r.body.status && r.body.status !== l.status){
     l.status = r.body.status;
