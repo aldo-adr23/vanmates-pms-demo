@@ -176,6 +176,16 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
 .st-failed { background: var(--red-soft); color: var(--red); }
 .st-handled, .st-cancelled, .st-held, .st-skipped { background: var(--cream-2); color: var(--muted); }
 .st-scheduled, .st-due { background: var(--green-soft); color: var(--b-green); }
+.st.sub { font-size: 11px; font-weight: 600; padding: 1px 8px; }
+.fusec { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.fusec h3 { margin: 0 0 6px; font-family: var(--serif); font-size: 17px; }
+.fuitem + .fuitem { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 12px; }
+.fusec iframe.pv { height: 520px; }
+.furpick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fucov { display: flex; flex-wrap: wrap; gap: 4px 14px; font-weight: 500; font-size: 13px; }
+.tf .fucov label { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.fubox { border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; display: grid; gap: 8px; }
+.fubox > b { font-size: 12.5px; }
 .seg { display: inline-flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; }
 .seg button { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); min-height: 28px; }
 .seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
@@ -380,7 +390,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-04-leadmail5"></script>
+<script src="arrivals-core.js?v=2026-10-04-afterhours2"></script>
 <script>
 (function () {
   'use strict';
@@ -402,7 +412,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   var S = { me: null, tab: 'arrivals', wk: A.weekendOf(new Date()), city: '', filter: 'all', rows: [], openId: null, seq: 0, busy: false,
     acc: null, accSeq: 0, accOpen: {}, accNew: {}, tpl: null, tplDirty: false,
     mo: { wk: A.weekendOf(new Date()), city: '', filter: 'all', rows: [], nodate: [], openId: null, seq: 0, busy: false, setup: true },
-    tk: 'checkin', cot: null, coTpls: null };
+    tk: 'checkin', cot: null, coTpls: null,
+    fu: [], fuBy: {}, fuErr: '', fuRules: undefined, fur: null, furPick: null };
 
   function $(id) { return document.getElementById(id); }
   function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
@@ -515,13 +526,17 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var seq = ++S.seq;
     renderWeek();
     if (!S.rows.length) $('groups').innerHTML = '<div class="empty card">Loading…</div>';
-    var rows;
+    var rows, fu;
     try {
-      rows = await selectAll('arrivals_v', '*', function (q) {
-        q = q.gte('arrival_date', S.wk.start).lte('arrival_date', S.wk.end);
-        if (S.city) q = q.eq('city', S.city);
-        return q.order('arrival_date', { ascending: true }).order('id', { ascending: true });
-      });
+      var res = await Promise.all([
+        selectAll('arrivals_v', '*', function (q) {
+          q = q.gte('arrival_date', S.wk.start).lte('arrival_date', S.wk.end);
+          if (S.city) q = q.eq('city', S.city);
+          return q.order('arrival_date', { ascending: true }).order('id', { ascending: true });
+        }),
+        fuLoadWeek()
+      ]);
+      rows = res[0]; fu = res[1];
     } catch (e) {
       if (seq !== S.seq) return;
       $('groups').innerHTML = '<div class="gate card">Could not load arrivals: ' + esc(e && e.message) + '</div>';
@@ -529,6 +544,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (seq !== S.seq) return;
     S.rows = rows;
+    fuIndex(fu);
     if (S.openId && !byId(S.openId)) S.openId = null;
     renderArrivals();
   }
@@ -592,7 +608,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
               '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + esc(r.school || '—') + '</small></span>' +
               '<span class="c-room">' + esc(roomText(r)) + '</span>' +
               '<span class="c-date">' + esc(shortDate(r.arrival_date)) + (str(r.arrival_time) ? ' · ' + esc(r.arrival_time) : '') + '</span>' +
-              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + '</span></button>';
+              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) + '</span></button>';
           }).join('') + '</section>';
       }).join('');
     }
@@ -665,11 +681,12 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + chipHtml(r) + '</div></div>' +
       '<button type="button" class="pclose" data-act="close" aria-label="Close">✕</button></div>' +
       '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
-      warn + '<div class="pact">' + acts.join('') + '</div>' + fx +
+      warn + '<div class="pact">' + acts.join('') + '</div>' + fx + fuPanelHtml(r) +
       '<div class="pv-head"><b>Email preview</b><span class="muted" style="font-size:12px">' + esc(r.student_email || 'no email yet') + '</span></div>' +
       '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
       '<iframe class="pv" id="pv" sandbox="" title="Email preview" referrerpolicy="no-referrer"></iframe></div>';
     $('pv').srcdoc = mail.html;
+    fuPanelPreviews(r);
   }
   // The arrivals_v row is flat: it carries the template columns (subject, intro, …, keys_only) and the access
   // columns (address, house_code, wifi_*, door_code, room_label), which is what buildArrivalEmail and
@@ -1119,11 +1136,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
           selectAll('arrival_templates', '*', function (q) { return q.order('building'); }),
           selectAll('arrivals_v', 'id,building,city,unit,bed,room_key,arrival_date,status', function (q) { return q.gte('arrival_date', since).order('arrival_date').order('id'); }),
           // null = the move-out messages SQL isn't applied yet (the check-in editor keeps working)
-          selectAll('checkout_templates', '*', function (q) { return q.order('building'); }).catch(function (e) { if (moSetupMissing(e)) return null; throw e; })
+          selectAll('checkout_templates', '*', function (q) { return q.order('building'); }).catch(function (e) { if (moSetupMissing(e)) return null; throw e; }),
+          // null = the after-hours follow-ups SQL isn't applied yet
+          selectAll('arrival_followups', FU_RULE_COLS, function (q) { return q.order('building').order('name').order('id'); }).catch(function (e) { if (fuSetupMissing(e)) return null; throw e; })
         ]);
         if (seq !== S.accSeq) return;
         S.coTpls = res[5];
-        S.acc = buildModel(res[0], res[1], res[2], res[3], res[4], res[5] || []);
+        S.fuRules = res[6];
+        S.acc = buildModel(res[0], res[1], res[2], res[3], res[4], res[5] || [], res[6] || []);
       } catch (e) {
         if (seq !== S.accSeq) return;
         var msg = '<div class="gate card">Could not load access lists: ' + esc(e && e.message) + '</div>';
@@ -1134,7 +1154,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (S.tab === 'access') renderAccess(); else if (S.tab === 'templates') renderTemplates();
   }
   // building → { city, address, house_code, units{}, rooms{}, tpl, upcoming }
-  function buildModel(bs, us, rs, ts, arr, cos) {
+  function buildModel(bs, us, rs, ts, arr, cos, fus) {
     var M = {}, today = todayYmd();
     function B(name, city) {
       name = str(name); if (!name) return null;
@@ -1147,6 +1167,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     rs.forEach(function (r) { var m = B(r.building); if (!m) return; m.rooms[r.room_key] = { room_key: r.room_key, unit: str(r.unit), room_label: str(r.room_label), door_code: str(r.door_code), bed: '', saved: true, upcoming: 0 }; });
     ts.forEach(function (t) { var m = B(t.building, t.city); if (m) m.tpl = t; });
     (cos || []).forEach(function (t) { var m = B(t.building, t.city); if (m) m.co = t; });
+    (fus || []).forEach(function (f) { B(f.building, f.city); });
     arr.forEach(function (a) {
       var m = B(a.building, a.city); if (!m) return;
       var up = a.arrival_date >= today && a.status !== 'cancelled' && a.status !== 'handled' ? 1 : 0;
@@ -1280,9 +1301,10 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var list = buildingList();
     $('tplKind').innerHTML = tplKindHtml();
     if (!list.length) { $('tplB').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
-    var co = S.tk === 'checkout';
-    var tplOf = function (m) { return co ? m.co : m.tpl; };
-    var pick = S.tplPick || (co ? S.cot && S.cot.building : S.tpl && S.tpl.building) || (list.filter(function (m) { return m.upcoming && !(tplOf(m) && tplOf(m).reviewed); })[0] || list[0]).building;
+    var co = S.tk === 'checkout', ah = S.tk === 'afterhours';
+    var tplOf = function (m) { return ah ? fuRulesFor(m.building)[0] : co ? m.co : m.tpl; };
+    var pick = S.tplPick || (ah ? (S.fur && S.fur.building) || ((S.fuRules || [])[0] || list[0]).building
+      : (co ? S.cot && S.cot.building : S.tpl && S.tpl.building) || (list.filter(function (m) { return m.upcoming && !(tplOf(m) && tplOf(m).reviewed); })[0] || list[0]).building);
     S.tplPick = null;
     if (!S.acc[pick]) pick = list[0].building;
     $('tplB').innerHTML = list.map(function (m) {
@@ -1290,6 +1312,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       return '<option value="' + esc(m.building) + '"' + (m.building === pick ? ' selected' : '') + '>' + esc(st + m.building + (m.city ? ' (' + m.city + ')' : '')) + '</option>';
     }).join('');
     if (co) { renderCot(pick); return; }
+    if (ah) { renderFur(pick); return; }
     if (!S.tpl || S.tpl.building !== pick || !S.tplDirty) { S.tpl = tplFromRow(pick, S.acc[pick].tpl); S.tplDirty = false; }
     renderTplForm();
   }
@@ -1408,16 +1431,17 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   var CO_DEFAULTS = { subject: 'Check-Out Info | {building}', checkout_time: '10:00 am',
     keys_text: 'To avoid any additional charges: before leaving, please leave your keys inside your bedroom and close your bedroom door.' };
   function tplKindHtml() {
-    var co = S.tk === 'checkout';
+    var on = function (k) { return S.tk === k ? ' class="on" aria-pressed="true"' : ''; };
     return '<div class="seg" role="group" aria-label="Template kind">' +
-      '<button type="button" data-tk="checkin"' + (co ? '' : ' class="on" aria-pressed="true"') + '>Check-in</button>' +
-      '<button type="button" data-tk="checkout"' + (co ? ' class="on" aria-pressed="true"' : '') + '>Check-out</button></div>';
+      '<button type="button" data-tk="checkin"' + on('checkin') + '>Check-in</button>' +
+      '<button type="button" data-tk="checkout"' + on('checkout') + '>Check-out</button>' +
+      '<button type="button" data-tk="afterhours"' + on('afterhours') + '>After-hours</button></div>';
   }
   function setTplKind(k) {
     if (k === S.tk) return;
     if (S.tplDirty && !window.confirm('Leave the template without saving?')) return;
-    var b = (S.tk === 'checkout' ? S.cot : S.tpl);
-    S.tplDirty = false; S.tk = k; S.tpl = null; S.cot = null; S.tplPick = b ? b.building : null;
+    var b = (S.tk === 'checkout' ? S.cot : S.tk === 'afterhours' ? S.fur : S.tpl);
+    S.tplDirty = false; S.tk = k; S.tpl = null; S.cot = null; S.fur = null; S.furPick = null; S.tplPick = b ? b.building : null;
     renderTemplates();
   }
   function cotFromRow(b, t) {
@@ -1526,6 +1550,374 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     loadMoBadge();
   }
 
+  // ───────── After-hours follow-ups (followup_messages_v, arrival_followups; SQL checkin-followups-2026-10-04.sql) ─────────
+  // Rule per building (+ also_buildings) sends at send_time on the arrival date to every open arrival there. The
+  // lockbox code itself is only ever in the masked editor input: the view never carries it, the email only links
+  // to it (FOLLOWUP_SECRET_BASE/<secret_token>, valid secret_valid_hours).
+  var FOLLOWUP_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/followup-send';
+  var FOLLOWUP_SECRET_BASE = 'https://adr23.app.n8n.cloud/webhook/lockbox';
+  var FU_RULE_COLS = 'id,building,city,name,also_buildings,send_time,enabled,subject,intro,sections,rules_url,docs_url,show_codes,secret_label,secret_value,secret_valid_hours,reviewed,reviewed_by,reviewed_at,updated_by,updated_at';
+  // arrival_followups / followup_messages_v not there yet (Postgres 42P01, PostgREST PGRST205).
+  function fuSetupMissing(e) {
+    if (!e) return false;
+    if (e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST200') return true;
+    return /(followup_messages_v|arrival_followups|followup_messages)/.test(String(e.message || '')) && /(does not exist|schema cache|could not find)/i.test(String(e.message || ''));
+  }
+  // end fuSetupMissing
+  function fuSetupHtml() { return '<div class="empty card"><b>After-hours messages are being set up</b>They appear here once the after-hours follow-ups update is applied.</div>'; }
+
+  // '18:00:00' -> '6:00 pm'
+  function hm12(t) {
+    var m = /^(\d{1,2}):(\d{2})/.exec(str(t));
+    if (!m) return str(t);
+    var h = +m[1];
+    return ((h % 12) || 12) + ':' + m[2] + (h < 12 ? ' am' : ' pm');
+  }
+  function fuTz(city) { return str(city) === 'Vancouver' ? 'America/Vancouver' : 'America/Toronto'; }
+  function fuTzName(city) { return str(city) === 'Vancouver' ? 'Vancouver time' : 'Toronto time'; }
+  // An instant as '6:02 pm' in the building's zone.
+  function fuClock(iso, city) {
+    if (!iso) return '';
+    var d = new Date(iso); if (isNaN(d)) return '';
+    try { return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: fuTz(city) }).replace(/\s*([AP])M$/i, function (_, x) { return ' ' + x.toLowerCase() + 'm'; }); }
+    catch (e) { return d.toLocaleTimeString(); }
+  }
+  // What stops a row from sending, in words ('disabled' is the rule being off, which hides the chip instead).
+  function fuNeeds(row) {
+    var miss = Array.isArray(row.missing) ? row.missing : A.followupReadiness(row).missing;
+    return miss.filter(function (k) { return k !== 'disabled'; }).map(function (k) {
+      if (k === 'secret') return (str(row.secret_label) || 'code').toLowerCase();
+      if (k === 'template') return 'review';
+      return k === 'email' ? 'email' : String(k);
+    });
+  }
+  // One followup_messages_v row -> { cls, label } for the small chip, or null when nothing should show.
+  function fuChip(row) {
+    var s = row.live_status || row.status;
+    if (!s || s === 'off') return null;
+    if (s === 'sent') return row.secret_view_count > 0 ? { cls: 'opened', label: 'Code viewed' } : { cls: 'sent', label: 'After-hours sent ' + fuClock(row.sent_at, row.city) };
+    if (s === 'held') return { cls: 'held', label: 'After-hours held' };
+    if (s === 'failed') return { cls: 'failed', label: 'After-hours failed' };
+    if (s === 'skipped') return row.skip_reason === 'arrival_closed' ? null : { cls: 'skipped', label: 'After-hours skipped' };
+    var need = fuNeeds(row);
+    if (need.length) return { cls: 'missing', label: 'After-hours needs: ' + need.join(', ') };
+    if (s === 'due') return { cls: 'due', label: 'After-hours due · sends at the next run' };
+    return { cls: 'scheduled', label: 'After-hours: ' + hm12(row.send_time) };
+  }
+  // end fuChip
+
+  // The weekend's follow-up rows; null when the SQL isn't applied, [] (and S.fuErr) on any other error — the
+  // arrivals list never waits on this.
+  function fuLoadWeek() {
+    S.fuErr = '';
+    return selectAll('followup_messages_v', '*', function (q) {
+      q = q.gte('arrival_date', S.wk.start).lte('arrival_date', S.wk.end);
+      if (S.city) q = q.eq('city', S.city);
+      return q.order('arrival_date', { ascending: true }).order('arrival_id', { ascending: true }).order('followup_id', { ascending: true });
+    }).catch(function (e) {
+      if (fuSetupMissing(e)) return null;
+      S.fuErr = String((e && e.message) || 'unknown error');
+      return [];
+    });
+  }
+  function fuIndex(rows) {
+    S.fu = rows; S.fuBy = {};
+    (rows || []).forEach(function (x) {
+      // a rule that is off shows nothing, unless something already happened on this arrival
+      if (!(x.followup_enabled || x.status === 'sent' || x.status === 'failed' || x.status === 'held')) return;
+      (S.fuBy[x.arrival_id] || (S.fuBy[x.arrival_id] = [])).push(x);
+    });
+  }
+  function fuChipHtml(row) {
+    var c = fuChip(row);
+    return c ? '<span class="st sub st-' + esc(c.cls) + '" title="' + esc(c.label) + '">' + esc(c.label) + '</span>' : '';
+  }
+  function fuChipsHtml(r) { return (S.fuBy[r.id] || []).map(fuChipHtml).join(''); }
+
+  // The preview: the real row, a placeholder token when no message row exists yet, so the button shows.
+  function fuPreviewRow(row) {
+    var o = {}; for (var k in row) o[k] = row[k];
+    if (!str(o.secret_token)) o.secret_token = 'preview';
+    return o;
+  }
+  // end fuPreviewRow
+
+  function fuPanelHtml(r) {
+    var list = S.fuBy[r.id] || [];
+    if (!list.length) return S.fuErr ? '<div class="fusec"><p class="note">Could not load after-hours messages: ' + esc(S.fuErr) + '</p></div>' : '';
+    return '<div class="fusec"><h3>After-hours check-in</h3>' + list.map(function (row, i) {
+      var s = row.live_status || row.status;
+      var closed = row.arrival_status === 'cancelled' || row.arrival_status === 'handled';
+      var need = fuNeeds(row);
+      var facts = [
+        ['Sends', s === 'sent' ? '' : shortDate(row.arrival_date) + ' · ' + hm12(row.send_time) + ' ' + fuTzName(row.city)],
+        ['Sent', row.sent_at ? fuClock(row.sent_at, row.city) + ', ' + shortDate(String(row.sent_at).slice(0, 10)) + (row.sent_by ? ' by ' + str(row.sent_by) : '') : ''],
+        ['Opened', row.opened_at ? clock(row.opened_at) + (row.open_count > 1 ? ' · ' + row.open_count + ' opens' : '') : (s === 'sent' ? 'Not yet' : '')],
+        [str(row.secret_label) || 'Code', s === 'sent' && str(row.secret_label) ? (row.secret_view_count > 0 ? 'Viewed ' + clock(row.secret_viewed_at) + (row.secret_view_count > 1 ? ' · ' + row.secret_view_count + ' views' : '') : 'Not viewed yet') : ''],
+        ['Error', s === 'failed' || (row.last_error && s === 'sent') ? str(row.last_error) : '']
+      ].filter(function (f) { return str(f[1]); });
+      var warn = '';
+      if (s === 'skipped') warn = '<p class="warnbox">Skipped — ' + (row.skip_reason === 'arrival_closed' ? 'this arrival is handled or cancelled.' : 'the arrival day is over.') + '</p>';
+      else if (s === 'held') warn = '<p class="warnbox">Held — it won’t send at ' + esc(hm12(row.send_time)) + ' until you resume it.</p>';
+      else if (s !== 'sent' && need.length) warn = '<p class="warnbox">Won’t send — needs ' + esc(need.join(', ')) + '.' + (need.indexOf('review') !== -1 || str(row.secret_label) && !row.secret_set ? ' Fix it in Templates › After-hours.' : '') + '</p>';
+      var acts = [];
+      if (s !== 'sent' && s !== 'skipped' && !closed) {
+        if (!need.length && row.followup_enabled) acts.push('<button type="button" class="btn btn-primary" data-fu="send" data-fk="' + i + '">' + (s === 'failed' ? 'Retry now' : 'Send now') + '</button>');
+        if (s === 'held') acts.push('<button type="button" class="btn btn-ghost" data-fu="resume" data-fk="' + i + '">Resume</button>');
+        else acts.push('<button type="button" class="btn btn-ghost" data-fu="hold" data-fk="' + i + '">Hold</button>');
+      }
+      if (s === 'sent' && !closed) acts.push('<button type="button" class="btn btn-ghost" data-fu="resend" data-fk="' + i + '">Resend</button>');
+      if (need.indexOf('review') !== -1 || (str(row.secret_label) && !row.secret_set)) acts.push('<button type="button" class="btn btn-ghost" data-fu="tpl" data-fk="' + i + '">Open the after-hours template</button>');
+      var mail = A.buildFollowupEmail(fuPreviewRow(row), { pixelBase: '', secretBase: FOLLOWUP_SECRET_BASE });
+      return '<div class="fuitem"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b>' + esc(row.followup_name || 'After-hours check-in') + '</b>' + fuChipHtml(row) + '</div>' +
+        '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
+        warn + (acts.length ? '<div class="pact">' + acts.join('') + '</div>' : '') +
+        '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
+        '<iframe class="pv" id="fuPv' + i + '" sandbox="" title="After-hours email preview" referrerpolicy="no-referrer"></iframe></div>';
+    }).join('') + '</div>';
+  }
+  function fuPanelPreviews(r) {
+    (S.fuBy[r.id] || []).forEach(function (row, i) {
+      var el = $('fuPv' + i);
+      if (el) el.srcdoc = A.buildFollowupEmail(fuPreviewRow(row), { pixelBase: '', secretBase: FOLLOWUP_SECRET_BASE }).html;
+    });
+  }
+  // The message row id, creating the row (status scheduled) when the view has none yet.
+  async function fuEnsure(row) {
+    if (row.id) return row.id;
+    var ok = await rpc('followup_message_ensure', { p_followup_id: row.followup_id, p_arrival_id: row.arrival_id });
+    return ok && ok.id ? ok.id : null;
+  }
+  // end fuEnsure
+  async function fuSend(id, resend) {
+    if (S.fuBusy) return;
+    S.fuBusy = true;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-fu="send"], [data-fu="resend"]'), function (b) { b.disabled = true; });
+    var j = null;
+    try {
+      var tok = await token();
+      if (!tok) { toast('Your session expired — reload the page.'); return; }
+      var res = await fetch(FOLLOWUP_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+        body: JSON.stringify({ ids: [id], resend: !!resend }) });
+      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service (HTTP ' + res.status + ').' }; }
+    } catch (e) {
+      toast('Send service unreachable — check your connection and try again.');
+    } finally { S.fuBusy = false; }
+    if (!j) { renderPanel(); return; }
+    var results = Array.isArray(j.results) ? j.results : [];
+    var bad = results.filter(function (x) { return !(x && x.ok); })[0];
+    if (!j.ok && !results.length) infoSheet('Not sent', '<p>' + esc(j.error || 'The send service refused the request.') + '</p>');
+    else if (bad) infoSheet('Not sent', '<p>' + esc(SEND_ERR[bad.error] || bad.error || 'Not sent') + '</p>');
+    else toast(resend ? 'Sent again' : 'Sent');
+    await loadArrivals();
+  }
+  // end fuSend
+  async function fuAct(name, i) {
+    var r = byId(S.openId); if (!r) return;
+    var row = (S.fuBy[r.id] || [])[i], id = null; if (!row) return;
+    if (name === 'tpl') { S.tplPick = row.followup_building || r.building; S.furPick = row.followup_id; S.tk = 'afterhours'; setTab('templates'); return; }
+    if (name === 'send' || name === 'resend') {
+      var yes = name === 'send'
+        ? await confirmSheet('Send the after-hours email now?', '<p class="note">It goes to ' + esc(row.student_email) + ' right away instead of at ' + esc(hm12(row.send_time)) + ' ' + esc(fuTzName(row.city)) + '.</p>', 'Send now')
+        : await confirmSheet('Resend the after-hours email?', '<p class="note">' + esc(row.student_name || 'This student') + ' already got it' + (row.sent_at ? ' at ' + esc(fuClock(row.sent_at, row.city)) : '') + '. A new copy (with a fresh ' + esc((str(row.secret_label) || 'code').toLowerCase()) + ' link window) goes to ' + esc(row.student_email) + '.</p>', 'Resend');
+      if (!yes) return;
+      id = await fuEnsure(row);
+      if (id) await fuSend(id, name === 'resend');
+      return;
+    }
+    if (name === 'hold' || name === 'resume') {
+      id = await fuEnsure(row); if (!id) return;
+      if (await rpc('followup_message_set', { p_id: id, p_status: name === 'hold' ? 'held' : 'scheduled' })) { toast(name === 'hold' ? 'Held' : 'Resumed'); await loadArrivals(); }
+    }
+  }
+  // end fuAct
+
+  // ── Templates › After-hours editor ──
+  function fuRulesFor(b) {
+    return (S.fuRules || []).filter(function (x) { return x.building === b || (Array.isArray(x.also_buildings) && x.also_buildings.indexOf(b) !== -1); });
+  }
+  function furFromRow(b, r) {
+    var m = S.acc[b] || {};
+    if (!r) {
+      return { id: null, building: b, city: m.city || '', name: 'After-hours check-in', send_time: '18:00', enabled: false, subject: '', intro: '', sections: [],
+        rules_url: '', docs_url: '', show_codes: true, also_buildings: [], secret_label: 'Lockbox code', secret_value: '', code_saved: '',
+        secret_valid_hours: 24, reviewed: false, reviewed_by: '', reviewed_at: '', exists: false };
+    }
+    return { id: r.id, building: r.building, city: str(r.city), name: str(r.name), send_time: str(r.send_time).slice(0, 5) || '18:00', enabled: !!r.enabled,
+      subject: r.subject || '', intro: r.intro || '',
+      sections: (Array.isArray(r.sections) ? r.sections : []).map(function (x) { return { title: str(x && x.title), text: String((x && x.text) || '') }; }),
+      rules_url: r.rules_url || '', docs_url: r.docs_url || '', show_codes: r.show_codes !== false,
+      also_buildings: Array.isArray(r.also_buildings) ? r.also_buildings.slice() : [], secret_label: r.secret_label || '',
+      secret_value: str(r.secret_value), code_saved: str(r.secret_value),
+      secret_valid_hours: r.secret_valid_hours || 24, reviewed: !!r.reviewed, reviewed_by: r.reviewed_by || '', reviewed_at: r.reviewed_at || '', exists: true };
+  }
+  function renderFur(pick) {
+    if (S.fuRules === null) { $('tplState').textContent = ''; $('tplBody').innerHTML = fuSetupHtml(); return; }
+    var rules = fuRulesFor(pick);
+    if (!S.fur || !S.tplDirty || (S.fur.building !== pick && (S.fur.also_buildings || []).indexOf(pick) === -1)) {
+      var want = S.furPick || (S.fur && (S.fur.id || 'new')), r = null;
+      rules.forEach(function (x) { if (x.id === want) r = x; });
+      if (!r && want !== 'new') r = rules[0] || null;
+      S.fur = r || want === 'new' ? furFromRow(r ? r.building : pick, r) : null;
+      S.tplDirty = false;
+    }
+    S.furPick = null;
+    var picker = '<div class="furpick">' + rules.map(function (x) {
+      var on = S.fur && S.fur.id === x.id;
+      return '<button type="button" class="chip' + (on ? ' on' : '') + '" data-fur="' + esc(x.id) + '">' + esc((x.enabled && x.reviewed ? '✓ ' : '') + str(x.name) + (x.building !== pick ? ' (' + str(x.building) + ')' : '')) + '</button>';
+    }).join('') + '<button type="button" class="chip' + (S.fur && !S.fur.id ? ' on' : '') + '" data-fur="new">+ New follow-up</button></div>';
+    if (!S.fur) {
+      $('tplState').textContent = 'No after-hours follow-up';
+      $('tplBody').innerHTML = '<div class="tp card">' + picker + '<div class="empty"><b>No after-hours follow-up for ' + esc(pick) + '</b>Add one to email every arrival of the day at a set time (e.g. 18:00) with after-hours check-in steps.</div></div>';
+      return;
+    }
+    renderFurForm(picker);
+  }
+  function furBanners(f) {
+    var out = [];
+    if (!f.enabled) out.push('<p class="warnbox">Off — nothing sends.</p>');
+    if (!f.reviewed) out.push('<p class="warnbox bad">Not reviewed — won’t send.</p>');
+    if (str(f.secret_label) && !str(f.code_saved)) out.push('<p class="warnbox bad">' + esc(str(f.secret_label)) + ' not set — won’t send.</p>');
+    if (!out.length) out.push('<p class="warnbox good">On and reviewed — every arrival of the day gets it at ' + esc(hm12(f.send_time)) + ' ' + esc(fuTzName(f.city)) + '.</p>');
+    return out.join('');
+  }
+  function renderFurForm(picker) {
+    var f = S.fur;
+    if (picker === undefined) picker = $('tplBody').querySelector('.furpick') ? $('tplBody').querySelector('.furpick').outerHTML : '';
+    $('tplState').textContent = f.reviewed ? 'Reviewed' + (f.reviewed_by ? ' by ' + f.reviewed_by : '') + (f.reviewed_at ? ', ' + clock(f.reviewed_at) : '') : (f.exists ? 'Not reviewed' : 'New — not saved');
+    var others = buildingList().map(function (m) { return m.building; }).filter(function (b) { return b !== f.building; });
+    f.also_buildings.forEach(function (b) { if (others.indexOf(b) === -1 && b !== f.building) others.push(b); });
+    others.sort(natSort);
+    var cov = others.map(function (b) {
+      return '<label><input type="checkbox" name="also" value="' + esc(b) + '"' + (f.also_buildings.indexOf(b) !== -1 ? ' checked' : '') + ' /> ' + esc(b) + '</label>';
+    }).join('');
+    var sec = f.sections.map(function (s, i) {
+      return '<div class="sect" data-i="' + i + '"><div class="sbar"><button type="button" class="sbtn" data-sec="up" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up">↑</button>' +
+        '<button type="button" class="sbtn" data-sec="down" ' + (i === f.sections.length - 1 ? 'disabled' : '') + ' aria-label="Move down">↓</button>' +
+        '<button type="button" class="sbtn" data-sec="del" aria-label="Remove section">Remove</button></div>' +
+        '<input class="inp" data-st="title" value="' + esc(s.title) + '" placeholder="Section title (e.g. Getting in after 6 pm)" />' +
+        '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
+    }).join('');
+    $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + picker + furBanners(f) +
+      '<form class="tf" id="furForm" autocomplete="off">' +
+      '<div class="two"><label><span>Name <small>· also the email heading</small></span><input class="inp" name="name" value="' + esc(f.name) + '" placeholder="After-hours check-in" /></label>' +
+      '<label><span>Send time <small>· on the arrival date, ' + esc(fuTzName(f.city)) + '</small></span><input class="inp" type="time" name="send_time" value="' + esc(f.send_time) + '" step="900" /></label></div>' +
+      '<label><span>City</span><select class="sel" name="city">' + cityOpts(f.city, '—') + '</select></label>' +
+      '<label class="chk"><input type="checkbox" name="enabled"' + (f.enabled ? ' checked' : '') + ' /> On — sends automatically to every arrival of the day</label>' +
+      '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Buildings covered <small class="muted" style="font-weight:500">· ' + esc(f.building) + ' plus:</small></div>' +
+      (cov ? '<div class="fucov">' + cov + '</div>' : '<p class="note">No other buildings known yet.</p>') + '</div>' +
+      '<label><span>Subject <small>· {first_name} and {building} are filled in; blank = “' + esc((str(f.name) || 'Check-in update') + ' | {building}') + '”</small></span><input class="inp" name="subject" value="' + esc(f.subject) + '" /></label>' +
+      '<label><span>Intro <small>· after “Hi {first_name},” · blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="It looks like you’re arriving after our front desk closes. Here is how to get in.">' + esc(f.intro) + '</textarea></label>' +
+      '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Sections</div><div id="secs" style="display:grid;gap:8px">' + sec + '</div>' +
+      '<button type="button" class="btn btn-ghost addbtn" data-sec="add">+ Add section</button></div>' +
+      '<label><span>House rules link</span><input class="inp" name="rules_url" type="url" value="' + esc(f.rules_url) + '" placeholder="https://" /></label>' +
+      '<label><span>Building documents link</span><input class="inp" name="docs_url" type="url" value="' + esc(f.docs_url) + '" placeholder="https://" /></label>' +
+      '<label class="chk"><input type="checkbox" name="show_codes"' + (f.show_codes ? ' checked' : '') + ' /> Repeat the room details (address, door code, house code, Wi-Fi)</label>' +
+      '<div class="fubox"><b>Lockbox</b><p class="note" style="margin:0">Never printed in the email: the student gets a button that shows it for a limited time. Leave the label blank for no lockbox.</p>' +
+      '<div class="two"><label><span>Label</span><input class="inp" name="secret_label" value="' + esc(f.secret_label) + '" placeholder="Lockbox code" /></label>' +
+      '<label><span>Link works for <small>· hours after sending (1–168)</small></span><input class="inp" type="number" min="1" max="168" step="1" name="secret_valid_hours" value="' + esc(f.secret_valid_hours) + '" /></label></div>' +
+      '<label><span>Code</span>' + secret('secret_value', f.secret_value, str(f.secret_label) || 'Code') + '</label></div>' +
+      '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
+      (f.reviewed ? '<button type="button" class="btn btn-ghost" data-fua="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-fua="review">Save &amp; mark reviewed</button>') +
+      (f.id ? '<button type="button" class="btn btn-ghost" data-fua="delete">Delete</button>' : '') +
+      '</div></form></div>' +
+      '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample arrival</span></div>' +
+      '<div class="pv-subj" id="furSubj"></div><iframe class="pv" id="furPv" sandbox="" title="After-hours preview" referrerpolicy="no-referrer"></iframe></div></div>';
+    renderFurPreview();
+  }
+  // A sample arrival in the rule's building. Never carries the code: the email only links to it.
+  function fuSample(f) {
+    var m = S.acc[f.building] || { units: {}, rooms: {} };
+    var u = Object.keys(m.units || {}).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
+    var rm = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
+    return { student_name: 'Alex Sample', student_email: 'alex@example.com', building: f.building, city: f.city,
+      unit: (u && u.unit) || (rm && rm.unit) || '1203', bed: 'B', room_label: (rm && rm.room_label) || 'Room B', door_code: (rm && rm.door_code) || '1234',
+      address: m.address || '123 Sample Street', house_code: m.house_code || '', wifi_name: (u && u.wifi_name) || 'Sample-WiFi', wifi_password: (u && u.wifi_password) || 'sample-password',
+      keys_only: !!(m.tpl && m.tpl.keys_only), followup_name: f.name, subject: f.subject, intro: f.intro, sections: f.sections,
+      rules_url: f.rules_url, docs_url: f.docs_url, show_codes: f.show_codes, secret_label: f.secret_label, secret_valid_hours: f.secret_valid_hours,
+      secret_token: 'preview', open_token: '', template_reviewed: true, followup_enabled: true };
+  }
+  // end fuSample
+  function renderFurPreview() {
+    if (!S.fur || !$('furPv')) return;
+    var mail = A.buildFollowupEmail(fuSample(S.fur), { pixelBase: '', secretBase: FOLLOWUP_SECRET_BASE });
+    $('furSubj').textContent = 'Subject: ' + mail.subject;
+    $('furPv').srcdoc = mail.html;
+  }
+  async function furInput(e) {
+    var el = e.target, f = S.fur; if (!f || !el.name && !el.getAttribute('data-st')) return;
+    if (el.type === 'checkbox' && e.type !== 'change') return;
+    var sec = el.closest('.sect');
+    if (sec && el.getAttribute('data-st')) f.sections[+sec.getAttribute('data-i')][el.getAttribute('data-st')] = el.value;
+    else if (el.name === 'also') {
+      f.also_buildings = Array.prototype.filter.call($('furForm').querySelectorAll('input[name="also"]'), function (x) { return x.checked; }).map(function (x) { return x.value; });
+    } else if (el.name === 'enabled') {
+      if (el.checked) {
+        var where = [f.building].concat(f.also_buildings);
+        var yes = await confirmSheet('Switch on ' + (str(f.name) || 'this follow-up') + '?',
+          '<p class="note">Every arrival of the day at these buildings will get this at ' + esc(str(f.send_time) || '18:00') + ' (' + esc(hm12(f.send_time)) + ', ' + esc(fuTzName(f.city)) + '):</p>' +
+          '<ul class="mlist">' + where.map(function (b) { return '<li><span>' + esc(b) + '</span></li>'; }).join('') + '</ul>' +
+          '<p class="note" style="margin-top:8px">It takes effect when you Save, and only sends once it is reviewed' + (str(f.secret_label) ? ' and the ' + esc(str(f.secret_label).toLowerCase()) + ' is set' : '') + '.</p>', 'Switch on');
+        if (!yes) { el.checked = false; return; }
+      }
+      f.enabled = el.checked;
+      S.tplDirty = true;
+      renderFurForm();
+      return;
+    }
+    else if (el.name === 'show_codes') f.show_codes = el.checked;
+    else if (el.name === 'secret_value') f.secret_value = el.value;
+    else if (el.name && el.name in f) f[el.name] = el.value;
+    else return;
+    S.tplDirty = true;
+    clearTimeout(_pvT); _pvT = setTimeout(renderFurPreview, 200);
+  }
+  function furSection(op, i) {
+    var s = S.fur.sections;
+    if (op === 'add') s.push({ title: '', text: '' });
+    else if (op === 'del') s.splice(i, 1);
+    else if (op === 'up' && i > 0) s.splice(i - 1, 0, s.splice(i, 1)[0]);
+    else if (op === 'down' && i < s.length - 1) s.splice(i + 1, 0, s.splice(i, 1)[0]);
+    S.tplDirty = true;
+    renderFurForm();
+  }
+  function furPickRule(id) {
+    if (S.fur && (S.fur.id || 'new') === id) return;
+    if (S.tplDirty && !window.confirm('Leave this follow-up without saving?')) return;
+    S.tplDirty = false; S.fur = null; S.furPick = id;
+    renderFur($('tplB').value);
+  }
+  async function saveFur(reviewed) {
+    var f = S.fur; if (!f) return;
+    if (!str(f.name)) { toast('Give the follow-up a name.'); return; }
+    if (!/^\d{1,2}:\d{2}/.test(str(f.send_time))) { toast('Pick a send time.'); return; }
+    var bad = ['rules_url', 'docs_url'].filter(function (k) { return str(f[k]) && !/^https?:\/\//i.test(str(f[k])); });
+    if (bad.length) { toast('Links must start with https://'); return; }
+    var hours = parseInt(f.secret_valid_hours, 10);
+    if (!(hours >= 1 && hours <= 168)) { toast('The link must work between 1 and 168 hours.'); return; }
+    var sections = f.sections.filter(function (s) { return str(s.title) || str(s.text); }).map(function (s) { return { title: str(s.title), text: String(s.text).trim() }; });
+    var ok = await rpc('followup_save', { p_id: f.id || null, p_building: f.building, p_city: f.city || null, p_name: str(f.name),
+      p_send_time: str(f.send_time).slice(0, 5), p_enabled: !!f.enabled, p_subject: f.subject.trim(), p_intro: f.intro.trim(), p_sections: sections,
+      p_rules_url: str(f.rules_url), p_docs_url: str(f.docs_url), p_show_codes: !!f.show_codes, p_also_buildings: f.also_buildings,
+      p_secret_label: str(f.secret_label), p_secret_value: str(f.secret_value) !== str(f.code_saved) ? str(f.secret_value) : null,
+      p_secret_valid_hours: hours, p_reviewed: reviewed });
+    if (!ok) return;
+    toast(reviewed === true ? 'Saved and marked reviewed' : reviewed === false ? 'Marked not reviewed'
+      : ok.unreviewed ? 'Changes saved — mark reviewed again to send' : 'Saved');
+    S.tplDirty = false; S.tplPick = f.building; S.furPick = ok.id || f.id; S.fur = null; S.acc = null;
+    await loadAccess();
+  }
+  // end saveFur
+  async function deleteFur() {
+    var f = S.fur; if (!f || !f.id) return;
+    if (!(await confirmSheet('Delete ' + (str(f.name) || 'this follow-up') + '?', '<p class="note">Nothing more will be sent from it. If it was already sent to students, switch it off instead.</p>', 'Delete'))) return;
+    if (!(await rpc('followup_delete', { p_id: f.id }))) return;
+    toast('Deleted');
+    S.tplDirty = false; S.tplPick = f.building; S.fur = null; S.furPick = null; S.acc = null;
+    await loadAccess();
+  }
+  // end after-hours
+
   // ───────── wiring ─────────
   function wire() {
     $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) setTab(b.getAttribute('data-tab')); });
@@ -1539,7 +1931,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('rosterFile').addEventListener('change', function () { var f = this.files && this.files[0]; $('rosterFile').value = ''; if (f) uploadRoster(f); });
     $('uploadRefresh').addEventListener('click', function () { clearTimeout(S.uploadReload); $('uploadRefresh').hidden = true; loadArrivals(); });
     $('groups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id')); });
-    $('panel').addEventListener('click', function (e) { var b = e.target.closest('[data-act]'); if (b && !b.disabled) act(b.getAttribute('data-act')); });
+    $('panel').addEventListener('click', function (e) {
+      var f = e.target.closest('[data-fu]');
+      if (f) { if (!f.disabled) fuAct(f.getAttribute('data-fu'), +f.getAttribute('data-fk')); return; }
+      var b = e.target.closest('[data-act]'); if (b && !b.disabled) act(b.getAttribute('data-act'));
+    });
     $('panel').addEventListener('submit', function (e) { e.preventDefault(); saveFx(e.target); });
     // show/hide a masked code (Access tab and side panel)
     document.addEventListener('click', function (e) {
@@ -1574,18 +1970,22 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('moPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-mo]'); if (b && !b.disabled) moAct(b.getAttribute('data-mo')); });
     $('moPanel').addEventListener('submit', function (e) { e.preventDefault(); moSaveFx(e.target); });
     $('tplB').addEventListener('change', function () {
-      var cur = S.tk === 'checkout' ? S.cot : S.tpl;
+      var cur = S.tk === 'checkout' ? S.cot : S.tk === 'afterhours' ? S.fur : S.tpl;
       if (S.tplDirty && cur && !window.confirm('Discard unsaved changes to the ' + cur.building + ' template?')) { this.value = cur.building; return; }
-      S.tplDirty = false; S.tplPick = this.value; S.tpl = null; S.cot = null; renderTemplates();
+      S.tplDirty = false; S.tplPick = this.value; S.tpl = null; S.cot = null; S.fur = null; S.furPick = null; renderTemplates();
     });
     $('tplKind').addEventListener('click', function (e) { var b = e.target.closest('[data-tk]'); if (b) setTplKind(b.getAttribute('data-tk')); });
-    var tplIn = function (e) { if (S.tk === 'checkout') cotInput(e); else tplInput(e); };
+    var tplIn = function (e) { if (S.tk === 'checkout') cotInput(e); else if (S.tk === 'afterhours') furInput(e); else tplInput(e); };
     $('tplBody').addEventListener('input', tplIn);
     $('tplBody').addEventListener('change', tplIn);
-    $('tplBody').addEventListener('submit', function (e) { e.preventDefault(); if (S.tk === 'checkout') saveCot(null); else saveTpl(null); });
+    $('tplBody').addEventListener('submit', function (e) { e.preventDefault(); if (S.tk === 'checkout') saveCot(null); else if (S.tk === 'afterhours') saveFur(null); else saveTpl(null); });
     $('tplBody').addEventListener('click', function (e) {
       var s = e.target.closest('[data-sec]');
-      if (s && !s.disabled) { var box = s.closest('.sect'); (S.tk === 'checkout' ? cotSection : tplSection)(s.getAttribute('data-sec'), box ? +box.getAttribute('data-i') : -1); return; }
+      if (s && !s.disabled) { var box = s.closest('.sect'); (S.tk === 'checkout' ? cotSection : S.tk === 'afterhours' ? furSection : tplSection)(s.getAttribute('data-sec'), box ? +box.getAttribute('data-i') : -1); return; }
+      var fr = e.target.closest('[data-fur]');
+      if (fr) { furPickRule(fr.getAttribute('data-fur')); return; }
+      var fa = e.target.closest('[data-fua]');
+      if (fa) { var k = fa.getAttribute('data-fua'); if (k === 'delete') deleteFur(); else saveFur(k === 'review'); return; }
       var t = e.target.closest('[data-tpl]');
       if (t) { saveTpl(t.getAttribute('data-tpl') === 'review'); return; }
       var c = e.target.closest('[data-cot]');
