@@ -1373,7 +1373,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-04-leadmail6"></script>
+<script src="pms-supabase.js?v=2026-10-04-leadmail7"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4077,6 +4077,10 @@ textarea.lm-input{resize:vertical;min-height:72px}
 .lm-row-end{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
 button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
 .lm-tool-taylor{color:var(--red);font-weight:600}
+.lm-sched-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--ink)}
+.lm-sched-row svg{color:var(--muted)}
+.lm-sched{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lm-sched label{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
 .lm-taylor{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--red-soft)}
 .lm-taylor .form-input{flex:1;min-width:0;padding:6px 8px}
 .lm-taylor-mark{color:var(--red);display:inline-flex}
@@ -29609,6 +29613,9 @@ Object.assign(LEAD_MAIL_ERRORS, {
   sequence_finished: 'All follow-ups were already sent.',
   admins_only: 'Only admins can edit the follow-up templates.',
   bad_lang: 'Pick English, Spanish or Japanese.',
+  bad_start_date: 'Pick a start date from today up to about a year ahead.',
+  bad_gap: 'Pick how often the follow-ups go out.',
+  bad_schedule: 'That follow-up schedule could not be read.',
 });
 // The same limits the Worker enforces, checked before upload.
 const LEAD_MAIL_FILES = { max: 10, fileBytes: 10 * 1024 * 1024, totalBytes: 10 * 1024 * 1024,
@@ -29641,6 +29648,25 @@ function leadMailFollowupState(fu){
     text: 'Automatic follow-ups stopped: ' + (LEAD_MAIL_STOP_REASONS[fu.stop_reason] || fu.stop_reason || 'stopped') + '.' };
   return { kind: 'active', step: fu.step, at: fu.next_at };
 }
+// Follow-up frequency choices ('' = the template gaps, 2 / 3 / 5 days).
+const LEAD_MAIL_GAPS = [['', 'Standard (2, 3, then 5 days)'], ['3', 'Every 3 days'], ['7', 'Every week'], ['14', 'Every 2 weeks'], ['30', 'Every month']];
+// "starts Fri, Jan 15, 2027 · every 2 weeks" for a sequence (or a schedule being chosen).
+function leadMailScheduleText(sch){
+  const parts = [];
+  if(sch && sch.start_at){
+    const d = new Date(sch.start_at + 'T12:00:00Z');
+    if(!isNaN(d)) parts.push('starts ' + d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }));
+  }
+  const g = sch && Number(sch.gap_days);
+  if(g){ const o = LEAD_MAIL_GAPS.find(x => x[0] === String(g)); parts.push(o ? o[1].toLowerCase() : 'every ' + g + ' days'); }
+  return parts.join(' · ');
+}
+// The schedule to send: null when it is the default (start 2 days after, template gaps).
+function leadMailScheduleBody(mode, date, gap){
+  const start = mode === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? date : null;
+  const g = gap ? Number(gap) : null;
+  return start || g ? { start_at: start, gap_days: g } : null;
+}
 /* LEAD-MAIL-CORE-END */
 
 const LEAD_MAIL = {
@@ -29648,6 +29674,7 @@ const LEAD_MAIL = {
   sending: false, sendKey: '', sendAnyway: false, files: [], draftSubject: '', draftBody: '',
   newMode: false, autoFollow: true, editFollow: false, editTemplates: false, loading: false, lang: 'en', tplLang: 'en',
   taylorOpen: false, taylorBusy: false, taylorAsk: '', prevDraft: null, prevSubject: null, taylorRooms: false,
+  schedMode: 'after', schedDate: '', schedGap: '', editSchedule: false,
 };
 // The Worker acts as the signed-in user, so "view as" must not change who the
 // drawer says the email comes from.
@@ -29713,7 +29740,8 @@ function leadMailReset(l){
   // Follow-ups only make sense for your own lead (they stop when someone else holds it).
   LEAD_MAIL.autoFollow = String(l.claimed_by || '').toLowerCase() === String(leadMailViewer().email || '').toLowerCase();
   LEAD_MAIL.lang = leadMailLang(l);
-  Object.assign(LEAD_MAIL, { taylorOpen: false, taylorBusy: false, taylorAsk: '', prevDraft: null, prevSubject: null, taylorRooms: false });
+  Object.assign(LEAD_MAIL, { taylorOpen: false, taylorBusy: false, taylorAsk: '', prevDraft: null, prevSubject: null, taylorRooms: false,
+    schedMode: 'after', schedDate: '', schedGap: '', editSchedule: false });
   if(pre !== 'compose'){ LEAD_MAIL.loading = false; leadMailRender(l); return; }
   leadMailRender(l);
   Promise.all([leadMailLoadStatus(), leadMailLoadHistory(l)]).then(() => {
@@ -29796,6 +29824,13 @@ function leadMailFollowupHtml(l, me){
   const tpl = (LEAD_MAIL.templates || []).find(t => t.step === st.step && (t.lang || 'en') === fuLang);
   const ov = LEAD_MAIL.followup.overrides && LEAD_MAIL.followup.overrides[String(st.step)];
   const text = (ov && String(ov).trim()) || (tpl && tpl.body) || '';
+  if(LEAD_MAIL.editSchedule){
+    return `<div class="lm-strip lm-strip-on" style="display:block">
+      <div class="lm-strip-head">${LM_ICON.clock}<b>Follow-up schedule</b><span class="lm-dim">· only for this lead · weekdays 9:00-16:45 Vancouver</span></div>
+      <div class="lm-sched-row" style="padding:0">${leadMailScheduleControls('lm-fs', LEAD_MAIL.schedMode, LEAD_MAIL.schedDate, LEAD_MAIL.schedGap)}</div>
+      <div class="lm-row-end"><button class="btn btn-ghost btn-mini" type="button" id="lm-fs-cancel">Cancel</button><button class="btn btn-primary btn-mini" type="button" id="lm-fs-save">Save schedule</button></div>
+    </div>`;
+  }
   if(LEAD_MAIL.editFollow){
     return `<div class="lm-strip lm-strip-on" style="display:block">
       <div class="lm-strip-head">${LM_ICON.clock}<b>Edit follow-up ${esc(st.step)} of 3</b><span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} · only for this lead</span></div>
@@ -29804,10 +29839,10 @@ function leadMailFollowupHtml(l, me){
     </div>`;
   }
   return `<div class="lm-strip lm-strip-on">
-    ${LM_ICON.clock}<div style="flex:1;min-width:0"><b>Follow-up ${esc(st.step)} of 3</b> <span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} if no reply ·</span>
+    ${LM_ICON.clock}<div style="flex:1;min-width:0"><b>Follow-up ${esc(st.step)} of 3</b> <span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} if no reply${leadMailScheduleText(LEAD_MAIL.followup) ? ' · ' + esc(leadMailScheduleText(LEAD_MAIL.followup)) : ''} ·</span>
       ${owner ? `<select class="lm-lang" id="lm-fu-lang" aria-label="Follow-up language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === fuLang ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<span class="lm-dim">${esc(LEAD_MAIL_LANGS[fuLang] || fuLang)}</span>`}
       <div class="lm-preview">${esc(leadMailGreeting(l.name, fuLang))} ${esc(text)}</div></div>
-    ${owner ? `<span class="lm-strip-actions"><button type="button" class="lm-link" id="lm-fu-edit">Edit</button><button type="button" class="lm-link" data-lm-fu="skip">Skip</button><button type="button" class="lm-link" data-lm-fu="stop">Stop</button></span>` : ''}
+    ${owner ? `<span class="lm-strip-actions"><button type="button" class="lm-link" id="lm-fu-sched">Schedule</button><button type="button" class="lm-link" id="lm-fu-edit">Edit</button><button type="button" class="lm-link" data-lm-fu="skip">Skip</button><button type="button" class="lm-link" data-lm-fu="stop">Stop</button></span>` : ''}
   </div>${tplLink ? `<div style="text-align:right;margin-top:-4px">${tplLink}</div>` : ''}`;
 }
 
@@ -29834,6 +29869,18 @@ function leadMailTemplatesHtml(){
   </div>`;
 }
 
+// Start + frequency controls, used under the composer and in the follow-up strip.
+function leadMailScheduleControls(prefix, mode, date, gap){
+  const today = new Date().toISOString().slice(0, 10), max = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+  return `<span class="lm-sched">
+    <label>Start <select class="lm-lang" id="${prefix}-mode">
+      <option value="after" ${mode !== 'date' ? 'selected' : ''}>After this email</option>
+      <option value="date" ${mode === 'date' ? 'selected' : ''}>On a date…</option></select></label>
+    ${mode === 'date' ? `<input type="date" class="lm-lang" id="${prefix}-date" min="${today}" max="${max}" value="${esc(date || '')}">` : ''}
+    <label>Frequency <select class="lm-lang" id="${prefix}-gap">${LEAD_MAIL_GAPS.map(([v, t]) => `<option value="${v}" ${String(gap || '') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+  </span>`;
+}
+
 function leadMailComposerHtml(l, me){
   const thread = leadMailReplyThread(LEAD_MAIL.emails, me);
   const needMe = (LEAD_MAIL.needsRead || []).some(e => String(e).toLowerCase() === me);
@@ -29855,12 +29902,13 @@ function leadMailComposerHtml(l, me){
     <textarea class="form-input lm-input" id="lead-mail-body" rows="3" maxlength="10000" placeholder="${reply ? 'Write a reply…' : 'Write your message…'}">${esc(LEAD_MAIL.draftBody || '')}</textarea>
     ${files ? `<div class="lm-files">${files}</div>` : ''}
     <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none"></div>
+    ${!(fu && reply) && LEAD_MAIL.autoFollow ? `<div class="lm-sched-row">${LM_ICON.clock}<span class="lm-dim">Follow-ups:</span>${leadMailScheduleControls('lm-s', LEAD_MAIL.schedMode, LEAD_MAIL.schedDate, LEAD_MAIL.schedGap)}</div>` : ''}
     <div class="lm-toolbar">
       <select class="lm-lang" id="lm-lang" title="Language of the greeting and of the automatic follow-ups" aria-label="Email language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === LEAD_MAIL.lang ? 'selected' : ''}>${v}</option>`).join('')}</select>
       <button type="button" class="lm-tool lm-tool-taylor" id="lm-taylor" title="Taylor writes a draft from the lead's details and the conversation, with matching rooms. Nothing is sent until you press Send.">${LM_ICON.spark}<span>Draft with Taylor</span></button>
       <label class="lm-tool" title="Attach photos or documents (10 MB total)">${LM_ICON.clip}<span>Attach</span><input type="file" id="lm-file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
       ${fu && reply ? `<span class="lm-dim" style="font-size:12px">Follow-ups re-time after your reply</span>`
-        : `<label class="lm-tool" title="Up to 3 short follow-ups in this conversation (2, 5 and 10 days later, weekdays 9:00-16:45 Vancouver). They stop when the lead replies."><input type="checkbox" id="lm-auto" ${LEAD_MAIL.autoFollow ? 'checked' : ''}><span>Follow up automatically if no reply</span></label>`}
+        : `<label class="lm-tool" title="Up to 3 short follow-ups in this conversation, weekdays 9:00-16:45 Vancouver. Choose when they start and how often below. They stop when the lead replies."><input type="checkbox" id="lm-auto" ${LEAD_MAIL.autoFollow ? 'checked' : ''}><span>Follow up automatically if no reply</span></label>`}
       <span style="flex:1"></span>
       <span class="lm-dim lm-kbd">⌘↵</span>
       <button class="btn btn-primary" type="button" id="lead-mail-send">${LEAD_MAIL.sendAnyway ? 'Send anyway' : reply ? 'Send reply' : 'Send email'}</button>
@@ -29939,10 +29987,33 @@ function leadMailWire(l){
     if(bod.value) grow();
   }
   const auto = document.getElementById('lm-auto');
-  if(auto) auto.addEventListener('change', () => { LEAD_MAIL.autoFollow = auto.checked; });
+  if(auto) auto.addEventListener('change', () => { LEAD_MAIL.autoFollow = auto.checked; leadMailKeepDraft(); leadMailRender(l); });
   on('lm-taylor', () => { LEAD_MAIL.taylorOpen = true; leadMailKeepDraft(); leadMailRender(l); const a = document.getElementById('lm-taylor-ask'); if(a) a.focus(); });
   on('lm-taylor-close', () => { LEAD_MAIL.taylorOpen = false; leadMailKeepDraft(); leadMailRender(l); });
   on('lm-taylor-go', () => leadMailTaylor(l));
+  // Schedule controls (composer 'lm-s', strip editor 'lm-fs'): a change re-renders to show/hide the date.
+  ['lm-s', 'lm-fs'].forEach(pre => {
+    const m = document.getElementById(pre + '-mode'), dt = document.getElementById(pre + '-date'), gp = document.getElementById(pre + '-gap');
+    if(m) m.addEventListener('change', () => { leadMailKeepDraft(); LEAD_MAIL.schedMode = m.value; leadMailRender(l); });
+    if(dt) dt.addEventListener('change', () => { LEAD_MAIL.schedDate = dt.value; });
+    if(gp) gp.addEventListener('change', () => { LEAD_MAIL.schedGap = gp.value; });
+  });
+  on('lm-fu-sched', () => {
+    const f = LEAD_MAIL.followup || {};
+    Object.assign(LEAD_MAIL, { editSchedule: true, schedMode: f.start_at ? 'date' : 'after', schedDate: f.start_at || '', schedGap: f.gap_days ? String(f.gap_days) : '' });
+    leadMailRender(l);
+  });
+  on('lm-fs-cancel', () => { LEAD_MAIL.editSchedule = false; leadMailRender(l); });
+  on('lm-fs-save', async () => {
+    if(LEAD_MAIL.schedMode === 'date' && !LEAD_MAIL.schedDate){ showToast('Pick the start date'); return; }
+    const body = leadMailScheduleBody(LEAD_MAIL.schedMode, LEAD_MAIL.schedDate, LEAD_MAIL.schedGap) || { start_at: null, gap_days: null };
+    const r = await leadMailCall('POST', '/api/leads/followup', { lead_id: l.id, action: 'schedule', schedule: body });
+    if(!r.ok){ showToast(leadMailErrorText(r.body && r.body.error)); return; }
+    LEAD_MAIL.followup = r.body.followup || LEAD_MAIL.followup;
+    LEAD_MAIL.editSchedule = false;
+    showToast('Follow-up schedule saved');
+    leadMailRender(l);
+  });
   on('lm-taylor-undo', () => { LEAD_MAIL.draftBody = LEAD_MAIL.prevDraft || ''; if(LEAD_MAIL.prevSubject != null) LEAD_MAIL.draftSubject = LEAD_MAIL.prevSubject; LEAD_MAIL.prevDraft = null; LEAD_MAIL.prevSubject = null; leadMailRender(l); });
   const ask = document.getElementById('lm-taylor-ask');
   if(ask){
@@ -30105,12 +30176,14 @@ async function leadMailSend(l){
   if(!LEAD_MAIL.sendKey || LEAD_MAIL.sendAnyway){ LEAD_MAIL.sendKey = leadMailNewKey(); LEAD_MAIL.sendAnyway = false; }
   const autoEl = document.getElementById('lm-auto');
   const followUp = autoEl ? !!autoEl.checked : undefined;
+  if(followUp && LEAD_MAIL.schedMode === 'date' && !LEAD_MAIL.schedDate) return fail('bad_start_date');
+  const schedule = followUp ? leadMailScheduleBody(LEAD_MAIL.schedMode, LEAD_MAIL.schedDate, LEAD_MAIL.schedGap) : null;
   LEAD_MAIL.sending = true;
   if(btn){ btn.disabled = true; btn.textContent = LEAD_MAIL.files.length ? 'Uploading…' : 'Sending…'; }
   const attachments = LEAD_MAIL.files.map(f => ({ name: f.name, type: f.type, data: f.data }));
   const r = reply
-    ? await leadMailCall('POST', '/api/leads/reply', { lead_id: l.id, thread_id: thread, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: followUp, lang: LEAD_MAIL.lang })
-    : await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: !!followUp, lang: LEAD_MAIL.lang });
+    ? await leadMailCall('POST', '/api/leads/reply', { lead_id: l.id, thread_id: thread, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: followUp, lang: LEAD_MAIL.lang, schedule })
+    : await leadMailCall('POST', '/api/leads/email', { lead_id: l.id, subject, message, send_key: LEAD_MAIL.sendKey, attachments, follow_up: !!followUp, lang: LEAD_MAIL.lang, schedule });
   LEAD_MAIL.sending = false;
   if(!r.ok){
     if(btn){ btn.disabled = false; btn.textContent = reply ? 'Send reply' : 'Send email'; }
@@ -30124,7 +30197,8 @@ async function leadMailSend(l){
     return fail(code);
   }
   LEAD_MAIL.files.forEach(f => f.thumb && URL.revokeObjectURL(f.thumb));
-  Object.assign(LEAD_MAIL, { draftSubject: '', draftBody: '', sendKey: '', files: [], newMode: false, prevDraft: null, prevSubject: null, taylorAsk: '' });
+  Object.assign(LEAD_MAIL, { draftSubject: '', draftBody: '', sendKey: '', files: [], newMode: false, prevDraft: null, prevSubject: null, taylorAsk: '',
+    schedMode: 'after', schedDate: '', schedGap: '' });
   // Mirror what the server wrote, so the drawer and table agree before realtime lands.
   if(r.body.status && r.body.status !== l.status){
     l.status = r.body.status;
