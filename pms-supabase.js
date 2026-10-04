@@ -589,7 +589,7 @@
       _rerenderTimer = null;
       const fns = ['renderTenants','renderPropertiesGrid','renderLandlords','renderVacancies',
                    'renderHomestayClients','renderHomestayFinance','renderHomestayHosts',
-                   'renderDeposits','renderLeads','renderSales','hbRerenderAgreements','updateSidebarCounts'];
+                   'renderDeposits','renderLeads','renderSales','hbRerenderAgreements','renderContracts','updateSidebarCounts'];
       for (const fn of fns) {
         try { if (typeof window[fn] === 'function') window[fn](); }
         catch (e) { console.warn('[vmDb] rerender ' + fn + ' failed:', e.message); }
