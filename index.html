@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-contracts2"></script>
+<script src="pms-supabase.js?v=2026-10-05-sessionid1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1663,10 +1663,10 @@
 
     <div class="sidebar-footer">
       <div class="user-card">
-        <div class="avatar">AD</div>
+        <div class="avatar"></div>
         <div>
-          <div class="user-name">Aldo D.</div>
-          <div class="user-role">CEO · Vancouver</div>
+          <div class="user-name"></div>
+          <div class="user-role"></div>
         </div>
       </div>
     </div>
@@ -1703,10 +1703,10 @@
         <span class="notif-badge" id="notif-badge" style="position:absolute;top:6px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px var(--surface)"></span>
       </button>
       <div class="role-pill" id="role-pill">
-        <div class="pill-avatar" id="pill-avatar">AD</div>
+        <div class="pill-avatar" id="pill-avatar"></div>
         <div>
-          <div id="pill-name" style="line-height:1.05">Aldo</div>
-          <div class="pill-role" id="pill-role">CEO</div>
+          <div id="pill-name" style="line-height:1.05"></div>
+          <div class="pill-role" id="pill-role"></div>
         </div>
         <span class="caret">▾</span>
         <div class="role-menu" id="role-menu"></div>
@@ -3021,11 +3021,11 @@ hello@vanmates.com · vanmates.com</textarea>
             <div class="card card-pad">
               <div class="card-head"><div><div class="card-title">Your <em>profile</em></div><div class="card-sub">How you appear inside the workspace</div></div></div>
               <div class="form-row">
-                <div class="form-field"><label>Display name</label><input class="form-input" id="set-prof-name" value="Aldo Diaz Rodriguez" /></div>
-                <div class="form-field"><label>Job title</label><input class="form-input" id="set-prof-title" value="CEO"/></div>
+                <div class="form-field"><label>Display name</label><input class="form-input" id="set-prof-name" value="" /></div>
+                <div class="form-field"><label>Job title</label><input class="form-input" id="set-prof-title" value=""/></div>
               </div>
               <div class="form-row">
-                <div class="form-field"><label>Email</label><input class="form-input" id="set-prof-email" type="email" value="aldo@vanmates.com" /></div>
+                <div class="form-field"><label>Email</label><input class="form-input" id="set-prof-email" type="email" value="" /></div>
                 <div class="form-field"><label>Phone</label><input class="form-input" id="set-prof-phone" type="tel" placeholder="+1 (604) ..." /></div>
               </div>
               <div class="form-row">
@@ -8083,9 +8083,10 @@ const roles = {
                 nav:["dashboard","maintenance"]},
 };
 
-const teamMembers = [
-  {id:"u1", ini:"AD", name:"Aldo Diaz Rodriguez", email:"aldo@vanmates.com", role:"admin", title:"CEO", assigned:null, city:"Vancouver", color:"#A88965", lastLogin:"now"},
-];
+// Filled from team_members by hydrateTeamFromDb(). No seed row: a seeded
+// admin used to double as the "current user" until hydration finished, and
+// whenever identity resolution failed it silently stayed that admin.
+const teamMembers = [];
 
 // Pending invitations — sent but not yet accepted
 const pendingInvites = [];
@@ -8094,7 +8095,43 @@ const salesReps = []; // hydrated from Supabase; one row per sales rep (targets)
 const contracts = []; // hydrated from Supabase; signed agreements (homestay first)
 const closedDeals = []; // hydrated from Supabase; the closed-deal ledger (Zoho sync, then the portal itself)
 
-let CURRENT_USER = teamMembers[0]; // Aldo (admin)
+/* AUTH-CORE-START */
+// Who is signed in comes from the Supabase auth session ONLY — the same token
+// every request carries, so the screen and RLS always agree on the person.
+// It used to come from sessionStorage.vm_session, which signin.html writes in
+// the one tab that signed in: any other tab (bookmark, typed URL, Slack link,
+// browser restart) had a valid token but no vm_session, and the portal kept its
+// default user — Aldo, as admin — showing his name and stamping his email on
+// inventory / partner / deposit writes.
+//
+// Until the session is resolved the user is SIGNED_OUT_USER: no role, no pages.
+function signedOutUser(){
+  return { id:"", ini:"", name:"", email:"", role:"none", title:"", assigned:null,
+           city:null, color:"#8A7B6C", allowed_pages:[] };
+}
+function sessionEmail(session){
+  return String((session && session.user && session.user.email) || "").trim().toLowerCase();
+}
+// The team row for this email, or null. Case- and whitespace-insensitive.
+function resolveSessionMember(email, team){
+  const e = String(email || "").trim().toLowerCase();
+  if(!e) return null;
+  return (team || []).find(m => String((m && m.email) || "").trim().toLowerCase() === e) || null;
+}
+// signin.html stashes the Google/password profile (name, picture) in this tab.
+// It may decorate the member only when it is for the SAME email — a stale stash
+// from another account must never rename or re-picture the signed-in person.
+function sessionProfileFor(member, stash){
+  if(!member || !stash || !member.email) return null;
+  return String(stash.email || "").trim().toLowerCase() === String(member.email).trim().toLowerCase() ? stash : null;
+}
+// "View as someone else" is an admin tool; it was offered to everyone.
+function canViewAs(user){ return !!(user && user.email && user.role === "admin"); }
+// Label for a role key that may not be in the roles table (e.g. "none").
+function roleLabelOf(rolesTable, role){ return (rolesTable && rolesTable[role] && rolesTable[role].label) || ""; }
+/* AUTH-CORE-END */
+
+let CURRENT_USER = signedOutUser(); // replaced by hydrateTeamFromDb() from the auth session
 let VIEWING_AS = null;             // when set, override active role
 
 function activeRole(){ return VIEWING_AS || CURRENT_USER; }
@@ -8884,7 +8921,7 @@ async function sendInviteEmail({name, email, role, title, pages, assigned}){
    No backend / email API required — the user reviews and hits Send themselves.
    This is the "today" implementation; later we can swap in Resend/SendGrid. */
 function openInviteMailto({name, email, role, title, pages, assigned}){
-  const inviter = (typeof CURRENT_USER !== "undefined" && CURRENT_USER) ? CURRENT_USER.name : "Aldo";
+  const inviter = (typeof CURRENT_USER !== "undefined" && CURRENT_USER && CURRENT_USER.name) || "Vanmates";
   const roleLabel = (typeof roles === "object" && roles[role]?.label) || role;
 
   const pageLabels = {
@@ -8931,63 +8968,69 @@ hello@vanmates.com`;
 renderPendingInvites();
 
 function applyRolePermissions(){
-  const u = activeRole();
+  const u = activeRole() || signedOutUser();
 
-  // Hard guard: admin role ALWAYS sees every nav item that exists in the
-  // DOM. No allowed_pages, no role.nav lookups — just take the live DOM.
-  // Anything else has historically been a footgun (stale roles arrays,
-  // missing entries, hydration edge cases) that nukes the admin sidebar.
-  if (u && u.role === 'admin') {
+  if (!u.email) {
+    // Not resolved yet (or resolution failed): no pages at all.
+    document.querySelectorAll(".nav-item[data-view]").forEach(el => el.classList.add("role-hidden"));
+  } else if (u.role === 'admin') {
+    // Hard guard: admin role ALWAYS sees every nav item that exists in the
+    // DOM. No allowed_pages, no role.nav lookups — just take the live DOM.
+    // Anything else has historically been a footgun (stale roles arrays,
+    // missing entries, hydration edge cases) that nukes the admin sidebar.
     document.querySelectorAll(".nav-item[data-view]").forEach(el => {
       el.classList.remove("role-hidden");
     });
     console.log("[applyRolePermissions] admin -> all nav visible");
-    return;
+  } else {
+    const r = roles[u.role] || roles.viewer || {nav:["dashboard"]};
+    // If the user has an explicit allowed_pages list (set when an admin
+    // restricted their pages on the invite), respect that. Otherwise fall
+    // back to the role's default nav.
+    const allowed = (Array.isArray(u.allowed_pages) && u.allowed_pages.length > 0)
+                    ? u.allowed_pages : r.nav;
+    // Show/hide nav items
+    document.querySelectorAll(".nav-item[data-view]").forEach(el => {
+      const v = el.dataset.view;
+      // Arrivals is part of the CS team's work: a CS member sees it without an explicit 'arrivals' page.
+      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs"));
+      el.classList.toggle("role-hidden", !ok);
+    });
+    // If currently active view is not allowed, switch to dashboard (or first
+    // allowed page if dashboard isn't on the list).
+    const activeView = document.querySelector(".view.active");
+    if(activeView && !allowed.includes(activeView.dataset.view)){
+      goToView(allowed.includes("dashboard") ? "dashboard" : (allowed[0] || "dashboard"));
+    }
   }
 
-  const r = roles[u.role] || roles.viewer || {nav:["dashboard"]};
-  // If the user has an explicit allowed_pages list (set when an admin
-  // restricted their pages on the invite), respect that. Otherwise fall
-  // back to the role's default nav.
-  const allowed = (Array.isArray(u.allowed_pages) && u.allowed_pages.length > 0)
-                  ? u.allowed_pages : r.nav;
-  // Show/hide nav items
-  document.querySelectorAll(".nav-item[data-view]").forEach(el => {
-    const v = el.dataset.view;
-    // Arrivals is part of the CS team's work: a CS member sees it without an explicit 'arrivals' page.
-    const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs"));
-    el.classList.toggle("role-hidden", !ok);
-  });
-  // If currently active view is not allowed, switch to dashboard (or first
-  // allowed page if dashboard isn't on the list).
-  const activeView = document.querySelector(".view.active");
-  if(activeView && !allowed.includes(activeView.dataset.view)){
-    goToView(allowed.includes("dashboard") ? "dashboard" : (allowed[0] || "dashboard"));
-  }
-
-  // Update sidebar footer (u was declared at the top of this function)
+  // Sidebar footer + topbar pill always show the active person. (The admin
+  // branch used to return before this, so every admin kept the static
+  // "Aldo D." / "Aldo" that was baked into the HTML.)
+  const roleLabel = roleLabelOf(roles, u.role);
   const footer = document.querySelector(".sidebar-footer .user-card");
   if(footer){
     footer.querySelector(".avatar").textContent = u.ini;
     footer.querySelector(".avatar").style.background = `linear-gradient(135deg, ${u.color}, ${shade(u.color,-25)})`;
     footer.querySelector(".user-name").textContent = u.name;
     // Prefer the user's custom title (e.g. "CEO") over the generic role label
-    footer.querySelector(".user-role").textContent = `${u.title || roles[u.role].label}${u.assigned?' · '+u.assigned:''}`;
+    footer.querySelector(".user-role").textContent = `${u.title || roleLabel}${u.assigned?' · '+u.assigned:''}`;
   }
 
   // Update topbar pill
   document.getElementById("pill-avatar").textContent = u.ini;
   document.getElementById("pill-avatar").style.background = `linear-gradient(135deg, ${u.color}, ${shade(u.color,-25)})`;
-  document.getElementById("pill-name").textContent = u.name.split(" ")[0];
+  document.getElementById("pill-name").textContent = (u.name || "").split(" ")[0];
   // Prefer the user's custom title (e.g. "CEO") over the generic role label
-  document.getElementById("pill-role").textContent = u.title || roles[u.role].label;
+  document.getElementById("pill-role").textContent = u.title || roleLabel;
+  if (!VIEWING_AS && typeof applySessionPicture === "function") applySessionPicture(u);
 
   // Banner shows when viewing as someone else
   const banner = document.getElementById("viewing-banner");
   if(VIEWING_AS){
     const scope = VIEWING_AS.assigned ? ` · scoped to <b>${esc(VIEWING_AS.assigned)}</b>` : "";
     document.getElementById("viewing-banner-msg").innerHTML =
-      `You are viewing as <b>${esc(VIEWING_AS.name)}</b> (${roles[VIEWING_AS.role].label})${scope}. The sidebar and data reflect what they would see.`;
+      `You are viewing as <b>${esc(VIEWING_AS.name)}</b> (${esc(roleLabelOf(roles, VIEWING_AS.role))})${scope}. The sidebar and data reflect what they would see.`;
     banner.classList.add("active");
   } else {
     banner.classList.remove("active");
@@ -8998,6 +9041,7 @@ function applyRolePermissions(){
 }
 
 function viewAs(member){
+  if(!canViewAs(CURRENT_USER)) return;
   if(member.id === CURRENT_USER.id) {
     VIEWING_AS = null;
   } else {
@@ -9013,6 +9057,61 @@ function exitViewAs(){
   applyRolePermissions();
 }
 
+// Sign out for real: end the Supabase session in this browser, not just the
+// per-tab profile stash. Sign out used to leave the token in localStorage, so
+// the next person to open the portal on the same computer was still signed in
+// as the previous one. scope "local" = this browser only, not every device.
+async function vmSignOut(){
+  try { sessionStorage.removeItem("vm_session"); } catch(e){}
+  const sb = window.vmDb && window.vmDb.sb;
+  if (sb) {
+    try { await Promise.race([sb.auth.signOut({ scope: "local" }), new Promise(r => setTimeout(r, 3000))]); }
+    catch(e){ console.warn("[signout]", e); }
+  }
+  // Belt and braces: the auth gate trusts this key, so make sure it is gone
+  // even if signOut() timed out or threw.
+  try { Object.keys(localStorage).filter(k => /^sb-.*-auth-token$/.test(k)).forEach(k => localStorage.removeItem(k)); } catch(e){}
+  location.href = "signin.html";
+}
+
+// The Google picture from signin.html's stash, on the sidebar + pill avatars.
+function applySessionPicture(u){
+  const pic = u && u.picture;
+  if(!pic) return;
+  [document.querySelector(".sidebar-footer .user-card .avatar"), document.getElementById("pill-avatar")].forEach(el => {
+    if(!el) return;
+    el.innerHTML = "";
+    el.style.background = `center/cover no-repeat url("${String(pic).replace(/["\\]/g, "")}")`;
+    el.title = u.name || "";
+  });
+}
+
+// Full-screen stop when the signed-in account is not a teammate, or the team
+// list could not be read. The portal must not fall back to anyone else.
+function showIdentityBlock(kind, email){
+  let el = document.getElementById("vm-identity-block");
+  if(!el){
+    el = document.createElement("div");
+    el.id = "vm-identity-block";
+    el.style.cssText = "position:fixed;inset:0;z-index:100000;background:var(--cream);display:flex;align-items:center;justify-content:center;padding:16px";
+    document.body.appendChild(el);
+  }
+  const msg = kind === "not-team"
+    ? `<b>${esc(email)}</b> isn't on the Vanmates team. Ask a workspace admin to send you an invite, or sign in with your work account.`
+    : `We couldn't load your profile${email ? ` for <b>${esc(email)}</b>` : ""}. Check your connection and reload.`;
+  el.innerHTML = `
+    <div class="card card-pad" style="max-width:420px;width:100%;text-align:center">
+      <div class="card-title" style="margin-bottom:8px">${kind === "not-team" ? "Not on the team" : "Couldn't sign you in"}</div>
+      <p style="color:var(--muted);margin:0 0 16px">${msg}</p>
+      <div style="display:flex;gap:8px;justify-content:center">
+        ${kind === "not-team" ? "" : `<button class="btn btn-primary" id="vm-identity-reload">Reload</button>`}
+        <button class="btn btn-ghost" id="vm-identity-signout">Sign out</button>
+      </div>
+    </div>`;
+  el.querySelector("#vm-identity-reload")?.addEventListener("click", () => location.reload());
+  el.querySelector("#vm-identity-signout")?.addEventListener("click", () => vmSignOut());
+}
+
 // Build role switcher menu
 function buildRoleMenu(){
   const menu = document.getElementById("role-menu");
@@ -9024,21 +9123,22 @@ function buildRoleMenu(){
       <div class="av" style="background:linear-gradient(135deg, ${CURRENT_USER.color}, ${shade(CURRENT_USER.color,-25)})">${esc(CURRENT_USER.ini)}</div>
       <div class="info">
         <div class="nm">${esc(CURRENT_USER.name)}</div>
-        <div class="rl">${esc(CURRENT_USER.title || roles[CURRENT_USER.role].label)} · Signed in</div>
+        <div class="rl">${esc(CURRENT_USER.title || roleLabelOf(roles, CURRENT_USER.role))} · Signed in</div>
       </div>
     </div>
+    ${canViewAs(CURRENT_USER) ? `
     <div class="head">View as someone else</div>
     ${teamMembers.filter(m => m.id !== CURRENT_USER.id).map(m => `
-      <div class="opt" data-pick="${m.id}">
+      <div class="opt" data-pick="${esc(m.id)}">
         <div class="av" style="background:linear-gradient(135deg, ${m.color}, ${shade(m.color,-25)})">${esc(m.ini)}</div>
         <div class="info">
           <div class="nm">${esc(m.name)}</div>
-          <div class="rl">${roles[m.role].label}${m.assigned?' · '+esc(m.assigned):''}</div>
+          <div class="rl">${esc(roleLabelOf(roles, m.role))}${m.assigned?' · '+esc(m.assigned):''}</div>
         </div>
-        <span class="badge-sm" style="background:${roles[m.role].color}22;color:${roles[m.role].color}">${roles[m.role].label.split(' ')[0]}</span>
+        <span class="badge-sm" style="background:${(roles[m.role]||{}).color||'#8A7B6C'}22;color:${(roles[m.role]||{}).color||'#8A7B6C'}">${esc(roleLabelOf(roles, m.role).split(' ')[0])}</span>
       </div>
     `).join("")}
-    <div class="footer">Switching just changes what you can see. The actual signed-in user is <b>${esc(CURRENT_USER.name)}</b>.</div>
+    <div class="footer">Switching just changes what you can see. The actual signed-in user is <b>${esc(CURRENT_USER.name)}</b>.</div>` : ''}
     <div style="height:1px;background:var(--line);margin:6px 0"></div>
     <a class="opt" href="signin.html" id="role-menu-signout" style="color:var(--red-dark);font-weight:600;text-decoration:none">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:8px"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -9051,9 +9151,8 @@ function buildRoleMenu(){
       if(m) viewAs(m);
     });
   });
-  // Clear the Google/email session before navigating to signin.html
   const so = document.getElementById("role-menu-signout");
-  if(so) so.addEventListener("click", () => { try { sessionStorage.removeItem("vm_session"); } catch(e){} });
+  if(so) so.addEventListener("click", (ev) => { ev.preventDefault(); vmSignOut(); });
 }
 
 document.getElementById("role-pill").addEventListener("click", e => {
@@ -14498,7 +14597,7 @@ function openDeposit(id){
       // Update the deposit record
       r.status = "completed";
       r.refundDate = ddIsoDate(ddToday());
-      r.processedBy = (typeof activeRole === "function" ? activeRole().name : "Aldo Diaz Rodriguez");
+      r.processedBy = (typeof activeRole === "function" ? activeRole().name : "") || "";
       if(!r.method) r.method = "e-transfer"; // default if not chosen
       if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', r);
       // Close panel and refresh
@@ -19697,51 +19796,6 @@ if(_origGoToView){
   };
 }
 
-/* ============ APPLY GOOGLE SIGN-IN SESSION ============
-   Reads sessionStorage.vm_session (set by signin.html / signup.html on
-   successful Google or password sign-in) and applies the real user's name,
-   email, and avatar picture across the workspace. */
-(function applyGoogleSession(){
-  let sess;
-  try { sess = JSON.parse(sessionStorage.getItem("vm_session") || "null"); } catch(e){ sess = null; }
-  if(!sess || !sess.email) return;
-
-  // Find a matching team member; if none, ignore the session (shouldn't happen
-  // because signin.html allowlists email, but be defensive).
-  const member = teamMembers.find(m => m.email.toLowerCase() === sess.email.toLowerCase());
-  if(!member) return;
-
-  // Override the team member with real Google profile data
-  if(sess.name) member.name = sess.name;
-  if(sess.picture) member.picture = sess.picture;
-  // Recompute initials from the real name
-  const parts = (member.name || "").split(/\s+/).filter(Boolean);
-  if(parts.length >= 2) member.ini = (parts[0][0] + parts[1][0]).toUpperCase();
-  else if(parts.length === 1) member.ini = parts[0].slice(0,2).toUpperCase();
-
-  // Make CURRENT_USER point to the same record (it's the same object reference)
-  CURRENT_USER = member;
-
-  // Helper: replace an .avatar element's text with the picture if available
-  const applyPic = (el) => {
-    if(!el || !sess.picture) return;
-    el.innerHTML = "";
-    el.style.background = `center/cover no-repeat url("${sess.picture}")`;
-    el.title = member.name;
-  };
-  applyPic(document.querySelector(".sidebar-footer .user-card .avatar"));
-  applyPic(document.getElementById("pill-avatar"));
-
-  // Update display names that were already rendered before this ran
-  const sidebarName = document.querySelector(".sidebar-footer .user-name");
-  if(sidebarName) sidebarName.textContent = member.name;
-  const pillName = document.getElementById("pill-name");
-  if(pillName) pillName.textContent = (member.name || "").split(/\s+/)[0];
-
-  // The role-pill dropdown already renders a "Sign out" link via
-  // renderRoleMenu(); we hooked it above to also clear sessionStorage.
-})();
-
 /* ============ HYDRATE TEAM + PENDING INVITES FROM SUPABASE ============
    Pulls every team_members row and every still-pending invite, merges
    them into the in-memory teamMembers / pendingInvites arrays, and then
@@ -19750,6 +19804,7 @@ if(_origGoToView){
 (async function hydrateTeamFromDb(){
   if (!window.vmDb || !window.vmDb.sb) {
     console.log("[hydrateTeam] no vmDb client, skipping");
+    showIdentityBlock("error", "");
     return;
   }
   const sb = window.vmDb.sb;
@@ -19817,18 +19872,34 @@ if(_origGoToView){
       });
     }
 
-    // 3. Re-apply session so CURRENT_USER points at the real signed-in row
+    // 3. Who is signed in: the Supabase session's own email (AUTH-CORE). Never
+    //    the per-tab vm_session stash, and never a default person.
+    let authEmail = "";
     try {
-      const sess = JSON.parse(sessionStorage.getItem("vm_session") || "null");
-      if (sess && sess.email) {
-        const member = teamMembers.find(m => (m.email||"").toLowerCase() === sess.email.toLowerCase());
-        if (member) {
-          if (sess.name) member.name = sess.name;
-          if (sess.picture) member.picture = sess.picture;
-          CURRENT_USER = member;
-        }
-      }
-    } catch(e) { console.warn("[hydrateTeam] session re-apply:", e); }
+      const { data } = await sb.auth.getSession();
+      authEmail = sessionEmail(data && data.session);
+    } catch(e) { console.warn("[hydrateTeam] getSession:", e); }
+    if (!authEmail) {
+      // The gate saw a token but it is gone or unusable now: sign in again.
+      location.replace('signin.html');
+      return;
+    }
+    // No rows at all means the team could not be read (RLS / network), which
+    // says nothing about membership — offer Reload, not "not on the team".
+    if (tmErr || !teamMembers.length) { showIdentityBlock("error", authEmail); return; }
+    const member = resolveSessionMember(authEmail, teamMembers);
+    if (!member) { showIdentityBlock("not-team", authEmail); return; }
+    let stash = null;
+    try { stash = JSON.parse(sessionStorage.getItem("vm_session") || "null"); } catch(e) { stash = null; }
+    const prof = sessionProfileFor(member, stash);
+    if (prof && prof.name) member.name = prof.name;
+    if (prof && prof.picture) member.picture = prof.picture;
+    CURRENT_USER = member;
+    VIEWING_AS = null;
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+    setVal("set-prof-name", member.name);
+    setVal("set-prof-title", member.title);
+    setVal("set-prof-email", member.email);
 
     // 4. Re-render anything that depends on the team / invites lists
     if (typeof applyRolePermissions === "function") applyRolePermissions();
@@ -19838,9 +19909,15 @@ if(_origGoToView){
     if (typeof renderTeam           === "function") renderTeam();   // <-- Team page Active members grid
     if (typeof renderRoleMenu       === "function") renderRoleMenu();
     if (typeof updateSidebarCounts  === "function") updateSidebarCounts();
+    if (typeof refreshDashboard     === "function") refreshDashboard();   // greeting uses the first name
+    // A page opened before identity resolved (deep link) rendered for nobody;
+    // re-enter it now so admin-only controls and per-person scoping apply.
+    const openView = document.querySelector(".view.active");
+    if (openView && openView.dataset.view !== "dashboard" && typeof goToView === "function") goToView(openView.dataset.view);
     console.log("[hydrateTeam] done. teamMembers=", teamMembers.length, "pendingInvites=", pendingInvites.length, "currentUser=", CURRENT_USER?.email, "allowed_pages=", CURRENT_USER?.allowed_pages);
   } catch(e) {
     console.error("[hydrateTeam] threw:", e);
+    if (!CURRENT_USER || !CURRENT_USER.email) showIdentityBlock("error", "");
   }
 })();
 
