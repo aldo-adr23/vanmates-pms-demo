@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-ptnaccess1"></script>
+<script src="pms-supabase.js?v=2026-10-05-agencymatch1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3384,7 +3384,10 @@ hello@vanmates.com · vanmates.com</textarea>
         <button class="btn btn-ghost" id="hm-refresh">Refresh</button>
       </div>
       <div id="hm-queue-pane" class="row-15">
-        <div class="card card-pad"><div class="card-title">Cases</div><div id="hm-queue"></div></div>
+        <div class="card card-pad"><div class="card-title">Cases</div>
+          <div class="hb-tabbar" role="tablist" id="hm-source-tabs" style="display:flex;gap:18px;border-bottom:1px solid var(--line);margin:6px 0 10px"></div>
+          <div id="hm-agency-gaps"></div>
+          <div id="hm-queue"></div></div>
         <div class="card card-pad"><div id="hm-case"><div class="card-sub">Pick a case on the left</div></div></div>
       </div>
       <div id="hm-profiles-pane" class="card card-pad" style="display:none">
@@ -3446,7 +3449,6 @@ hello@vanmates.com · vanmates.com</textarea>
       </div>
 
       <div class="hb-tabbar" role="tablist">
-        <button type="button" class="hb-tab" role="tab" data-hb-tab="agency">Agency requests<span class="hb-n" id="hb-n-agency"></span></button>
         <button type="button" class="hb-tab" role="tab" data-hb-tab="waiting">Waiting on payment<span class="hb-n" id="hb-n-waiting"></span></button>
         <button type="button" class="hb-tab" role="tab" data-hb-tab="arriving">Arriving<span class="hb-n" id="hb-n-arriving"></span></button>
         <button type="button" class="hb-tab" role="tab" data-hb-tab="ongoing">Ongoing<span class="hb-n" id="hb-n-ongoing"></span></button>
@@ -3480,28 +3482,6 @@ hello@vanmates.com · vanmates.com</textarea>
             </div>
           </div>
           <div id="hb-auth-msg" class="card-sub" style="margin-top:10px"></div>
-        </div>
-      </div>
-
-      <!-- Agency requests (partners.vanmates.com). Read with the admin session
-           (partner_homestay_requests admin select policy); "Create booking" opens
-           the New booking tab filled in, with the agency as payer. -->
-      <div class="hb-pane" data-hb-pane="agency" hidden>
-        <div class="card" id="ahs-card">
-          <div class="card-head" style="flex-wrap:wrap;gap:10px">
-            <div>
-              <div class="card-sub">Homestay requests agencies made on partners.vanmates.com. Create booking opens the New booking tab filled in; the agency is invoiced on its account and the student is never charged.</div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <select class="form-input" id="ahs-status" style="max-width:170px">
-                <option value="">Open (all)</option><option value="requested">Requested</option><option value="matched">Matched</option>
-              </select>
-              <select class="form-input" id="ahs-group" style="max-width:170px"><option value="">All groups</option></select>
-              <input class="form-input" id="ahs-q" placeholder="Ref, agency or student" style="max-width:200px">
-              <button class="btn btn-ghost" id="ahs-refresh" type="button">Refresh</button>
-            </div>
-          </div>
-          <div id="ahs-body" style="overflow-x:auto"><div class="card-pad card-sub">Not loaded yet.</div></div>
         </div>
       </div>
 
@@ -20602,6 +20582,33 @@ function hmQueue(cases, filter){
   return list.slice().sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0)
     || String(a.created_at).localeCompare(String(b.created_at)));
 }
+// Source tabs above the case list. Agency = a partners.vanmates.com request (HS-####), which
+// comes in here first and only becomes a booking once its offer is accepted.
+const HM_SOURCES = [["all", "All"], ["agency", "Agency"], ["direct", "Direct"]];
+function hmBySource(cases, source){
+  const list = cases || [];
+  if (source === "agency") return list.filter(c => c.source === "partner");
+  if (source === "direct") return list.filter(c => c.source !== "partner");
+  return list;
+}
+// "Agency · Maple Education · HS-1042" for an agency case, "" for a direct one.
+// agencyNames: Map of agency_id -> name; a missing name is left out, never guessed.
+function hmAgencyLabel(c, agencyNames){
+  if (!c || c.source !== "partner") return "";
+  const name = c.agency_id && agencyNames && agencyNames.get ? agencyNames.get(c.agency_id) : "";
+  return ["Agency", name, c.partner_request_ref || c.source_ref].filter(Boolean).join(" · ");
+}
+// Open agency requests that have no case here: the hand-off from the partner app failed or
+// has not run yet. Requests younger than graceMin are left out — group requests are queued
+// and handed over a few minutes later, and are not missing yet.
+function hmAgencyGaps(requests, cases, nowMs, graceMin){
+  const have = new Set((cases || []).filter(c => c.source === "partner")
+    .map(c => c.partner_request_ref || c.source_ref).filter(Boolean));
+  const grace = (graceMin == null ? 15 : graceMin) * 60000;
+  return (requests || []).filter(r => r.status === "requested" && r.ref && !have.has(r.ref)
+    && !(nowMs - Date.parse(r.created_at) < grace))
+    .slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+}
 function hmElapsed(iso, nowMs){
   const m = Math.max(0, Math.floor((nowMs - Date.parse(iso)) / 60000));
   if (m < 60) return `${m} min`;
@@ -30464,9 +30471,11 @@ renderLeads();
 })();
 
 /* AGENCY-HS-CORE-START */
-/* Homestay console > Agency requests: homestay requests agencies made on
-   partners.vanmates.com (partner_homestay_requests, read with the admin session)
-   become bookings through the SAME staff booking form and VM - Homestay Booking
+/* Agency homestay requests: requests agencies made on partners.vanmates.com
+   (partner_homestay_requests, read with the admin session). They are worked in
+   Homestay matching (Agency tab), which books them on offer acceptance. These
+   helpers serve matching's "Book directly" fallback for a request that never
+   reached matching: the SAME staff booking form and VM - Homestay Booking
    Create webhook, with the agency as payer. Pure: rows in, form values, request
    fields and result summaries out.
    Spec: rina docs/superpowers/specs/2026-09-27-agency-paid-homestays-design.md */
@@ -30917,7 +30926,7 @@ function ahsArrivalText(row, city){
 
   /* ---- tabs + list (HB-STAGES-CORE decides the tab) ---- */
   const HB_TAB_KEY = 'vm_hb_tab';
-  const HB_TABS = ['agency', 'waiting', 'arriving', 'ongoing', 'ended', 'needs', 'new'];
+  const HB_TABS = ['waiting', 'arriving', 'ongoing', 'ended', 'needs', 'new'];
   const HB_STAGE_WORDS = { waiting: 'Waiting on payment', arriving: 'Arriving', ongoing: 'Ongoing', ended: 'Ended' };
   const HB_COLS = {
     waiting: ['Student', 'Host', 'Stay', 'Weekly', 'Fees due', 'Status'],
@@ -30952,11 +30961,10 @@ function ahsArrivalText(row, city){
       b.classList.toggle('on', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    const pane = tab === 'agency' ? 'agency' : (tab === 'new' ? 'new' : 'list');
+    const pane = tab === 'new' ? 'new' : 'list';
     document.querySelectorAll('.hb-view .hb-pane').forEach((p) => { p.hidden = p.getAttribute('data-hb-pane') !== pane; });
     const q = $('hb-q'); if (q) q.hidden = pane !== 'list';
     if (pane === 'list') hbRenderList();
-    if (tab === 'agency' && !quiet) ahsLoad();
   }
 
   function hbRenderCounts() {
@@ -32066,16 +32074,13 @@ function ahsArrivalText(row, city){
   const AHS_FORM = { request: null, fields: null, createdRef: '' };
   const AHS_DATA = { rows: null, students: new Map(), error: '', loading: null };
 
+  // Agency requests are worked in Homestay matching now; this only loads them for the
+  // "Book directly" fallback there (a request the partner portal never handed to matching).
   async function ahsLoad() {
-    const body = $('ahs-body'); if (!body) return;
-    if (typeof ptnIsAdmin === 'function' && !ptnIsAdmin()) {
-      body.innerHTML = '<div class="card-pad card-sub">Only admins and people with the Partners page can see agency requests.</div>';
-      return;
-    }
+    if (typeof ptnIsAdmin === 'function' && !ptnIsAdmin()) { AHS_DATA.error = 'Only admins and people with the Partners page can book agency requests.'; return; }
     const sb = window.vmDb && window.vmDb.sb;
-    if (!sb) { body.innerHTML = '<div class="card-pad card-sub">Not connected to the database.</div>'; return; }
+    if (!sb) { AHS_DATA.error = 'Not connected to the database.'; return; }
     if (AHS_DATA.loading) return AHS_DATA.loading;
-    if (!AHS_DATA.rows) body.innerHTML = '<div class="card-pad card-sub">Loading agency requests…</div>';
     AHS_DATA.loading = (async () => {
       try {
         const requests = await ptnSelectAll(sb, 'partner_homestay_requests', '*',
@@ -32096,61 +32101,27 @@ function ahsArrivalText(row, city){
         const hint = /partner_/.test(String(e.message || '')) ? ' (has the homestay requests SQL been applied?)' : '';
         AHS_DATA.error = String(e.message || e) + hint;
       } finally { AHS_DATA.loading = null; }
-      ahsRender();
+      const d = AHS_DATA.raw;
+      AHS_DATA.rows = d && !AHS_DATA.error ? ahsRequestRows(d.requests, d.agencies, d.students, d.users, {}, d.groups) : [];
     })();
     return AHS_DATA.loading;
   }
 
-  function ahsRender() {
-    const body = $('ahs-body'); if (!body) return;
-    if (AHS_DATA.error) { body.innerHTML = '<div class="card-pad card-sub">Could not load agency requests: ' + esc(AHS_DATA.error) + '</div>'; return; }
-    if (!AHS_DATA.raw) return;
-    const d = AHS_DATA.raw;
-    const nReq = d.requests.filter((r) => r.status === 'requested').length;
-    const nEl = $('hb-n-agency'); if (nEl) { nEl.textContent = nReq || ''; nEl.classList.toggle('hb-need-v', nReq > 0); }
-    const gSel = $('ahs-group');
-    if (gSel && AHS_DATA.groupsFailed) {
-      gSel.innerHTML = '<option value="">Groups unavailable</option>';
-      gSel.disabled = true;
-      gSel.title = 'The groups could not be loaded, so the group filter is off. Reload to try again.';
-    } else if (gSel) {
-      gSel.disabled = false; gSel.title = '';
-      const refs = Array.from(new Set((d.groups || []).map((g) => g.ref).filter(Boolean))).sort();
-      const cur = gSel.value;
-      gSel.innerHTML = '<option value="">All groups</option>' + refs.map((x) => '<option value="' + esc(x) + '">' + esc(x) + '</option>').join('');
-      gSel.value = refs.includes(cur) ? cur : '';
-    }
-    const groupRef = gSel ? gSel.value : '';
-    const rows = ahsRequestRows(d.requests, d.agencies, d.students, d.users,
-      { status: ($('ahs-status') || {}).value || '', q: ($('ahs-q') || {}).value || '', group: groupRef }, d.groups);
-    AHS_DATA.rows = rows;
-    const gh = ahsGroupHeader(groupRef, d.groups, d.requests, rows.length);
-    const ghHtml = gh ? '<div class="card-pad" style="border-bottom:1px solid var(--line)"><strong>Group ' + esc(gh.ref) + (gh.name ? ' · ' + esc(gh.name) : '') + '</strong>' +
-      '<div class="card-sub">' + [gh.leader_name ? 'Leader ' + esc(gh.leader_name) : '', esc(gh.leader_phone), esc(gh.leader_email),
-        gh.student_count !== '' ? esc(gh.student_count) + ' students' : ''].filter(Boolean).join(' · ') + '</div>' +
-      '<div class="card-sub">' + esc(gh.count_label) + '</div></div>' : '';
-    if (!rows.length) {
-      body.innerHTML = ghHtml + '<div class="card-pad card-sub">' + (d.requests.length ? 'No request matches.' : 'No open agency requests.') + '</div>';
-      return;
-    }
-    body.innerHTML = ghHtml + '<table><thead><tr><th>Request</th><th>Agency</th><th>Student</th><th>City</th><th>Stay</th>' +
-      '<th>Package</th><th>Plan</th><th>Status</th><th></th></tr></thead><tbody>' +
-      rows.map((r) => '<tr>' +
-        '<td class="nowrap"><code>' + esc(r.ref) + '</code>' + (r.group_ref ? '<div class="card-sub">Group ' + esc(r.group_ref) + '</div>' : '') + '</td>' +
-        '<td>' + esc(r.agency_name || '—') + (r.user_name ? '<div class="card-sub">' + esc(r.user_name) + '</div>' : '') + '</td>' +
-        '<td>' + esc(r.student_name || '—') + '<div class="card-sub">' + esc(r.student_email) + '</div></td>' +
-        '<td>' + esc(r.city_label) + '</td>' +
-        '<td class="nowrap">' + esc(r.check_in) + '<div class="card-sub">to ' + esc(r.check_out) + '</div>' +
-          (ahsArrivalText(r, r.city) ? '<div class="card-sub" style="white-space:normal;max-width:260px">Arrival: ' + esc(ahsArrivalText(r, r.city)) + '</div>' : '') + '</td>' +
-        '<td>' + esc(r.package_label) + '<div class="card-sub">' + esc(r.meal_label) + '</div></td>' +
-        '<td>' + esc(r.plan_label) + '</td>' +
-        '<td>' + esc(ahsStatus(r.status).label) + '</td>' +
-        '<td class="nowrap">' + (r.status === 'requested'
-          ? '<button class="btn btn-primary btn-mini ahs-create" type="button" data-id="' + esc(r.id) + '"' +
-            (AHS_FORM.request && AHS_FORM.request.id === r.id ? ' disabled' : '') + '>Create booking</button>'
-          : '') + '</td>' +
-        '</tr>').join('') + '</tbody></table>';
-  }
+  // Homestay matching's "Book directly": open the New booking form filled from request `ref`.
+  window.ahsBookDirect = async function (ref, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await ahsLoad();
+      const r = (AHS_DATA.rows || []).find((x) => x.ref === ref);
+      if (!r) {
+        hmNotice({ title: 'Cannot book ' + ref, lines: [AHS_DATA.error || 'The request is no longer open (it may have been matched or cancelled). Refresh matching.'] });
+        return;
+      }
+      if (typeof goToView === 'function') goToView('homestay-bookings');
+      await hbLoadAll();
+      ahsFillForm(r.id);
+    } finally { if (btn) btn.disabled = false; }
+  };
 
   function ahsSetStudentOnly(hidden) {
     document.querySelectorAll('.hb-student-only').forEach((el) => { el.hidden = hidden; });
@@ -32185,7 +32156,6 @@ function ahsArrivalText(row, city){
     ahsShowRetry('');
     hbStatus('Filled from ' + r.ref + '. Choose the host and both weekly rates, check the dates, then create.');
     if (typeof hbPreview === 'function') hbPreview();
-    ahsRender();
     hbFeesSummary();
     hbSetTab('new');
     hbGoStep(2);  // the request carries the student; host and both rates are what is left
@@ -32199,7 +32169,6 @@ function ahsArrivalText(row, city){
     const c = $('hb-create'); if (c) c.textContent = 'Create booking & get link';
     ahsSetStudentOnly(false);
     if (!keepStatus) { hbStatus(''); ahsShowRetry(''); }
-    ahsRender();
     hbPreview();
     hbFeesSummary();
   }
@@ -32252,7 +32221,6 @@ function ahsArrivalText(row, city){
   document.addEventListener('DOMContentLoaded', function () {
     const nav = document.querySelector('.nav-item[data-view="homestay-bookings"]');
     if (nav) nav.addEventListener('click', hbLoadAll);
-    if (nav) nav.addEventListener('click', () => { ahsLoad(); });
     document.querySelectorAll('.hb-view .hb-tab').forEach((b) =>
       b.addEventListener('click', () => hbSetTab(b.getAttribute('data-hb-tab'))));
     document.querySelectorAll('.hb-view [data-hb-go]').forEach((k) =>
@@ -32336,15 +32304,6 @@ function ahsArrivalText(row, city){
       if (b) hbExtendPreview(row, b);
     });
     hbSetTab(hbTab, true);
-    const ahsBody = $('ahs-body');
-    if (ahsBody) ahsBody.addEventListener('click', (e) => {
-      const b = e.target.closest ? e.target.closest('.ahs-create') : null;
-      if (b) ahsFillForm(b.getAttribute('data-id'));
-    });
-    const ahsSt = $('ahs-status'); if (ahsSt) ahsSt.addEventListener('change', ahsRender);
-    const ahsGr = $('ahs-group'); if (ahsGr) ahsGr.addEventListener('change', ahsRender);
-    const ahsQ = $('ahs-q'); if (ahsQ) ahsQ.addEventListener('input', ahsRender);
-    const ahsRf = $('ahs-refresh'); if (ahsRf) ahsRf.addEventListener('click', () => { ahsLoad(); });
     const ahsCl = $('hb-agency-clear'); if (ahsCl) ahsCl.addEventListener('click', () => ahsClearForm(false));
     const ahsRt = $('hb-agency-retry'); if (ahsRt) ahsRt.addEventListener('click', ahsRetry);
     ['hb-weekly', 'hb-host-weekly', 'hb-movein', 'hb-moveout'].forEach((id) => {
@@ -32401,7 +32360,7 @@ function ahsArrivalText(row, city){
 const HM_WORKER = "https://vanmates-homestay-matching.talatcan.workers.dev";
 // rooms is loaded lazily (n8n executions are precious) — see hmEnsureRoomsLoaded.
 const HM = { cases: [], events: [], profiles: [], hosts: [], rooms: [], roomsLoaded: false, roomsLoading: null,
-  selected: null, filter: "open", openCount: 0, loading: false, flash: null, offers: [], offerDraft: null, optionDraft: null,
+  selected: null, filter: "open", source: "all", agencyNames: new Map(), agencyRequests: [], openCount: 0, loading: false, flash: null, offers: [], offerDraft: null, optionDraft: null,
   allOffers: [], allOffersLoading: false };
 const hmEsc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -32637,6 +32596,7 @@ async function loadHomestayMatching(){
     HM.settings = st.error ? [] : (st.data || []);
     HM.openCount = hmQueue(HM.cases, "open").length;
     if (typeof updateSidebarCounts === "function") updateSidebarCounts();
+    await hmLoadAgencyExtras(sb);
     try { const h = await vmN8n.read("hosts-list"); HM.hosts = (h && h.hosts) || []; } catch (e) { HM.hosts = []; }
     // HM.rooms is loaded lazily — see hmEnsureRoomsLoaded — to save an n8n
     // execution on every load/refresh when nobody opens the phone-answer form.
@@ -32673,19 +32633,67 @@ function hmEnsureRoomsLoaded(){
   return HM.roomsLoading;
 }
 
+// Agency names for the queue labels, and open agency requests that never reached matching.
+// Both are admin-only partner tables; a read error leaves the queue as it is.
+async function hmLoadAgencyExtras(sb){
+  if (typeof ptnIsAdmin === "function" && !ptnIsAdmin()) { HM.agencyRequests = []; return; }
+  try {
+    const reqs = await ptnSelectAll(sb, "partner_homestay_requests", "id,ref,status,agency_id,student_id,created_at",
+      q => q.eq("status", "requested").order("id"));
+    const ids = [...HM.cases.map(c => c.agency_id), ...reqs.map(r => r.agency_id)];
+    const [agencies, students] = await Promise.all([
+      ptnSelectIn(sb, "partner_agencies", "id,name", "id", ids),
+      ptnSelectIn(sb, "partner_students", "id,given_name,family_name", "id", reqs.map(r => r.student_id)),
+    ]);
+    HM.agencyNames = new Map(agencies.map(a => [a.id, a.name || ""]));
+    const st = new Map(students.map(x => [x.id, `${x.given_name || ""} ${x.family_name || ""}`.trim()]));
+    HM.agencyRequests = reqs.map(r => Object.assign({}, r, { student_name: st.get(r.student_id) || "" }));
+  } catch (e) {
+    console.warn("[matching] agency extras unavailable:", (e && e.message) || e);
+    HM.agencyRequests = [];
+  }
+}
+
+function hmRenderSourceTabs(gaps){
+  const box = document.getElementById("hm-source-tabs"); if (!box) return;
+  box.innerHTML = HM_SOURCES.map(([key, label]) => {
+    const n = hmQueue(hmBySource(HM.cases, key), HM.filter).length;
+    const warn = key === "agency" && gaps.length ? ` <span class="badge badge-red" title="Agency requests not in matching">${gaps.length} missing</span>` : "";
+    return `<button type="button" class="hb-tab${HM.source === key ? " on" : ""}" role="tab" aria-selected="${HM.source === key}" data-hm-source="${key}"
+      style="padding:0 0 9px;border:0;background:none;font:inherit;font-size:13.5px;cursor:pointer;${HM.source === key ? "font-weight:700;box-shadow:inset 0 -2px 0 var(--red)" : "color:var(--muted)"}">${hmEsc(label)} <span class="card-sub">${n}</span>${warn}</button>`;
+  }).join("");
+}
+
+function hmRenderAgencyGaps(gaps){
+  const box = document.getElementById("hm-agency-gaps"); if (!box) return;
+  if (HM.source !== "agency" || !gaps.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div style="border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+    <div style="font-weight:600">${gaps.length === 1 ? "1 agency request is" : gaps.length + " agency requests are"} not in matching</div>
+    <div class="card-sub">The hand-off from the partner portal did not create a case. Tell Aldo; if it cannot wait, book it directly.</div>
+    ${gaps.map(r => `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap">
+      <div><code>${hmEsc(r.ref)}</code> · ${hmEsc(HM.agencyNames.get(r.agency_id) || "agency")}${r.student_name ? " · " + hmEsc(r.student_name) : ""}
+        <span class="card-sub">· sent ${hmElapsed(r.created_at, Date.now())} ago</span></div>
+      <button class="btn btn-ghost btn-mini" type="button" data-hm-book-direct="${hmEsc(r.ref)}">Book directly</button>
+    </div>`).join("")}
+  </div>`;
+}
+
 function hmChip(status){
   const s = HM_STATUS[status] || [status, "grey"];
   return `<span class="badge badge-${s[1]}">${hmEsc(s[0])}</span>`;
 }
 
 function hmRenderQueue(){
-  const list = hmQueue(HM.cases, HM.filter);
   const now = Date.now();
+  const gaps = hmAgencyGaps(HM.agencyRequests, HM.cases, now);
+  hmRenderSourceTabs(gaps);
+  hmRenderAgencyGaps(gaps);
+  const list = hmQueue(hmBySource(HM.cases, HM.source), HM.filter);
   document.getElementById("hm-queue").innerHTML = list.length ? list.map(c => `
     <div class="list-row" style="cursor:pointer" data-hm-case="${hmEsc(c.id)}">
       <div class="list-main">
         <div class="list-title">${hmEsc(c.id)} · ${hmEsc(c.student_name || "No name")} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
-        <div class="list-sub">${hmEsc(c.source)} · ${hmEsc(c.city || "?")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmElapsed(c.created_at, now)} ago</div>
+        <div class="list-sub">${c.source === "partner" ? `<span class="badge badge-blue">${hmEsc(hmAgencyLabel(c, HM.agencyNames))}</span>` : "Direct"} · ${hmEsc(c.city || "?")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmElapsed(c.created_at, now)} ago</div>
       </div>${hmChip(c.status)}
     </div>`).join("") : `<div class="card-sub">No cases here.</div>`;
 }
@@ -33065,7 +33073,7 @@ async function hmOpenCase(id){
     ${earlierHtml}`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
-      <div class="card-sub">${hmEsc(c.source)}${c.source_ref ? " · " + hmEsc(c.source_ref) : ""}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
+      <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
     ${readyForOffer ? nextBox : offerOut ? offerTop : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
@@ -33457,6 +33465,18 @@ document.addEventListener("submit", async (ev) => {
 document.addEventListener("change", (ev) => {
   if (ev.target.matches && ev.target.matches("#hm-case [data-hm-opt-pick]")) hmOptPickUpdate();
 });
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hm-source],[data-hm-book-direct]");
+  if (!t) return;
+  if (t.dataset.hmSource) {
+    HM.source = t.dataset.hmSource;
+    try { localStorage.setItem("vm_hm_source", HM.source); } catch (_) { /* storage blocked */ }
+    hmRenderQueue();
+    return;
+  }
+  if (typeof window.ahsBookDirect === "function") window.ahsBookDirect(t.dataset.hmBookDirect, t);
+});
+try { const v = localStorage.getItem("vm_hm_source"); if (HM_SOURCES.some(([k]) => k === v)) HM.source = v; } catch (_) { /* storage blocked */ }
 document.addEventListener("change", (ev) => {
   if (ev.target.id !== "hm-filter") return;
   HM.filter = ev.target.value;
