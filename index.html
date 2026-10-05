@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-04-vacancies2"></script>
+<script src="pms-supabase.js?v=2026-10-05-contracts2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -35346,6 +35346,8 @@ window.HM = HM;
    completed (void from any open state); the portal only reads `data` and asks
    the Worker to act. */
 const CT_KIND = 'coliving-sublease';
+// Signs for Vanmates (the CEO's signature is printed on every contract). Mirrors the Worker's vanmates-signers.js.
+const CT_COUNTERSIGNER = { email: 'marcela@vanmates.com', name: 'Marcela Maldonado', title: 'Co-living Manager' };
 const CT_TABS = [
   ['waiting', 'Waiting for Vanmates'],
   ['sent', 'Sent'],
@@ -35564,13 +35566,14 @@ function ctCanAct(me) {
   if (u.role === 'admin') return true;
   return Array.isArray(u.allowed_pages) && u.allowed_pages.includes('contracts');
 }
-function ctCanSign(row, me) { return !!row && ctStr(row.status) === 'customer_signed' && ctCanAct(me); }
+function ctIsCountersigner(me) { return !!me && ctStr(me.email).trim().toLowerCase() === CT_COUNTERSIGNER.email; }
+function ctCanSign(row, me) { return !!row && ctStr(row.status) === 'customer_signed' && ctCanAct(me) && ctIsCountersigner(me); }
 // The drawer's buttons, in order.
 function ctActions(row, me) {
   if (!row || !ctCanAct(me)) return [];
   const s = ctStr(row.status);
   const out = [];
-  if (s === 'customer_signed') out.push('sign');
+  if (s === 'customer_signed' && ctIsCountersigner(me)) out.push('sign');
   if (s === 'draft') out.push('send');
   if (s === 'sent') out.push('resend');
   if (s === 'draft' || s === 'sent' || s === 'customer_signed') out.push('void');
@@ -35840,6 +35843,8 @@ function ctRenderPanel(row) {
   const actionsHtml = acts.length
     ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('void', 'Void…', false) + '</div>'
     : (ctCanAct(me) ? '' : '<div class="ct-sub">Only admins and people with the Contracts page can sign, send or void.</div>');
+  const signerNote = ctStr(row.status) === 'customer_signed' && !ctIsCountersigner(me)
+    ? '<div class="ct-sub">' + esc(CT_COUNTERSIGNER.name) + ' (' + esc(CT_COUNTERSIGNER.title) + ') signs for Vanmates.</div>' : '';
   const timeline = ctTimeline(row);
 
   // A redraw keeps whatever was typed into an open Void/Send form.
@@ -35861,7 +35866,7 @@ function ctRenderPanel(row) {
       ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash : '<span class="ct-sub">not signed yet</span>')) +
       (s.voidReason ? ctKv('Void reason', esc(s.voidReason)) : '') +
       (pdfs.length ? '<div class="ct-actions">' + pdfs.join('') + '</div>' : '')) +
-    (acts.length || !ctCanAct(me) ? ctSection('Actions', actionsHtml + '<div id="ct-form"></div>') : '') +
+    (acts.length || !ctCanAct(me) || signerNote ? ctSection('Actions', actionsHtml + signerNote + '<div id="ct-form"></div>') : '') +
     ctSection('History', timeline.length
       ? '<ol class="ct-timeline">' + timeline.map((e) => '<li' + (e.bad ? ' class="ct-need"' : '') + '><span>' + esc(e.when || '—') + '</span><span>' + esc(e.text) + '</span></li>').join('') + '</ol>'
       : '<div class="ct-sub">No events yet.</div>') +
@@ -36071,8 +36076,10 @@ function ctOpenSignModal(row) {
   const me = ctMe(), s = ctSummary(row);
   CT_PAD.rowId = row.id;
   document.getElementById('ct-sign-sub').textContent = s.tenantNames + ' · ' + s.place;
-  document.getElementById('ct-sign-name').value = me.name || '';
-  document.getElementById('ct-sign-title-in').value = me.title || '';
+  document.getElementById('ct-sign-name').value = CT_COUNTERSIGNER.name;
+  document.getElementById('ct-sign-title-in').value = CT_COUNTERSIGNER.title;
+  document.getElementById('ct-sign-name').readOnly = true;
+  document.getElementById('ct-sign-title-in').readOnly = true;
   const err = document.getElementById('ct-sign-err'); err.textContent = ''; err.classList.remove('show');
   ctPadClear();
   let saved = null;
