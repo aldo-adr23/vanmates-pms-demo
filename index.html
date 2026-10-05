@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-movedout1"></script>
+<script src="pms-supabase.js?v=2026-10-05-agencyform1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21416,7 +21416,7 @@ function ptnValidateAgency(f){
     language: ptnText(f.language) || 'en', currency: (ptnText(f.currency) || 'CAD').toUpperCase(),
     status: ptnText(f.status) || 'pending',
   };
-  if (!row.name) errors.push('Name is required');
+  if (!row.name) errors.push('Agency name is required');
   if (row.contact_email && !ptnValidEmail(row.contact_email)) errors.push('Contact email is not a valid email');
   if (row.billing_email && !ptnValidEmail(row.billing_email)) errors.push('Billing email is not a valid email');
   if (!PTN_LANGS.includes(row.language)) errors.push('Language must be en, es or ja');
@@ -21890,20 +21890,22 @@ function ptnAgencyFormHtml(a){
   a = a || {};
   return `<form class="card" data-ptn-agency-form style="padding:16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
     <strong style="grid-column:1/-1">${a.id ? 'Edit ' + esc(a.name) : 'New agency'}</strong>
-    ${ptnField('name', 'Name *', a.name)}
-    ${ptnField('legal_name', 'Legal name', a.legal_name)}
+    ${ptnField('name', 'Agency name *', a.name)}
     ${ptnField('country', 'Country', a.country)}
-    ${ptnField('billing_address', 'Billing address', a.billing_address)}
-    ${ptnField('contact_name', 'Contact name', a.contact_name)}
-    ${ptnField('contact_email', 'Contact email', a.contact_email, ' type="email"')}
-    ${ptnField('contact_phone', 'Contact phone', a.contact_phone)}
-    ${ptnField('billing_email', 'Billing email', a.billing_email, ' type="email"')}
     ${ptnSelectField('language', 'Language', PTN_LANG_OPTS, a.language || 'en')}
     ${ptnField('currency', 'Currency', a.currency || 'CAD')}
+    <strong style="grid-column:1/-1;margin-top:6px">Main contact <span class="name-sub" style="font-weight:normal">— ${a.id ? 'the person Vanmates deals with' : 'becomes the agency\'s admin user'}; they add the rest of their team from their partner portal</span></strong>
+    ${ptnField('contact_name', 'Person\'s name', a.contact_name)}
+    ${ptnField('contact_email', 'Email', a.contact_email, ' type="email"')}
+    ${ptnField('contact_phone', 'Phone', a.contact_phone)}
+    <strong style="grid-column:1/-1;margin-top:6px">Invoicing <span class="name-sub" style="font-weight:normal">— optional</span></strong>
+    ${ptnField('legal_name', 'Legal name', a.legal_name, ' placeholder="Same as agency name"')}
+    ${ptnField('billing_email', 'Invoices sent to', a.billing_email, ' type="email" placeholder="Billing email"')}
+    ${ptnField('billing_address', 'Billing address', a.billing_address)}
     ${a.id ? ptnSelectField('status', 'Status', PTN_AGENCY_STATUSES.map(s => [s, s[0].toUpperCase() + s.slice(1)]), a.status || 'pending')
       : `<div style="grid-column:1/-1;display:flex;flex-direction:column;gap:6px">
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="activate_now" checked> Activate now <span class="name-sub">(untick to leave it pending; nobody can sign in while it is pending)</span></label>
-      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="create_first_user" checked> Create the first user from the contact <span class="name-sub">(agency admin, needs contact name + email)</span></label></div>`}
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="create_first_user" checked> Give the main contact a sign-in <span class="name-sub">(needs their name + email)</span></label></div>`}
     <p class="name-sub" style="grid-column:1/-1;margin:0">Users who have not signed in yet get their invitation email when the agency becomes Active.</p>
     ${ptnBillingOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Billing</strong>
     ${ptnSelectField('payment_terms', 'Payment terms', RCV_TERMS, a.payment_terms || 'net15')}
@@ -22140,7 +22142,7 @@ async function ptnSaveAgency(form){
   const firstUser = !id && el.create_first_user && el.create_first_user.checked;
   if (r.ok && firstUser) {
     const plan = ptnFirstUserPlan(Object.assign({ id: null }, r.row), ptnData.users, ptnData.agencies);
-    if (!plan.ok) { msg.textContent = plan.errors.join('. ') + ' (or untick "Create the first user").'; return; }
+    if (!plan.ok) { msg.textContent = plan.errors.join('. ') + ' (or untick "Give the main contact a sign-in").'; return; }
   }
   // Payment terms, credit limit and reference are not written here: the partner app's
   // staff endpoint validates and audits them (PATCH /api/staff/billing/agencies/:id).
