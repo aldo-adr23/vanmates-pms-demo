@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-ddproof2"></script>
+<script src="pms-supabase.js?v=2026-10-05-movedout6"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24887,6 +24887,9 @@ function ckoZonedIso(v, city){
    single data.charges object and data.payment, shown read-only. Spec: rina
    docs/superpowers/specs/2026-09-25-checkout-phase3a-design.md */
 const CKO_LINE_TYPES = [['cleaning', 'Cleaning'], ['keys', 'Keys / fobs'], ['damage', 'Damage'], ['unpaid_balance', 'Unpaid balance'], ['other', 'Other']];
+// 2026-10-05: what a new charge says when staff leave Description blank. Cleaning
+// matches the pre-filled fee line's wording.
+const CKO_LINE_DEFAULT_DESC = { cleaning: 'Move-out cleaning fee', keys: 'Keys / fobs not returned', unpaid_balance: 'Unpaid balance' };
 const CKO_LINE_SOURCES = { rule: 'Standard fee', report: 'From the cleaning report', manual: 'Added by staff' };
 const CKO_METHOD_OPTIONS = [['etransfer', 'e-Transfer'], ['wire', 'Wire'], ['eft', 'EFT'], ['cheque', 'Cheque']];
 const CKO_PAY_KINDS = [['refund', 'Refund'], ['top_up', 'Top-up']];
@@ -25196,7 +25199,10 @@ function ckoLineArgs(c, line, version){
   const a = ckoMoneyIn(line.amount);
   if (a.blank) return ckoRefuse('missing:amount');
   if (a.bad) return ckoRefuse('invalid:amount');
-  const d = ckoLineDesc(line.description);
+  // A blank description takes the type's standard wording where it has one
+  // (damage and other must say what it was for).
+  const blank = !String(line.description == null ? '' : line.description).trim();
+  const d = ckoLineDesc(blank && CKO_LINE_DEFAULT_DESC[type] ? CKO_LINE_DEFAULT_DESC[type] : line.description);
   if (d.error) return { ok: false, error: d.error };
   const ev = ckoEvidenceIn(line.evidence, c.id);
   if (!ev) return ckoRefuse('invalid:evidence');
@@ -26151,7 +26157,7 @@ const CKO_CHARGE_FORMS = {
   line_add: { title: 'Add a charge', submit: 'Add charge', fields: [
     { name: 'type', label: 'Type', type: 'select', required: true, options: CKO_LINE_TYPES },
     { name: 'amount', label: 'Amount ($)', type: 'money', required: true },
-    { name: 'description', label: 'Description', type: 'textarea', required: true },
+    { name: 'description', label: 'Description (blank = standard wording for cleaning, keys or unpaid balance)', type: 'textarea', required: false },
     { name: 'evidence', label: 'Evidence links, one per line (Drive or other https links)', type: 'textarea', required: false },
     { name: 'files', label: 'Or attach photos / PDFs', type: 'files', required: false },
   ] },
@@ -26305,7 +26311,8 @@ function ckoRoomRow(events, kv){
   if (!r) return '';
   return kv('Room', `<span class="tag-pill ${r.tone}" data-cko-room="${esc(r.tone)}">${esc(r.text)}</span>`);
 }
-async function openCheckout(id, banner, refocus){
+// ok: banner is a confirmation (drawn green), not a refusal.
+async function openCheckout(id, banner, refocus, ok){
   const tok = ++ckoOpenSeq;
   CKO_FORM = null;
   if (!ckoCases) await loadCheckouts();
@@ -26404,7 +26411,7 @@ async function openCheckout(id, banner, refocus){
     raf(() => {
       if (tok !== ckoOpenSeq) return;
       const b = document.getElementById('cko-banner');
-      if (banner && b) { b.textContent = banner; b.focus(); return; }
+      if (banner && b) { b.textContent = banner; if (ok) { b.dataset.ok = '1'; b.setAttribute('role', 'status'); b.style.cssText += ';color:var(--ink);background:var(--green-soft);border-left:3px solid var(--green);border-radius:8px;padding:10px 12px;font-weight:600'; } b.focus(); return; }
       if (!refocus) return;
       const a = document.querySelector('#cko-actions button:not([disabled])') || document.getElementById('cko-actions');
       if (a) a.focus();
@@ -26553,6 +26560,8 @@ async function ckoCall(id, name, args, done){
   else if (!reopen) showToast(ckoRefusalText(r.error));
   return !r.error;
 }
+// Shown green at the top of the drawer once "Already moved out" went all the way.
+const CKO_FAST_DONE = '✓ Moved to Charges Review. Next: check the deposit held and the charges below (add any that are missing), then Submit for approval so finance can approve the refund.';
 // checkout_advance calls in order (ckoFastPayloads), stopping at the first
 // refusal. Every step that went through stays done (each is a real status), so
 // a refusal part-way says where the case stopped. A field refusal on the first
@@ -26581,9 +26590,9 @@ async function ckoAdvanceChain(id, calls){
   const msg = !failed ? '' : (done ? `Stopped at ${failed.from}. ` : '') + `${failed.step === 'take' ? 'Take' : CKO_STEPS[failed.step].label}: ${ckoRefusalText(r.error)}`;
   await ckoReload();
   const reopen = ckoShowing(id) && ckoCases && ckoCases.some(c => c.id === id);
-  if (reopen) await openCheckout(id, msg, true);
+  if (reopen) await openCheckout(id, msg || CKO_FAST_DONE, true, !failed);
   else ckoRestoreButtons();
-  if (!failed) showToast('In Charges Review, with the charges filled in');
+  if (!failed) showToast('Moved to Charges Review');
   else if (!reopen) showToast(msg);
   return !failed;
 }
