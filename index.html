@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-agencyform1"></script>
+<script src="pms-supabase.js?v=2026-10-05-movedout2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24318,23 +24318,26 @@ function ckoNextStep(c, me){
 // which an Override to Charges Review does not). Offered from Information Complete,
 // Move-Out Scheduled and Inspection Pending; Inspection Completed is already one click.
 const CKO_FAST_STEPS = ['schedule', 'moved_out', 'inspection_done', 'to_charges'];
-// { steps, fields, allowed, reason } for the owner or an admin, else null.
+// { steps, fields, allowed, reason, take } for the owner or an admin, or for
+// anyone on an unowned case: take = true runs checkout_take first, so the
+// person who clicks becomes the owner (scheduling needs one). Else null.
 function ckoFastPlan(c, me){
   const m = ckoMeOf(me);
-  if (!ckoIsOpen(c) || !ckoCanManage(c, m)) return null;
+  const take = !c.owner;
+  if (!ckoIsOpen(c) || !(ckoCanManage(c, m) || (take && m.email))) return null;
   const i = CKO_FAST_STEPS.findIndex(k => CKO_STEPS[k].from === c.status);
   if (i === -1 || CKO_FAST_STEPS[i] === 'to_charges') return null;
   const steps = CKO_FAST_STEPS.slice(i);
   const fields = [].concat(...steps.map(k => CKO_STEPS[k].fields));
-  const out = (allowed, reason) => ({ steps, fields, allowed, reason });
-  if (steps[0] === 'schedule' && !c.owner) return out(false, CKO_ERROR_TEXT.needs_owner);
+  const out = (allowed, reason) => ({ steps, fields, allowed, reason, take });
   if ((c.flags || []).indexOf('short_notice_review_required') !== -1) return out(false, CKO_ERROR_TEXT.review_pending);
   return out(true, '');
 }
 // The plan's form values -> { ok, calls: [{ step, from, fields }] } in order, each
 // checked by ckoStepPayload, or { ok: false, error } naming the first problem.
 function ckoFastPayloads(c, plan, v, ctx){
-  const calls = [];
+  // checkout_take first on an unowned case (it does not change the status).
+  const calls = plan.take ? [{ step: 'take', from: c.status, fields: {} }] : [];
   let from = c.status;
   for (const step of plan.steps) {
     const p = ckoStepPayload(step, v, ctx);
@@ -26362,9 +26365,11 @@ function ckoBusyToast(){ showToast('Still saving the last change…'); }
 function ckoActionBarHtml(c){
   const next = ckoNextStep(c, ckoMe());
   const why = !!(next && next.step && !next.allowed && next.reason);
+  const fast = ckoFastPlan(c, ckoMe());
   return `<div id="cko-actions" role="group" aria-label="Checkout actions" tabindex="-1" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 4px">${ckoActions(c, ckoMe()).map(a =>
     `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`).join('')}</div>
     ${why ? `<div id="cko-next-why" class="name-sub" style="font-size:12px">${esc(next.label)}: ${esc(next.reason)}</div>` : ''}
+    ${fast && !fast.allowed ? `<div id="cko-fast-why" class="name-sub" style="font-size:12px">Already moved out: ${esc(fast.reason)}</div>` : ''}
     <div id="cko-banner" class="card-sub" role="alert" tabindex="-1" style="color:var(--red-dark)"></div>
     <div id="cko-form"></div>`;
 }
@@ -26410,11 +26415,11 @@ function ckoStepDefaults(step, c){
   if (step === 'schedule') return { inspector_email: c.owner };
   return {};
 }
-// "Already moved out": inspected now, by the owner, with the key count the
-// resident said they would return.
-function ckoFastDefaults(c){
+// "Already moved out": inspected now, by the owner (or whoever is taking the
+// case), with the key count the resident said they would return.
+function ckoFastDefaults(c, me){
   const k = (c.data || {}).keys || {};
-  return { inspection_at: ckoLocalInputNow(c.city), inspector_email: c.owner, keys: 'returned', count: k.count == null ? '' : k.count, result: 'good' };
+  return { inspection_at: ckoLocalInputNow(c.city), inspector_email: c.owner || ckoMeOf(me).email, keys: 'returned', count: k.count == null ? '' : k.count, result: 'good' };
 }
 const CKO_ACT_FORMS = {
   assign: { title: 'Assign this case', submit: 'Assign', fields: [{ name: 'email', label: 'Owner', type: 'team', required: true }] },
@@ -26496,7 +26501,8 @@ async function ckoAdvanceChain(id, calls){
   let r = { error: null }, done = 0;
   try {
     for (const k of calls) {
-      r = await window.vmDb.checkoutRpc('checkout_advance', { p_case: id, p_from: k.from, p_step: k.step, p_fields: k.fields });
+      r = k.step === 'take' ? await window.vmDb.checkoutRpc('checkout_take', { p_case: id })
+        : await window.vmDb.checkoutRpc('checkout_advance', { p_case: id, p_from: k.from, p_step: k.step, p_fields: k.fields });
       if (r.error) break;
       done++;
     }
@@ -26508,7 +26514,7 @@ async function ckoAdvanceChain(id, calls){
     return false;
   }
   const failed = r.error ? calls[done] : null;
-  const msg = !failed ? '' : (done ? `Stopped at ${failed.from}. ` : '') + `${CKO_STEPS[failed.step].label}: ${ckoRefusalText(r.error)}`;
+  const msg = !failed ? '' : (done ? `Stopped at ${failed.from}. ` : '') + `${failed.step === 'take' ? 'Take' : CKO_STEPS[failed.step].label}: ${ckoRefusalText(r.error)}`;
   await ckoReload();
   const reopen = ckoShowing(id) && ckoCases && ckoCases.some(c => c.id === id);
   if (reopen) await openCheckout(id, msg, true);
@@ -26612,7 +26618,7 @@ function ckoAct(act, lineId){
     case 'moved_out_fast': {
       const plan = ckoFastPlan(c, ckoMe());
       if (!plan || !plan.allowed) return;
-      return show({ title: `Already moved out → Charges Review`, fields: plan.fields, submit: 'Record and go to charges' }, ckoFastDefaults(c), { act, steps: plan.steps });
+      return show({ title: plan.take ? 'Already moved out → Charges Review (you take the case)' : 'Already moved out → Charges Review', fields: plan.fields, submit: 'Record and go to charges' }, ckoFastDefaults(c, ckoMe()), { act, steps: plan.steps, take: plan.take });
     }
     case 'assign': return show(CKO_ACT_FORMS.assign, { email: c.owner }, { act });
     case 'override': {
@@ -26688,11 +26694,11 @@ async function ckoSubmitForm(form){
     return ckoCall(id, 'checkout_advance', { p_case: id, p_from: st.from, p_step: st.step, p_fields: p.fields }, `${s.label}: done`);
   }
   if (st.act === 'moved_out_fast') {
-    const plan = { steps: st.steps }, v = {};
+    const plan = { steps: st.steps, take: st.take }, v = {};
     st.steps.forEach(k => CKO_STEPS[k].fields.forEach(fd => { v[fd.name] = val(fd.name); }));
     const p = ckoFastPayloads(c, plan, v, { city: c.city, now: Date.now() });
     if (!p.ok) return err(p.error);
-    if (!confirm(`Record the move-out and inspection and send this case to Charges Review? It runs ${st.steps.length} steps (${st.steps.map(k => CKO_STEPS[k].label).join(', ')}); each one is logged and mirrored to Asana.`)) return;
+    if (!confirm(`${st.take ? 'Take this case and record' : 'Record'} the move-out and inspection and send it to Charges Review? It runs ${st.steps.length} steps (${st.steps.map(k => CKO_STEPS[k].label).join(', ')}); each one is logged and mirrored to Asana.`)) return;
     return ckoAdvanceChain(id, p.calls);
   }
   if (st.act === 'assign') {
