@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-movedout2"></script>
+<script src="pms-supabase.js?v=2026-10-05-ddproof1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -14290,6 +14290,48 @@ document.getElementById("dd-sort")?.addEventListener("change", e => {
 
 renderDeposits();
 
+/* Proof-of-payment link. The stored proofUrl is useless across sessions: it is
+   a blob: preview from the uploader's tab (dead anywhere else, and safeHref
+   turns it into "#", which opened the portal itself). The storage path is the
+   truth, so sign it fresh on every open. A blob: is only trusted while the tab
+   that made it is still waiting for its upload. */
+const DD_LOCAL_PROOFS = new Set();
+async function ddProofHref(r){
+  if (r.proofPath && window.vmDb && window.vmDb.fileUrl) return await window.vmDb.fileUrl(r.proofPath);
+  const u = String(r.proofUrl || "");
+  if (u.startsWith("blob:")) return DD_LOCAL_PROOFS.has(u) ? u : null;
+  return /^https?:/i.test(u) ? u : null;
+}
+const DD_PROOF_MISSING = "Couldn't open this proof. If it never finished uploading, re-attach it via ⋯ → Edit refund.";
+// Resolve once, then point every [data-dd-proof] link and the preview <img> at it.
+function ddWireProof(r, root){
+  const links = root.querySelectorAll("[data-dd-proof]");
+  const img = root.querySelector("[data-dd-proof-img]");
+  if (!links.length && !img) return;
+  const ready = ddProofHref(r).catch(() => null);
+  ready.then(url => {
+    if (url) {
+      links.forEach(a => { a.href = url; a.rel = "noopener"; });
+      if (img) img.src = url;
+    } else if (img) {
+      img.style.display = "none";
+      const fb = img.nextElementSibling;
+      if (fb) { fb.textContent = DD_PROOF_MISSING; fb.style.display = "block"; }
+    }
+  });
+  // A click before the link is signed opens a tab now and fills it in after,
+  // so the popup blocker still sees a user gesture.
+  links.forEach(a => { a.onclick = e => {
+    if (a.getAttribute("href") !== "#") return;
+    e.preventDefault(); e.stopPropagation();
+    const tab = window.open("", "_blank");
+    ready.then(url => {
+      if (url && tab) tab.location = url;
+      else { if (tab) tab.close(); showToast(url ? "Popup blocked: allow popups to open the proof" : DD_PROOF_MISSING); }
+    });
+  }; });
+}
+
 /* === Deposit detail panel === */
 function openDeposit(id){
   const r = damageDeposits.find(x => x.id === id);
@@ -14460,14 +14502,14 @@ function openDeposit(id){
       <div class="card card-pad">
         ${(r.proofUrl || r.proofName) ? `
           ${(r.proofType && r.proofType.startsWith("image/")) || (r.proofName && /\.(png|jpg|jpeg|webp|gif)$/i.test(r.proofName))
-            ? `<a href="${safeHref(r.proofUrl || '#')}" target="_blank" style="display:block">
-                 <img src="${safeHref(r.proofUrl || '')}" alt="Proof of payment for ${esc(r.name)}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
-                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="${safeHref(r.proofUrl || '#')}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
+            ? `<a href="#" data-dd-proof target="_blank" style="display:block">
+                 <img data-dd-proof-img alt="Proof of payment for ${esc(r.name)}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
+                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="#" data-dd-proof target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
                </a>
                <div style="margin-top:10px;font-size:12px;color:var(--muted)">
                  ${esc(r.proofName || 'attachment')}${r.proofSize ? ' · ' + esc(r.proofSize) : ''}
                  ${(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.role === 'admin')
-                    ? ` · <a href="${safeHref(r.proofUrl || '#')}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
+                    ? ` · <a href="#" data-dd-proof target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
                     : ''}
                </div>`
             : `<div style="display:flex;align-items:center;gap:14px">
@@ -14476,7 +14518,7 @@ function openDeposit(id){
                    <div style="font-weight:600;font-size:14px">${esc(r.proofName || 'Proof of payment')}</div>
                    <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(r.proofSize || 'On file')}</div>
                  </div>
-                 <a href="${safeHref(r.proofUrl || '#')}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
+                 <a href="#" data-dd-proof target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
                </div>`}
         ` : `
           <div style="font-size:13px;color:var(--muted);line-height:1.5">
@@ -14500,6 +14542,7 @@ function openDeposit(id){
       <button class="btn btn-ghost" id="dd-more-btn" data-id="${r.id}" title="Edit or delete">⋯</button>
     </div>
   `;
+  ddWireProof(r, body);
 
   // Wire Send statement (placeholder for now)
   const sendBtn = document.getElementById("dd-send-statement");
@@ -17220,7 +17263,9 @@ function openEditDeposit(rec){
     if (rec.proofUrl || rec.proofName) {
       proofExBlk.style.display = "block";
       proofExLink.textContent = rec.proofName || "View attachment";
-      proofExLink.href = rec.proofUrl || "#";
+      proofExLink.href = "#";
+      proofExLink.setAttribute("data-dd-proof", "");
+      ddWireProof(rec, proofExBlk);
     } else {
       proofExBlk.style.display = "none";
     }
@@ -17344,6 +17389,7 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
     // the proof shows immediately even before the upload finishes.
     if (proofFile) {
       target.proofUrl  = URL.createObjectURL(proofFile);
+      DD_LOCAL_PROOFS.add(target.proofUrl);
       target.proofName = proofFile.name;
       target.proofSize = `${Math.round(proofFile.size/1024).toLocaleString()} KB`;
       target.proofType = proofFile.type || "application/octet-stream";
