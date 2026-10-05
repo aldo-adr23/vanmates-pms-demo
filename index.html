@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-04-contracts1"></script>
+<script src="pms-supabase.js?v=2026-10-04-roommatch1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24739,6 +24739,8 @@ const CKO_ERROR_TEXT = {
   top_up_due: 'A top-up is still due. Mark it sent before closing.',
   locked: 'The charges are locked at this stage (flag a dispute to change them).',
   line_gone: 'That charge is no longer there. The case has been reloaded.',
+  bad_room: 'That room is not in this city\'s inventory any more. Reopen the case and choose again.',
+  no_move_out_date: 'This case has no move-out date yet, so the room cannot be released.',
   already_sent: 'This refund was already marked sent.',
   legacy_lines_required: 'Add the carried-over charges as lines before re-approving.',
   remove_reason_required: 'Give a reason for removing this charge.',
@@ -24849,6 +24851,8 @@ function ckoActions(c, me){
   // nothing is missing; the owner or an admin may clear it after reaching the resident.
   if (open && manage && f.indexOf('resident_not_responding') !== -1) a.push({ act: 'clear_not_responding', label: 'Clear not responding' });
   // 2026-09-28: the owner or an admin clears it once the room is sorted in Asana by hand.
+  // 2026-10-04: or picks the room the matcher could not tell, which releases it like a match.
+  if (open && manage && f.indexOf('room_not_released') !== -1) a.push({ act: 'room_pick', label: 'Choose room' });
   if (open && manage && f.indexOf('room_not_released') !== -1) a.push({ act: 'room_sorted', label: 'Room sorted' });
   if (open && manage && f.indexOf('date_changed') !== -1) a.push({ act: 'clear_date_changed', label: 'Date change seen' });
   a.push({ act: 'note', label: 'Add note' });
@@ -24887,19 +24891,13 @@ function ckoTab(cases, tab, me, now){
     return true;
   });
 }
-// Needs action first, then longest waiting, then soonest move-out (none last), then oldest.
-// Each case's keys are worked out once (decorate, sort, unwrap), not per comparison.
-function ckoSort(cases, me, now){
-  return (cases || []).map(c => {
-    const d = ckoDaysWaiting(c, now);
-    return { c, act: ckoNeedsAction(c, me, now) ? 1 : 0, od: (c.flags || []).indexOf('finance_overdue') !== -1 ? 1 : 0, w: d == null ? -1 : d, noMo: c.moveOut ? 0 : 1, mo: String(c.moveOut), cr: String(c.createdAt) };
-  }).sort((a, b) =>
-    (b.act - a.act) ||
-    (b.od - a.od) ||
-    (b.w - a.w) ||
-    (a.noMo - b.noMo) ||
-    a.mo.localeCompare(b.mo) ||
-    a.cr.localeCompare(b.cr)).map(x => x.c);
+// Newest submission first, so a checkout that just came in is at the top of every open tab
+// (Aldo 2026-10-04; it used to sort needs-action / longest-waiting first, which put a new case
+// at the bottom). Same moment → higher case id first. The Needs action tab still narrows to
+// what needs someone; its rows carry the flags.
+function ckoSort(cases){
+  return (cases || []).map(c => ({ c, cr: String(c.createdAt || ''), id: String(c.id || '') }))
+    .sort((a, b) => b.cr.localeCompare(a.cr) || b.id.localeCompare(a.id)).map(x => x.c);
 }
 // Closed cases: most recently closed first (closedAt, else when the status
 // last changed), then newest submission.
@@ -25918,11 +25916,12 @@ function ckoRoomRelease(events){
   if (e.type === 'flag_cleared') return { tone: 'green', text: 'Sorted by hand in Asana' };
   const room = a.task_name || 'the room';
   if (e.type === 'room_release') {
-    if (a.match === 'exact') return { tone: 'blue', text: `Queued: ${room}, available ${ckoRoomDay(a.target_date)}` };
-    if (a.match === 'ambiguous') return { tone: 'red', text: `Not released: several rooms match (${[].concat(a.candidates || []).join(', ')})` };
+    if (a.match === 'exact') return { tone: 'blue', text: `Queued: ${room}, available ${ckoRoomDay(a.target_date)}${a.via === 'staff' ? ' (chosen by staff)' : ''}` };
+    if (a.match === 'test') return { tone: 'blue', text: 'Test house: no room released' };
+    if (a.match === 'ambiguous') return { tone: 'red', text: `Not released: several rooms match (${[].concat(a.candidates || []).join(', ')}). Use Choose room.` };
     if (a.match === 'no_inventory') return { tone: 'blue', text: 'Not released automatically: this city has no rooms in the inventory yet' };
     if (a.match === 'error') return { tone: 'red', text: `Room matching failed: ${a.error || 'unknown error'}. Put the room back on sale in Asana by hand.` };
-    return { tone: 'red', text: 'Not released: no room in the inventory matches this house and room' };
+    return { tone: 'red', text: 'Not released: no room in the inventory matches this house and room. Use Choose room.' };
   }
   if (e.type === 'room_released') return { tone: 'green', text: `Released: ${room}, available ${ckoRoomDay(a.target_date)}` };
   if (e.type === 'room_release_failed') {
@@ -25937,10 +25936,18 @@ function ckoRoomRelease(events){
   }
   if (e.type === 'room_cancel_noted') return { tone: 'amber', text: `Checkout cancelled: ${room} was released; check in Asana whether it should be Rented again` };
   if (a.reason === 'already_listed') return { tone: 'green', text: `Already on sale: ${room}, available ${ckoRoomDay(a.target_date)}` };
+  // 2026-10-04: no Lease Start, but the room already sits in a later month in Asana (re-booked by hand).
+  if (a.reason === 'rebooked' && !a.lease_start && a.listed_from) return { tone: 'amber', text: `Not released: ${room} is already listed in Asana from ${ckoRoomDay(a.listed_from)} (booked until then?). If the resident is just leaving early, move it by hand` };
   if (a.reason === 'rebooked') return { tone: 'blue', text: `Not released: ${room} already has the next tenant from ${ckoRoomDay(a.lease_start)}` };
   if (a.reason === 'non_sale_section') return { tone: 'red', text: `Not released: ${room} is in "${a.section || 'no section'}" in Asana` };
   if (a.reason === 'no_section') return { tone: 'red', text: `Not released: no "${a.missing_section || '?'}" section in Asana` };
   return { tone: 'red', text: `Not released: ${a.reason || 'unknown reason'}` };
+}
+// checkout_room_options rows → the Choose room select's [value, label] pairs, in the order the
+// RPC gives (its best guesses first). Guesses are marked; a hidden room says so.
+function ckoRoomPickOptions(rows){
+  return (Array.isArray(rows) ? rows : []).filter(r => r && r.id && r.task_name).map(r => [String(r.id),
+    (r.guess ? '★ ' : '') + String(r.task_name).trim().replace(/\s+/g, ' ') + (r.status === 'hidden' ? ' (hidden in inventory)' : '')]);
 }
 /* ---- Phase 4b: management reports (Reports tab, admins only) -------------
    checkout_report(p_from, p_to, p_city, p_house) computes every number (one
@@ -27009,6 +27016,22 @@ function ckoAct(act, lineId){
     }
     case 'clear_not_responding': return flag('resident_not_responding', false, 'Not-responding flag cleared');
     case 'room_sorted': return flag('room_not_released', false, 'Room flag cleared');
+    case 'room_pick': {
+      if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { showToast('Not connected to the database'); return; }
+      ckoBusy = true;
+      ckoSetButtons(true);
+      window.vmDb.checkoutRpc('checkout_room_options', { p_case: id }).then(r => {
+        ckoBusy = false;
+        ckoRestoreButtons();
+        if (!ckoShowing(id)) return;
+        if (r.error) { showToast(ckoRefusalText(r.error)); return; }
+        const options = ckoRoomPickOptions(r.data);
+        if (!options.length) { showToast('No rooms in the inventory for this city'); return; }
+        show({ title: 'Choose the room to put back on sale', submit: 'Release this room',
+          fields: [{ name: 'room', label: `Room (${c.house || '?'} · ${c.room || '?'} as the resident wrote it; ★ = best guesses)`, type: 'select', required: true, options }] }, {}, { act });
+      }, () => { ckoBusy = false; ckoRestoreButtons(); showToast('Could not load the rooms. Try again.'); });
+      return;
+    }
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
       if (!confirm('Unassign this case? It goes back to Unassigned for anyone to take.')) return;
@@ -27115,6 +27138,10 @@ async function ckoSubmitForm(form){
   }
   if (st.act === 'decide') return send(ckoDecideArgs(c, val('outcome'), val('reason'), val('resident_note')), 'checkout_decide_exception', 'Decision saved; the resident will be emailed');
   if (st.act === 'note') return send(ckoNoteArgs(c, val('text')), 'checkout_note', 'Note added');
+  if (st.act === 'room_pick') {
+    if (!val('room')) return err('Choose a room.');
+    return ckoCall(id, 'checkout_room_pick', { p_case: id, p_room_id: val('room') }, 'Room queued: it goes back on sale in Asana within a minute');
+  }
   if (st.act === 'cancel') {
     const b = ckoCancelArgs(c, val('reason'));
     if (!b.ok) return err(b.error);
