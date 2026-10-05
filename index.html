@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-sessionid1"></script>
+<script src="pms-supabase.js?v=2026-10-05-hostcity1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3403,7 +3403,7 @@ hello@vanmates.com · vanmates.com</textarea>
             <label>Last name <input class="form-input" name="last_name" maxlength="80" autocomplete="off"></label>
             <label>Email <input class="form-input" type="email" name="email" maxlength="254" autocomplete="off"></label>
             <label>Phone (optional) <input class="form-input" type="tel" name="phone" maxlength="40" autocomplete="off"></label>
-            <label>City <select class="form-input" name="city"><option value="">—</option><option value="vancouver">Vancouver</option><option value="toronto">Toronto</option><option value="montreal">Montréal</option></select></label>
+            <label>City <select class="form-input" name="city"><option value="">—</option><option value="vancouver">Vancouver</option><option value="toronto">Toronto</option><option value="montreal">Montréal</option><option value="victoria">Victoria</option><option value="calgary">Calgary</option><option value="edmonton">Edmonton</option><option value="halifax">Halifax</option><option value="ottawa">Ottawa</option><option value="winnipeg">Winnipeg</option><option value="other">Other city (the host types it)</option></select></label>
             <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
               <button class="btn btn-primary" type="button" data-hm-add-send>Send application link</button>
               <button class="btn btn-ghost" type="button" data-hm-add-cancel>Cancel</button>
@@ -20552,7 +20552,8 @@ const HM_MISSING = {
 };
 function hmMissingLabel(code){ return HM_MISSING[code] || code; }
 // Host onboarding (2026-10-02 spec §7): keep HM_DIETS in step with the Worker's DIETS (src/core/apply.ts).
-const HM_CITIES = ["vancouver", "toronto", "montreal"];
+// The homestay cities (2026-10-05: + Victoria, Calgary, Edmonton, Halifax, Ottawa, Winnipeg); keep in step with the Worker.
+const HM_CITIES = ["vancouver", "toronto", "montreal", "victoria", "calgary", "edmonton", "halifax", "ottawa", "winnipeg"];
 const HM_DIETS = ["vegetarian", "vegan", "halal", "gluten_free", "dairy_free", "kosher"];
 const HM_GENDERS = ["any", "female", "male"];
 // student_genders on the profile: [] = any; one entry = only that gender. The form offers any / female / male.
@@ -20881,8 +20882,16 @@ function haName(app){
   const a = (app && app.answers && app.answers.about) || {};
   return [a.first_name, a.last_name].map(x => String(x || "").trim()).filter(Boolean).join(" ") || (app && app.email) || "No name";
 }
-const HA_CITY = { vancouver: "Vancouver", toronto: "Toronto", montreal: "Montréal" };
-const haCity = app => { const c = app && app.answers && app.answers.home && app.answers.home.city; return HA_CITY[c] || c || ""; };
+const HA_CITY = { vancouver: "Vancouver", toronto: "Toronto", montreal: "Montréal", victoria: "Victoria", calgary: "Calgary",
+  edmonton: "Edmonton", halifax: "Halifax", ottawa: "Ottawa", winnipeg: "Winnipeg" };
+// A home's city as staff read it; an "Other city" host typed the place + province ("Kelowna, BC (other city)").
+const haHomeCity = ho => {
+  if (!ho || !ho.city) return "";
+  if (ho.city !== "other") return HA_CITY[ho.city] || ho.city;
+  const place = [String(ho.city_other || "").trim(), ho.province].filter(Boolean).join(", ");
+  return place ? `${place} (other city)` : "Other city";
+};
+const haCity = app => haHomeCity(app && app.answers && app.answers.home);
 // The four things staff look for before approving. Contract and photos come from the Worker's progress
 // (the agreement section is not done when it is out of date); CRC and payouts from the row itself.
 function haChips(app){
@@ -20994,7 +21003,7 @@ function haAnswerSections(answers){
     { key: "about", title: "About", rows: [["Name", tx([ab.first_name, ab.last_name].filter(Boolean).join(" "))], ["Phone", tx(ab.phone)],
       ["Adult (19+) confirmed", yn(ab.adult_ack)], ["Texts about students", yn(ab.sms_consent)], ["Heard about us", tx(ab.heard_from)]] },
     { key: "home", title: "Home", rows: [["Address", tx([ho.unit ? `${ho.unit} - ${ho.street || ""}` : ho.street].filter(Boolean).join(""))],
-      ["City", tx(HA_CITY[ho.city] || ho.city)], ["Postal code", tx(ho.postal_code)], ["Area", tx(ho.area)],
+      ["City", tx(haHomeCity(ho))], ["Postal code", tx(ho.postal_code)], ["Area", tx(ho.area)],
       ["Home type", tx(HA_HOME_TYPE[ho.home_type] || ho.home_type)], ["Transit stop", tx(ho.transit_stop)],
       ["Walk to transit", ho.transit_walk_min == null ? "—" : `${ho.transit_walk_min} min`],
       ["To downtown", ho.downtown_min == null ? "—" : `${ho.downtown_min} min`]] },
@@ -32890,7 +32899,7 @@ async function hmOpenCase(id){
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
       <label>Date of birth <input class="form-input" type="date" name="student_dob" value="${hmEsc(c.student_dob)}" ${disabled}></label>
-      <label>City <select class="form-input" name="city" ${disabled}><option value="">—</option>${["vancouver","toronto","montreal"].map(x => `<option ${c.city === x ? "selected" : ""}>${x}</option>`).join("")}${c.city && !["vancouver","toronto","montreal"].includes(c.city) ? `<option selected>${hmEsc(c.city)}</option>` : ""}</select></label>
+      <label>City <select class="form-input" name="city" ${disabled}><option value="">—</option>${HM_CITIES.map(x => `<option ${c.city === x ? "selected" : ""}>${x}</option>`).join("")}${c.city && !HM_CITIES.includes(c.city) ? `<option selected>${hmEsc(c.city)}</option>` : ""}</select></label>
       <label>Area wanted <input class="form-input" name="area_pref" value="${hmEsc(c.area_pref)}" ${disabled}></label>
       <label>Arrival <input class="form-input" type="date" name="arrival" value="${hmEsc(c.arrival)}" ${disabled}></label>
       <label>Departure <input class="form-input" type="date" name="departure" value="${hmEsc(c.departure)}" ${disabled}></label>
@@ -33900,7 +33909,8 @@ function hmAddHostCheck(form, hosts){
   if (!body.first_name) bad.push("First name");
   if (!body.last_name) bad.push("Last name");
   if (!HM_ADD_EMAIL_RE.test(body.email) || body.email.length > 254) bad.push("Email");
-  if (!["vancouver", "toronto", "montreal"].includes(body.city)) bad.push("City");
+  // An "other" city: the host types the place and province in the form.
+  if (!["vancouver", "toronto", "montreal", "victoria", "calgary", "edmonton", "halifax", "ottawa", "winnipeg", "other"].includes(body.city)) bad.push("City");
   if (bad.length) return { error: bad };
   const host = (hosts || []).find(h => String(h.email || "").trim().toLowerCase() === body.email);
   if (host) return { kind: host.payable === true ? "open" : "unpayable", host, body };
