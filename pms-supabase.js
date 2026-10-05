@@ -75,7 +75,6 @@
     landlords:         { table: 'landlords',          key: 'id' },
     homestayHosts:     { table: 'homestay_hosts',     key: 'id' },
     homestayClients:   { table: 'homestay_clients',   key: 'id' },
-    vacancies:         { table: 'vacancies',          key: 'id' },
     damageDeposits:    { table: 'damage_deposits',    key: 'id' },
     homestayApplicants:{ table: 'homestay_applicants',key: 'id' },
     leads:             { table: 'leads',              key: 'id' },
@@ -98,7 +97,6 @@
     landlords:         [['name','name'],['email','email'],['phone','phone'],['city','city']],
     homestayHosts:     [['name','name'],['email','email'],['phone','phone'],['city','city'],['capacity','capacity']],
     homestayClients:   [['name','name'],['email','email'],['hostId','host_id'],['status','status']],
-    vacancies:         [['room','room'],['prop','prop'],['city','city'],['rent','rent'],['availDate','avail_date'],['listed','listed']],
     damageDeposits:    [['status','status']],
     homestayApplicants:[['name','name'],['city','city']],
     leads:             [['name','name'],['email','email'],['phone','phone'],['city','city'],['source','source'],['source_page','source_page'],['status','status'],['assignee','assignee'],['claimed_by','claimed_by'],['claimed_at','claimed_at'],['created_at','created_at']],
@@ -165,7 +163,6 @@
       landlords:          window.landlords,
       homestayHosts:      window.homestayHosts,
       homestayClients:    window.homestayClients,
-      vacancies:          window.vacancies,
       damageDeposits:     window.damageDeposits,
       homestayApplicants: window.homestayApplicants,
       leads:              window.leads,
@@ -174,6 +171,8 @@
       closedDeals:        window.closedDeals
     };
 
+    // Vacancies are not here: they come from the live inventory mirror (index.html
+    // loadVacancies, VAC-CORE); the old vacancies table is stale (2026-10-04).
     for (const [name, cfg] of Object.entries(TABLES)) {
       try {
         // Fetch active (non-deleted) rows AND the set of tombstone IDs in
