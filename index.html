@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-movedout5"></script>
+<script src="pms-supabase.js?v=2026-10-05-ddproof2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4925,13 +4925,10 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
           <label>Proof of payment <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">(screenshot or receipt — required for completed refunds)</span></label>
           <label for="edit-deposit-proof-input" class="form-pdf" id="edit-deposit-proof-label" style="cursor:pointer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span id="edit-deposit-proof-text">Click to upload screenshot / receipt</span>
+            <span id="edit-deposit-proof-text">Click to upload screenshots / receipts (you can pick several)</span>
           </label>
-          <input id="edit-deposit-proof-input" type="file" accept="image/*,application/pdf" style="display:none"/>
-          <div id="edit-deposit-proof-existing" style="margin-top:10px;display:none;font-size:12px;color:var(--muted)">
-            <span>Currently attached: <a id="edit-deposit-proof-link" href="#" target="_blank" style="color:var(--red-dark);text-decoration:underline"></a></span>
-            <button type="button" id="edit-deposit-proof-remove" style="background:transparent;border:0;color:var(--red-dark);font-size:11px;text-decoration:underline;margin-left:8px;cursor:pointer">Remove</button>
-          </div>
+          <input id="edit-deposit-proof-input" type="file" accept="image/*,application/pdf" multiple style="display:none"/>
+          <div id="edit-deposit-proof-existing" style="margin-top:10px;display:none;font-size:12px;color:var(--muted)"></div>
         </div>
       </div>
     </form>
@@ -14290,46 +14287,65 @@ document.getElementById("dd-sort")?.addEventListener("change", e => {
 
 renderDeposits();
 
-/* Proof-of-payment link. The stored proofUrl is useless across sessions: it is
-   a blob: preview from the uploader's tab (dead anywhere else, and safeHref
-   turns it into "#", which opened the portal itself). The storage path is the
-   truth, so sign it fresh on every open. A blob: is only trusted while the tab
-   that made it is still waiting for its upload. */
+/* Proof of payment: a refund can carry several files (r.proofs, a list of
+   {path, name, size, type, url}). Older records hold one file in flat
+   proofPath/proofName/... fields; ddProofs reads those as a list of one and
+   ddSetProofs migrates them on the next save.
+   The storage path is the truth, so each link is signed fresh on open. A
+   stored url is a blob: preview from the uploader's tab (dead anywhere else,
+   and safeHref turns it into "#", which opened the portal itself), so a blob:
+   is only trusted while the tab that made it is waiting for its upload. */
 const DD_LOCAL_PROOFS = new Set();
-async function ddProofHref(r){
-  if (r.proofPath && window.vmDb && window.vmDb.fileUrl) return await window.vmDb.fileUrl(r.proofPath);
-  const u = String(r.proofUrl || "");
+function ddProofs(r){
+  if (Array.isArray(r.proofs)) return r.proofs;
+  if (r.proofPath || r.proofUrl || r.proofName)
+    return [{ path: r.proofPath || null, url: r.proofUrl || null, name: r.proofName || null, size: r.proofSize || null, type: r.proofType || null }];
+  return [];
+}
+function ddSetProofs(r, list){
+  r.proofs = list;
+  delete r.proofUrl; delete r.proofName; delete r.proofSize; delete r.proofPath; delete r.proofType;
+}
+function ddProofIsImage(p){
+  return (p.type && p.type.startsWith("image/")) || (p.name && /\.(png|jpg|jpeg|webp|gif)$/i.test(p.name));
+}
+async function ddProofHref(p){
+  if (p.path && window.vmDb && window.vmDb.fileUrl) return await window.vmDb.fileUrl(p.path);
+  const u = String(p.url || "");
   if (u.startsWith("blob:")) return DD_LOCAL_PROOFS.has(u) ? u : null;
   return /^https?:/i.test(u) ? u : null;
 }
 const DD_PROOF_MISSING = "Couldn't open this proof. If it never finished uploading, re-attach it via ⋯ → Edit refund.";
-// Resolve once, then point every [data-dd-proof] link and the preview <img> at it.
+// For each proof i, resolve once, then point every [data-dd-proof="i"] link and
+// the [data-dd-proof-img="i"] preview at it.
 function ddWireProof(r, root){
-  const links = root.querySelectorAll("[data-dd-proof]");
-  const img = root.querySelector("[data-dd-proof-img]");
-  if (!links.length && !img) return;
-  const ready = ddProofHref(r).catch(() => null);
-  ready.then(url => {
-    if (url) {
-      links.forEach(a => { a.href = url; a.rel = "noopener"; });
-      if (img) img.src = url;
-    } else if (img) {
-      img.style.display = "none";
-      const fb = img.nextElementSibling;
-      if (fb) { fb.textContent = DD_PROOF_MISSING; fb.style.display = "block"; }
-    }
-  });
-  // A click before the link is signed opens a tab now and fills it in after,
-  // so the popup blocker still sees a user gesture.
-  links.forEach(a => { a.onclick = e => {
-    if (a.getAttribute("href") !== "#") return;
-    e.preventDefault(); e.stopPropagation();
-    const tab = window.open("", "_blank");
+  ddProofs(r).forEach((p, i) => {
+    const links = root.querySelectorAll(`[data-dd-proof="${i}"]`);
+    const img = root.querySelector(`[data-dd-proof-img="${i}"]`);
+    if (!links.length && !img) return;
+    const ready = ddProofHref(p).catch(() => null);
     ready.then(url => {
-      if (url && tab) tab.location = url;
-      else { if (tab) tab.close(); showToast(url ? "Popup blocked: allow popups to open the proof" : DD_PROOF_MISSING); }
+      if (url) {
+        links.forEach(a => { a.href = url; a.rel = "noopener"; });
+        if (img) img.src = url;
+      } else if (img) {
+        img.style.display = "none";
+        const fb = img.nextElementSibling;
+        if (fb) { fb.textContent = DD_PROOF_MISSING; fb.style.display = "block"; }
+      }
     });
-  }; });
+    // A click before the link is signed opens a tab now and fills it in after,
+    // so the popup blocker still sees a user gesture.
+    links.forEach(a => { a.onclick = e => {
+      if (a.getAttribute("href") !== "#") return;
+      e.preventDefault(); e.stopPropagation();
+      const tab = window.open("", "_blank");
+      ready.then(url => {
+        if (url && tab) tab.location = url;
+        else { if (tab) tab.close(); showToast(url ? "Popup blocked: allow popups to open the proof" : DD_PROOF_MISSING); }
+      });
+    }; });
+  });
 }
 
 /* === Deposit detail panel === */
@@ -14495,32 +14511,31 @@ function openDeposit(id){
     <div class="panel-section">
       <div class="panel-section-title">
         <span>Proof of <em>payment</em></span>
-        ${(r.proofUrl || r.proofName)
-          ? '<span class="ct" style="color:var(--green-dark)">On file</span>'
+        ${ddProofs(r).length
+          ? `<span class="ct" style="color:var(--green-dark)">${ddProofs(r).length > 1 ? ddProofs(r).length + ' files' : 'On file'}</span>`
           : (r.status === "completed" ? '<span class="ct" style="color:var(--red-dark)">Missing</span>' : '<span class="ct">Not yet uploaded</span>')}
       </div>
       <div class="card card-pad">
-        ${(r.proofUrl || r.proofName) ? `
-          ${(r.proofType && r.proofType.startsWith("image/")) || (r.proofName && /\.(png|jpg|jpeg|webp|gif)$/i.test(r.proofName))
-            ? `<a href="#" data-dd-proof target="_blank" style="display:block">
-                 <img data-dd-proof-img alt="Proof of payment for ${esc(r.name)}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
-                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="#" data-dd-proof target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
+        ${ddProofs(r).length ? ddProofs(r).map((p, i) => `<div${i ? ' style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)"' : ''}>${ddProofIsImage(p)
+            ? `<a href="#" data-dd-proof="${i}" target="_blank" style="display:block">
+                 <img data-dd-proof-img="${i}" alt="Proof of payment for ${esc(r.name)}" style="max-width:100%;max-height:320px;border:1px solid var(--line);border-radius:8px;display:block" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
+                 <div style="display:none;padding:14px;background:var(--cream);border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--muted)">Image isn't loading inline. <a href="#" data-dd-proof="${i}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open in new tab</a></div>
                </a>
                <div style="margin-top:10px;font-size:12px;color:var(--muted)">
-                 ${esc(r.proofName || 'attachment')}${r.proofSize ? ' · ' + esc(r.proofSize) : ''}
+                 ${esc(p.name || 'attachment')}${p.size ? ' · ' + esc(p.size) : ''}
                  ${(typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.role === 'admin')
-                    ? ` · <a href="#" data-dd-proof target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
+                    ? ` · <a href="#" data-dd-proof="${i}" target="_blank" style="color:var(--red-dark);text-decoration:underline">Open original</a>`
                     : ''}
                </div>`
             : `<div style="display:flex;align-items:center;gap:14px">
                  <div style="width:54px;height:64px;background:var(--red-soft);border:1px solid var(--red);border-radius:8px;display:grid;place-items:center;flex-shrink:0;color:var(--red-dark);font-family:var(--serif);font-weight:700;font-size:16px">PDF</div>
                  <div style="flex:1;min-width:0">
-                   <div style="font-weight:600;font-size:14px">${esc(r.proofName || 'Proof of payment')}</div>
-                   <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(r.proofSize || 'On file')}</div>
+                   <div style="font-weight:600;font-size:14px">${esc(p.name || 'Proof of payment')}</div>
+                   <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(p.size || 'On file')}</div>
                  </div>
-                 <a href="#" data-dd-proof target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
-               </div>`}
-        ` : `
+                 <a href="#" data-dd-proof="${i}" target="_blank" class="btn btn-ghost" style="padding:6px 12px;font-size:12px;flex-shrink:0">Open</a>
+               </div>`}</div>`).join('')
+        : `
           <div style="font-size:13px;color:var(--muted);line-height:1.5">
             ${r.status === "completed"
               ? 'No proof of payment is attached to this completed refund. Click the ⋯ button below and choose "Edit refund" to upload one.'
@@ -14620,7 +14635,7 @@ function openDeposit(id){
   const markBtn = document.getElementById("dd-mark-complete");
   if(markBtn){
     markBtn.addEventListener("click", () => {
-      const hasProof = !!(r.proofUrl || r.proofPath || r.proofName);
+      const hasProof = ddProofs(r).length > 0;
       if (!hasProof) {
         showToast("Attach a proof of payment before marking this refund as completed.");
         document.getElementById("panel-close")?.click();
@@ -17255,37 +17270,37 @@ function openEditDeposit(rec){
   const proofInput   = document.getElementById("edit-deposit-proof-input");
   const proofLabel   = document.getElementById("edit-deposit-proof-text");
   const proofExBlk   = document.getElementById("edit-deposit-proof-existing");
-  const proofExLink  = document.getElementById("edit-deposit-proof-link");
-  const proofExClear = document.getElementById("edit-deposit-proof-remove");
+  const PROOF_PROMPT = "Click to upload screenshots / receipts (you can pick several)";
   if (proofInput) proofInput.value = "";
-  if (proofLabel) proofLabel.textContent = "Click to upload screenshot / receipt";
-  if (proofExBlk && proofExLink) {
-    if (rec.proofUrl || rec.proofName) {
-      proofExBlk.style.display = "block";
-      proofExLink.textContent = rec.proofName || "View attachment";
-      proofExLink.href = "#";
-      proofExLink.setAttribute("data-dd-proof", "");
-      ddWireProof(rec, proofExBlk);
-    } else {
-      proofExBlk.style.display = "none";
-    }
-  }
+  if (proofLabel) proofLabel.textContent = PROOF_PROMPT;
+  // One row per attached file, each with its own Remove.
+  const drawExisting = () => {
+    if (!proofExBlk) return;
+    const list = ddProofs(rec);
+    proofExBlk.style.display = list.length ? "block" : "none";
+    proofExBlk.innerHTML = list.length ? `<div style="margin-bottom:4px">Currently attached:</div>` + list.map((p, i) => `
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+        <a href="#" data-dd-proof="${i}" target="_blank" style="color:var(--red-dark);text-decoration:underline;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name || "View attachment")}</a>
+        <button type="button" data-dd-proof-remove="${i}" style="background:transparent;border:0;color:var(--red-dark);font-size:11px;text-decoration:underline;cursor:pointer;flex-shrink:0">Remove</button>
+      </div>`).join("") : "";
+    ddWireProof(rec, proofExBlk);
+    proofExBlk.querySelectorAll("[data-dd-proof-remove]").forEach(b => { b.onclick = () => {
+      const i = +b.dataset.ddProofRemove, cur = ddProofs(rec);
+      if (!confirm(`Remove "${cur[i] && cur[i].name || "this file"}" from this refund?`)) return;
+      ddSetProofs(rec, cur.filter((_, j) => j !== i));
+      if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', rec);
+      drawExisting();
+      if (typeof renderDeposits === "function") renderDeposits();
+      showToast("Proof of payment removed");
+    }; });
+  };
+  drawExisting();
   if (proofInput) {
     proofInput.onchange = (e) => {
-      const f = e.target.files && e.target.files[0];
-      if (proofLabel) proofLabel.textContent = f ? `${f.name} · ${(f.size/1024).toFixed(0)} KB` : "Click to upload screenshot / receipt";
-    };
-  }
-  if (proofExClear && _editingDeposit) {
-    proofExClear.onclick = () => {
-      if (!confirm("Remove the existing proof-of-payment file from this refund?")) return;
-      delete _editingDeposit.proofUrl;
-      delete _editingDeposit.proofName;
-      delete _editingDeposit.proofSize;
-      delete _editingDeposit.proofPath;
-      proofExBlk.style.display = "none";
-      if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', _editingDeposit);
-      showToast("Proof of payment removed");
+      const fs = [...(e.target.files || [])];
+      if (proofLabel) proofLabel.textContent = !fs.length ? PROOF_PROMPT
+        : fs.length === 1 ? `${fs[0].name} · ${(fs[0].size/1024).toFixed(0)} KB`
+        : `${fs.length} files: ${fs.map(f => f.name).join(", ")}`;
     };
   }
 
@@ -17349,9 +17364,9 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
   const target = damageDeposits[idx];
 
   // Proof-of-payment: REQUIRED when marking status as "completed"
-  const proofFile = document.getElementById("edit-deposit-proof-input")?.files?.[0] || null;
-  const hadProof  = !!(target.proofUrl || target.proofPath);
-  if (status === "completed" && !proofFile && !hadProof) {
+  const proofFiles = [...(document.getElementById("edit-deposit-proof-input")?.files || [])];
+  const hadProof  = ddProofs(target).length > 0;
+  if (status === "completed" && !proofFiles.length && !hadProof) {
     failEdit("Please attach a proof of payment (screenshot / receipt) before marking the refund as completed.");
     return;
   }
@@ -17387,23 +17402,26 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
     // Proof-of-payment: if user picked a new file, store metadata + upload to
     // Supabase Storage in the background. Local preview uses an object URL so
     // the proof shows immediately even before the upload finishes.
-    if (proofFile) {
-      target.proofUrl  = URL.createObjectURL(proofFile);
-      DD_LOCAL_PROOFS.add(target.proofUrl);
-      target.proofName = proofFile.name;
-      target.proofSize = `${Math.round(proofFile.size/1024).toLocaleString()} KB`;
-      target.proofType = proofFile.type || "application/octet-stream";
-      target.proofPath = null;  // filled in after upload completes
+    if (proofFiles.length) {
+      const added = proofFiles.map(f => {
+        const url = URL.createObjectURL(f);
+        DD_LOCAL_PROOFS.add(url);
+        return { url, path: null,  // path filled in after upload completes
+                 name: f.name, size: `${Math.round(f.size/1024).toLocaleString()} KB`,
+                 type: f.type || "application/octet-stream" };
+      });
+      ddSetProofs(target, ddProofs(target).concat(added));
       if (window.vmDb && window.vmDb.uploadFile) {
-        window.vmDb.uploadFile(proofFile, `deposit-proofs/${target.id}-${Date.now()}`).then(res => {
-          if (res && res.path) {
-            target.proofPath = res.path;
-            // If the helper exposes a signed URL, prefer that for cross-device viewing
-            if (res.signedUrl) target.proofUrl = res.signedUrl;
-            if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', target);
-            if (typeof renderDeposits === "function") renderDeposits();
-          }
-        }).catch(err => console.warn("[proof upload] failed:", err));
+        proofFiles.forEach((f, i) => {
+          window.vmDb.uploadFile(f, `deposit-proofs/${target.id}-${Date.now()}-${i}`).then(res => {
+            if (res && res.path) {
+              added[i].path = res.path;
+              delete added[i].url;  // the blob: preview means nothing outside this tab
+              if (window.vmDb && window.vmDb.upsert) window.vmDb.upsert('damageDeposits', target);
+              if (typeof renderDeposits === "function") renderDeposits();
+            }
+          }).catch(err => console.warn("[proof upload] failed:", err));
+        });
       }
     }
 
@@ -17414,7 +17432,7 @@ document.getElementById("edit-deposit-form")?.addEventListener("submit", async e
     if(typeof renderDeposits === "function") renderDeposits();
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
 
-    if(typeof showToast === "function") showToast(`Updated refund for ${name}${proofFile ? ' · proof of payment attached' : ''}`);
+    if(typeof showToast === "function") showToast(`Updated refund for ${name}${proofFiles.length ? ` · ${proofFiles.length > 1 ? proofFiles.length + ' proofs' : 'proof of payment'} attached` : ''}`);
     closeEditDeposit();
   } catch(err){
     console.error("[edit-deposit] threw:", err);
@@ -24869,9 +24887,6 @@ function ckoZonedIso(v, city){
    single data.charges object and data.payment, shown read-only. Spec: rina
    docs/superpowers/specs/2026-09-25-checkout-phase3a-design.md */
 const CKO_LINE_TYPES = [['cleaning', 'Cleaning'], ['keys', 'Keys / fobs'], ['damage', 'Damage'], ['unpaid_balance', 'Unpaid balance'], ['other', 'Other']];
-// 2026-10-05: what a new charge says when staff leave Description blank. Cleaning
-// matches the pre-filled fee line's wording.
-const CKO_LINE_DEFAULT_DESC = { cleaning: 'Move-out cleaning fee', keys: 'Keys / fobs not returned', unpaid_balance: 'Unpaid balance' };
 const CKO_LINE_SOURCES = { rule: 'Standard fee', report: 'From the cleaning report', manual: 'Added by staff' };
 const CKO_METHOD_OPTIONS = [['etransfer', 'e-Transfer'], ['wire', 'Wire'], ['eft', 'EFT'], ['cheque', 'Cheque']];
 const CKO_PAY_KINDS = [['refund', 'Refund'], ['top_up', 'Top-up']];
@@ -25181,10 +25196,7 @@ function ckoLineArgs(c, line, version){
   const a = ckoMoneyIn(line.amount);
   if (a.blank) return ckoRefuse('missing:amount');
   if (a.bad) return ckoRefuse('invalid:amount');
-  // A blank description takes the type's standard wording where it has one
-  // (damage and other must say what it was for).
-  const blank = !String(line.description == null ? '' : line.description).trim();
-  const d = ckoLineDesc(blank && CKO_LINE_DEFAULT_DESC[type] ? CKO_LINE_DEFAULT_DESC[type] : line.description);
+  const d = ckoLineDesc(line.description);
   if (d.error) return { ok: false, error: d.error };
   const ev = ckoEvidenceIn(line.evidence, c.id);
   if (!ev) return ckoRefuse('invalid:evidence');
@@ -26139,7 +26151,7 @@ const CKO_CHARGE_FORMS = {
   line_add: { title: 'Add a charge', submit: 'Add charge', fields: [
     { name: 'type', label: 'Type', type: 'select', required: true, options: CKO_LINE_TYPES },
     { name: 'amount', label: 'Amount ($)', type: 'money', required: true },
-    { name: 'description', label: 'Description (blank = standard wording for cleaning, keys or unpaid balance)', type: 'textarea', required: false },
+    { name: 'description', label: 'Description', type: 'textarea', required: true },
     { name: 'evidence', label: 'Evidence links, one per line (Drive or other https links)', type: 'textarea', required: false },
     { name: 'files', label: 'Or attach photos / PDFs', type: 'files', required: false },
   ] },
@@ -26293,8 +26305,7 @@ function ckoRoomRow(events, kv){
   if (!r) return '';
   return kv('Room', `<span class="tag-pill ${r.tone}" data-cko-room="${esc(r.tone)}">${esc(r.text)}</span>`);
 }
-// ok: banner is a confirmation (drawn green), not a refusal.
-async function openCheckout(id, banner, refocus, ok){
+async function openCheckout(id, banner, refocus){
   const tok = ++ckoOpenSeq;
   CKO_FORM = null;
   if (!ckoCases) await loadCheckouts();
@@ -26393,7 +26404,7 @@ async function openCheckout(id, banner, refocus, ok){
     raf(() => {
       if (tok !== ckoOpenSeq) return;
       const b = document.getElementById('cko-banner');
-      if (banner && b) { b.textContent = banner; if (ok) { b.dataset.ok = '1'; b.setAttribute('role', 'status'); b.style.cssText += ';color:var(--ink);background:var(--green-soft);border-left:3px solid var(--green);border-radius:8px;padding:10px 12px;font-weight:600'; } b.focus(); return; }
+      if (banner && b) { b.textContent = banner; b.focus(); return; }
       if (!refocus) return;
       const a = document.querySelector('#cko-actions button:not([disabled])') || document.getElementById('cko-actions');
       if (a) a.focus();
@@ -26542,8 +26553,6 @@ async function ckoCall(id, name, args, done){
   else if (!reopen) showToast(ckoRefusalText(r.error));
   return !r.error;
 }
-// Shown green at the top of the drawer once "Already moved out" went all the way.
-const CKO_FAST_DONE = '✓ Moved to Charges Review. Next: check the deposit held and the charges below (add any that are missing), then Submit for approval so finance can approve the refund.';
 // checkout_advance calls in order (ckoFastPayloads), stopping at the first
 // refusal. Every step that went through stays done (each is a real status), so
 // a refusal part-way says where the case stopped. A field refusal on the first
@@ -26572,9 +26581,9 @@ async function ckoAdvanceChain(id, calls){
   const msg = !failed ? '' : (done ? `Stopped at ${failed.from}. ` : '') + `${failed.step === 'take' ? 'Take' : CKO_STEPS[failed.step].label}: ${ckoRefusalText(r.error)}`;
   await ckoReload();
   const reopen = ckoShowing(id) && ckoCases && ckoCases.some(c => c.id === id);
-  if (reopen) await openCheckout(id, msg || CKO_FAST_DONE, true, !failed);
+  if (reopen) await openCheckout(id, msg, true);
   else ckoRestoreButtons();
-  if (!failed) showToast('Moved to Charges Review');
+  if (!failed) showToast('In Charges Review, with the charges filled in');
   else if (!reopen) showToast(msg);
   return !failed;
 }
