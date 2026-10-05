@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-ddproof1"></script>
+<script src="pms-supabase.js?v=2026-10-05-movedout4"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -26287,7 +26287,8 @@ function ckoRoomRow(events, kv){
   if (!r) return '';
   return kv('Room', `<span class="tag-pill ${r.tone}" data-cko-room="${esc(r.tone)}">${esc(r.text)}</span>`);
 }
-async function openCheckout(id, banner, refocus){
+// ok: banner is a confirmation (drawn green), not a refusal.
+async function openCheckout(id, banner, refocus, ok){
   const tok = ++ckoOpenSeq;
   CKO_FORM = null;
   if (!ckoCases) await loadCheckouts();
@@ -26386,7 +26387,7 @@ async function openCheckout(id, banner, refocus){
     raf(() => {
       if (tok !== ckoOpenSeq) return;
       const b = document.getElementById('cko-banner');
-      if (banner && b) { b.textContent = banner; b.focus(); return; }
+      if (banner && b) { b.textContent = banner; if (ok) { b.dataset.ok = '1'; b.setAttribute('role', 'status'); b.style.cssText += ';color:var(--ink);background:var(--green-soft);border-left:3px solid var(--green);border-radius:8px;padding:10px 12px;font-weight:600'; } b.focus(); return; }
       if (!refocus) return;
       const a = document.querySelector('#cko-actions button:not([disabled])') || document.getElementById('cko-actions');
       if (a) a.focus();
@@ -26535,6 +26536,8 @@ async function ckoCall(id, name, args, done){
   else if (!reopen) showToast(ckoRefusalText(r.error));
   return !r.error;
 }
+// Shown green at the top of the drawer once "Already moved out" went all the way.
+const CKO_FAST_DONE = '✓ Moved to Charges Review. Next: check the deposit held and the charges below (add any that are missing), then Submit for approval so finance can approve the refund.';
 // checkout_advance calls in order (ckoFastPayloads), stopping at the first
 // refusal. Every step that went through stays done (each is a real status), so
 // a refusal part-way says where the case stopped. A field refusal on the first
@@ -26563,9 +26566,9 @@ async function ckoAdvanceChain(id, calls){
   const msg = !failed ? '' : (done ? `Stopped at ${failed.from}. ` : '') + `${failed.step === 'take' ? 'Take' : CKO_STEPS[failed.step].label}: ${ckoRefusalText(r.error)}`;
   await ckoReload();
   const reopen = ckoShowing(id) && ckoCases && ckoCases.some(c => c.id === id);
-  if (reopen) await openCheckout(id, msg, true);
+  if (reopen) await openCheckout(id, msg || CKO_FAST_DONE, true, !failed);
   else ckoRestoreButtons();
-  if (!failed) showToast('In Charges Review, with the charges filled in');
+  if (!failed) showToast('Moved to Charges Review');
   else if (!reopen) showToast(msg);
   return !failed;
 }
