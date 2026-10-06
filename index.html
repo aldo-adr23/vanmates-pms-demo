@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-nobook2"></script>
+<script src="pms-supabase.js?v=2026-10-06-drawer1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24470,7 +24470,10 @@ function ckoActions(c, me){
   const m = ckoMeOf(me), admin = m.role === 'admin', open = ckoIsOpen(c), manage = ckoCanManage(c, m), f = c.flags || [];
   const a = [];
   const next = ckoNextStep(c, m);
-  if (next && next.step) a.push({ act: 'next', label: next.label, primary: true, disabled: !next.allowed, title: next.reason });
+  // 2026-10-06: while the charges are a draft the button takes you to them (Approve
+  // would only refuse with "not submitted yet").
+  const draft = !!next && next.step === 'approve_refund' && !ckoChargesSubmitted(c);
+  if (next && next.step) a.push({ act: 'next', label: draft ? 'Go to the charges' : next.label, primary: true, disabled: draft ? false : !next.allowed, title: draft ? '' : next.reason });
   const fast = ckoFastPlan(c, m);
   if (fast) a.push({ act: 'moved_out_fast', label: 'Already moved out → Charges Review', disabled: !fast.allowed, title: fast.allowed ? 'Record the move-out and inspection now and go straight to the charges' : fast.reason });
   if (open && !c.owner) a.push({ act: 'take', label: 'Take' });
@@ -26479,46 +26482,48 @@ async function openCheckout(id, banner, refocus, ok){
   // a list refresh may have moved on since (p_from must be what staff saw).
   CKO_SHOWN = Object.assign({}, c, { flags: c.flags.slice() });
   CKO_LINES = lines && !lines.error ? { caseId: c.id, bundle: lines } : null;
-  document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}">
-    ${ckoActionBarHtml(c)}
-    ${h('Case')}
-    ${kv('Status', esc(c.status) + (c.outcome ? ` <span class="name-sub">(${esc(c.outcome)})</span>` : ''))}
-    ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
-    ${ckoResidentLinkRow(c, kv)}
-    ${ckoRemindersRow(c, kv)}
-    ${ckoRoomRow(events, kv)}
-    ${kv('At this status', waited == null ? '—' : esc(waited) + (waited === 1 ? ' day' : ' days'))}
-    ${slaParts.length ? kv('Deadlines', `<span data-cko-sla>${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</span>`) : ''}
-    ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
+  // 2026-10-06 (Aldo: "does not tell me in which stage the person is, lots of info"):
+  // the stage tracker and Next on top, then the current stage's block, then the
+  // rest folded into sections that open on click (nothing removed).
+  const stg = ckoStageOf(c), tl = ckoTimeline(events, ckoName, c.city, ckoChargesSnapshots(c));
+  const fold = (title, body, open) => body.trim() ? `<details class="cko-fold"${open ? ' open' : ''} style="margin-top:10px;border:1px solid var(--line,#E4DBC9);border-radius:10px;padding:0 12px"><summary style="cursor:pointer;padding:10px 0;font-size:13px;font-weight:600;letter-spacing:.02em">${esc(title)}</summary><div style="padding-bottom:8px">${body}</div></details>` : '';
+  const moveoutRows = `
+    ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
     ${sch.inspection_at ? kv('Inspection booked', `${when(sch.inspection_at)} · ${esc(ckoName(sch.inspector_email))}`) : ''}
     ${kv('Move-out clean', `<span data-cko-cleaning="${esc(cln.status)}">${esc(ckoCleaningLine(cln))}</span>${cln.status === 'booked' && cln.bookedAt ? ` <span class="name-sub">since ${esc(day(cln.bookedAt))}</span>` : ''}`)}
     ${mo.keys ? kv('Moved out', `${esc(day(mo.at))} · keys ${esc(ckoOptionLabel(CKO_KEYS_OPTIONS, mo.keys).toLowerCase())} (${esc(mo.count)})${mo.source === 'limpio' ? ' <span class="name-sub">· from the cleaning report</span>' : ''}`) : ''}
     ${ins.result ? kv('Inspection result', `${esc(ckoOptionLabel(CKO_RESULT_OPTIONS, ins.result))}${ins.source === 'limpio' ? ` <span class="name-sub">· by ${esc(ins.by || 'the cleaner')}, from the Limpio cleaning report</span>` : ''}${ins.notes && ins.source !== 'limpio' ? `<div class="name-sub">${esc(ins.notes)}</div>` : ''}`) : ''}
-    ${cln.report ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}
+    ${cln.report ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}`;
+  const reviewOpen = (c.flags || []).indexOf('short_notice_review_required') !== -1;
+  document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}">
+    ${ckoStageTrackerHtml(c, stg, waited, slaParts)}
+    ${ckoActionBarHtml(c)}
     ${ckoChargesHtml(c, lines, kv, h)}
-    ${h('Move-out')}
-    ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
-    ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
-    ${kv('Notice', esc(ckoNoticeText(c)) + (n.required ? ` <span class="name-sub">of ${esc(n.required)} required</span>` : ''))}
-    ${kv('Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
-    ${kv('Submitted', when(c.createdAt))}
-    ${h('Resident')}
+    ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
+    ${fold('Move-out & inspection', moveoutRows, !!stg && (stg.key === 'book' || stg.key === 'moveout'))}
+    ${fold('Resident', `
     ${kv('Email', esc(c.email))}
     ${kv('Phone', esc(d.phone || '—'))}
     ${kv('Forwarding address', esc(d.forwarding_address || '—'))}
     ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + ' · will return')}
     ${kv('Reason', esc(d.reason || '—') + (d.reason_details ? `<div class="name-sub">${esc(d.reason_details)}</div>` : ''))}
     ${kv('Refund method', esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
-    ${h('Acknowledgements')}
+    ${kv('Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
+    ${kv('Submitted', when(c.createdAt))}`, false)}
+    ${fold('Notice & acknowledgements', `
+    ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
+    ${kv('Notice', esc(ckoNoticeText(c)) + (n.required ? ` <span class="name-sub">of ${esc(n.required)} required</span>` : ''))}
+    ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
     ${kv('Deposit & cleaning', dep.at ? `${esc(day(dep.at))} · deposit shown ${money(dep.deposit_shown)} · cleaning ${money(dep.cleaning_fee)}${dep.wire_fee ? ' · wire ' + money(dep.wire_fee) : ''}<div class="name-sub">"${esc(dep.text || '')}"</div>` : '—')}
     ${kv('Short notice', sn ? `${esc(day(sn.at))}<div class="name-sub">"${esc(sn.text || '')}"</div>` : 'Not needed')}
-    ${h('Notice review')}
     ${x ? kv('Requested', `${esc(x.reason || '')} · ${esc(day(x.requested_at))}<div>${esc(x.explanation || '')}</div>`) : kv('Requested', 'No')}
-    ${dec ? kv('Decision', `<b>${esc(ckoOptionLabel(CKO_OUTCOME_OPTIONS, dec.outcome))}</b> · ${esc(ckoName(dec.by))} · ${esc(day(dec.at))}<div class="name-sub">Internal: ${esc(dec.reason || '')}</div>${dec.resident_note ? `<div class="name-sub">To resident: ${esc(dec.resident_note)}</div>` : ''}`) : ''}
-    ${h('Links')}
-    ${kv('Asana', c.asanaGid ? `<a href="${esc(ckoAsanaUrl(c.asanaGid))}" target="_blank" rel="noopener">Open task</a>` : '<span class="name-sub">Not mirrored yet</span>')}
-    ${h('Timeline (' + zone + ')')}
-    ${ckoTimeline(events, ckoName, c.city, ckoChargesSnapshots(c)).map(e => { const t = ckoLocal(e.at, c.city); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>'}
+    ${dec ? kv('Decision', `<b>${esc(ckoOptionLabel(CKO_OUTCOME_OPTIONS, dec.outcome))}</b> · ${esc(ckoName(dec.by))} · ${esc(day(dec.at))}<div class="name-sub">Internal: ${esc(dec.reason || '')}</div>${dec.resident_note ? `<div class="name-sub">To resident: ${esc(dec.resident_note)}</div>` : ''}`) : ''}`, reviewOpen)}
+    ${fold('Resident link, reminders, room', `
+    ${ckoResidentLinkRow(c, kv)}
+    ${ckoRemindersRow(c, kv)}
+    ${ckoRoomRow(events, kv)}
+    ${kv('Asana', c.asanaGid ? `<a href="${esc(ckoAsanaUrl(c.asanaGid))}" target="_blank" rel="noopener">Open task</a>` : '<span class="name-sub">Not mirrored yet</span>')}`, false)}
+    ${fold('Timeline (' + tl.length + ' · ' + zone + ')', tl.map(e => { const t = ckoLocal(e.at, c.city); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>', false)}
   </div>`;
   if (banner || refocus) {
     const raf = window.requestAnimationFrame ? (f) => window.requestAnimationFrame(f) : (f) => setTimeout(f, 16);
@@ -26547,12 +26552,38 @@ let ckoBusy = false;
 let CKO_SHOWN = null; // snapshot of the case the drawer last drew
 let CKO_LINES = null; // { caseId, bundle } the Charges block last drew (bundle.version = lines_version)
 function ckoBusyToast(){ showToast('Still saving the last change…'); }
+// 2026-10-06: the stage at the top of the drawer — five steps, the current one
+// marked, then status, days here, deadlines and the one Next thing to do.
+function ckoStageTrackerHtml(c, stg, waited, slaParts){
+  const closed = !ckoIsOpen(c);
+  const steps = CKO_STAGES.map((s, i) => {
+    const n = i + 1, done = closed || (stg && n < stg.n), cur = !closed && stg && n === stg.n;
+    const dot = cur ? 'background:var(--red);box-shadow:0 0 0 4px var(--red-soft)' : done ? 'background:var(--red)' : 'background:var(--line,#D8CDB8)';
+    return `<li style="flex:1 1 0;min-width:0;text-align:center;position:relative"${cur ? ' aria-current="step"' : ''}>
+      ${i ? `<span aria-hidden="true" style="position:absolute;top:7px;right:50%;width:100%;height:2px;background:${done || cur ? 'var(--red)' : 'var(--line,#D8CDB8)'}"></span>` : ''}
+      <span aria-hidden="true" style="position:relative;display:inline-block;width:16px;height:16px;border-radius:50%;${dot}"></span>
+      <div style="font-size:11px;line-height:1.25;margin-top:6px;${cur ? 'font-weight:700;color:var(--ink)' : 'color:var(--muted)'}">${esc(s.label)}</div>
+    </li>`;
+  }).join('');
+  const head = closed ? `Closed${c.outcome ? ' · ' + esc(c.outcome) : ''}` : stg ? `Stage ${stg.n} of ${CKO_STAGES.length} · ${esc(stg.label)}` : esc(c.status);
+  const next = ckoNextText(c, Date.now());
+  return `<section id="cko-stage" aria-label="Stage" style="margin:6px 0 4px;padding:14px 14px 12px;border:1px solid var(--line,#E4DBC9);border-radius:12px;background:var(--surface,#fff)">
+    <ol style="display:flex;list-style:none;margin:0 0 12px;padding:0">${steps}</ol>
+    <div style="font-weight:700">${head}</div>
+    <div class="name-sub" style="margin-top:2px">${esc(c.status)}${!closed && waited != null ? ` · ${esc(waited)} ${waited === 1 ? 'day' : 'days'} here` : ''}</div>
+    ${slaParts.length ? `<div data-cko-sla style="margin-top:6px">${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</div>` : ''}
+    ${next ? `<div style="margin-top:10px;font-size:15px"><span class="name-sub">Next:</span> <b>${esc(next)}</b></div>` : ''}
+  </section>`;
+}
+// Actions used now and then go under "More" so the bar shows what moves the case on.
+const CKO_MORE_ACTS = ['assign', 'release', 'flag_dispute', 'clear_dispute', 'cancel', 'override'];
 function ckoActionBarHtml(c){
   const next = ckoNextStep(c, ckoMe());
   const why = !!(next && next.step && !next.allowed && next.reason);
   const fast = ckoFastPlan(c, ckoMe());
-  return `<div id="cko-actions" role="group" aria-label="Checkout actions" tabindex="-1" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 4px">${ckoActions(c, ckoMe()).map(a =>
-    `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`).join('')}</div>
+  const btn = (a, more) => `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px${more ? ';width:100%;justify-content:flex-start;border-radius:8px' : ''}" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`;
+  const acts = ckoActions(c, ckoMe()), main = acts.filter(a => CKO_MORE_ACTS.indexOf(a.act) === -1), more = acts.filter(a => CKO_MORE_ACTS.indexOf(a.act) !== -1);
+  return `<div id="cko-actions" role="group" aria-label="Checkout actions" tabindex="-1" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 4px;align-items:flex-start">${main.map(a => btn(a, false)).join('')}${more.length ? `<details id="cko-more" style="position:relative"><summary class="btn btn-ghost" style="padding:6px 12px;font-size:12px;list-style:none;cursor:pointer">More ▾</summary><div style="position:absolute;z-index:5;margin-top:4px;min-width:190px;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--surface,#fff);border:1px solid var(--line,#E4DBC9);border-radius:10px;box-shadow:var(--shadow-md)">${more.map(a => btn(a, true)).join('')}</div></details>` : ''}</div>
     ${why ? `<div id="cko-next-why" class="name-sub" style="font-size:12px">${esc(next.label)}: ${esc(next.reason)}</div>` : ''}
     ${fast && !fast.allowed ? `<div id="cko-fast-why" class="name-sub" style="font-size:12px">Already moved out: ${esc(fast.reason)}</div>` : ''}
     <div id="cko-banner" class="card-sub" role="alert" tabindex="-1" style="color:var(--red-dark)"></div>
@@ -26717,6 +26748,8 @@ async function ckoAdvanceChain(id, calls, doneMsg){
 function ckoAct(act, lineId){
   const c = ckoPanelCase(), host = document.getElementById('cko-form');
   if (!c || !host) return;
+  // An action picked from "More" closes the menu (its form opens below the bar).
+  const more = document.getElementById('cko-more'); if (more) more.open = false;
   if (ckoBusy) { if (act !== 'form_back') ckoBusyToast(); return; }
   const id = c.id;
   // where: 'cko-charges-form' for the Charges block's forms. One form at a
@@ -26789,14 +26822,16 @@ function ckoAct(act, lineId){
     case 'clear_date_changed': return flag('date_changed', false, 'Date-change flag cleared');
     case 'next': {
       const n = ckoNextStep(c, ckoMe());
-      if (!n || !n.step || !n.allowed) return;
+      if (!n || !n.step) return;
       const s = CKO_STEPS[n.step];
       // Approve and Mark sent live in the Charges block (Phase 3a): go there.
+      // It is also "Go to the charges" on a draft, for anyone (2026-10-06).
       if (s.block) {
         const blk = document.getElementById('cko-charges');
         if (blk) { if (typeof blk.scrollIntoView === 'function') blk.scrollIntoView({ block: 'start', behavior: 'smooth' }); blk.focus(); }
         return;
       }
+      if (!n.allowed) return;
       if (!n.fields.length) {
         if (!confirm(`${n.label}? The case moves to ${s.to}.`)) return;
         const p = ckoStepPayload(n.step, {}, { city: c.city, now: Date.now() });
