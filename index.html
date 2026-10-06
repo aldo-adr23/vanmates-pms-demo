@@ -1510,7 +1510,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-needhints1"></script>
+<script src="pms-supabase.js?v=2026-10-06-hbcancel2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -18028,12 +18028,20 @@ function hbDaysBetween(from, to){
   return Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
 }
 function hbEndDate(b){ return String((b && (b.move_out_date || b.lease_end_date)) || ''); }
+// 2026-10-06: a cancelled booking (VM - Homestay Booking Cancel, or the agency
+// cancelling in the partner app) is over, not waiting on payment.
 function hbStage(b, today){
+  if(b && b.status === 'cancelled') return 'ended';
   if(!b || b.status !== 'paid') return 'waiting';
   const end = hbEndDate(b);
   if(b.billing_status === 'ended' || (end && end < today)) return 'ended';
   const mi = String(b.move_in_date || '');
   return mi && mi > today ? 'arriving' : 'ongoing';
+}
+// Staff can cancel a booking nobody has paid for, if the student pays (an agency
+// booking is cancelled by the agency, in the partner app).
+function hbCanCancel(b){
+  return !!b && (b.status === 'created' || b.status === 'payment_failed') && String(b.payer_type || 'student').trim().toLowerCase() !== 'agency';
 }
 function hbIsStale(b, today){
   return hbStage(b, today) === 'waiting' && !!(b && b.move_in_date) && String(b.move_in_date) < today;
@@ -18120,6 +18128,7 @@ function hbStatusLine(b, today){
     const text = !Number.isFinite(n) ? 'Arriving' : (n === 1 ? 'Arrives tomorrow' : 'Arrives in ' + n + ' days');
     return { text, sub: hbLetterWords(b).text, need: false };
   }
+  if(stage === 'ended' && b.status === 'cancelled') return { text: 'Cancelled', sub: 'never paid', need: false };
   if(stage === 'ended') return { text: 'Ended', sub: hbEndDate(b) ? 'moved out ' + hbEndDate(b) : '', need: false };
   const left = hbDaysBetween(today, hbEndDate(b));
   if(Number.isFinite(left) && left <= 14) return { text: 'Leaving soon', sub: 'Extend?', need: false };
@@ -18133,6 +18142,7 @@ function hbStayProgress(b, today){
     if(!Number.isFinite(n)) return 'arriving';
     return n === 1 ? 'arrives tomorrow' : 'arrives in ' + n + ' days';
   }
+  if(stage === 'ended' && b.status === 'cancelled') return 'cancelled';
   if(stage === 'ended') return end ? 'ended ' + end : 'ended';
   if(stage !== 'ongoing') return '';
   const left = hbDaysBetween(today, end);
@@ -30911,7 +30921,7 @@ function ahsArrivalText(row, city){
   const HB_RO_TOKEN_KEY = 'vm_staff_token_ro';
   // homestay-agency-invoice-retry: re-runs only the partner-app invoice step of an
   // agency booking Booking Create already committed (n8n side: agency-paid homestays).
-  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-details', 'homestay-letter-resend', 'homestay-agency-invoice-retry', 'homestay-agreement-resend'];
+  const HB_WRITE_PATHS = ['booking-create', 'booking-end', 'booking-cancel', 'booking-details', 'homestay-letter-resend', 'homestay-agency-invoice-retry', 'homestay-agreement-resend'];
 
   function hbFullToken() { return localStorage.getItem(HB_TOKEN_KEY) || ''; }
   function hbReadToken() { return hbFullToken() || localStorage.getItem(HB_RO_TOKEN_KEY) || ''; }
@@ -31334,7 +31344,7 @@ function ahsArrivalText(row, city){
   // contracts update). It must not throw away a form someone is typing into.
   function hbRefreshPanel(background) {
     if (!hbPanelShowing()) return;
-    if (background && document.querySelector('#panel-body .hb-panel .hb-inline-form, #panel-body .hb-panel .hb-end-date')) return;
+    if (background && document.querySelector('#panel-body .hb-panel .hb-inline-form, #panel-body .hb-panel .hb-end-date, #panel-body .hb-panel .hb-cancel-go')) return;
     const b = hbLastRows.find((x) => x.booking_ref === hbPanelRef);
     if (b) hbRenderPanel(b); else if (typeof closeProperty === 'function') closeProperty();
   }
@@ -31519,6 +31529,20 @@ function ahsArrivalText(row, city){
   // Billing already finished, so there is nothing left to end. A refunded booking
   // is deliberately still endable: a refund does not stop the subscription.
   function hbMoveOutAction(b) {
+    // 2026-10-06 (Aldo: "give me the option to cancel/delete people, I can only end
+    // tenancy"): a booking nobody paid for is cancelled, not ended. Ending one only
+    // stopped billing that never started and left it under Waiting on payment.
+    if (b.status === 'cancelled') return '';
+    if (hbCanCancel(b)) {
+      if (!hbCanWrite()) {
+        return '<button type="button" class="btn btn-ghost btn-mini hb-need-token" ' +
+          'title="Cancelling stops the student\'s payment link, so it needs the full staff token.">Cancel booking — needs full token</button>';
+      }
+      return '<span class="hb-act" data-ref="' + esc(b.booking_ref) + '">' +
+        '<button type="button" class="btn btn-ghost btn-mini hb-cancel-start">Cancel booking…</button></span>';
+    }
+    // An unpaid agency booking: the agency cancels it (Cancel agency booking…).
+    if (b.status === 'created' || b.status === 'payment_failed') return '';
     const done = b.billing_status === 'ended';
     const dated = b.move_out_date ? '<span class="hb-sub">moves out ' + esc(b.move_out_date) + '</span> ' : '';
     if (done) return '';
@@ -31635,6 +31659,31 @@ function ahsArrivalText(row, city){
   // Two-step by design: the button only opens the date field, and nothing is sent
   // until Confirm. Ending a tenancy cancels a live Stripe subscription, so it must
   // not be one stray click away.
+  // Two-step, like ending a tenancy: the first click only asks.
+  function hbOpenCancel(cell) {
+    hbCloseExtend();
+    hbCloseLetterRow();
+    cell.innerHTML =
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        '<span class="hb-sub">Cancel this booking? The student\'s payment link stops working. Nothing is charged or refunded.</span>' +
+        '<button type="button" class="btn btn-primary hb-cancel-go">Yes, cancel booking</button>' +
+        '<button type="button" class="btn btn-ghost hb-cancel-keep">Keep it</button>' +
+      '</div>';
+  }
+  async function hbCancel(cell) {
+    const ref = cell.getAttribute('data-ref');
+    const go = cell.querySelector('.hb-cancel-go');
+    if (go) go.disabled = true;
+    const ref0 = hbPanelRef;
+    hbStatus('Cancelling ' + ref + '…');
+    try {
+      const d = await hbPost('booking-cancel', { booking_ref: ref });
+      hbStatusFor(ref0, d.already ? ref + ' was already cancelled.' : ref + ' cancelled — the payment link no longer works. It is under Ended.');
+    } catch (e) {
+      hbStatusFor(ref0, e.message, true);
+    }
+    try { await hbLoadBookings(ref0); } catch (e) { hbStatus(e.message, true); hbRefreshPanel(); }
+  }
   function hbOpenEnd(cell) {
     hbCloseExtend();
     hbCloseLetterRow();
@@ -31748,7 +31797,7 @@ function ahsArrivalText(row, city){
   // holds stays attached.
   function hbCloseEnd() {
     document.querySelectorAll('#panel-body .hb-panel .hb-act').forEach((el) => {
-      if (!el.querySelector('.hb-end-date')) return;
+      if (!el.querySelector('.hb-end-date') && !el.querySelector('.hb-cancel-go')) return;
       const b = hbLastRows.find((x) => x.booking_ref === el.getAttribute('data-ref'));
       if (b) el.outerHTML = hbMoveOutAction(b); else el.remove();
     });
@@ -32459,6 +32508,9 @@ function ahsArrivalText(row, city){
         if (e.target.closest('.hb-end-start')) return hbOpenEnd(cell);
         if (e.target.closest('.hb-end-go')) return hbEnd(cell);
         if (e.target.closest('.hb-end-cancel')) return hbRefreshPanel();
+        if (e.target.closest('.hb-cancel-start')) return hbOpenCancel(cell);
+        if (e.target.closest('.hb-cancel-go')) return hbCancel(cell);
+        if (e.target.closest('.hb-cancel-keep')) return hbRefreshPanel();
       }
       const extStart = e.target.closest('.hb-ext-start');
       if (extStart) {
