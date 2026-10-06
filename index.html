@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-moveoutdue1"></script>
+<script src="pms-supabase.js?v=2026-10-06-ptnstaff2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21703,8 +21703,17 @@ function ptnTeamErrorMessage(status, body){
   if (code === 'NOT_FOUND') return 'That user was not found';
   if (code === 'INVALID') return body.field ? `Check the ${String(body.field).replace(/_/g, ' ')} field` : 'Check the form';
   if (status === 401) return 'your session was not accepted; reload the portal and sign in again';
-  if (status === 403) return 'only portal admins can do this';
+  if (status === 403) return ptnForbiddenMessage(body);
   return code || body.error || `HTTP ${status}`;
+}
+// A 403 from the partner app's staff endpoints, by the check that failed (body.reason).
+// An older partner app sends no reason: that is the admin check.
+function ptnForbiddenMessage(body, what){
+  const reason = body && body.reason;
+  if (reason === 'email_unconfirmed') return 'your login email is not confirmed in Supabase (Authentication → Users); confirm it there, then try again';
+  if (reason === 'not_team_member') return 'your login is not linked to a portal team member; ask an admin to check Team';
+  if (reason === 'no_partners_page') return 'you need the Partners page for this; ask an admin to add it in Team';
+  return 'only portal admins can ' + (what || 'do this');
 }
 /* PARTNERS-CORE-END */
 /* PARTNER-ONBOARD-CORE-START */
@@ -21788,6 +21797,10 @@ function ptnIsAdmin(){
   if (CURRENT_USER.role === 'admin') return true;
   return Array.isArray(CURRENT_USER.allowed_pages) && CURRENT_USER.allowed_pages.includes('partners');
 }
+// Admin role only: Receivables, Commissions and an agency's billing / commission / room-link
+// terms go through the partner app's /api/staff/billing/*, which stays admin only even for
+// people with the Partners page.
+function ptnStaffAdmin(){ return typeof CURRENT_USER !== 'undefined' && !!CURRENT_USER && CURRENT_USER.role === 'admin'; }
 function ptnActor(){ return (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.email) || null; }
 async function ptnSelectAll(sb, table, cols, build){
   const rows = [], PAGE = 1000;
@@ -21875,7 +21888,10 @@ function renderPartners(){
   const root = document.getElementById('ptn-root');
   if (!root || !ptnData) return;
   const scrollY = window.scrollY;
-  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`], ['receivables', 'Receivables'], ['commissions', 'Commissions']];
+  const fin = ptnStaffAdmin();
+  if (!fin && (PTN_STATE.tab === 'receivables' || PTN_STATE.tab === 'commissions')) PTN_STATE.tab = 'agencies';
+  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`]]
+    .concat(fin ? [['receivables', 'Receivables'], ['commissions', 'Commissions']] : []);
   const body = PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml()
     : PTN_STATE.tab === 'receivables' ? rcvHtml() : PTN_STATE.tab === 'commissions' ? cmmHtml() : ptnAgenciesHtml();
   root.innerHTML = `
@@ -21985,36 +22001,37 @@ function ptnAgencyFormHtml(a){
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="activate_now" checked> Activate now <span class="name-sub">(untick to leave it pending; nobody can sign in while it is pending)</span></label>
       <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="create_first_user" checked> Give the main contact a sign-in <span class="name-sub">(needs their name + email)</span></label></div>`}
     <p class="name-sub" style="grid-column:1/-1;margin:0">Users who have not signed in yet get their invitation email when the agency becomes Active.</p>
-    ${ptnBillingOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Billing</strong>
+    ${!ptnStaffAdmin() ? `<p class="name-sub" style="grid-column:1/-1;margin:0">Billing, commission and room-link terms are set by an admin.</p>` : ''}
+    ${ptnStaffAdmin() && ptnBillingOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Billing</strong>
     ${ptnSelectField('payment_terms', 'Payment terms', RCV_TERMS, a.payment_terms || 'net15')}
     ${ptnField('credit_limit', 'Credit limit (CAD, blank = none)', a.credit_limit_cents == null ? '' : rcvDollars(a.credit_limit_cents), ' inputmode="decimal"')}
     ${ptnField('payment_ref', 'Payment reference (A–Z, 0–9)', a.payment_ref, ` maxlength="20" style="text-transform:uppercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}` : ''}
-    ${ptnCommissionModelOn() ? ptnCommissionModelHtml(a) : ptnCommissionOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Commission</strong>
+    ${!ptnStaffAdmin() ? '' : ptnCommissionModelOn() ? ptnCommissionModelHtml(a) : ptnCommissionOn() ? `<strong style="grid-column:1/-1;margin-top:6px">Commission</strong>
     ${ptnField('commission_pct', 'Commission (% of co-living rent)', a.commission_pct == null ? '' : String(Number(a.commission_pct)), ' inputmode="decimal" placeholder="Not set"')}
     ${ptnField('homestay_commission', 'Homestay placement commission (CAD)', a.homestay_commission_cents == null ? '' : rcvDollars(a.homestay_commission_cents), ' inputmode="decimal" placeholder="Not set"')}
     <p class="name-sub" style="grid-column:1/-1;margin:0">Deducted on the agency's invoices: the % from each room booking's rent (not deposit, membership or cleaning), the flat amount from the first invoice of each agency homestay (at most the matching fee). Invoices already issued keep the commission they had.</p>` : ''}
-    ${ptnLinksOn() ? ptnLinksFieldsHtml(a) : ''}
+    ${ptnStaffAdmin() && ptnLinksOn() ? ptnLinksFieldsHtml(a) : ''}
     <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save agency</button>
       <button class="btn btn-ghost" type="button" data-ptn-agency-cancel>Close</button> <span class="name-sub" data-ptn-msg></span></div>
   </form>`;
 }
 function ptnAgenciesHtml(){
   const d = ptnData;
-  const linksOn = ptnLinksOn();
+  const linksOn = ptnLinksOn(), fin = ptnStaffAdmin();
   if (linksOn && !PTN_REPS && !ptnRepsLoading) ptnLoadReps();
   const edit = PTN_STATE.editAgency === 'new' ? {} : (PTN_STATE.editAgency && d.agencies.find(a => a.id === PTN_STATE.editAgency));
   const count = (list, id) => list.filter(x => x.agency_id === id).length;
   return `<div style="margin-bottom:12px"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button></div>
     ${edit ? ptnAgencyFormHtml(edit) : ''}
     ${d.agencies.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th><th>Billing</th>${linksOn ? '<th>Rep</th>' : ''}<th>Users</th><th>Bookings</th><th></th></tr></thead>
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th>${fin ? '<th>Billing</th>' : ''}${linksOn ? '<th>Rep</th>' : ''}<th>Users</th><th>Bookings</th><th></th></tr></thead>
       <tbody>${d.agencies.map(a => `<tr style="border-top:1px solid var(--line)">
         <td style="padding:8px"><strong>${esc(a.name)}</strong>${a.legal_name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}</td>
         <td>${esc(a.country || '—')}</td>
         <td>${esc(a.contact_name || '')}${a.contact_email ? `<br><span class="name-sub">${esc(a.contact_email)}</span>` : ''}</td>
         <td>${esc(a.billing_email || '—')}</td><td>${esc(a.language)}</td>
         <td>${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}</td>
-        <td style="white-space:nowrap">${ptnBillingLine(a)}</td>
+        ${fin ? `<td style="white-space:nowrap">${ptnBillingLine(a)}</td>` : ''}
         ${linksOn ? `<td>${esc(ptnRepName(PTN_REPS || [], a.rep_id))}</td>` : ''}
         <td>${count(d.users, a.id)}${count(d.users, a.id) ? '' : ptnNoUsersHtml(a, true)}</td><td>${count(d.bookings, a.id)}</td>
         <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
@@ -22426,7 +22443,7 @@ async function ptnSendInvite(userId){
   if (res.status === 401) { tok = await ptnToken(true); if (tok) res = await call(tok); }
   let body = null; try { body = await res.json(); } catch (_) {}
   if (res.ok && body && body.ok) return;
-  const why = { 401: 'your session was not accepted', 403: 'only portal admins can send links', 404: 'that user was not found',
+  const why = { 401: 'your session was not accepted', 403: ptnForbiddenMessage(body, 'send links'), 404: 'that user was not found',
     409: 'the user or agency is not active', 502: 'the email could not be sent' }[res.status];
   throw new Error(why || (body && (body.error || body.code)) || `HTTP ${res.status}`);
 }
@@ -22720,7 +22737,7 @@ function rcvErrorMessage(status, body){
   }
   if (RCV_ERRORS[code]) return RCV_ERRORS[code];
   if (status === 401) return 'your session was not accepted; reload the portal and sign in again';
-  if (status === 403) return 'only portal admins can do this';
+  if (status === 403) return ptnForbiddenMessage(body);
   return code || body.error || `HTTP ${status}`;
 }
 // One write at a time per dialog: a second submit while the first is in flight is dropped
@@ -22995,7 +23012,7 @@ function cmmErrorMessage(status, body){
     return errs.length ? 'check the form: ' + errs.map(([k, v]) => `${k.replace(/_/g, ' ')} (${v})`).join(', ') : 'check the form';
   }
   if (status === 401) return 'your session was not accepted; reload the portal and sign in again';
-  if (status === 403) return 'only portal admins can do this';
+  if (status === 403) return ptnForbiddenMessage(body);
   return code || body.error || `HTTP ${status}`;
 }
 function cmmSigned(cents){
