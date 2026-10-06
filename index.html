@@ -1521,7 +1521,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-landlords1"></script>
+<script src="pms-supabase.js?v=2026-10-06-landlords2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -9113,12 +9113,12 @@ function llModel(landlords, properties, today) {
   }
   const props = properties.map((p) => {
     const l = owner.get(p.name) || null;
-    const live = l && !l.archived ? l : null;
-    const c = live ? llContractFor(live, p.name) : null;
-    const status = !live ? "nolandlord" : !c ? "missing" : llContractStatus(c, today, false);
+    // A property whose only landlord is archived is archived with it (lease ended), not "no landlord".
+    const c = l ? llContractFor(l, p.name) : null;
+    const status = !l ? "nolandlord" : l.archived ? "archived" : !c ? "missing" : llContractStatus(c, today, false);
     return {
       name: p.name, addr: p.addr || "", city: llCityOf(p), rooms: p.rooms || 0,
-      landlord: live, contract: c, status, daysLeft: c && c.end ? llDays(today, c.end) : null,
+      landlord: l, contract: c, status, daysLeft: c && c.end && !l.archived ? llDays(today, c.end) : null,
     };
   });
   const byProp = new Map(props.map((r) => [r.name, r]));
@@ -9167,17 +9167,17 @@ function llSort(a, b) {
   return String(a.name).localeCompare(String(b.name), undefined, { numeric: true });
 }
 
-// One CSV row per property (archived landlords appended), for the export button.
+// One CSV row per property (archived landlords with no inventory property appended), for the export button.
 function llCsv(model) {
   const head = ["Property", "City", "Address", "Status", "Landlord", "Company", "Role", "Email", "Phone", "Contract start", "Contract end", "Monthly rent", "Deposit", "Month to month", "Document"];
   const q = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const line = (r, l, c, status) => [r ? r.name : "", r ? r.city : (l && l.city) || "", r ? r.addr : "", LL_STATUS[status].label,
     l ? l.name : "", l ? l.company : "", l ? LL_ROLES[l.role] || "" : "", l ? l.email : "", l ? l.phone : "",
-    c ? c.start : "", c ? c.end : "", c ? c.rent : "", c ? c.deposit : "", c ? (c.monthToMonth ? "yes" : "") : "",
+    c ? c.start : "", c ? c.end : "", c && c.rent ? c.rent + (c.currency && c.currency !== "CAD" ? " " + c.currency : "") : "", c ? c.deposit : "", c ? (c.monthToMonth ? "yes" : "") : "",
     c ? c.docName || c.docUrl || (c.docPath ? "uploaded" : "") : ""].map(q).join(",");
   const out = [head.join(",")];
   for (const r of model.props) out.push(line(r, r.landlord, r.contract, r.status));
-  for (const row of model.landlords.filter((x) => x.l.archived)) out.push(line(null, row.l, row.contracts[0] || null, "archived"));
+  for (const row of model.landlords.filter((x) => x.l.archived && !x.props.length)) out.push(line(null, row.l, row.contracts[0] || null, "archived"));
   return out.join("\n");
 }
 /* LL-CORE-END */
@@ -9192,7 +9192,7 @@ const LL_UI = { tab: "attention", view: "props", q: "", city: "", stack: [] };
 function llToday() { return llYmd(new Date()); }
 function llCanEdit() { return typeof CURRENT_USER !== "undefined" && !!CURRENT_USER && CURRENT_USER.role === "admin"; }
 function llNow() { return llModel(landlords, properties, llToday()); }
-function llMoney(n) { return n ? fmt(n) : "—"; }
+function llMoney(n, cur) { return n ? fmt(n) + (cur && cur !== "CAD" ? " " + cur : "") : "—"; }
 function llWhen(daysLeft, end) {
   if (daysLeft == null) return "";
   if (daysLeft === 0) return "ends today";
@@ -9209,7 +9209,7 @@ function llTerm(c) {
 }
 function llContractSub(c) {
   if (!c) return "";
-  return [c.rent ? fmt(c.rent) + "/mo" : "", c.monthToMonth ? "month-to-month" : "", llHasDoc(c) ? "" : "no document"].filter(Boolean).join(" · ");
+  return [c.rent ? llMoney(c.rent, c.currency) + "/mo" : "", c.monthToMonth ? "month-to-month" : "", llHasDoc(c) ? "" : "no document"].filter(Boolean).join(" · ");
 }
 function llSave(l) {
   l.updatedAt = new Date().toISOString();
@@ -9232,7 +9232,7 @@ function renderLandlords() {
   const view = document.querySelector('.view[data-view="landlords"]');
   if (!view || !document.getElementById("ll-body")) return;
   const M = llNow();
-  const rowsAll = LL_UI.tab === "archived" || LL_UI.view === "landlords"
+  const rowsAll = LL_UI.view === "landlords"
     ? M.landlords.map((r) => Object.assign({ name: r.l.name, daysLeft: r.nextEnd ? llDays(llToday(), r.nextEnd) : null }, r))
     : M.props;
   const asLandlords = rowsAll !== M.props;
@@ -9251,9 +9251,9 @@ function renderLandlords() {
     : "";
 
   // Tabs with counts (counted in the current view, before search/city)
-  const tabSrc = (t) => (t === "archived" ? M.landlords : asLandlords ? M.landlords : M.props);
+  const tabSrc = () => (asLandlords ? M.landlords : M.props);
   document.getElementById("ll-tabs").innerHTML = LL_TABS
-    .filter(([k]) => !(k === "nolandlord" && asLandlords && LL_UI.tab !== "archived"))
+    .filter(([k]) => !(k === "nolandlord" && asLandlords))
     .map(([k, label]) => {
       const n = tabSrc(k).filter((r) => llInTab(r.status, k)).length;
       const need = n && ["attention", "soon", "expired", "missing", "nolandlord", "review"].includes(k);
@@ -9329,8 +9329,8 @@ function llContractHtml(c, l, opts) {
     ${llKv("Status", llStatusHtml(c.status || llContractStatus(c, llToday(), !!l.archived), llWhen(c.end ? llDays(llToday(), c.end) : null, c.end)))}
     ${opts && opts.showProps ? llKv("Covers", c.props && c.props.length ? c.props.map((n) => `<button type="button" class="hb-link" data-ll-prop="${esc(n)}">${esc(n)}</button>`).join(", ") : "All of this landlord's properties") : ""}
     ${llKv("Term", esc(llTerm(c)) + (c.monthToMonth ? `<div class="hb-sub">Continues month-to-month after the end date</div>` : ""))}
-    ${llKv("Rent", esc(llMoney(c.rent)) + (c.rent ? " / month" : ""))}
-    ${llKv("Deposit", esc(llMoney(c.deposit)))}
+    ${llKv("Rent", esc(llMoney(c.rent, c.currency)) + (c.rent ? " / month" : ""))}
+    ${llKv("Deposit", esc(llMoney(c.deposit, c.currency)))}
     ${llKv("Document", llHasDoc(c)
       ? `<button type="button" class="btn btn-ghost tn-mini" data-ll-doc="${esc(c.id)}" data-ll-owner="${esc(l.id)}">Open ${c.docPath ? "PDF" : c.docUrl && /mail\.google/.test(c.docUrl) ? "in Gmail" : "link"}</button><div class="hb-sub">${esc(c.docName || "")}</div>`
       : `<span class="hb-need">No document on file</span>`)}
@@ -9349,6 +9349,7 @@ function llOpenProp(name) {
     <div class="panel-section">
       <div class="panel-section-title"><span><em>Landlord</em></span>${l && can ? `<button type="button" class="hb-link" data-ll-unlink="${esc(name)}">Unlink</button>` : ""}</div>
       ${l ? llContactHtml(l) : `<div class="ct-note ct-need">No landlord is linked to this property.</div>`}
+      ${l && l.archived ? `<div class="ct-note">This landlord is archived${l.archivedReason ? " — " + esc(l.archivedReason) : ""}. Restore them from their page if we still hold this property.</div>` : ""}
       ${can ? `<div class="ct-actions">
         <select class="form-input tn-select" id="ll-link-pick"><option value="">${l ? "Change landlord…" : "Link a landlord…"}</option>${others.filter((x) => x !== l).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}${x.company ? " · " + esc(x.company) : ""}</option>`).join("")}</select>
         <button type="button" class="btn btn-ghost tn-mini" data-ll-link-go="${esc(name)}">Link</button>
@@ -9358,7 +9359,7 @@ function llOpenProp(name) {
     ${l ? `<div class="panel-section">
       <div class="panel-section-title"><span><em>Contract</em></span></div>
       ${r.contract ? llContractHtml(r.contract, l, { showProps: false }) : `<div class="ct-note ct-need">No contract on file for this property.</div>`}
-      ${can ? `<div class="ct-actions"><button type="button" class="btn ${r.contract ? "btn-ghost" : "btn-primary"} tn-mini" data-ll-add-contract="${esc(l.id)}" data-ll-for="${esc(name)}">+ Add contract for this property</button></div>` : ""}
+      ${can && !l.archived ? `<div class="ct-actions"><button type="button" class="btn ${r.contract ? "btn-ghost" : "btn-primary"} tn-mini" data-ll-add-contract="${esc(l.id)}" data-ll-for="${esc(name)}">+ Add contract for this property</button></div>` : ""}
     </div>` : ""}
     <div class="panel-section">
       <div class="panel-section-title"><span><em>Property</em></span></div>
@@ -9528,7 +9529,7 @@ function llInit() {
     const t = e.target.closest("[data-ll-tab],[data-ll-view],[data-ll-prop],[data-ll-open]");
     if (!t) return;
     if (t.dataset.llTab) { LL_UI.tab = t.dataset.llTab; renderLandlords(); }
-    else if (t.dataset.llView) { LL_UI.view = t.dataset.llView; if (LL_UI.tab === "archived" && LL_UI.view === "props") LL_UI.tab = "attention"; if (LL_UI.tab === "nolandlord" && LL_UI.view === "landlords") LL_UI.tab = "attention"; renderLandlords(); }
+    else if (t.dataset.llView) { LL_UI.view = t.dataset.llView; if (LL_UI.tab === "nolandlord" && LL_UI.view === "landlords") LL_UI.tab = "attention"; renderLandlords(); }
     else if (t.dataset.llProp) llOpenProp(t.dataset.llProp);
     else if (t.dataset.llOpen) llOpenLandlord(t.dataset.llOpen);
   });
