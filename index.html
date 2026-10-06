@@ -983,6 +983,8 @@
   .hb-view .hb-stale td{opacity:.55}
   .hb-view .hb-group td{background:var(--cream);font-size:12.5px;padding:10px 16px}
   .hb-sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .hb-need-item + .hb-need-item{margin-top:8px}
+  .hb-need-how{max-width:52ch;line-height:1.4}
   .hb-need{color:var(--red);font-weight:600}
   .hb-need::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--red);margin-right:7px;vertical-align:2px}
   .hb-view .hb-agency-banner{padding:14px 16px;margin-bottom:16px}
@@ -1508,7 +1510,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-drawer1"></script>
+<script src="pms-supabase.js?v=2026-10-06-needhints1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -18064,6 +18066,33 @@ function hbNeedsYou(b){
   if(b.tail_charge_status === 'failed') out.push('Final charge failed');
   return out;
 }
+// What to do about one hbNeedsYou line: a plain next step, so the list says
+// how to fix a problem and not only that there is one. '' when there is
+// nothing useful to add. Keyed on the line's text, case-insensitively, because
+// most lines come from the server (VM - Homestay Bookings List) as words.
+function hbNeedHint(flag, b){
+  const f = String(flag || '').toLowerCase();
+  const r = b || {};
+  if(f === 'host payout overdue'){
+    // The payout run silently skips a booking it cannot price; say which.
+    if(!(Number(r.host_weekly_rate) > 0)) return 'The payout run skips this booking because it has no host rate. Ask Aldo to set the host\'s weekly rate on it.';
+    if(!r.lease_end_date) return 'The payout run skips this booking because it has no end date. Ask Aldo to set the lease end date on it.';
+    // Until the list knows when the student paid, a late payment looks the same
+    // as a stuck payout, so the hint covers both.
+    return 'Was due ' + (r.next_host_payout_date || '—') + ' and has not been sent. If the student paid after that date, the next 9:00 payout run pays it by itself. If it is still here after 9:00, check the host can receive payouts (Homestay hosts) and tell Aldo.';
+  }
+  if(f === 'host payout failed') return 'Stripe refused the transfer. It retries every morning at 9:00 by itself; if it fails again, the Vanmates Stripe balance is usually too low — add funds. Stripe\'s reason is in the "Host payout FAILED" email to hello@.';
+  if(f === 'waiting for agency payment') return 'The host is paid as soon as the agency pays its invoice on partners.vanmates.com. Chase the agency.';
+  if(f === 'final charge failed' || f === 'rent unpaid') return 'The student\'s card was declined. Ask them to update their card from their booking page; the host\'s payout is held until the charge goes through, then pays by itself.';
+  if(f === 'could not start billing') return 'The student\'s monthly billing was never set up in Stripe, so later rent will not be collected. Tell Aldo.';
+  if(f === 'could not cancel billing') return 'The student may still be charged after their stay. Cancel the subscription in Stripe by hand.';
+  if(f === 'agency invoices not issued') return 'The agency was never invoiced, so it cannot pay and the host will not be paid.' + (r.partner_sync_error ? ' Error: ' + String(r.partner_sync_error) + '.' : '') + ' Tell Aldo.';
+  if(f === 'refunded but still billing or owing the host') return 'Cancel the student\'s subscription in Stripe, and decide whether the host is still owed for the nights already stayed.';
+  if(f.indexOf('letter not sent') === 0) return 'Open the booking and press Resend letter.';
+  if(f.indexOf('letter blocked') === 0) return 'Fill in the missing details (Edit details, or the host\'s contact on Homestay hosts), then press Resend letter.';
+  if(f === 'letter failed to send') return 'Open the booking and press Resend letter.';
+  return '';
+}
 function hbLetterWords(b){
   const st = String((b && b.letter_status) || '');
   const sig = String((b && b.letter_sig) || '');
@@ -20420,11 +20449,12 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
     .sort((a, b) => (order[a.state] - order[b.state]) || (a.due < b.due ? -1 : a.due > b.due ? 1 : 0) || ((b.status === 'new') - (a.status === 'new')));
   const followUps = { overdue: attention.filter(a => a.state === 'overdue').length, today: attention.filter(a => a.state === 'today').length };
 
-  // Every deal won in the shown month, newest first. A month with none falls
-  // back to the latest eight overall so the table is never blank.
+  // Every deal won in the shown month, newest first — and only those. A
+  // fallback to "the latest eight" used to fill an empty month with the
+  // previous month's deals, which read as September's sales under October.
   const byClosed = (a, b) => (a.closedAt < b.closedAt ? 1 : a.closedAt > b.closedAt ? -1 : 0);
-  const recentClosedScope = wonMonth.length ? 'month' : 'latest';
-  const recentClosed = (wonMonth.length ? wonMonth.slice().sort(byClosed) : won.slice().sort(byClosed).slice(0, 8))
+  const recentClosedScope = 'month';
+  const recentClosed = wonMonth.slice().sort(byClosed)
     .map(x => ({ id: x.id, name: x.name, room: x.room, rent: x.rent, months: x.months,
                  fee: x.fee, feePending: x.feePending, segment: x.segment,
                  closedAt: x.closedAt, feeReceivedAt: x.feeReceivedAt, owner: x.owner }));
@@ -31167,7 +31197,7 @@ function ahsArrivalText(row, city){
         hbCell(hbEndDate(b) || '—'), hbCell(hbDepositWords(b)), hbCell(p.text, p.sub, p.need)];
     } else {
       cells = [who, hbCell(HB_STAGE_WORDS[hbStage(b, today)]), host,
-        '<td>' + hbNeedsYou(b).map((x) => '<div class="hb-need">' + esc(x) + '</div>').join('') + '</td>'];
+        '<td>' + hbNeedsYou(b).map(hbNeedHtml(b)).join('') + '</td>'];
     }
     return '<tr class="hb-row' + (stale ? ' hb-stale' : '') + '" data-ref="' + esc(b.booking_ref) + '" tabindex="0">' +
       cells.join('') + '</tr>';
@@ -31222,6 +31252,13 @@ function ahsArrivalText(row, city){
     return '<div class="panel-section hb-panel-section"><div class="panel-section-title"><span>' + title + '</span></div>' + inner + '</div>';
   }
 
+  // A needs-you line plus what to do about it.
+  function hbNeedHtml(b) {
+    return (x) => {
+      const how = hbNeedHint(x, b);
+      return '<div class="hb-need-item"><div class="hb-need">' + esc(x) + '</div>' + (how ? '<div class="hb-sub hb-need-how">' + esc(how) + '</div>' : '') + '</div>';
+    };
+  }
   function hbRenderPanel(b) {
     const today = hbToday();
     const name = b.student_name || b.student_email || b.booking_ref;
@@ -31250,7 +31287,7 @@ function ahsArrivalText(row, city){
     const body = document.getElementById('panel-body');
     body.innerHTML = '<div class="hb-panel" data-ref="' + esc(b.booking_ref) + '">' +
       '<div class="hb-panel-status" id="hb-panel-status"></div>' +
-      (needs.length ? hbSection('Needs <em>you</em>', needs.map((x) => '<div class="hb-need" style="margin:4px 0">' + esc(x) + '</div>').join('')) : '') +
+      (needs.length ? hbSection('Needs <em>you</em>', needs.map(hbNeedHtml(b)).join('')) : '') +
       hbSection('Stay',
         hbKv('Host', esc(hbHostName(b.host_id) || '—')) +
         hbKv('Meals', esc(hbMealsWords(b.meal_plan) || '—')) +
@@ -35050,7 +35087,7 @@ window.HM = HM;
     const noFee = v.recentClosed.filter(d => !d.fee).length;
     $('sales-closed-sub').textContent = v.recentClosedScope === 'month'
       ? `${v.recentClosed.length} deal${v.recentClosed.length === 1 ? '' : 's'} won in ${v.period.month.label}${noFee ? ` · ${noFee} still need a placement fee` : ''}`
-      : (v.recentClosed.length ? `Nothing won in ${v.period.month.label} — showing the latest` : 'Won deals, newest first');
+      : 'Won deals, newest first';
     $('sales-closed').innerHTML = v.recentClosed.length ? v.recentClosed.map(d => {
       const feeCell = d.fee
         ? `<span class="num">${fmt(d.fee)}</span>`
@@ -35061,7 +35098,7 @@ window.HM = HM;
            : (canEdit(d) ? `<button class="badge badge-amber sl-fee-btn" type="button" data-sales-fee="${esc(d.id)}" title="Mark the placement fee as received today"><span class="dot"></span>Not yet · mark received</button>` : `<span class="badge badge-amber"><span class="dot"></span>Not yet</span>`));
       const segBadge = d.segment === 'b2c' ? ' <span class="badge badge-blue">B2C</span>' : d.segment === 'b2b' ? ' <span class="badge badge-amber">B2B</span>' : '';
       return `<tr><td>${fmtDate(d.closedAt)}</td><td><b>${esc(d.name)}</b>${segBadge}<div class="name-sub">${esc(d.room || '—')}${v.team && d.owner ? ' · ' + esc(d.owner.split('@')[0]) : ''}</div></td><td>${d.rent ? fmt(d.rent) + ' × ' + d.months : '—'}</td><td class="right">${feeCell}</td><td>${recvCell}</td><td class="right">${canEdit(d) ? `<button class="btn btn-ghost btn-mini" type="button" data-sales-edit="${esc(d.id)}">Edit</button>` : ''}</td></tr>`;
-    }).join('') : `<tr><td colspan="6" class="sl-empty">No won deals yet.</td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="sl-empty">Nothing won in ${esc(v.period.month.label)} yet.</td></tr>`;
   }
   function renderLost(v){
     const top = {}; v.lost.forEach(l => { top[l.reasonLabel] = (top[l.reasonLabel] || 0) + 1; });
@@ -35077,7 +35114,11 @@ window.HM = HM;
      `closed_deals` ledger. Kept apart on purpose: a lead is work in progress,
      a closed deal is a fact, and only the second one has to reconcile with
      Zoho. */
-  const CD_STATE = { q: '', city: '', source: '', payment: '', status: '', from: '', to: '', by: 'rep' };
+  // `ym` is the month the date range was last synced to: picking a month at
+  // the top of the page sets From/To to that month, and the inputs (or Clear)
+  // can still widen it. Without this the table showed every month's deals
+  // whatever month was picked.
+  const CD_STATE = { q: '', city: '', source: '', payment: '', status: '', from: '', to: '', by: 'rep', ym: '' };
 
   function cdLedger(){ return cdDeals(window.closedDeals || [], window.leads || []); }
 
@@ -35297,6 +35338,11 @@ window.HM = HM;
 
   function renderClosedDeals(){
     if(!$('sales-cd')) return;
+    const ym = salesCurrentYm();
+    if(CD_STATE.ym !== ym){
+      const p = salesPeriod(ym, salesToday());
+      CD_STATE.ym = ym; CD_STATE.from = p.month.start; CD_STATE.to = p.month.end;
+    }
     const repKey = salesCurrentRep();
     const scoped = cdScoped(cdLedger(), repKey);
     cdFillFilters(scoped);
