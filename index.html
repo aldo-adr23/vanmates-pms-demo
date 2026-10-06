@@ -1521,7 +1521,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-landlords2"></script>
+<script src="pms-supabase.js?v=2026-10-06-agencymatch3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -32144,7 +32144,7 @@ function hmRenderSourceTabs(gaps){
   const box = document.getElementById("hm-source-tabs"); if (!box) return;
   box.innerHTML = HM_SOURCES.map(([key, label]) => {
     const n = hmQueue(hmBySource(HM.cases, key), HM.filter).length;
-    const warn = key === "agency" && gaps.length ? ` <span class="badge badge-red" title="Agency requests not in matching">${gaps.length} missing</span>` : "";
+    const warn = key === "agency" && gaps.length ? ` <span class="badge badge-red" title="Agency requests with no case yet">${gaps.length} without a case</span>` : "";
     return `<button type="button" class="hb-tab${HM.source === key ? " on" : ""}" role="tab" aria-selected="${HM.source === key}" data-hm-source="${key}"
       style="padding:0 0 9px;border:0;background:none;font:inherit;font-size:13.5px;cursor:pointer;${HM.source === key ? "font-weight:700;box-shadow:inset 0 -2px 0 var(--red)" : "color:var(--muted)"}">${hmEsc(label)} <span class="card-sub">${n}</span>${warn}</button>`;
   }).join("");
@@ -32154,12 +32154,12 @@ function hmRenderAgencyGaps(gaps){
   const box = document.getElementById("hm-agency-gaps"); if (!box) return;
   if (HM.source !== "agency" || !gaps.length) { box.innerHTML = ""; return; }
   box.innerHTML = `<div style="border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:10px">
-    <div style="font-weight:600">${gaps.length === 1 ? "1 agency request is" : gaps.length + " agency requests are"} not in matching</div>
-    <div class="card-sub">The partner portal never handed these over. Send each one to matching to find its host; if one will not go, tell Aldo.</div>
+    <div style="font-weight:600">${gaps.length === 1 ? "1 agency request has" : gaps.length + " agency requests have"} no case yet</div>
+    <div class="card-sub">No case means nobody is looking for a host for them. Start a case to work them like any other. If one will not start, tell Aldo.</div>
     ${gaps.map(r => `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap">
       <div><code>${hmEsc(r.ref)}</code> · ${hmEsc(HM.agencyNames.get(r.agency_id) || "agency")}${r.student_name ? " · " + hmEsc(r.student_name) : ""}
         <span class="card-sub">· sent ${hmElapsed(r.created_at, Date.now())} ago</span></div>
-      <button class="btn btn-ghost btn-mini" type="button" data-hm-pull="${hmEsc(r.ref)}">Send to matching</button>
+      <button class="btn btn-ghost btn-mini" type="button" data-hm-pull="${hmEsc(r.ref)}">Start case</button>
     </div>`).join("")}
   </div>`;
 }
@@ -32965,17 +32965,17 @@ document.addEventListener("click", (ev) => {
 // "Send to matching": the Worker runs the same intake the partner portal should have, so a
 // repeat returns the existing case and a cancelled request is refused.
 async function hmPullAgencyRequest(ref, btn){
-  btn.disabled = true; btn.textContent = "Sending…";
+  btn.disabled = true; btn.textContent = "Starting…";
   try {
     const out = await hmWorker("/staff/intake/partner", { ref });
     if (out.case_id) HM.selected = out.case_id;
     await loadHomestayMatching();
   } catch (e) {
-    const why = e.body && e.body.error === "cancelled" ? `${ref} is ${e.body.status || "no longer open"} on the partner portal, so there is nothing to match.`
+    const why = e.body && e.body.error === "cancelled" ? `${ref} is ${e.body.status || "no longer open"} on the partner portal, so there is nothing to find a host for.`
       : e.body && e.body.error === "student_not_found" ? `${ref} has no student on the partner portal. Ask the agency to fix the request.`
-      : `Could not send ${ref}: ${e.message || e}`;
-    hmNotice({ title: "Not sent to matching", lines: [why] });
-    btn.disabled = false; btn.textContent = "Send to matching";
+      : `Could not start a case for ${ref}: ${e.message || e}`;
+    hmNotice({ title: "Case not started", lines: [why] });
+    btn.disabled = false; btn.textContent = "Start case";
   }
 }
 try { const v = localStorage.getItem("vm_hm_source"); if (HM_SOURCES.some(([k]) => k === v)) HM.source = v; } catch (_) { /* storage blocked */ }
