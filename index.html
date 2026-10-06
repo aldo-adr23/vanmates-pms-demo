@@ -1009,6 +1009,8 @@
   .hb-view #hb-agency-retry{width:100%;margin-top:8px;justify-content:center}
   .hb-view #hb-link-panel{margin-top:14px}
   .hb-panel .hb-panel-status{min-height:18px;font-size:12.5px;color:var(--muted);margin-bottom:10px}
+.hb-panel .hb-panel-link{display:flex;gap:8px;align-items:center;margin:-4px 0 12px}
+.hb-panel .hb-panel-link .hb-link-out{flex:1;min-width:0;font-size:12.5px}
   .hb-panel .hb-kv{display:grid;grid-template-columns:130px minmax(0,1fr);gap:10px;padding:6px 0;border-top:1px solid var(--cream-2);font-size:13.5px}
   .hb-panel .hb-kv:first-of-type{border-top:0}
   .hb-panel .hb-kv > span:first-child{color:var(--muted)}
@@ -1510,7 +1512,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-fuwording2"></script>
+<script src="pms-supabase.js?v=2026-10-06-extendlink"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -30955,23 +30957,32 @@ function ahsArrivalText(row, city){
   // Only while our panel is actually showing: closeProperty() leaves the old
   // panel markup (and hbPanelRef) behind, so a message from the New booking
   // tab would otherwise be remembered and reappear when a booking is reopened.
-  let hbLastMsg = { msg: '', bad: false };
+  let hbLastMsg = { msg: '', bad: false, link: '' };
   let hbPanelRef = '';
-  function hbStatus(msg, bad) {
+  function hbStatus(msg, bad, link) {
     const inPanel = hbPanelShowing();
-    if (inPanel) hbLastMsg = { msg: msg || '', bad: !!bad };
+    if (inPanel) hbLastMsg = { msg: msg || '', bad: !!bad, link: link || '' };
     (inPanel ? ['hb-status', 'hb-panel-status'] : ['hb-status']).forEach((id) => {
       const el = $(id); if (!el) return;
       el.textContent = msg || '';
       el.style.color = bad ? '#b4443a' : '';
     });
+    if (inPanel) hbPanelLink(link);
+  }
+  // A payment link under the panel's status line, for staff to paste into
+  // WhatsApp as well as the email. Any later message without one clears it.
+  function hbPanelLink(link) {
+    const el = $('hb-panel-link'); if (!el) return;
+    el.hidden = !link;
+    el.innerHTML = link ? '<input class="form-input hb-link-out" type="text" readonly value="' + esc(link) + '">' +
+      '<button type="button" class="btn btn-ghost btn-mini hb-link-copy">Copy link</button>' : '';
   }
   // For a result that lands after an await: the toolbar always hears it, but
   // the panel line (and hbLastMsg, which a redraw restores) only when the panel
   // still shows the booking the action started on. Staff may have opened
   // another booking while the request was in flight.
-  function hbStatusFor(ref0, msg, bad) {
-    if (hbPanelRef === ref0) return hbStatus(msg, bad);
+  function hbStatusFor(ref0, msg, bad, link) {
+    if (hbPanelRef === ref0) return hbStatus(msg, bad, link);
     const el = $('hb-status'); if (!el) return;
     el.textContent = msg || '';
     el.style.color = bad ? '#b4443a' : '';
@@ -31297,6 +31308,7 @@ function ahsArrivalText(row, city){
     const body = document.getElementById('panel-body');
     body.innerHTML = '<div class="hb-panel" data-ref="' + esc(b.booking_ref) + '">' +
       '<div class="hb-panel-status" id="hb-panel-status"></div>' +
+      '<div class="hb-panel-link" id="hb-panel-link" hidden></div>' +
       (needs.length ? hbSection('Needs <em>you</em>', needs.map(hbNeedHtml(b)).join('')) : '') +
       hbSection('Stay',
         hbKv('Host', esc(hbHostName(b.host_id) || '—')) +
@@ -31319,6 +31331,7 @@ function ahsArrivalText(row, city){
       '</div>';
     const st = $('hb-panel-status');
     if (st) { st.textContent = hbLastMsg.msg; st.style.color = hbLastMsg.bad ? '#b4443a' : ''; }
+    hbPanelLink(hbLastMsg.link);
   }
 
   function hbOpenPanel(ref) {
@@ -31328,7 +31341,7 @@ function ahsArrivalText(row, city){
     // leaves behind; every opener of the shared panel clears them.
     document.querySelectorAll('.panel-head .header-edit-btn').forEach((x) => x.remove());
     document.getElementById('ll-more-menu')?.remove();
-    if (ref !== hbPanelRef || !hbPanelShowing()) { hbLastMsg = { msg: '', bad: false }; hbStatus(''); }
+    if (ref !== hbPanelRef || !hbPanelShowing()) { hbLastMsg = { msg: '', bad: false, link: '' }; hbStatus(''); }
     hbPanelRef = ref;
     hbRenderPanel(b);
     document.getElementById('detail-panel').classList.add('open');
@@ -31900,10 +31913,16 @@ function ahsArrivalText(row, city){
     // throws before Upsert Booking on a bad room or an invalid length, and n8n
     // answers an empty 200. Saying "created" there would be a lie.
     if (!d || !d.link) return fail('The endpoint returned no link — nothing was created.');
-    say('Created ' + d.booking_ref + ' · the student has been emailed their payment link.');
+    // "Sent", not "received": Booking Create answers before Email Student Link
+    // runs, so this response cannot know the mail went out. The link below is
+    // the fallback either way.
+    const first = String(b.student_name || '').trim().split(/\s+/)[0] || 'the student';
+    const done = 'Extension ' + ptnDay(movein) + ' → ' + ptnDay(moveout) + ' (' + d.booking_ref + ') — payment link sent to ' +
+      first + ' at ' + b.student_email + '. Copy it below to send on WhatsApp too.';
+    say(done);
     // The note above dies with the panel redraw the reload triggers; the
     // status line is rebuilt from hbLastMsg, so the outcome stays visible.
-    hbStatusFor(ref0, 'Created ' + d.booking_ref + ' · the student has been emailed their payment link.');
+    hbStatusFor(ref0, done, false, d.link);
     if (typeof hbLoadBookings === 'function') hbLoadBookings(ref0).catch((e) => { hbStatus(e.message, true); hbRefreshPanel(); });
   }
 
@@ -32523,6 +32542,14 @@ function ahsArrivalText(row, city){
         return;
       }
       if (e.target.closest('.hb-ext-cancel')) { hbCloseExtend(); return; }
+      const linkCopy = e.target.closest('.hb-link-copy');
+      if (linkCopy) {
+        const i = linkCopy.parentNode.querySelector('.hb-link-out'); if (!i) return;
+        i.select();
+        const ok = () => { linkCopy.textContent = 'Copied'; setTimeout(() => { linkCopy.textContent = 'Copy link'; }, 1500); };
+        try { navigator.clipboard.writeText(i.value).then(ok, () => showToast('Press ⌘C to copy')); } catch (err) { showToast('Press ⌘C to copy'); }
+        return;
+      }
     });
     if (pbody) pbody.addEventListener('input', function (e) {
       if (!e.target.closest || !e.target.closest('.hb-panel')) return;
