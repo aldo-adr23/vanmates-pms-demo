@@ -1510,7 +1510,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-06-fuwording1"></script>
+<script src="pms-supabase.js?v=2026-10-06-extendfix"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31849,6 +31849,9 @@ function ahsArrivalText(row, city){
     if (!room_id) return say('Choose which room first.');
     if (!nights) return say('Check-out must be after check-in.');
     if (!weekly) return say('Enter what the student pays per week.');
+    // Booking Create refuses a booking without a name, and an extension has no
+    // name field of its own: it is the same student, so it comes off the stay.
+    if (!String(b.student_name || '').trim()) return say('This booking has no student name on it. Add one with Edit details first.');
 
     // The same refusal the create form makes. A negative margin is a typo every
     // time, and the payout run would otherwise find it by moving real money.
@@ -31878,10 +31881,19 @@ function ahsArrivalText(row, city){
         host_id: b.host_id, room_id: room_id, student_email: b.student_email,
         weekly_rate_cents: weekly, host_weekly_cents: host,
         move_in_date: movein, lease_days: nights,
-        meal_plan: b.meal_plan || 'two_meals'
+        meal_plan: b.meal_plan || 'two_meals',
+        student_name: b.student_name, student_dob: b.student_dob || '',
+        student_country: b.student_country || '',
+        // Same student staying on: the placement fee was settled with the first
+        // stay and the deposit is still held. Said outright rather than left to
+        // Booking Create's lookups, which do not read prior bookings for the
+        // fee and would charge the default $295 again.
+        placement_fee_status: 'waived', placement_fee_cents: 0,
+        placement_fee_ref: 'extension of ' + b.booking_ref,
+        deposit: 'none'
       });
     } catch (e) {
-      return fail('Could not create it. Nothing was sent to the student.');
+      return fail('Could not create it (' + e.message + '). Nothing was sent to the student.');
     }
 
     // A 2xx with no link is a real failure hbPost cannot see: Compute Booking
