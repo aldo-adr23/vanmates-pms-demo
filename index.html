@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-stages2"></script>
+<script src="pms-supabase.js?v=2026-10-05-moveoutdue1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2760,6 +2760,7 @@
         </select>
         <select id="cko-filter-flag" class="form-input" style="max-width:220px">
           <option value="">All flags</option>
+          <option value="action">Needs action</option>
           <option value="short_notice">Short notice</option>
           <option value="short_notice_review_required">Review requested</option>
           <option value="unverified">Unverified</option>
@@ -24353,8 +24354,15 @@ function ckoDaysWaiting(c, now){
   if (isNaN(t)) return null;
   return Math.max(0, Math.floor((ckoNowMs(now) - t) / 86400000));
 }
+// 2026-10-05: the move-out date is behind us (in the property's zone) and the
+// move-out is still not recorded: Information Incomplete / Complete or Move-Out Scheduled.
+const CKO_BEFORE_MOVE_OUT = ['Information Incomplete', 'Information Complete', 'Move-Out Scheduled'];
+function ckoMoveOutPassed(c, now){
+  return !!c && CKO_BEFORE_MOVE_OUT.indexOf(c.status) !== -1 && ckoIsDate(c.moveOut) && c.moveOut < ckoToday(c.city, ckoNowMs(now));
+}
 function ckoNeedsAction(c, me, now){
   if (!ckoIsOpen(c)) return false;
+  if (ckoMoveOutPassed(c, now)) return true;
   const f = c.flags || [], m = ckoMeOf(me), days = ckoDaysWaiting(c, now);
   if (!c.owner) return true;
   if (f.some(x => CKO_ACTION_FLAGS.indexOf(x) !== -1)) return true;
@@ -24490,11 +24498,12 @@ function ckoStageCounts(cases){
   return CKO_STAGES.map((s, i) => ({ key: s.key, label: s.label, n: i + 1, count: (cases || []).filter(c => s.statuses.indexOf(c.status) !== -1).length }));
 }
 // The one thing that moves the case on, in plain words, whoever has to do it.
-function ckoNextText(c){
+function ckoNextText(c, now){
   if (!c || !ckoIsOpen(c)) return '';
   const f = c.flags || [], has = (x) => f.indexOf(x) !== -1;
   if (has('resident_dispute')) return 'Resolve the resident dispute';
   if (has('short_notice_review_required')) return 'Decide the short-notice review';
+  if (ckoMoveOutPassed(c, now)) return c.status === 'Information Incomplete' ? 'Move-out date passed: chase the resident' : 'Move-out date passed: use Already moved out';
   switch (c.status) {
     case 'Information Incomplete': return 'Resident: finish the checkout form';
     case 'Information Complete': return c.owner ? 'Book the move-out' : 'Take the case, then book the move-out';
@@ -26016,7 +26025,7 @@ function renderCheckouts(){
     const cl = closed || !ckoIsOpen(c);
     const ago = cl ? ckoClosedDaysAgo(c, now) : null, days = cl ? null : ckoDaysWaiting(c, now);
     const wait = cl ? (ago == null ? '—' : `closed ${esc(ago)} d ago`) : (days == null ? '—' : esc(days));
-    const stg = ckoStageOf(c), next = ckoNextText(c);
+    const stg = ckoStageOf(c), next = ckoNextText(c, now);
     const dots = stg ? `<span aria-hidden="true" style="letter-spacing:1px"><span style="color:var(--red)">${'●'.repeat(stg.n)}</span><span style="color:var(--line)">${'●'.repeat(CKO_STAGES.length - stg.n)}</span></span>` : '';
     return `<tr data-cko-id="${esc(c.id)}" style="cursor:pointer">
       <td>${act ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Needs action">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
