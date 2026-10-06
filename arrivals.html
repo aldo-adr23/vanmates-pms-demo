@@ -390,7 +390,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-06-agencymatch2"></script>
+<script src="arrivals-core.js?v=2026-10-06-fuwording2"></script>
 <script>
 (function () {
   'use strict';
@@ -1435,7 +1435,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return '<div class="seg" role="group" aria-label="Template kind">' +
       '<button type="button" data-tk="checkin"' + on('checkin') + '>Check-in</button>' +
       '<button type="button" data-tk="checkout"' + on('checkout') + '>Check-out</button>' +
-      '<button type="button" data-tk="afterhours"' + on('afterhours') + '>After-hours</button></div>';
+      '<button type="button" data-tk="afterhours"' + on('afterhours') + '>Follow-ups</button></div>';
   }
   function setTplKind(k) {
     if (k === S.tk) return;
@@ -1556,7 +1556,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   // to it (FOLLOWUP_SECRET_BASE/<secret_token>, valid secret_valid_hours).
   var FOLLOWUP_SEND_URL = 'https://adr23.app.n8n.cloud/webhook/followup-send';
   var FOLLOWUP_SECRET_BASE = 'https://adr23.app.n8n.cloud/webhook/lockbox';
-  var FU_RULE_COLS = 'id,building,city,name,also_buildings,send_time,enabled,subject,intro,sections,rules_url,docs_url,show_codes,secret_label,secret_value,secret_valid_hours,reviewed,reviewed_by,reviewed_at,updated_by,updated_at';
+  var FU_RULE_COLS = 'id,building,city,name,also_buildings,send_time,enabled,subject,intro,sections,rules_url,docs_url,show_codes,secret_label,secret_value,secret_valid_hours,reviewed,reviewed_by,reviewed_at,updated_by,updated_at,day_offset';
   // arrival_followups / followup_messages_v not there yet (Postgres 42P01, PostgREST PGRST205).
   function fuSetupMissing(e) {
     if (!e) return false;
@@ -1572,6 +1572,27 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!m) return str(t);
     var h = +m[1];
     return ((h % 12) || 12) + ':' + m[2] + (h < 12 ? ' am' : ' pm');
+  }
+  // A rule's send day in words (arrival_followups.day_offset: 0 = the arrival date, -1 = the day before, ...).
+  function fuDayWords(off) {
+    var n = -(parseInt(off, 10) || 0);
+    return n <= 0 ? 'on the arrival date' : n === 1 ? 'the day before arrival' : n + ' days before arrival';
+  }
+  // Chip / heading prefix: the rule's own name, or "After-hours" for the after-hours check-in rules.
+  function fuLabel(row) {
+    var nm = str(row && (row.followup_name || row.name));
+    return !nm || /after-hours/i.test(nm) ? 'After-hours' : nm;
+  }
+  // The local date (YYYY-MM-DD) an instant falls on in the building's zone ('' when unknown).
+  function fuYmd(iso, city) {
+    if (!iso) return '';
+    var d = new Date(iso); if (isNaN(d)) return '';
+    try { return d.toLocaleDateString('en-CA', { timeZone: fuTz(city) }); } catch (e) { return ''; }
+  }
+  // When a row sends: "11:00 am" on the arrival date, else "Sat 10 Oct · 11:00 am" (send_at = arrival + day_offset).
+  function fuWhen(row) {
+    var day = fuYmd(row.send_at, row.city);
+    return day && day !== str(row.arrival_date).slice(0, 10) ? shortDate(day) + ' · ' + hm12(row.send_time) : hm12(row.send_time);
   }
   function fuTz(city) { return str(city) === 'Vancouver' ? 'America/Vancouver' : 'America/Toronto'; }
   function fuTzName(city) { return str(city) === 'Vancouver' ? 'Vancouver time' : 'Toronto time'; }
@@ -1595,14 +1616,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function fuChip(row) {
     var s = row.live_status || row.status;
     if (!s || s === 'off') return null;
-    if (s === 'sent') return row.secret_view_count > 0 ? { cls: 'opened', label: 'Code viewed' } : { cls: 'sent', label: 'After-hours sent ' + fuClock(row.sent_at, row.city) };
-    if (s === 'held') return { cls: 'held', label: 'After-hours held' };
-    if (s === 'failed') return { cls: 'failed', label: 'After-hours failed' };
-    if (s === 'skipped') return row.skip_reason === 'arrival_closed' ? null : { cls: 'skipped', label: 'After-hours skipped' };
+    if (s === 'sent') return row.secret_view_count > 0 ? { cls: 'opened', label: 'Code viewed' } : { cls: 'sent', label: fuLabel(row) + ' sent ' + fuClock(row.sent_at, row.city) };
+    if (s === 'held') return { cls: 'held', label: fuLabel(row) + ' held' };
+    if (s === 'failed') return { cls: 'failed', label: fuLabel(row) + ' failed' };
+    if (s === 'skipped') return row.skip_reason === 'arrival_closed' ? null : { cls: 'skipped', label: fuLabel(row) + ' skipped' };
     var need = fuNeeds(row);
-    if (need.length) return { cls: 'missing', label: 'After-hours needs: ' + need.join(', ') };
-    if (s === 'due') return { cls: 'due', label: 'After-hours due · sends at the next run' };
-    return { cls: 'scheduled', label: 'After-hours: ' + hm12(row.send_time) };
+    if (need.length) return { cls: 'missing', label: fuLabel(row) + ' needs: ' + need.join(', ') };
+    if (s === 'due') return { cls: 'due', label: fuLabel(row) + ' due · sends at the next run' };
+    return { cls: 'scheduled', label: fuLabel(row) + ': ' + fuWhen(row) };
   }
   // end fuChip
 
@@ -1645,21 +1666,21 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function fuPanelHtml(r) {
     var list = S.fuBy[r.id] || [];
     if (!list.length) return S.fuErr ? '<div class="fusec"><p class="note">Could not load after-hours messages: ' + esc(S.fuErr) + '</p></div>' : '';
-    return '<div class="fusec"><h3>After-hours check-in</h3>' + list.map(function (row, i) {
+    return '<div class="fusec"><h3>Follow-up emails</h3>' + list.map(function (row, i) {
       var s = row.live_status || row.status;
       var closed = row.arrival_status === 'cancelled' || row.arrival_status === 'handled';
       var need = fuNeeds(row);
       var facts = [
-        ['Sends', s === 'sent' ? '' : shortDate(row.arrival_date) + ' · ' + hm12(row.send_time) + ' ' + fuTzName(row.city)],
+        ['Sends', s === 'sent' ? '' : shortDate(fuYmd(row.send_at, row.city) || row.arrival_date) + ' · ' + hm12(row.send_time) + ' ' + fuTzName(row.city)],
         ['Sent', row.sent_at ? fuClock(row.sent_at, row.city) + ', ' + shortDate(String(row.sent_at).slice(0, 10)) + (row.sent_by ? ' by ' + str(row.sent_by) : '') : ''],
         ['Opened', row.opened_at ? clock(row.opened_at) + (row.open_count > 1 ? ' · ' + row.open_count + ' opens' : '') : (s === 'sent' ? 'Not yet' : '')],
         [str(row.secret_label) || 'Code', s === 'sent' && str(row.secret_label) ? (row.secret_view_count > 0 ? 'Viewed ' + clock(row.secret_viewed_at) + (row.secret_view_count > 1 ? ' · ' + row.secret_view_count + ' views' : '') : 'Not viewed yet') : ''],
         ['Error', s === 'failed' || (row.last_error && s === 'sent') ? str(row.last_error) : '']
       ].filter(function (f) { return str(f[1]); });
       var warn = '';
-      if (s === 'skipped') warn = '<p class="warnbox">Skipped — ' + (row.skip_reason === 'arrival_closed' ? 'this arrival is handled or cancelled.' : 'the arrival day is over.') + '</p>';
+      if (s === 'skipped') warn = '<p class="warnbox">Skipped — ' + (row.skip_reason === 'arrival_closed' ? 'this arrival is handled or cancelled.' : 'its send day is over.') + '</p>';
       else if (s === 'held') warn = '<p class="warnbox">Held — it won’t send at ' + esc(hm12(row.send_time)) + ' until you resume it.</p>';
-      else if (s !== 'sent' && need.length) warn = '<p class="warnbox">Won’t send — needs ' + esc(need.join(', ')) + '.' + (need.indexOf('review') !== -1 || str(row.secret_label) && !row.secret_set ? ' Fix it in Templates › After-hours.' : '') + '</p>';
+      else if (s !== 'sent' && need.length) warn = '<p class="warnbox">Won’t send — needs ' + esc(need.join(', ')) + '.' + (need.indexOf('review') !== -1 || str(row.secret_label) && !row.secret_set ? ' Fix it in Templates › Follow-ups.' : '') + '</p>';
       var acts = [];
       if (s !== 'sent' && s !== 'skipped' && !closed) {
         if (!need.length && row.followup_enabled) acts.push('<button type="button" class="btn btn-primary" data-fu="send" data-fk="' + i + '">' + (s === 'failed' ? 'Retry now' : 'Send now') + '</button>');
@@ -1667,13 +1688,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         else acts.push('<button type="button" class="btn btn-ghost" data-fu="hold" data-fk="' + i + '">Hold</button>');
       }
       if (s === 'sent' && !closed) acts.push('<button type="button" class="btn btn-ghost" data-fu="resend" data-fk="' + i + '">Resend</button>');
-      if (need.indexOf('review') !== -1 || (str(row.secret_label) && !row.secret_set)) acts.push('<button type="button" class="btn btn-ghost" data-fu="tpl" data-fk="' + i + '">Open the after-hours template</button>');
+      if (need.indexOf('review') !== -1 || (str(row.secret_label) && !row.secret_set)) acts.push('<button type="button" class="btn btn-ghost" data-fu="tpl" data-fk="' + i + '">Open the follow-up template</button>');
       var mail = A.buildFollowupEmail(fuPreviewRow(row), { pixelBase: '', secretBase: FOLLOWUP_SECRET_BASE });
       return '<div class="fuitem"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b>' + esc(row.followup_name || 'After-hours check-in') + '</b>' + fuChipHtml(row) + '</div>' +
         '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
         warn + (acts.length ? '<div class="pact">' + acts.join('') + '</div>' : '') +
         '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
-        '<iframe class="pv" id="fuPv' + i + '" sandbox="" title="After-hours email preview" referrerpolicy="no-referrer"></iframe></div>';
+        '<iframe class="pv" id="fuPv' + i + '" sandbox="" title="Follow-up email preview" referrerpolicy="no-referrer"></iframe></div>';
     }).join('') + '</div>';
   }
   function fuPanelPreviews(r) {
@@ -1718,7 +1739,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (name === 'tpl') { S.tplPick = row.followup_building || r.building; S.furPick = row.followup_id; S.tk = 'afterhours'; setTab('templates'); return; }
     if (name === 'send' || name === 'resend') {
       var yes = name === 'send'
-        ? await confirmSheet('Send the after-hours email now?', '<p class="note">It goes to ' + esc(row.student_email) + ' right away instead of at ' + esc(hm12(row.send_time)) + ' ' + esc(fuTzName(row.city)) + '.</p>', 'Send now')
+        ? await confirmSheet(fuLabel(row) === 'After-hours' ? 'Send the after-hours email now?' : 'Send the “' + fuLabel(row) + '” email now?', '<p class="note">It goes to ' + esc(row.student_email) + ' right away instead of ' + esc(fuWhen(row)) + ' ' + esc(fuTzName(row.city)) + '.</p>', 'Send now')
         : await confirmSheet('Resend the after-hours email?', '<p class="note">' + esc(row.student_name || 'This student') + ' already got it' + (row.sent_at ? ' at ' + esc(fuClock(row.sent_at, row.city)) : '') + '. A new copy (with a fresh ' + esc((str(row.secret_label) || 'code').toLowerCase()) + ' link window) goes to ' + esc(row.student_email) + '.</p>', 'Resend');
       if (!yes) return;
       id = await fuEnsure(row);
@@ -1739,11 +1760,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function furFromRow(b, r) {
     var m = S.acc[b] || {};
     if (!r) {
-      return { id: null, building: b, city: m.city || '', name: 'After-hours check-in', send_time: '18:00', enabled: false, subject: '', intro: '', sections: [],
+      return { id: null, building: b, city: m.city || '', name: 'After-hours check-in', send_time: '18:00', day_offset: 0, enabled: false, subject: '', intro: '', sections: [],
         rules_url: '', docs_url: '', show_codes: true, also_buildings: [], secret_label: 'Lockbox code', secret_value: '', code_saved: '',
         secret_valid_hours: 24, reviewed: false, reviewed_by: '', reviewed_at: '', exists: false };
     }
-    return { id: r.id, building: r.building, city: str(r.city), name: str(r.name), send_time: str(r.send_time).slice(0, 5) || '18:00', enabled: !!r.enabled,
+    return { id: r.id, building: r.building, city: str(r.city), name: str(r.name), send_time: str(r.send_time).slice(0, 5) || '18:00', day_offset: parseInt(r.day_offset, 10) || 0, enabled: !!r.enabled,
       subject: r.subject || '', intro: r.intro || '',
       sections: (Array.isArray(r.sections) ? r.sections : []).map(function (x) { return { title: str(x && x.title), text: String((x && x.text) || '') }; }),
       rules_url: r.rules_url || '', docs_url: r.docs_url || '', show_codes: r.show_codes !== false,
@@ -1778,7 +1799,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!f.enabled) out.push('<p class="warnbox">Off — nothing sends.</p>');
     if (!f.reviewed) out.push('<p class="warnbox bad">Not reviewed — won’t send.</p>');
     if (str(f.secret_label) && !str(f.code_saved)) out.push('<p class="warnbox bad">' + esc(str(f.secret_label)) + ' not set — won’t send.</p>');
-    if (!out.length) out.push('<p class="warnbox good">On and reviewed — every arrival of the day gets it at ' + esc(hm12(f.send_time)) + ' ' + esc(fuTzName(f.city)) + '.</p>');
+    if (!out.length) out.push('<p class="warnbox good">On and reviewed — every arrival gets it ' + esc(fuDayWords(f.day_offset)) + ' at ' + esc(hm12(f.send_time)) + ' ' + esc(fuTzName(f.city)) + '.</p>');
     return out.join('');
   }
   function renderFurForm(picker) {
@@ -1801,9 +1822,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + picker + furBanners(f) +
       '<form class="tf" id="furForm" autocomplete="off">' +
       '<div class="two"><label><span>Name <small>· also the email heading</small></span><input class="inp" name="name" value="' + esc(f.name) + '" placeholder="After-hours check-in" /></label>' +
-      '<label><span>Send time <small>· on the arrival date, ' + esc(fuTzName(f.city)) + '</small></span><input class="inp" type="time" name="send_time" value="' + esc(f.send_time) + '" step="900" /></label></div>' +
+      '<label><span>Send time <small>· ' + esc(fuDayWords(f.day_offset)) + ', ' + esc(fuTzName(f.city)) + '</small></span><input class="inp" type="time" name="send_time" value="' + esc(f.send_time) + '" step="900" /></label></div>' +
       '<label><span>City</span><select class="sel" name="city">' + cityOpts(f.city, '—') + '</select></label>' +
-      '<label class="chk"><input type="checkbox" name="enabled"' + (f.enabled ? ' checked' : '') + ' /> On — sends automatically to every arrival of the day</label>' +
+      '<label class="chk"><input type="checkbox" name="enabled"' + (f.enabled ? ' checked' : '') + ' /> On — sends automatically to every arrival it covers</label>' +
       '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Buildings covered <small class="muted" style="font-weight:500">· ' + esc(f.building) + ' plus:</small></div>' +
       (cov ? '<div class="fucov">' + cov + '</div>' : '<p class="note">No other buildings known yet.</p>') + '</div>' +
       '<label><span>Subject <small>· {first_name} and {building} are filled in; blank = “' + esc((str(f.name) || 'Check-in update') + ' | {building}') + '”</small></span><input class="inp" name="subject" value="' + esc(f.subject) + '" /></label>' +
@@ -1822,7 +1843,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       (f.id ? '<button type="button" class="btn btn-ghost" data-fua="delete">Delete</button>' : '') +
       '</div></form></div>' +
       '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample arrival</span></div>' +
-      '<div class="pv-subj" id="furSubj"></div><iframe class="pv" id="furPv" sandbox="" title="After-hours preview" referrerpolicy="no-referrer"></iframe></div></div>';
+      '<div class="pv-subj" id="furSubj"></div><iframe class="pv" id="furPv" sandbox="" title="Follow-up preview" referrerpolicy="no-referrer"></iframe></div></div>';
     renderFurPreview();
   }
   // A sample arrival in the rule's building. Never carries the code: the email only links to it.
@@ -1855,7 +1876,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (el.checked) {
         var where = [f.building].concat(f.also_buildings);
         var yes = await confirmSheet('Switch on ' + (str(f.name) || 'this follow-up') + '?',
-          '<p class="note">Every arrival of the day at these buildings will get this at ' + esc(str(f.send_time) || '18:00') + ' (' + esc(hm12(f.send_time)) + ', ' + esc(fuTzName(f.city)) + '):</p>' +
+          '<p class="note">' + (f.day_offset ? 'Every arrival at these buildings will get this ' + esc(fuDayWords(f.day_offset)) + ' at ' : 'Every arrival of the day at these buildings will get this at ') + esc(str(f.send_time) || '18:00') + ' (' + esc(hm12(f.send_time)) + ', ' + esc(fuTzName(f.city)) + '):</p>' +
           '<ul class="mlist">' + where.map(function (b) { return '<li><span>' + esc(b) + '</span></li>'; }).join('') + '</ul>' +
           '<p class="note" style="margin-top:8px">It takes effect when you Save, and only sends once it is reviewed' + (str(f.secret_label) ? ' and the ' + esc(str(f.secret_label).toLowerCase()) + ' is set' : '') + '.</p>', 'Switch on');
         if (!yes) { el.checked = false; return; }
