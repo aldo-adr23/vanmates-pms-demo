@@ -1508,7 +1508,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-05-agencymatch1"></script>
+<script src="pms-supabase.js?v=2026-10-05-stages2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2804,7 +2804,7 @@
         </div>
         <div style="overflow-x:auto">
         <table>
-          <thead><tr><th>Resident</th><th>House / room</th><th>Move-out</th><th>Notice</th><th>Status</th><th>Owner</th><th>Days waiting</th><th>Flags</th><th>Submitted</th></tr></thead>
+          <thead><tr><th>Resident</th><th>House / room</th><th>Stage</th><th>Next</th><th>Owner</th><th>Move-out</th><th>Days at stage</th><th>Flags</th></tr></thead>
           <tbody id="cko-body"></tbody>
         </table>
         </div>
@@ -24452,7 +24452,7 @@ function ckoActions(c, me){
   if (admin) a.push({ act: 'override', label: 'Override status' });
   return a;
 }
-// f = { q, flag: '' | 'action' | <flag>, city, status, owner: '' | 'none' | <email>,
+// f = { q, flag: '' | 'action' | <flag>, city, status, stage: '' | CKO_STAGES key, owner: '' | 'none' | <email>,
 //       ids: null | [case ids] (Phase 4b drill-down from Reports) }
 function ckoFilter(cases, f, me, now){
   f = f || {};
@@ -24462,6 +24462,7 @@ function ckoFilter(cases, f, me, now){
     if (ids && !ids.has(c.id)) return false;
     if (f.city && c.city !== f.city) return false;
     if (f.status && c.status !== f.status) return false;
+    if (f.stage && !(ckoStageOf(c) && ckoStageOf(c).key === f.stage)) return false;
     if (f.owner === 'none' && c.owner) return false;
     if (f.owner && f.owner !== 'none' && c.owner !== String(f.owner).toLowerCase()) return false;
     if (f.flag === 'action' && !ckoNeedsAction(c, me, now)) return false;
@@ -24470,12 +24471,57 @@ function ckoFilter(cases, f, me, now){
     return true;
   });
 }
-// tab = 'action' | 'mine' | 'unassigned' | 'open' | 'closed'
+// 2026-10-05: five plain-language stages over the nine statuses, for the stage
+// bar and each row's progress dots (Aldo: the tabs and status tiles were confusing).
+const CKO_STAGES = [
+  { key: 'waiting', label: 'Waiting for resident', statuses: ['Information Incomplete'] },
+  { key: 'book', label: 'Book move-out', statuses: ['Information Complete'] },
+  { key: 'moveout', label: 'Move-out & inspection', statuses: ['Move-Out Scheduled', 'Inspection Pending', 'Inspection Completed'] },
+  { key: 'charges', label: 'Charges', statuses: ['Charges Review'] },
+  { key: 'refund', label: 'Refund', statuses: ['Deposit Processing', 'Deposit Sent'] },
+];
+// { key, label, n (1-5) } for an open case's status, null when Closed or unknown.
+function ckoStageOf(c){
+  const i = CKO_STAGES.findIndex(s => s.statuses.indexOf(c && c.status) !== -1);
+  return i === -1 ? null : { key: CKO_STAGES[i].key, label: CKO_STAGES[i].label, n: i + 1 };
+}
+// One entry per stage, in order, with how many of cases are at it.
+function ckoStageCounts(cases){
+  return CKO_STAGES.map((s, i) => ({ key: s.key, label: s.label, n: i + 1, count: (cases || []).filter(c => s.statuses.indexOf(c.status) !== -1).length }));
+}
+// The one thing that moves the case on, in plain words, whoever has to do it.
+function ckoNextText(c){
+  if (!c || !ckoIsOpen(c)) return '';
+  const f = c.flags || [], has = (x) => f.indexOf(x) !== -1;
+  if (has('resident_dispute')) return 'Resolve the resident dispute';
+  if (has('short_notice_review_required')) return 'Decide the short-notice review';
+  switch (c.status) {
+    case 'Information Incomplete': return 'Resident: finish the checkout form';
+    case 'Information Complete': return c.owner ? 'Book the move-out' : 'Take the case, then book the move-out';
+    case 'Move-Out Scheduled': return 'Record the move-out';
+    case 'Inspection Pending': return 'Record the inspection';
+    case 'Inspection Completed': return 'Send to charges review';
+    case 'Charges Review':
+      if (has('missing_refund_info')) return 'Resident: refund details';
+      return ckoChargesSubmitted(c) ? 'Finance: approve the refund' : 'Check the charges, then submit';
+    case 'Deposit Processing': return 'Finance: send the refund';
+    case 'Deposit Sent': return ckoTopUpDue(c) > 0 ? 'Finance: send the top-up' : 'Finance: close the case';
+  }
+  return '';
+}
+// Waiting on finance (not on the owner): submitted charges, a refund or a top-up to send.
+function ckoFinanceTurn(c){
+  return !!c && ckoIsOpen(c) && ((c.status === 'Charges Review' && ckoChargesSubmitted(c)) || c.status === 'Deposit Processing' || (c.status === 'Deposit Sent' && ckoTopUpDue(c) > 0));
+}
+// tab = 'forme' | 'open' | 'finance' | 'closed' (the list's tabs), or the older
+// 'action' | 'mine' | 'unassigned'. forme = my own open cases, plus, for finance,
+// every case waiting on finance.
 function ckoTab(cases, tab, me, now){
   const m = ckoMeOf(me);
   return (cases || []).filter(c => {
     if (tab === 'closed') return !ckoIsOpen(c);
     if (!ckoIsOpen(c)) return false;
+    if (tab === 'forme') return (!!m.email && c.owner === m.email) || (ckoIsFinance(m) && ckoFinanceTurn(c));
     if (tab === 'action') return ckoNeedsAction(c, m, now);
     if (tab === 'mine') return !!m.email && c.owner === m.email;
     if (tab === 'unassigned') return !c.owner;
@@ -25642,6 +25688,7 @@ const CKO_RPT_CARDS = [
   { key: 'completion', label: 'Completion', format: 'pct', betterWhen: 'up' },
 ];
 const CKO_RPT_TAB = ['reports', 'Reports'];
+const CKO_FIN_TAB = ['finance', 'Finance'];
 const CKO_RPT_PERIODS = [['this_month', 'This month'], ['last_month', 'Last month'], ['last_3', 'Last 3 months'], ['last_12', 'Last 12 months'], ['custom', 'Custom dates']];
 // The five 12-month charts, in the spec's order (keys are checkout_report's trend fields).
 const CKO_RPT_TREND = [
@@ -25655,7 +25702,13 @@ const CKO_RPT_TREND = [
 const CKO_RPT_COLS = [['group', 'Group', 'text'], ['cases', 'Cases', 'count'], ['notice_ok_pct', "30+ days' notice", 'pct'], ['avg_days_to_refund', 'Avg days to refund', 'days'], ['overdue_pct', 'Over deadline', 'pct'], ['disputes', 'Disputes', 'count'], ['exceptional_amount', 'Exceptional deductions', 'money']];
 const CKO_RPT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // Reports is the admins' tab (checkout_report refuses anyone else anyway).
-function ckoTabsFor(tabs, me){ const t = (tabs || []).slice(); if (ckoIsAdmin(me)) t.push(CKO_RPT_TAB); return t; }
+// Finance is listed for those who approve refunds (before Closed); Reports for admins.
+function ckoTabsFor(tabs, me){
+  const t = (tabs || []).slice();
+  if (ckoIsFinance(me) && !t.some(x => x[0] === 'finance')) { const i = t.findIndex(x => x[0] === 'closed'); t.splice(i === -1 ? t.length : i, 0, CKO_FIN_TAB); }
+  if (ckoIsAdmin(me)) t.push(CKO_RPT_TAB);
+  return t;
+}
 function ckoRptFormat(format, v){
   if (format === 'pct') return ckoRptPct(v);
   if (format === 'days') return ckoRptDays(v);
@@ -25801,9 +25854,11 @@ function ckoRptDrillIds(view, ref){
    the checkout_* RPCs through vmDb.checkoutRpc; after each one the list and
    the open case are read again. */
 // ids: a Reports drill-down (Phase 4b) — the list shows exactly these cases; null = off.
-const CKO_STATE = { q: '', flag: '', city: '', status: '', owner: '', tab: 'action', ids: null };
-const CKO_TABS = [['action', 'Needs action'], ['mine', 'Mine'], ['unassigned', 'Unassigned'], ['finance', 'Finance'], ['open', 'All open'], ['closed', 'Closed']];
-const CKO_COLS = 9;
+const CKO_STATE = { q: '', flag: '', city: '', status: '', stage: '', owner: '', tab: 'open', ids: null };
+// 2026-10-05: three tabs (For me, Everyone, Closed) instead of six that overlapped;
+// Finance and Reports are added per role by ckoTabsFor. The stage bar does the rest.
+const CKO_TABS = [['forme', 'For me'], ['open', 'Everyone'], ['closed', 'Closed']];
+const CKO_COLS = 8;
 let ckoCases = null, ckoLoading = null;
 // Drawer token: every open (and every close) bumps it, so a response that
 // arrives after the user moved on is dropped instead of overwriting the panel.
@@ -25881,7 +25936,7 @@ function ckoOwnerOptions(){
   sel.value = CKO_STATE.owner;
 }
 // Any list filter set (the tab is not a filter).
-function ckoFiltersActive(){ return !!(CKO_STATE.q || CKO_STATE.status || CKO_STATE.owner || CKO_STATE.flag || CKO_STATE.city); }
+function ckoFiltersActive(){ return !!(CKO_STATE.q || CKO_STATE.status || CKO_STATE.stage || CKO_STATE.owner || CKO_STATE.flag || CKO_STATE.city); }
 function renderCheckouts(){
   const body = document.getElementById('cko-body');
   if (!body || !ckoCases) return;
@@ -25893,29 +25948,32 @@ function renderCheckouts(){
   }
   // Rebuilding the tabs and tiles drops focus; put it back on the same one.
   const fa = document.activeElement, fd = fa && fa.dataset ? fa.dataset : {};
-  const refocus = fd.ckoTab ? `[data-cko-tab="${fd.ckoTab}"]` : fd.ckoStatus ? `[data-cko-status="${fd.ckoStatus}"]` : '';
-  // Reports is admins' only (Phase 4b); anyone else left on it goes back to Needs action.
-  if (CKO_STATE.tab === 'reports' && !ckoIsAdmin(me)) CKO_STATE.tab = 'action';
+  const refocus = fd.ckoTab ? `[data-cko-tab="${fd.ckoTab}"]` : fd.ckoStage ? `[data-cko-stage="${fd.ckoStage}"]` : '';
+  // Reports is admins' only (Phase 4b), Finance finance's; anyone else left on one goes back to Everyone.
+  if ((CKO_STATE.tab === 'reports' && !ckoIsAdmin(me)) || (CKO_STATE.tab === 'finance' && !ckoIsFinance(me))) CKO_STATE.tab = 'open';
   const tabs = document.getElementById('cko-tabs');
   if (tabs) tabs.innerHTML = ckoTabsFor(CKO_TABS, me).map(([k, label]) => {
     const on = CKO_STATE.tab === k;
     const count = k === 'reports' ? '' : ` <span class="name-sub">${ckoTab(ckoCases, k, me, now).length}</span>`;
     return `<button type="button" class="tab${on ? ' active' : ''}" role="tab" aria-selected="${on}" data-cko-tab="${k}">${esc(label)}${count}</button>`;
   }).join('');
+  // The stage bar: the five stages of this tab's cases (the other filters aside);
+  // a click filters the list to that stage, a second click clears it.
   const strip = document.getElementById('cko-strip');
-  if (strip) strip.innerHTML = ckoStatusCounts(ckoCases.filter(ckoIsOpen), now).filter(s => s.status !== 'Closed').map(s => {
-    const on = CKO_STATE.status === s.status;
-    return `<button type="button" class="card" aria-pressed="${on}" data-cko-status="${esc(s.status)}" style="flex:0 0 auto;min-width:128px;padding:10px 12px;text-align:left;cursor:pointer;${on ? 'outline:2px solid var(--red);' : ''}">
-      <div class="name-sub" style="font-size:11px">${esc(s.status)}</div>
+  const stageCases = ckoTab(ckoCases, CKO_STATE.tab, me, now);
+  if (strip) strip.innerHTML = ckoStageCounts(stageCases).map((s, i, all) => {
+    const on = CKO_STATE.stage === s.key, r = i === 0 ? '10px 0 0 10px' : i === all.length - 1 ? '0 10px 10px 0' : '0';
+    return `<button type="button" aria-pressed="${on}" data-cko-stage="${esc(s.key)}" style="flex:1 1 0;min-width:120px;padding:10px 12px;text-align:left;cursor:pointer;border:1px solid var(--line);border-radius:${r};margin-left:${i ? '-1px' : '0'};font:inherit;background:${on ? 'var(--red)' : 'var(--cream-2)'};color:${on ? '#fff' : 'var(--ink)'}">
+      <div style="font-size:11px;opacity:.85">${s.n} · ${esc(s.label)}</div>
       <div style="font-size:20px;font-weight:700">${s.count}</div>
-      <div class="name-sub" style="font-size:11px">${s.avgDays == null ? '—' : 'avg ' + esc(s.avgDays) + (s.avgDays === 1 ? ' day' : ' days')}</div>
     </button>`;
   }).join('');
   if (refocus) { const el = document.querySelector('#cko-tabs ' + refocus + ', #cko-strip ' + refocus); if (el) el.focus(); }
   // Reports replaces the strip, the list filters and both lists; the nav badge still counts.
   const rpt = CKO_STATE.tab === 'reports';
   const stripEl = document.getElementById('cko-strip'), fbar = document.getElementById('cko-filter-bar'), rep = document.getElementById('cko-report');
-  if (stripEl) stripEl.style.display = rpt ? 'none' : 'flex';
+  // The stage bar is for open cases: not on Reports, Closed or Finance (its own table).
+  if (stripEl) stripEl.style.display = rpt || CKO_STATE.tab === 'closed' || CKO_STATE.tab === 'finance' ? 'none' : 'flex';
   if (fbar) fbar.style.display = rpt ? 'none' : '';
   if (rep) rep.hidden = !rpt;
   // .btn{display:inline-flex} beats [hidden], so this one is toggled by style, not the attribute.
@@ -25923,7 +25981,7 @@ function renderCheckouts(){
   if (rpt) {
     ['cko-list-card', 'cko-fin-card', 'cko-drill'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
     const badge = document.querySelector('.nav-item[data-view="checkouts"] .nav-count');
-    if (badge) badge.textContent = String(ckoTab(ckoCases, 'action', me, now).length);
+    if (badge) badge.textContent = String(ckoTab(ckoCases, 'forme', me, now).length);
     ckoRenderReport();
     return;
   }
@@ -25945,7 +26003,7 @@ function renderCheckouts(){
   empty.style.display = rows.length ? 'none' : '';
   empty.innerHTML = 'No checkouts match.' + (ckoFiltersActive() ? ' <button type="button" class="btn btn-ghost" data-cko-clear style="margin-left:8px">Clear filters</button>' : '');
   const badge = document.querySelector('.nav-item[data-view="checkouts"] .nav-count');
-  if (badge) badge.textContent = String(ckoTab(ckoCases, 'action', me, now).length);
+  if (badge) badge.textContent = String(ckoTab(ckoCases, 'forme', me, now).length);
   // The Finance tab has its own table and header stats (Phase 3a).
   const fin = CKO_STATE.tab === 'finance', listCard = document.getElementById('cko-list-card'), finCard = document.getElementById('cko-fin-card');
   if (listCard) listCard.hidden = fin;
@@ -25958,16 +26016,17 @@ function renderCheckouts(){
     const cl = closed || !ckoIsOpen(c);
     const ago = cl ? ckoClosedDaysAgo(c, now) : null, days = cl ? null : ckoDaysWaiting(c, now);
     const wait = cl ? (ago == null ? '—' : `closed ${esc(ago)} d ago`) : (days == null ? '—' : esc(days));
+    const stg = ckoStageOf(c), next = ckoNextText(c);
+    const dots = stg ? `<span aria-hidden="true" style="letter-spacing:1px"><span style="color:var(--red)">${'●'.repeat(stg.n)}</span><span style="color:var(--line)">${'●'.repeat(CKO_STAGES.length - stg.n)}</span></span>` : '';
     return `<tr data-cko-id="${esc(c.id)}" style="cursor:pointer">
-      <td>${act ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Needs action">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)} · ${esc(c.email)}</div></td>
+      <td>${act ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Needs action">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
       <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
-      <td>${esc(fmtDate(c.moveOut))}</td>
-      <td>${esc(ckoNoticeText(c))}</td>
-      <td>${esc(c.status)}${c.outcome === 'cancelled' ? '<div class="name-sub">cancelled</div>' : ''}</td>
+      <td>${cl ? `Closed${c.outcome === 'cancelled' ? '<div class="name-sub">cancelled</div>' : ''}` : `${dots}<div style="font-size:13px">${stg ? esc(stg.label) : esc(c.status)}</div><div class="name-sub">${esc(c.status)}</div>`}</td>
+      <td>${next ? `<b style="font-weight:600">${esc(next)}</b>` : '<span class="name-sub">—</span>'}</td>
       <td>${c.owner ? esc(ckoName(c.owner)) : '<span class="tag-pill red" style="font-size:11px">Unassigned</span>'}</td>
+      <td>${esc(fmtDate(c.moveOut))}<div class="name-sub">${esc(ckoNoticeText(c))}</div></td>
       <td>${wait}</td>
       <td>${c.flags.map(ckoChip).join(' ')}</td>
-      <td>${esc(fmtDate(ckoLocal(c.createdAt, c.city).date))}</td>
     </tr>`;
   }).join('');
 }
@@ -26101,7 +26160,7 @@ function ckoRptDownload(){
 // Open the Checkouts list on exactly these cases (from a report card or table cell).
 function ckoRptDrill(ids){
   if (!ids || !ids.length) { showToast('No cases to show'); return; }
-  Object.assign(CKO_STATE, { ids: ids.slice(), tab: 'drill', q: '', status: '', owner: '', flag: '', city: '' });
+  Object.assign(CKO_STATE, { ids: ids.slice(), tab: 'drill', q: '', status: '', stage: '', owner: '', flag: '', city: '' });
   ['cko-search', 'cko-filter-status', 'cko-filter-owner', 'cko-filter-flag', 'cko-filter-city'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   // The report can name a case the list hasn't loaded yet (or that changed
   // since); reload once so the chip's "not found" count is accurate.
@@ -26913,19 +26972,17 @@ window.openCheckout = openCheckout;
     const d = e.target.closest('[data-cko-rpt-drill]');
     if (d) ckoRptDrill(ckoRptDrillIds(CKO_RPT.view, d.dataset.ckoRptDrill));
   });
-  // A status tile filters to that status across all open cases (click again to clear).
+  // A stage in the bar filters the list to it (click again to clear).
   on('cko-strip', 'click', e => {
-    const b = e.target.closest('[data-cko-status]');
+    const b = e.target.closest('[data-cko-stage]');
     if (!b) return;
-    CKO_STATE.status = CKO_STATE.status === b.dataset.ckoStatus ? '' : b.dataset.ckoStatus;
-    if (CKO_STATE.status && !CKO_STATE.ids) CKO_STATE.tab = 'open';
-    if (st) st.value = CKO_STATE.status;
+    CKO_STATE.stage = CKO_STATE.stage === b.dataset.ckoStage ? '' : b.dataset.ckoStage;
     renderCheckouts();
   });
   on('cko-body', 'click', e => { const tr = e.target.closest('[data-cko-id]'); if (tr) openCheckout(tr.dataset.ckoId); });
   on('cko-empty', 'click', e => {
     if (!e.target.closest('[data-cko-clear]')) return;
-    Object.assign(CKO_STATE, { q: '', status: '', owner: '', flag: '', city: '' });
+    Object.assign(CKO_STATE, { q: '', status: '', stage: '', owner: '', flag: '', city: '' });
     ['cko-search', 'cko-filter-status', 'cko-filter-owner', 'cko-filter-flag', 'cko-filter-city'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     renderCheckouts();
   });
