@@ -303,7 +303,31 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 .fx label.fl { display: grid; gap: 3px; font-size: 12px; font-weight: 700; color: var(--muted); flex: 1 1 140px; }
 .fx textarea.inp { min-height: 56px; }
 
-/* templates */
+/* templates: building sidebar + editor */
+.tlay { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 12px; align-items: start; }
+.tside { position: sticky; top: 12px; padding: 10px; display: grid; gap: 8px; max-height: calc(100dvh - 24px); grid-template-rows: auto auto minmax(0, 1fr); }
+.tside .inp { width: 100%; }
+.tside .tsum { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.tside .tsum label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.tblist { position: relative; overflow-y: auto; margin: 0 -4px; padding: 0 4px; display: grid; gap: 2px; align-content: start; }
+.tbi { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; text-align: left; width: 100%; border: 0; background: none;
+  border-radius: 9px; padding: 7px 8px; color: var(--ink); font: inherit; cursor: pointer; }
+.tbi:hover { background: var(--cream-2); }
+.tbi.on { background: var(--red-soft); }
+.tbi b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbi small { grid-column: 2 / 4; font-size: 11.5px; color: var(--muted); }
+.tbi .cov { font-size: 11px; font-weight: 700; color: var(--muted); }
+.tdot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--muted); box-sizing: border-box; }
+.tdot.full { background: var(--green); border-color: var(--green); }
+.tdot.part { border-color: var(--amber); background: linear-gradient(90deg, var(--amber) 50%, transparent 50%); }
+.tbi .need { color: var(--b-amber); font-weight: 700; }
+.thead { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin: 2px 0 8px; }
+.thead h2 { font-family: var(--serif); font-size: 24px; margin: 0; line-height: 1.2; }
+.thead .muted { font-size: 13px; }
+.tplchips .chip { min-height: 34px; font-size: 13px; padding: 0 12px; }
+.warnbox.tstat { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; }
+.warnbox.tstat .btn { min-height: 32px; padding: 4px 12px; font-size: 12.5px; }
+.tbtns .tcopy { margin-left: auto; width: auto; max-width: 100%; color: var(--muted); }
 .tsplit { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
 .tp { padding: 14px 16px; }
 .tf { display: grid; gap: 10px; }
@@ -318,6 +342,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 .sbtn:disabled { opacity: .4; cursor: default; }
 .tbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .tpv { position: sticky; top: 12px; }
+.tpv iframe.pv { height: calc(100dvh - 110px); min-height: 420px; }
 
 /* modal + toast (cs.html) */
 .modal { position: fixed; inset: 0; background: var(--scrim); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
@@ -341,6 +366,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 @media (max-width: 1099px) {
   .split { grid-template-columns: minmax(0, 1fr) 400px; }
   .tsplit { grid-template-columns: 1fr; }
+  .tpv iframe.pv { height: 640px; }
   .tpv { position: static; }
 }
 @media (max-width: 899px) {
@@ -367,6 +393,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   .arow.hd { display: none; }
   .kpi .v { font-size: 20px; }
   .tf .two { grid-template-columns: 1fr; }
+  .tlay { grid-template-columns: minmax(0, 1fr); }
+  .tside { position: static; max-height: none; }
+  .tblist { max-height: 220px; }
   .wkpick { flex: 1 1 100%; justify-content: space-between; }
   .toolbar select.sel { flex: 1; }
 }
@@ -454,13 +483,18 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     <div id="accBody"><div class="empty">Loading…</div></div>
   </section>
   <section id="v-templates" hidden>
-    <div class="toolbar">
-      <span id="tplKind"></span>
-      <select class="sel" id="tplB" aria-label="Building"></select>
-      <span class="muted" id="tplState"></span>
+    <div class="tlay">
+      <aside class="tside card" aria-label="Buildings">
+        <input class="inp" id="tplQ" type="search" placeholder="Search building" aria-label="Search building" autocomplete="off" />
+        <div class="tsum"><span id="tplSum"></span><label><input type="checkbox" id="tplInc" /> Incomplete only</label></div>
+        <div class="tblist" id="tplSide"></div>
+      </aside>
+      <div>
+        <div class="thead"><div><h2 id="tplName"></h2><span class="muted" id="tplMeta"></span></div><span class="muted" id="tplState"></span></div>
+        <div class="chips tplchips" id="tplChips" role="tablist" aria-label="Template kind" style="margin-bottom:10px"></div>
+        <div id="tplBody"><div class="empty">Loading…</div></div>
+      </div>
     </div>
-    <div class="chips tplchips" id="tplChips" style="margin-bottom:10px"></div>
-    <div id="tplBody"><div class="empty">Loading…</div></div>
   </section>
 </div>
 <div class="modal" id="modal"><div class="mcard" id="modalCard" role="dialog" aria-modal="true"></div></div>
@@ -468,7 +502,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-landlords5"></script>
+<script src="arrivals-core.js?v=2026-10-07-tplside1"></script>
 <script>
 (function () {
   'use strict';
@@ -511,6 +545,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function todayYmd() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
   function cityOpts(sel, blank) {
     return (blank ? '<option value="">' + esc(blank) + '</option>' : '') + CITIES.map(function (c) { return '<option' + (c === sel ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('');
+  }
+  // A template's City field only when it says something: hidden while the building's own city is set and the
+  // template agrees (an empty template city takes the building's); shown when the building has none or they differ.
+  function tplCityField(t) {
+    var bc = str(((S.acc || {})[t.building] || {}).city);
+    if (bc && !str(t.city)) t.city = bc;
+    return bc && str(t.city) === bc ? '' : '<label><span>City' + (bc ? ' <small>· differs from the building (' + esc(bc) + ')</small>' : '') + '</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>';
   }
   function secret(name, value, label) {
     return '<span class="secret"><input class="inp" type="password" autocomplete="new-password" spellcheck="false" name="' + name + '" value="' + esc(value) + '" placeholder="' + esc(label) + '" aria-label="' + esc(label) + '" /><button type="button" class="eye" data-eye>Show</button></span>';
@@ -2214,18 +2255,18 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   function renderTemplates() {
     var list = buildingList();
-    $('tplKind').innerHTML = tplKindHtml();
-    if (!list.length) { $('tplB').innerHTML = ''; $('tplChips').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
+    if (!list.length) { $('tplSide').innerHTML = ''; $('tplName').textContent = ''; $('tplMeta').textContent = ''; $('tplChips').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
     var co = S.tk === 'checkout', ah = S.tk === 'afterhours', bk = isBkKind(S.tk);
     var tplOf = function (m) { return ah ? fuRulesFor(m.building)[0] : co ? m.co : bk ? (m.bk || {})[S.tk] : m.tpl; };
     var pick = S.tplPick || (ah ? (S.fur && S.fur.building) || ((S.fuRules || [])[0] || list[0]).building
       : (co ? S.cot && S.cot.building : bk ? S.bkt && S.bkt.building : S.tpl && S.tpl.building) || (list.filter(function (m) { return m.upcoming && !(tplOf(m) && tplOf(m).reviewed); })[0] || list[0]).building);
     S.tplPick = null;
     if (!S.acc[pick]) pick = list[0].building;
-    $('tplB').innerHTML = list.map(function (m) {
-      var st = tplOf(m) && tplOf(m).reviewed ? '✓ ' : (m.upcoming ? '• ' : '');
-      return '<option value="' + esc(m.building) + '"' + (m.building === pick ? ' selected' : '') + '>' + esc(st + m.building + (m.city ? ' (' + m.city + ')' : '')) + '</option>';
-    }).join('');
+    S.tplCur = pick;
+    renderTplSide();
+    var pm = S.acc[pick];
+    $('tplName').textContent = pick;
+    $('tplMeta').textContent = [pm.city || 'No city', pm.upcoming ? pm.upcoming + ' upcoming arrival' + (pm.upcoming === 1 ? '' : 's') : ''].filter(Boolean).join(' · ');
     $('tplChips').innerHTML = tplChipsHtml(S.acc[pick]);
     if (bk) { renderBkt(pick); return; }
     if (co) { renderCot(pick); return; }
@@ -2233,10 +2274,42 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!S.tpl || S.tpl.building !== pick || !S.tplDirty) { S.tpl = tplFromRow(pick, S.acc[pick].tpl); S.tplDirty = false; }
     renderTplForm();
   }
+  // The building list: one dot per building for how many of its templates are reviewed (● all, ◐ some, ○ none).
+  var TPL_KINDS = ['booking', 'checkin', 'room_change', 'afterhours', 'checkout'];
+  function tplCoverage(m) {
+    var n = 0, r = 0;
+    TPL_KINDS.forEach(function (k) { var st = kindState(m, k); if (!st) return; n++; if (st === 'reviewed') r++; });
+    return { n: n, r: r };
+  }
+  function renderTplSide() {
+    var q = str(S.tplQ).toLowerCase(), all = buildingList(), done = 0;
+    var rows = all.map(function (m) { var c = tplCoverage(m); if (c.n && c.r === c.n) done++; return { m: m, c: c }; });
+    $('tplSum').textContent = done + ' of ' + all.length + ' complete';
+    var shown = rows.filter(function (x) {
+      return (!q || x.m.building.toLowerCase().indexOf(q) !== -1 || str(x.m.city).toLowerCase().indexOf(q) !== -1) &&
+        (!S.tplInc || x.c.r < x.c.n || x.m.building === S.tplCur);
+    });
+    $('tplSide').innerHTML = shown.length ? shown.map(function (x) {
+      var m = x.m, c = x.c, cls = c.n && c.r === c.n ? 'full' : c.r ? 'part' : '';
+      var cur = kindState(m, S.tk), need = m.upcoming && cur && cur !== 'reviewed';
+      return '<button type="button" class="tbi' + (m.building === S.tplCur ? ' on' : '') + '" data-tb="' + esc(m.building) + '"' + (m.building === S.tplCur ? ' aria-current="true"' : '') + '>' +
+        '<span class="tdot ' + cls + '" aria-hidden="true"></span><b>' + esc(m.building) + '</b><span class="cov" title="Reviewed templates">' + c.r + '/' + c.n + '</span>' +
+        '<small>' + esc(m.city || 'No city') + (m.upcoming ? ' · ' + (need ? '<span class="need">' + m.upcoming + ' upcoming, ' + esc(KIND_LABEL[S.tk].toLowerCase()) + ' not reviewed</span>' : m.upcoming + ' upcoming') : '') + '</small></button>';
+    }).join('') : '<p class="note" style="margin:6px">No building matches.</p>';
+    // keep the open building visible in the list (scrolls the list only, never the page)
+    var box = $('tplSide'), on = box.querySelector('.tbi.on');
+    if (on && (on.offsetTop < box.scrollTop || on.offsetTop + on.offsetHeight > box.scrollTop + box.clientHeight)) box.scrollTop = on.offsetTop - box.clientHeight / 2;
+  }
+  function tplPickBuilding(b) {
+    var cur = curTpl();
+    if (b === S.tplCur) return;
+    if (S.tplDirty && cur && !window.confirm('Discard unsaved changes to the ' + cur.building + ' template?')) return;
+    S.tplDirty = false; S.tplPick = b; S.tpl = null; S.cot = null; S.fur = null; S.bkt = null; S.furPick = null; renderTemplates();
+  }
   function renderTplForm() {
     var t = S.tpl;
     $('tplState').textContent = t.reviewed ? 'Reviewed' + (t.reviewed_by ? ' by ' + t.reviewed_by : '') + (t.reviewed_at ? ', ' + clock(t.reviewed_at) : '') : (t.exists ? 'Not reviewed' : 'No template yet');
-    var banner = t.reviewed ? '<p class="warnbox good">Reviewed — arrivals for this building can be sent.</p>' : '<p class="warnbox bad">Not reviewed — arrivals for this building can’t be sent.</p>';
+    var banner = t.reviewed ? '<p class="warnbox good">Reviewed — arrivals for this building can be sent.</p>' : '<p class="warnbox tstat"><span>Not reviewed — arrivals for this building can’t be sent.</span><button type="button" class="btn btn-primary" data-tpl="review">Save &amp; mark reviewed</button></p>';
     var sec = t.sections.map(function (s, i) {
       return '<div class="sect" data-i="' + i + '"><div class="sbar"><button type="button" class="sbtn" data-sec="up" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up">↑</button>' +
         '<button type="button" class="sbtn" data-sec="down" ' + (i === t.sections.length - 1 ? 'disabled' : '') + ' aria-label="Move down">↓</button>' +
@@ -2245,8 +2318,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
     }).join('');
     $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + banner +
-      '<form class="tf" id="tplForm" autocomplete="off">' + tplCopyPicker(t) +
-      '<label><span>City</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>' +
+      '<form class="tf" id="tplForm" autocomplete="off">' + tplCityField(t) +
       '<label><span>Subject <small>· {first_name} and {building} are filled in</small></span><input class="inp" name="subject" value="' + esc(t.subject) + '" placeholder="Welcome to {building}: your check-in details" /></label>' +
       '<label><span>Intro <small>· blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="Hi {first_name}, welcome to Vanmates! Here is everything you need for your arrival at {building}.">' + esc(t.intro) + '</textarea></label>' +
       '<label><span>Checking in</span><textarea class="inp" name="checkin_text" placeholder="How to get in: lobby, buzzer, where the keys are…">' + esc(t.checkin_text) + '</textarea></label>' +
@@ -2261,7 +2333,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<label class="chk"><input type="checkbox" name="wifi_in_unit"' + (t.wifi_in_unit ? ' checked' : '') + ' /> Wi-Fi is posted in the apartment (no Wi-Fi needed per unit)</label>' +
       '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
       (t.reviewed ? '<button type="button" class="btn btn-ghost" data-tpl="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-tpl="review">Save &amp; mark reviewed</button>') +
-      '</div></form></div>' +
+      tplCopyPicker(t) + '</div></form></div>' +
       '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample arrival</span></div>' +
       '<div class="pv-subj" id="tplSubj"></div><iframe class="pv" id="tplPv" sandbox="" title="Template preview" referrerpolicy="no-referrer"></iframe></div></div>';
     renderTplPreview();
@@ -2301,10 +2373,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function tplCopyPicker(t) {
     var src = buildingList().filter(function (m) { return m.building !== t.building && m.tpl; });
     if (!src.length) return '';
-    return '<label><span>Copy from <small>· fills this form with another building\u2019s template; nothing is saved until you press Save</small></span>' +
-      '<select class="sel" name="tpl_copy_from"><option value="">— pick a building —</option>' +
+    return '<select class="sel tcopy" name="tpl_copy_from" aria-label="Copy from another building" title="Fills this form with another building\u2019s template; nothing is saved until you press Save"><option value="">Copy from another building\u2026</option>' +
       src.map(function (m) { return '<option value="' + esc(m.building) + '">' + esc((m.tpl.reviewed ? '\u2713 ' : '') + m.building) + '</option>'; }).join('') +
-      '</select></label>';
+      '</select>';
   }
   var TPL_COPY_FIELDS = ['subject', 'intro', 'checkin_text', 'checkin_time', 'checkout_time', 'rules_url', 'docs_url', 'keys_only', 'wifi_in_unit'];
   function tplCopyFrom(b) {
@@ -2358,22 +2429,12 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   // ───────── Check-out templates (checkout_templates, checkout_template_save) ─────────
   var CO_DEFAULTS = { subject: 'Check-Out Info | {building}', checkout_time: '10:00 am',
     keys_text: 'To avoid any additional charges: before leaving, please leave your keys inside your bedroom and close your bedroom door.' };
-  function tplKindHtml() {
-    var on = function (k) { return S.tk === k ? ' class="on" aria-pressed="true"' : ''; };
-    // In the order a tenant gets them: booking, check-in, room change, after-hours follow-ups, check-out.
-    return '<div class="seg" role="group" aria-label="Template kind">' +
-      '<button type="button" data-tk="booking"' + on('booking') + '>Booking</button>' +
-      '<button type="button" data-tk="checkin"' + on('checkin') + '>Check-in</button>' +
-      '<button type="button" data-tk="room_change"' + on('room_change') + '>Room change</button>' +
-      '<button type="button" data-tk="afterhours"' + on('afterhours') + '>Follow-ups</button>' +
-      '<button type="button" data-tk="checkout"' + on('checkout') + '>Check-out</button></div>';
-  }
   function isBkKind(k) { return k === 'booking' || k === 'room_change'; }
   function curTpl() { return S.tk === 'checkout' ? S.cot : S.tk === 'afterhours' ? S.fur : isBkKind(S.tk) ? S.bkt : S.tpl; }
   function setTplKind(k) {
     if (k === S.tk) return;
     if (S.tplDirty && !window.confirm('Leave the template without saving?')) return;
-    var b = curTpl() || (S.tplPick ? { building: S.tplPick } : null) || ($('tplB').value ? { building: $('tplB').value } : null);
+    var b = curTpl() || (S.tplPick ? { building: S.tplPick } : null) || (S.tplCur ? { building: S.tplCur } : null);
     S.tplDirty = false; S.tk = k; S.tpl = null; S.cot = null; S.fur = null; S.bkt = null; S.furPick = null; S.tplPick = b ? b.building : null;
     renderTemplates();
   }
@@ -2394,9 +2455,10 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   var KIND_STATE = { reviewed: ['ready', 'Reviewed'], draft: ['missing', 'Draft'], none: ['skipped', 'None'] };
   function tplChipsHtml(m) {
     if (!m) return '';
+    // In the order a tenant gets them: booking, check-in, room change, after-hours follow-ups, check-out.
     return ['booking', 'checkin', 'room_change', 'afterhours', 'checkout'].map(function (k) {
       var st = kindState(m, k); if (!st) return '';
-      return '<button type="button" class="chip' + (S.tk === k ? ' on' : '') + '" data-tk="' + k + '">' + esc(KIND_LABEL[k]) +
+      return '<button type="button" class="chip' + (S.tk === k ? ' on' : '') + '" data-tk="' + k + '" role="tab" aria-selected="' + (S.tk === k) + '">' + esc(KIND_LABEL[k]) +
         '<span class="st st-' + KIND_STATE[st][0] + ' sub">' + esc(KIND_STATE[st][1]) + '</span></button>';
     }).join('');
   }
@@ -2418,16 +2480,15 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function cotCopyPicker(t) {
     var src = buildingList().filter(function (m) { return m.building !== t.building && m.co; });
     if (!src.length) return '';
-    return '<label><span>Copy from <small>· fills this form with another building’s check-out template; nothing is saved until you press Save</small></span>' +
-      '<select class="sel" name="cot_copy_from"><option value="">— pick a building —</option>' +
+    return '<select class="sel tcopy" name="cot_copy_from" aria-label="Copy from another building" title="Fills this form with another building’s check-out template; nothing is saved until you press Save"><option value="">Copy from another building…</option>' +
       src.map(function (m) { return '<option value="' + esc(m.building) + '">' + esc((m.co.reviewed ? '✓ ' : '') + m.building) + '</option>'; }).join('') +
-      '</select></label>';
+      '</select>';
   }
   function renderCotForm() {
     var t = S.cot;
     $('tplState').textContent = t.reviewed ? 'Reviewed' + (t.reviewed_by ? ' by ' + t.reviewed_by : '') + (t.reviewed_at ? ', ' + clock(t.reviewed_at) : '') : (t.exists ? 'Not reviewed' : 'No check-out template yet');
     var banner = t.reviewed ? '<p class="warnbox good">Reviewed — check-out messages for this building send automatically.</p>'
-      : '<p class="warnbox bad">Not reviewed — check-out messages for this building won’t send.</p>';
+      : '<p class="warnbox tstat"><span>Not reviewed — check-out messages for this building won’t send.</span><button type="button" class="btn btn-primary" data-cot="review">Save &amp; mark reviewed</button></p>';
     var sec = t.sections.map(function (s, i) {
       return '<div class="sect" data-i="' + i + '"><div class="sbar"><button type="button" class="sbtn" data-sec="up" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up">↑</button>' +
         '<button type="button" class="sbtn" data-sec="down" ' + (i === t.sections.length - 1 ? 'disabled' : '') + ' aria-label="Move down">↓</button>' +
@@ -2436,8 +2497,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
     }).join('');
     $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + banner +
-      '<form class="tf" id="cotForm" autocomplete="off">' + cotCopyPicker(t) +
-      '<label><span>City</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>' +
+      '<form class="tf" id="cotForm" autocomplete="off">' + tplCityField(t) +
       '<label><span>Subject <small>· {first_name} and {building} are filled in</small></span><input class="inp" name="subject" value="' + esc(t.subject) + '" placeholder="' + esc(CO_DEFAULTS.subject) + '" /></label>' +
       '<label><span>Intro <small>· after “Hi {first_name},” · blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="Thank you for staying with Vanmates! Here is what to do before you leave {building}.">' + esc(t.intro) + '</textarea></label>' +
       '<label><span>Check-out time <small>· “before …” in the Move-out row</small></span><input class="inp" name="checkout_time" value="' + esc(t.checkout_time) + '" placeholder="10:00 am" /></label>' +
@@ -2447,7 +2507,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<label><span>Closing <small>· before the sign-off</small></span><textarea class="inp" name="closing" placeholder="We hope you enjoyed your stay!">' + esc(t.closing) + '</textarea></label>' +
       '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
       (t.reviewed ? '<button type="button" class="btn btn-ghost" data-cot="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-cot="review">Save &amp; mark reviewed</button>') +
-      '</div></form></div>' +
+      cotCopyPicker(t) + '</div></form></div>' +
       '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample move-out</span></div>' +
       '<div class="pv-subj" id="cotSubj"></div><iframe class="pv" id="cotPv" sandbox="" title="Check-out template preview" referrerpolicy="no-referrer"></iframe></div></div>';
     renderCotPreview();
@@ -2529,16 +2589,15 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function bktCopyPicker(t) {
     var src = buildingList().filter(function (m) { return m.building !== t.building && m.bk && m.bk[t.kind]; });
     if (!src.length) return '';
-    return '<label><span>Copy from <small>· fills this form with another building’s ' + esc(BK_LABEL[t.kind].toLowerCase()) + '; nothing is saved until you press Save</small></span>' +
-      '<select class="sel" name="bkt_copy_from"><option value="">— pick a building —</option>' +
+    return '<select class="sel tcopy" name="bkt_copy_from" aria-label="Copy from another building" title="Fills this form with another building’s ' + esc(BK_LABEL[t.kind].toLowerCase()) + '; nothing is saved until you press Save"><option value="">Copy from another building…</option>' +
       src.map(function (m) { return '<option value="' + esc(m.building) + '">' + esc((m.bk[t.kind].reviewed ? '✓ ' : '') + m.building) + '</option>'; }).join('') +
-      '</select></label>';
+      '</select>';
   }
   function renderBktForm() {
     var t = S.bkt, label = BK_LABEL[t.kind];
     $('tplState').textContent = t.reviewed ? 'Reviewed' + (t.reviewed_by ? ' by ' + t.reviewed_by : '') + (t.reviewed_at ? ', ' + clock(t.reviewed_at) : '') : (t.exists ? 'Draft — not reviewed' : 'No ' + label.toLowerCase() + ' template yet');
     var banner = t.reviewed ? '<p class="warnbox good">Reviewed — ' + esc(label.toLowerCase()) + ' emails for this building can use it.</p>'
-      : '<p class="warnbox bad">Draft — not reviewed. No ' + esc(label.toLowerCase()) + ' email is prepared from a draft.</p>';
+      : '<p class="warnbox tstat"><span>Draft — not reviewed. No ' + esc(label.toLowerCase()) + ' email is prepared from a draft.</span><button type="button" class="btn btn-primary" data-bkt="review">Save &amp; mark reviewed</button></p>';
     var sec = t.sections.map(function (s, i) {
       return '<div class="sect" data-i="' + i + '"><div class="sbar"><button type="button" class="sbtn" data-sec="up" ' + (i === 0 ? 'disabled' : '') + ' aria-label="Move up">↑</button>' +
         '<button type="button" class="sbtn" data-sec="down" ' + (i === t.sections.length - 1 ? 'disabled' : '') + ' aria-label="Move down">↓</button>' +
@@ -2547,9 +2606,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         '<textarea class="inp" data-st="text" placeholder="Section text">' + esc(s.text) + '</textarea></div>';
     }).join('');
     $('tplBody').innerHTML = '<div class="tsplit"><div class="tp card">' + banner +
-      '<form class="tf" id="bktForm" autocomplete="off">' + bktCopyPicker(t) +
+      '<form class="tf" id="bktForm" autocomplete="off">' +
       '<p class="note" style="margin:0">Placeholders, filled in for each tenant: ' + esc(BK_PLACEHOLDERS) + '. No door code or Wi-Fi is ever in this email.</p>' +
-      '<label><span>City</span><select class="sel" name="city">' + cityOpts(t.city, '—') + '</select></label>' +
+      tplCityField(t) +
       '<label><span>Subject <small>· blank = “' + esc(BK_SUBJECT[t.kind]) + '”</small></span><input class="inp" name="subject" value="' + esc(t.subject) + '" placeholder="' + esc(BK_SUBJECT[t.kind]) + '" /></label>' +
       '<label><span>Intro <small>· blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="Hi {first_name}, …">' + esc(t.intro) + '</textarea></label>' +
       '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Sections</div><div id="secs" style="display:grid;gap:8px">' + sec + '</div>' +
@@ -2557,7 +2616,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<label><span>Closing <small>· before the sign-off</small></span><textarea class="inp" name="closing" placeholder="See you soon!">' + esc(t.closing) + '</textarea></label>' +
       '<div class="tbtns"><button type="submit" class="btn btn-ghost">Save</button>' +
       (t.reviewed ? '<button type="button" class="btn btn-ghost" data-bkt="unreview">Un-review</button>' : '<button type="button" class="btn btn-primary" data-bkt="review">Save &amp; mark reviewed</button>') +
-      '</div></form></div>' +
+      bktCopyPicker(t) + '</div></form></div>' +
       '<div class="tp card tpv"><div class="pv-head" style="margin-top:0"><b>Preview</b><span class="muted" style="font-size:12px">sample tenant</span></div>' +
       '<div class="pv-subj" id="bktSubj"></div><iframe class="pv" id="bktPv" sandbox="" title="' + esc(label) + ' preview" referrerpolicy="no-referrer"></iframe></div></div>';
     renderBktPreview();
@@ -3114,12 +3173,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('moGroups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) moOpenRow(b.getAttribute('data-id')); });
     $('moPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-mo]'); if (b && !b.disabled) moAct(b.getAttribute('data-mo')); });
     $('moPanel').addEventListener('submit', function (e) { e.preventDefault(); moSaveFx(e.target); });
-    $('tplB').addEventListener('change', function () {
-      var cur = curTpl();
-      if (S.tplDirty && cur && !window.confirm('Discard unsaved changes to the ' + cur.building + ' template?')) { this.value = cur.building; return; }
-      S.tplDirty = false; S.tplPick = this.value; S.tpl = null; S.cot = null; S.fur = null; S.bkt = null; S.furPick = null; renderTemplates();
-    });
-    $('tplKind').addEventListener('click', function (e) { var b = e.target.closest('[data-tk]'); if (b) setTplKind(b.getAttribute('data-tk')); });
+    $('tplSide').addEventListener('click', function (e) { var b = e.target.closest('[data-tb]'); if (b) tplPickBuilding(b.getAttribute('data-tb')); });
+    $('tplQ').addEventListener('input', function () { S.tplQ = this.value; if (S.acc) renderTplSide(); });
+    $('tplInc').addEventListener('change', function () { S.tplInc = this.checked; if (S.acc) renderTplSide(); });
     $('tplChips').addEventListener('click', function (e) { var b = e.target.closest('[data-tk]'); if (b) setTplKind(b.getAttribute('data-tk')); });
     var tplIn = function (e) { if (S.tk === 'checkout') cotInput(e); else if (S.tk === 'afterhours') furInput(e); else if (isBkKind(S.tk)) bktInput(e); else tplInput(e); };
     $('tplBody').addEventListener('input', tplIn);
