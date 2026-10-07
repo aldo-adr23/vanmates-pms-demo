@@ -990,6 +990,19 @@ function roomsToCheck(rows) {
   return (rows || []).filter(function (r) { return rmMissing(r).length && (+r.upcoming_arrivals || 0) > 0; }).sort(rmSortRooms);
 }
 
+// Buildings with no room rows yet (only a roster, contract or saved building names them) -> empty roomsTree groups,
+// so the Rooms page still shows their card with + Add unit. blds: [{building, city, upcoming}]. With a search, the
+// building name must match it; without one, only buildings with someone coming show.
+function roomsEmptyBuildings(blds, rows, q, city) {
+  var have = {};
+  (rows || []).forEach(function (r) { have[str(r.building)] = 1; });
+  return (blds || []).filter(function (b) {
+    var n = str(b && b.building);
+    if (!n || have[n] || (city && b.city !== city)) return false;
+    return str(q) ? roomMatches({ building: n }, q) : (+b.upcoming || 0) > 0;
+  }).map(function (b) { return { building: str(b.building), city: str(b.city), rooms: 0, ready: 0, missing: 0, upcoming: +b.upcoming || 0, units: [] }; })
+    .sort(function (a, b) { return rmCmp(a.building, b.building); });
+}
 // access_import_issues row -> "Row 34 in tab ‘Cherry S’: unit unreadable" (reason codes read as words).
 function importIssueText(i) {
   var x = i || {};
@@ -1101,7 +1114,7 @@ var ArrCore = {
   checkoutMissingLabel: checkoutMissingLabel, CO_MISSING_ORDER: CO_MISSING_ORDER,
   buildFollowupEmail: buildFollowupEmail, followupEmailSpec: followupEmailSpec, followupReadiness: followupReadiness,
   followupMissingLabel: followupMissingLabel, FU_MISSING_ORDER: FU_MISSING_ORDER,
-  roomMatches: roomMatches, roomsFilter: roomsFilter, roomsTree: roomsTree, roomsToCheck: roomsToCheck, roomTitle: roomTitle,
+  roomMatches: roomMatches, roomsFilter: roomsFilter, roomsTree: roomsTree, roomsEmptyBuildings: roomsEmptyBuildings, roomsToCheck: roomsToCheck, roomTitle: roomTitle,
   roomOptionLabel: roomOptionLabel, roomSaved: roomSaved, roomMissingLabel: roomMissingLabel, importIssueText: importIssueText,
   groupImportIssues: groupImportIssues, nextArrivalByRoom: nextArrivalByRoom, roomNext: roomNext, roomPreviewInput: roomPreviewInput,
   roomPick: roomPick,
