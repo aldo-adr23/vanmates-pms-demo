@@ -144,10 +144,18 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
 .chip.on { background: var(--red); border-color: var(--red); color: var(--on-red); }
 .chip .n { opacity: .75; font-weight: 700; }
 
-.kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
-.kpi { padding: 10px 12px; }
-.kpi .k { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.kpi { padding: 10px 12px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; width: 100%; font: inherit; color: var(--ink); cursor: pointer; min-width: 0; }
+.kpi:hover { background: var(--cream-2); }
+.kpi:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.kpi.on { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-soft); }
+.kpi .k { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.kpi.on .k { color: var(--red); }
 .kpi .v { font-family: var(--serif); font-size: 24px; font-weight: 700; line-height: 1.15; }
+.kpi .ksub { font-size: 12px; color: var(--muted); }
+.kcell { position: relative; min-width: 0; }
+.kcell .kpi { height: 100%; }
+.kinfo { position: absolute; top: 8px; right: 8px; }
 .ibtn { border: 0; background: transparent; padding: 0; width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; color: var(--muted); }
 .ibtn:hover { color: var(--ink); background: var(--cream-2); }
 .ibtn svg { width: 14px; height: 14px; }
@@ -185,6 +193,15 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
 .st-scheduled, .st-due { background: var(--green-soft); color: var(--b-green); }
 .st.sub { font-size: 11px; font-weight: 600; padding: 1px 8px; }
 .fusec { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.sendsec { margin: 4px 0 12px; }
+.sendsec h3 { margin: 0 0 6px; font-family: var(--serif); font-size: 15px; }
+.sends { list-style: none; margin: 0 0 6px; padding: 0; }
+.send { display: flex; flex-direction: column; gap: 1px; padding: 6px 0 6px 10px; border-left: 3px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
+.send + .send { margin-top: 4px; }
+.send span { color: var(--muted); font-size: 12.5px; }
+.send-opened { border-left-color: var(--green); }
+.send-failed { border-left-color: var(--red); }
+.send-failed span { color: var(--red); }
 .fusec h3 { margin: 0 0 6px; font-family: var(--serif); font-size: 17px; }
 .fuitem + .fuitem { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 12px; }
 .fusec iframe.pv { height: 520px; }
@@ -332,7 +349,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   body[data-panel="open"] .panel { display: block; }
   body[data-panel="open"] { overflow: hidden; }
   .pclose { display: grid; }
-  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .erow.b, .erow.bz, .erow.u, .erow.r { grid-template-columns: 1fr 1fr; }
   .rrow { grid-template-columns: minmax(0, 1fr) auto; }
   .rrow .rn { grid-column: 1 / -1; grid-row: 2; }
@@ -388,8 +405,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       <button type="button" class="btn btn-primary" id="sendAll" disabled>Send all ready (0)</button>
       <input type="file" id="rosterFile" accept=".xlsx,.xls,.csv" hidden />
     </div>
-    <div class="kpis" id="kpis"></div>
-    <div class="chips" id="chips" style="margin-bottom:10px"></div>
+    <div class="kpis" id="kpis" role="group" aria-label="Show arrivals"></div>
     <div class="split">
       <div id="groups"><div class="empty">Loading…</div></div>
       <aside class="panel card" id="panel"></aside>
@@ -452,7 +468,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-landlords4"></script>
+<script src="arrivals-core.js?v=2026-10-07-sends1"></script>
 <script>
 (function () {
   'use strict';
@@ -477,6 +493,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     mo: { wk: A.weekendOf(new Date()), city: '', filter: 'all', rows: [], nodate: [], openId: null, seq: 0, busy: false, setup: true },
     tk: 'checkin', cot: null, coTpls: null, bkt: null, bkTpls: undefined, zoho: false,
     fu: [], fuBy: {}, fuErr: '', fuRules: undefined, fur: null, furPick: null,
+    // one line per check-in email sent (arrival-sends-2026-10-07.sql); sendsBy null = view not there yet
+    sendsBy: null, sendsErr: '',
     // contract arrivals (contract-arrivals-2026-10-06.sql): Check-ins source filter + the Bookings sub-view
     av: 'checkins', source: '',
     bk: { setup: false, city: '', filter: 'todo', todo: [], rows: [], openId: null, draft: null, seq: 0, busy: false } };
@@ -594,7 +612,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var seq = ++S.seq;
     renderWeek();
     if (!S.rows.length) $('groups').innerHTML = '<div class="empty card">Loading…</div>';
-    var rows, fu;
+    var rows, fu, sends;
     try {
       var res = await Promise.all([
         selectAll('arrivals_v', '*', function (q) {
@@ -602,9 +620,10 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
           if (S.city) q = q.eq('city', S.city);
           return q.order('arrival_date', { ascending: true }).order('id', { ascending: true });
         }),
-        fuLoadWeek()
+        fuLoadWeek(),
+        sendsLoadWeek()
       ]);
-      rows = res[0]; fu = res[1];
+      rows = res[0]; fu = res[1]; sends = res[2];
     } catch (e) {
       if (seq !== S.seq) return;
       $('groups').innerHTML = '<div class="gate card">Could not load arrivals: ' + esc(e && e.message) + '</div>';
@@ -613,6 +632,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (seq !== S.seq) return;
     S.rows = rows.filter(function (r) { return srcMatch(r, S.source); });
     fuIndex(fu);
+    sendsIndex(sends);
     if (S.openId && !byId(S.openId)) S.openId = null;
     renderArrivals();
   }
@@ -622,14 +642,47 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('wkLabel').innerHTML = esc(w.title) + '<small>' + esc(w.range) + '</small>';
     $('wkLabel').title = w.label;
   }
-  function notOpened24(r) { return r.status === 'sent' && !r.opened_at && !!r.sent_at && Date.now() - Date.parse(r.sent_at) > 86400000; }
-  var FILTERS = [['all', 'All'], ['missing', 'Missing'], ['ready', 'Ready'], ['sent', 'Sent'], ['notopened', 'Not opened 24h'], ['failed', 'Failed'], ['dropped', 'Not in latest roster']];
-  function matches(r, f) {
-    if (f === 'all') return true;
-    if (f === 'notopened') return notOpened24(r);
-    if (f === 'dropped') return !!r.not_in_latest_roster && r.status !== 'cancelled' && r.status !== 'handled';
-    return r.status === f;
+  // Sent more than 24h ago with no open on the LATEST email (per-email rows when arrival_sends_v is there, else the
+  // arrival's totals).
+  function notOpened24(r) { return latestNotOpened24(r, S.sendsBy ? S.sendsBy[r.id] : null, Date.now()); }
+
+  // ───────── Check-in cards (the filters): To fix · Ready to send · Sent · All ─────────
+  var CARDS = [['fix', 'To fix'], ['ready', 'Ready to send'], ['sent', 'Sent'], ['all', 'All']];
+  function isClosed(r) { return r.status === 'cancelled' || r.status === 'handled'; }
+  // Missing info, a failed send, or dropped from the latest roster (each arrival once).
+  function isToFix(r) { return r.status === 'missing' || r.status === 'failed' || (!!r.not_in_latest_roster && !isClosed(r)); }
+  function cardMatch(r, f) {
+    if (f === 'fix') return isToFix(r);
+    if (f === 'ready') return r.status === 'ready' && !r.not_in_latest_roster;
+    if (f === 'sent') return r.status === 'sent';
+    return true;
   }
+  function latestNotOpened24(r, list, now) {
+    if (!r || r.status !== 'sent') return false;
+    var last = list && list.length ? sendsLatest(list) : null;
+    if (last) return !last.opened_at && !!last.sent_at && now - Date.parse(last.sent_at) > 86400000;
+    return !r.opened_at && !!r.sent_at && now - Date.parse(r.sent_at) > 86400000;
+  }
+  // rows -> { fix, ready, sent, all, notOpened }; notOpened(r) says whether a sent row's latest email is unopened 24h+.
+  function cardCounts(rows, notOpened) {
+    var c = { fix: 0, ready: 0, sent: 0, all: 0, notOpened: 0 };
+    (rows || []).forEach(function (r) {
+      c.all++;
+      CARDS.forEach(function (k) { if (k[0] !== 'all' && cardMatch(r, k[0])) c[k[0]]++; });
+      if (r.status === 'sent' && notOpened(r)) c.notOpened++;
+    });
+    return c;
+  }
+  function cardsHtml(c, on) {
+    return CARDS.map(function (k) {
+      var sel = on === k[0];
+      var sub = k[0] === 'sent' ? '<span class="ksub">' + esc(c.notOpened) + ' not opened</span>' : '';
+      var card = '<button type="button" class="kpi card' + (sel ? ' on' : '') + '" data-card="' + k[0] + '" aria-pressed="' + (sel ? 'true' : 'false') + '">' +
+        '<span class="k">' + esc(k[1]) + '</span><span class="v">' + esc(c[k[0]]) + '</span>' + sub + '</button>';
+      return k[0] === 'sent' ? '<div class="kcell">' + card + '<button type="button" class="ibtn kinfo" id="openInfo" aria-label="About open tracking" title="About open tracking">' + INFO_SVG + '</button></div>' : card;
+    }).join('');
+  }
+  // end check-in cards
   function canSend(r) { return (r.status === 'ready' || r.status === 'failed') && !(r.missing && r.missing.length); }
   function roomText(r) {
     var p = [];
@@ -638,33 +691,117 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return p.join(' · ') || '—';
   }
   function chipHtml(r) { var c = A.statusChip(r); return '<span class="st st-' + esc(c.cls) + '" title="' + esc(c.label) + '">' + esc(c.label) + '</span>'; }
+  // The row's open line: the LATEST email's open state when per-email rows are loaded, else the arrival's totals.
   function openText(r) {
-    if (r.opened_at) return 'Opened ' + clock(r.opened_at) + (r.open_count > 1 ? ' (' + r.open_count + '×)' : '');
+    var per = S.sendsBy ? sendsOpenText(S.sendsBy[r.id], Date.now()) : '';
+    if (per) return per;
+    if (r.opened_at) return 'Opened ' + clock(r.opened_at) + (r.open_count > 1 ? ' · ' + r.open_count + ' opens' : '');
     if (r.status === 'sent') return notOpened24(r) ? 'Not opened in 24h' : 'Not opened yet';
     return '';
   }
+  // ───────── Emails sent (arrival-sends-2026-10-07.sql) ─────────
+  // One arrival_sends_v row per check-in email claimed: #seq, first send or resend, sent at / by, its OWN opens
+  // (every email has its own pixel token), or the failure. Rows backfilled from before per-email tracking shared one
+  // pixel: opens_unattributed, and their opens all sit on the last of them.
+  function sendsSetupMissing(e) {
+    if (!e) return false;
+    if (e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST200') return true;
+    return /(arrival_sends_v|arrival_sends)/.test(String(e.message || '')) && /(does not exist|schema cache|could not find)/i.test(String(e.message || ''));
+  }
+  // Gmail / n8n errors in words; the raw text (shortened) when nothing matches.
+  function sendErrWords(e) {
+    var t = str(e);
+    if (!t) return 'no reason given';
+    if (/invalid (to|recipient)|recipient address|invalid email|address rejected|bad_email/i.test(t)) return 'the email address was rejected';
+    if (/invalid_grant|unauthori[sz]ed|\b401\b|credential|token (has been )?expired/i.test(t)) return 'the Gmail connection needs signing in again';
+    if (/\b429\b|rate ?limit|quota|too many/i.test(t)) return 'Gmail’s sending limit was reached — try again later';
+    if (/timed? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up/i.test(t)) return 'Gmail didn’t answer in time';
+    return t.length > 200 ? t.slice(0, 200) + '…' : t;
+  }
+  // One send row -> { cls, head, tail } in plain text (escaped at render).
+  function sendLine(s, now) {
+    var n = '#' + (parseInt(s.seq, 10) || '?');
+    if (s.status === 'failed') {
+      return { cls: 'failed', head: n + ' ' + (s.resend ? 'Resend' : 'Send') + ' failed' + (s.claimed_at ? ' ' + clock(s.claimed_at) : ''), tail: 'Not delivered: ' + sendErrWords(s.last_error) };
+    }
+    if (s.status === 'claimed') {
+      var fresh = s.claimed_at && now - Date.parse(s.claimed_at) < 600000;
+      return { cls: 'sending', head: n + ' ' + (s.resend ? 'Resend' : 'Send') + ' started ' + clock(s.claimed_at),
+        tail: fresh ? 'Sending…' : 'No confirmation from Gmail — check Sent mail before resending' };
+    }
+    var head = n + ' ' + (s.resend ? 'Resent' : 'Sent') + ' ' + clock(s.sent_at) + (str(s.sent_by) ? ' by ' + str(s.sent_by) : '');
+    var cnt = parseInt(s.open_count, 10) || 0;
+    if (!s.opened_at) return { cls: 'sent', head: head, tail: 'Not opened yet' };
+    return { cls: 'opened', head: head, tail: 'Opened ' + clock(s.opened_at) + ' (' + cnt + '×)' + (cnt > 1 && s.last_opened_at ? ', last ' + clock(s.last_opened_at) : '') };
+  }
+  // The LATEST sent email of a list (by seq), or null.
+  function sendsLatest(list) {
+    var sent = (list || []).filter(function (s) { return s.status === 'sent'; });
+    return sent.length ? sent[sent.length - 1] : null;
+  }
+  // The arrival row's open line from its emails: the LATEST sent email's open state, never the merged count.
+  // '' when there is no sent email (the caller falls back to the arrival's totals).
+  function sendsOpenText(list, now) {
+    var sent = (list || []).filter(function (s) { return s.status === 'sent'; });
+    if (!sent.length) return '';
+    var last = sent[sent.length - 1], newest = list[list.length - 1];
+    var cnt = parseInt(last.open_count, 10) || 0;
+    var late = !last.opened_at && last.sent_at && now - Date.parse(last.sent_at) > 86400000;
+    var t;
+    if (sent.length === 1) t = last.opened_at ? 'Opened ' + clock(last.opened_at) + (cnt > 1 ? ' · ' + cnt + ' opens' : '') : (late ? 'Not opened in 24h' : 'Not opened yet');
+    else t = 'Sent ' + sent.length + '× · ' + (last.opened_at ? 'latest opened ' + clock(last.opened_at) : (late ? 'latest not opened in 24h' : 'latest not opened'));
+    if (newest && newest.status === 'failed') t += ' · last ' + (newest.resend ? 'resend' : 'send') + ' failed';
+    return t;
+  }
+  // The side-panel list, newest first. '' when there are no rows (or the view isn't there: list null).
+  function sendsPanelHtml(list, now) {
+    if (!list || !list.length) return '';
+    var shared = list.filter(function (s) { return s.opens_unattributed; });
+    var note = '';
+    if (shared.length) {
+      var hi = shared.reduce(function (m, s) { return Math.max(m, parseInt(s.seq, 10) || 0); }, 0);
+      note = '<p class="note">Emails #1–#' + esc(hi) + ' were sent before each email had its own tracking, so their opens can’t be split per email: they are all counted on #' + esc(hi) + '.</p>';
+    }
+    return '<div class="sendsec"><h3>Emails sent</h3><ul class="sends">' + list.slice().reverse().map(function (s) {
+      var l = sendLine(s, now);
+      return '<li class="send send-' + esc(l.cls) + '"><b>' + esc(l.head) + '</b><span>' + esc(l.tail) + '</span></li>';
+    }).join('') + '</ul>' + note + '</div>';
+  }
+  // end sendsPanelHtml
+  // The weekend's send rows; null when the SQL isn't applied, [] (and S.sendsErr) on any other error — the arrivals
+  // list never waits on this.
+  function sendsLoadWeek() {
+    S.sendsErr = '';
+    return selectAll('arrival_sends_v', '*', function (q) {
+      q = q.gte('arrival_date', S.wk.start).lte('arrival_date', S.wk.end);
+      if (S.city) q = q.eq('city', S.city);
+      return q.order('arrival_id', { ascending: true }).order('seq', { ascending: true });
+    }).catch(function (e) {
+      if (sendsSetupMissing(e)) return null;
+      S.sendsErr = String((e && e.message) || 'unknown error');
+      return [];
+    });
+  }
+  function sendsIndex(rows) {
+    if (!rows) { S.sendsBy = null; return; }
+    S.sendsBy = {};
+    rows.forEach(function (x) { (S.sendsBy[x.arrival_id] || (S.sendsBy[x.arrival_id] = [])).push(x); });
+    Object.keys(S.sendsBy).forEach(function (k) { S.sendsBy[k].sort(function (a, b) { return a.seq - b.seq; }); });
+  }
+  // end emails sent
+
   var INFO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>';
 
   function renderArrivals() {
-    var c = A.counts(S.rows);
-    $('kpis').innerHTML = [
-      ['Arriving', c.arriving], ['Ready', c.ready], ['Missing', c.missing], ['Sent', c.sent],
-      ['Opened', c.opened, true], ['Failed', c.failed]
-    ].map(function (k) {
-      return '<div class="kpi card"><div class="k">' + esc(k[0]) + (k[2] ? ' <button type="button" class="ibtn" id="openInfo" aria-label="About open tracking" title="About open tracking">' + INFO_SVG + '</button>' : '') + '</div><div class="v">' + esc(k[1]) + '</div></div>';
-    }).join('');
-    $('chips').innerHTML = FILTERS.map(function (f) {
-      var n = S.rows.filter(function (r) { return matches(r, f[0]); }).length;
-      return '<button type="button" class="chip' + (S.filter === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + esc(f[1]) + ' <span class="n">' + n + '</span></button>';
-    }).join('');
+    $('kpis').innerHTML = cardsHtml(cardCounts(S.rows, notOpened24), S.filter);
     var ready = A.batchReady(S.rows);
     $('sendAll').textContent = 'Send all ready (' + ready.length + ')';
     $('sendAll').disabled = !ready.length || S.busy;
 
-    var list = S.rows.filter(function (r) { return matches(r, S.filter); });
+    var list = S.rows.filter(function (r) { return cardMatch(r, S.filter); });
     if (!list.length) {
-      $('groups').innerHTML = '<div class="empty card"><b>' + (S.rows.length ? 'Nothing in this filter' : 'No arrivals this weekend') + '</b>' +
-        (S.rows.length ? 'Try another status.' : 'Rosters land here when the school emails them.') + '</div>';
+      $('groups').innerHTML = '<div class="empty card"><b>' + (S.rows.length ? 'Nothing here' : 'No arrivals this weekend') + '</b>' +
+        (S.rows.length ? 'Pick another card.' : 'Rosters land here when the school emails them.') + '</div>';
     } else {
       $('groups').innerHTML = A.groupByBuilding(list).map(function (g) {
         var unreviewed = g.arrivals.some(function (r) { return !r.template_reviewed; });
@@ -696,6 +833,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     var miss = Array.isArray(r.missing) ? r.missing : [];
     var has = function (k) { return miss.indexOf(k) !== -1; };
+    var sendList = S.sendsBy ? (S.sendsBy[r.id] || []) : null;
+    var perEmail = !!(sendList && sendList.length);
     var facts = [
       ['Arrives', A.longDate(r.arrival_date) + (str(r.arrival_time) ? ' · ' + str(r.arrival_time) : '')],
       ['Checks out', r.checkout_date ? A.longDate(r.checkout_date) : ''],
@@ -704,9 +843,10 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       ['Lease type', isContract(r) ? leaseText(r.lease_type) : ''],
       ['Booking reference', isContract(r) ? str(r.booking_ref) : ''],
       ['Roster', str(r.roster_filename)],
-      ['Sent', r.sent_at ? clock(r.sent_at) + (r.sent_by ? ' by ' + r.sent_by : '') : ''],
-      ['Opened', r.opened_at ? clock(r.opened_at) + (r.open_count > 1 ? ' · ' + r.open_count + ' opens, last ' + clock(r.last_opened_at) : '') : (r.status === 'sent' ? 'Not yet' : '')],
-      ['Error', r.status === 'failed' || (r.last_error && r.status === 'sent') ? str(r.last_error) : '']
+      // per-email lines (Emails sent) replace the merged Sent / Opened / Error facts when arrival_sends_v has rows
+      ['Sent', !perEmail && r.sent_at ? clock(r.sent_at) + (r.sent_by ? ' by ' + r.sent_by : '') : ''],
+      ['Opened', perEmail ? '' : r.opened_at ? clock(r.opened_at) + (r.open_count > 1 ? ' · ' + r.open_count + ' opens, last ' + clock(r.last_opened_at) : '') : (r.status === 'sent' ? 'Not yet' : '')],
+      ['Error', !perEmail && (r.status === 'failed' || (r.last_error && r.status === 'sent')) ? str(r.last_error) : '']
     ].filter(function (f) { return str(f[1]); });
 
     var acts = [];
@@ -752,6 +892,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + chipHtml(r) + (isContract(r) ? ' ' + contractTag() : '') + '</div></div>' +
       '<button type="button" class="pclose" data-act="close" aria-label="Close">✕</button></div>' +
       '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
+      sendsPanelHtml(sendList, Date.now()) + (S.sendsErr && r.sent_at ? '<p class="note">Could not load the emails sent: ' + esc(S.sendsErr) + '</p>' : '') +
       warn + '<div class="pact">' + acts.join('') + '</div>' + fx + fuPanelHtml(r) +
       '<div class="pv-head"><b>Email preview</b><span class="muted" style="font-size:12px">' + esc(r.student_email || 'no email yet') + '</span></div>' +
       '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
@@ -926,7 +1067,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     infoSheet('About “opened”', '<p>Opens are counted with a tiny image in the email. It’s a hint, not proof:</p><ul style="padding-left:18px;margin:0">' +
       '<li>Apple Mail (Privacy Protection) loads images on its own, so some emails show as opened when nobody read them.</li>' +
       '<li>Gmail and Outlook users who block images never report an open, even after reading.</li>' +
-      '<li>“Not opened 24h” is worth a WhatsApp nudge, not a resend by default.</li></ul>');
+      '<li>“Not opened” on the Sent card (the latest email, sent over 24h ago) is worth a WhatsApp nudge, not a resend by default.</li></ul>');
   }
 
   // ───────── Move-outs tab (automatic check-out messages, checkout_messages_v) ─────────
@@ -2881,8 +3022,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('wkPrev').addEventListener('click', function () { S.wk = A.shiftWeekend(S.wk, -1); S.openId = null; S.rows = []; loadArrivals(); });
     $('wkNext').addEventListener('click', function () { S.wk = A.shiftWeekend(S.wk, 1); S.openId = null; S.rows = []; loadArrivals(); });
     $('cityF').addEventListener('change', function () { S.city = this.value; S.openId = null; loadArrivals(); });
-    $('chips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.filter = b.getAttribute('data-f'); renderArrivals(); } });
-    $('kpis').addEventListener('click', function (e) { if (e.target.closest('#openInfo')) openInfo(); });
+    $('kpis').addEventListener('click', function (e) {
+      if (e.target.closest('#openInfo')) { openInfo(); return; }
+      var b = e.target.closest('[data-card]');
+      if (b) { S.filter = b.getAttribute('data-card'); renderArrivals(); var f = document.querySelector('#kpis [data-card="' + S.filter + '"]'); if (f) f.focus(); }
+    });
     $('sendAll').addEventListener('click', sendAll);
     $('uploadRoster').addEventListener('click', function () { if (!S.uploading) $('rosterFile').click(); });
     $('rosterFile').addEventListener('change', function () { var f = this.files && this.files[0]; $('rosterFile').value = ''; if (f) uploadRoster(f); });
