@@ -504,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-rowsend1"></script>
+<script src="arrivals-core.js?v=2026-10-07-housesample2"></script>
 <script>
 (function () {
   'use strict';
@@ -2374,7 +2374,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var u = Object.keys(m.units).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
     var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
     var sat = S.wk.saturday;
-    var unit = (u && u.unit) || (r && r.unit) || '1203';
+    var unit = sampleUnit(m, (u && u.unit) || (r && r.unit));
     var z = zSampleAccess(m, unit, r);
     return {
       arrival: { student_name: 'Alex Sample', building: t.building, unit: unit, bed: 'B', arrival_date: sat, checkout_date: addDaysYmd(sat, 27) },
@@ -2391,6 +2391,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return { unit_door_code: str(ud.unit_door_code), buzzer: str(ud.buzzer), floor: str(ud.floor), whatsapp_url: str(ud.whatsapp_url),
       checkin_video_url: str(m && m.checkin_video_url), contact_url: str(m && m.contact_url), bed_type: str(r && r.bed_type) };
   }
+  // The sample's unit: a house has none (unit ''), so its preview shows no Apartment row; an apartment building without a
+  // saved unit gets a placeholder.
+  function sampleUnit(m, unit) { return unit || (m && m.building_type === 'house' ? '' : '1203'); }
   function renderTplPreview() {
     if (!S.tpl || !$('tplPv')) return;
     var s = sampleFor(S.tpl);
@@ -2546,7 +2549,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function coSample(t) {
     var m = S.acc[t.building] || { units: {}, rooms: {} };
     var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
-    return { student_name: 'Alex Sample', building: t.building, unit: (r && r.unit) || '1203', bed: 'B', room_label: (r && r.room_label) || 'Room B',
+    return { student_name: 'Alex Sample', building: t.building, unit: sampleUnit(m, r && r.unit), bed: 'B', room_label: (r && r.room_label) || 'Room B',
       checkout_date: S.mo.wk.saturday, template_reviewed: true, subject: t.subject, intro: t.intro, checkout_time: t.checkout_time,
       keys_text: t.keys_text, sections: t.sections, closing: t.closing };
   }
@@ -2656,7 +2659,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function bkSample(t) {
     var m = S.acc[t.building] || { units: {}, rooms: {} };
     var r = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
-    var unit = (r && r.unit) || '1203', z = zSampleAccess(m, unit, r), sat = S.wk.saturday;
+    var unit = sampleUnit(m, r && r.unit), z = zSampleAccess(m, unit, r), sat = S.wk.saturday;
     return {
       arrival: { student_name: 'Alex Sample', student_email: 'alex@example.com', building: t.building, unit: unit, bed: 'B',
         arrival_date: sat, checkout_date: addDaysYmd(sat, 120), lease_type: 'Fixed term', booking_ref: 'VM-SAMPLE' },
@@ -3015,7 +3018,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var m = S.acc[f.building] || { units: {}, rooms: {} };
     var u = Object.keys(m.units || {}).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
     var rm = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
-    var unit = (u && u.unit) || (rm && rm.unit) || '1203', z = zSampleAccess(m, unit, rm);
+    var unit = sampleUnit(m, (u && u.unit) || (rm && rm.unit)), z = zSampleAccess(m, unit, rm);
     return { student_name: 'Alex Sample', student_email: 'alex@example.com', building: f.building, city: f.city,
       unit_door_code: z.unit_door_code, buzzer: z.buzzer, floor: z.floor, whatsapp_url: z.whatsapp_url, checkin_video_url: z.checkin_video_url,
       contact_url: z.contact_url, bed_type: z.bed_type,
