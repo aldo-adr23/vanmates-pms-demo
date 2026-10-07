@@ -954,6 +954,16 @@
      Rides on .hb-view/.tn-view (tabs, slim table) and the .ct-panel drawer rows. Words,
      not traffic-light chips; terracotta only for what needs someone. */
   .ll-view .tn-banner b{font-weight:700}
+  .ll-view .ll-chips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0}
+  .ll-view .ll-chips .tn-pill .hb-n{margin-left:5px}
+  .ll-view .ll-chips .tn-pill.on .hb-n{color:inherit}
+  .ll-view .ll-grp td{cursor:pointer;user-select:none}
+  .ll-view .ll-grp:hover td{background:var(--cream-2)}
+  .ll-view .ll-grp .ll-caret{display:inline-block;width:14px;color:var(--muted);transition:transform .15s}
+  .ll-view .ll-grp.ll-shut .ll-caret{transform:rotate(-90deg)}
+  .ll-view .ll-grp b{font-weight:700;margin-right:6px}
+  .ll-view .ll-unit td:first-child{padding-left:34px}
+  .ll-view .ll-doc{margin-left:8px;font-size:12px}
   .ll-panel .ll-contract{padding:2px 0}
   .ll-panel .ll-hr{border:0;border-top:1px dashed var(--line);margin:14px 0}
   .ll-panel .panel-section-title .hb-link{font-size:12.5px}
@@ -1521,7 +1531,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-07-sends1"></script>
+<script src="pms-supabase.js?v=2026-10-07-landlords5"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2554,6 +2564,7 @@
       </div>
       <div id="ll-soon" class="card-sub hb-note tn-banner" hidden></div>
       <div class="hb-tabbar" role="tablist" id="ll-tabs"></div>
+      <div class="ll-chips" id="ll-chips" hidden></div>
       <div class="tn-tools">
         <input class="form-input tn-search" id="ll-q" type="search" placeholder="Search property, landlord, email or phone" autocomplete="off" spellcheck="false">
         <select class="form-input tn-select" id="ll-city" aria-label="City"><option value="">All cities</option></select>
@@ -9144,11 +9155,9 @@ function llModel(landlords, properties, today) {
   return { props, landlords: rows };
 }
 
-const LL_TABS = [
-  ["attention", "Needs attention"], ["soon", "Expiring soon"], ["expired", "Expired"],
-  ["missing", "Missing contract"], ["nolandlord", "No landlord"], ["review", "Under review"],
-  ["active", "Active"], ["all", "All"], ["archived", "Archived"],
-];
+// Four main tabs; the issue kinds are filters shown only under Needs attention.
+const LL_TABS = [["active", "Active"], ["attention", "Needs attention"], ["archived", "Archived"], ["all", "All"]];
+const LL_ISSUES = [["soon", "Expiring soon"], ["expired", "Expired"], ["missing", "Missing contract"], ["nolandlord", "No landlord"], ["review", "Under review"]];
 function llInTab(status, tab) {
   if (tab === "all") return status !== "archived";
   if (tab === "attention") return LL_STATUS[status].need;
@@ -9165,6 +9174,27 @@ function llSort(a, b) {
   const da = a.daysLeft == null ? 1e9 : a.daysLeft, db = b.daysLeft == null ? 1e9 : b.daysLeft;
   if (da !== db) return da - db;
   return String(a.name).localeCompare(String(b.name), undefined, { numeric: true });
+}
+
+// Building a unit belongs to: "Blood Alley · 403" → "Blood Alley", "The Stainsbury 101" → "The Stainsbury",
+// "Cherry 335 (East tower)" → "Cherry". A name without a unit number is its own building.
+function llBuilding(name) {
+  const s = String(name || "").trim();
+  const dot = s.split(" · ");
+  if (dot.length > 1) return dot[0].trim();
+  const m = s.match(/^(.*?\D)\s+\d{3,4}\b(?![-\d])/);
+  return m && m[1].trim().length > 2 ? m[1].trim() : s;
+}
+// Rows grouped by building. byUrgency: worst status first, then soonest end (for the issue tabs);
+// otherwise A–Z by building and unit number, which is how people look a property up.
+function llGroup(rows, byUrgency) {
+  const by = new Map();
+  const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  for (const r of rows) { const k = llBuilding(r.name); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+  const groups = [...by].map(([key, rs]) => ({ key, rows: rs.slice().sort(byUrgency ? llSort : (a, b) => nat(a.name, b.name)) }));
+  return groups.sort(byUrgency
+    ? (a, b) => llSort(Object.assign({}, a.rows[0], { name: a.key }), Object.assign({}, b.rows[0], { name: b.key }))
+    : (a, b) => nat(a.key, b.key));
 }
 
 // One CSV row per property (archived landlords with no inventory property appended), for the export button.
@@ -9188,7 +9218,7 @@ function llCsv(model) {
    or a landlord with its properties and leases. Statuses come from LL-CORE on the real
    clock (not the portal's frozen TODAY). Archive hides a landlord without deleting it.
    Writes go through vmDb.upsert('landlords'); only admins see the edit actions. */
-const LL_UI = { tab: "attention", view: "props", q: "", city: "", stack: [] };
+const LL_UI = { tab: "active", view: "props", q: "", city: "", shut: new Set() };
 function llToday() { return llYmd(new Date()); }
 function llCanEdit() { return typeof CURRENT_USER !== "undefined" && !!CURRENT_USER && CURRENT_USER.role === "admin"; }
 function llNow() { return llModel(landlords, properties, llToday()); }
@@ -9244,24 +9274,28 @@ function renderLandlords() {
   const active = M.landlords.filter((r) => !r.l.archived).length;
   const covered = M.props.filter((r) => r.status === "active").length;
   document.getElementById("ll-summary").textContent =
-    `${M.props.length} properties · ${active} landlords · ${covered} with a current contract · ${M.landlords.length - active} archived`;
+    `${M.props.length} properties · ${active} active landlords · ${covered} with a current contract`;
   const soon = M.props.filter((r) => r.status === "soon").sort(llSort);
   const banner = document.getElementById("ll-soon");
   banner.hidden = !soon.length;
   banner.innerHTML = soon.length
-    ? `<b>${soon.length} contract${soon.length === 1 ? "" : "s"} end within ${LL_SOON_DAYS} days</b> — follow up on renewal: ` +
-      soon.map((r) => `<button type="button" class="hb-link" data-ll-prop="${esc(r.name)}">${esc(r.name)}</button> (${esc(llWhen(r.daysLeft, r.contract.end, r.contract.monthToMonth))})`).join(", ")
+    ? `<b>${soon.length} lease${soon.length === 1 ? "" : "s"} end within ${LL_SOON_DAYS} days</b> · ` +
+      soon.map((r) => `<button type="button" class="hb-link" data-ll-prop="${esc(r.name)}">${esc(r.name)}</button> (${r.daysLeft} day${r.daysLeft === 1 ? "" : "s"})`).join(" · ") +
+      ` · <button type="button" class="hb-link" data-ll-tab="soon"><b>Show them</b></button>`
     : "";
 
   // Tabs with counts (counted in the current view, before search/city)
-  const tabSrc = () => (asLandlords ? M.landlords : M.props);
-  document.getElementById("ll-tabs").innerHTML = LL_TABS
-    .filter(([k]) => !(k === "nolandlord" && asLandlords))
-    .map(([k, label]) => {
-      const n = tabSrc(k).filter((r) => llInTab(r.status, k)).length;
-      const need = n && ["attention", "soon", "expired", "missing", "nolandlord", "review"].includes(k);
-      return `<button type="button" class="hb-tab${LL_UI.tab === k ? " on" : ""}" data-ll-tab="${k}" role="tab">${esc(label)}<span class="hb-n${need ? " hb-need-v" : ""}">${n}</span></button>`;
-    }).join("");
+  const src = asLandlords ? M.landlords : M.props;
+  const count = (k) => src.filter((r) => llInTab(r.status, k)).length;
+  const issue = LL_ISSUES.some(([k]) => k === LL_UI.tab);
+  document.getElementById("ll-tabs").innerHTML = LL_TABS.map(([k, label]) => {
+    const n = count(k), on = LL_UI.tab === k || (k === "attention" && issue);
+    return `<button type="button" class="hb-tab${on ? " on" : ""}" data-ll-tab="${k}" role="tab">${esc(label)}<span class="hb-n${k === "attention" && n ? " hb-need-v" : ""}">${n}</span></button>`;
+  }).join("");
+  const chips = document.getElementById("ll-chips");
+  chips.hidden = !(LL_UI.tab === "attention" || issue);
+  chips.innerHTML = chips.hidden ? "" : [["attention", "All issues"]].concat(LL_ISSUES.filter(([k]) => count(k)))
+    .map(([k, label]) => `<button type="button" class="tn-pill${LL_UI.tab === k ? " on" : ""}" data-ll-tab="${k}">${esc(label)}<span class="hb-n">${count(k)}</span></button>`).join("");
   document.querySelectorAll("[data-ll-view]").forEach((b) => b.classList.toggle("on", b.dataset.llView === (asLandlords ? "landlords" : "props")));
 
   // City options
@@ -9274,24 +9308,34 @@ function renderLandlords() {
     .filter((r) => asLandlords
       ? llMatches(LL_UI.q, [r.l.name, r.l.company, r.l.email, r.l.phone, r.props.join(" "), (r.l.properties || []).join(" ")])
       : llMatches(LL_UI.q, [r.name, r.addr, r.city, r.landlord && r.landlord.name, r.landlord && r.landlord.company, r.landlord && r.landlord.email, r.landlord && r.landlord.phone]))
-    .sort(llSort);
+    .sort(LL_UI.tab === "attention" || LL_ISSUES.some(([k]) => k === LL_UI.tab) ? llSort : (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
 
   document.getElementById("ll-thead").innerHTML = asLandlords
     ? `<tr><th>Landlord</th><th>Contact</th><th>Properties</th><th>Next contract end</th><th>Status</th></tr>`
     : `<tr><th>Property</th><th>Landlord</th><th>Contract</th><th>Status</th></tr>`;
-  document.getElementById("ll-body").innerHTML = list.map((r) => asLandlords ? `
+  const propRow = (r, unit) => `
+    <tr class="hb-row${unit ? " ll-unit" : ""}" tabindex="0" data-ll-prop="${esc(r.name)}">
+      <td><div class="tn-name">${esc(r.name)}</div><div class="hb-sub">${esc([r.addr, r.city].filter(Boolean).join(" · "))}</div></td>
+      <td>${r.landlord ? `${esc(r.landlord.name)}<div class="hb-sub">${esc(r.landlord.email || r.landlord.phone || "")}</div>` : `<span class="hb-sub">—</span>`}</td>
+      <td>${r.contract ? `${esc(llTerm(r.contract))}${llHasDoc(r.contract) ? `<button type="button" class="hb-link ll-doc" data-ll-doc="${esc(r.contract.id)}" data-ll-owner="${esc(r.landlord.id)}" title="Open the lease">${r.contract.docPath ? "PDF" : "Link"}</button>` : ""}<div class="hb-sub">${esc(llContractSub(r.contract))}</div>` : `<span class="hb-sub">—</span>`}</td>
+      <td>${llStatusHtml(r.status, r.contract ? llWhen(r.daysLeft, r.contract.end, r.contract.monthToMonth) : "")}</td>
+    </tr>`;
+  const groupHtml = (g) => {
+    if (g.rows.length < 2) return propRow(g.rows[0], false);
+    const shut = LL_UI.shut.has(g.key) && !LL_UI.q;
+    const owners = [...new Set(g.rows.map((r) => (r.landlord ? r.landlord.name : "")))];
+    const need = g.rows.filter((r) => LL_STATUS[r.status].need).length;
+    return `<tr class="hb-group ll-grp${shut ? " ll-shut" : ""}" data-ll-grp="${esc(g.key)}" tabindex="0" aria-expanded="${!shut}"><td colspan="4"><span class="ll-caret">▾</span><b>${esc(g.key)}</b>${g.rows.length} units${owners.length === 1 && owners[0] ? " · " + esc(owners[0]) : ""}${need ? ` · <span class="hb-need">${need} need${need === 1 ? "s" : ""} attention</span>` : ""}</td></tr>` +
+      (shut ? "" : g.rows.map((r) => propRow(r, true)).join(""));
+  };
+  const urgent = LL_UI.tab === "attention" || LL_ISSUES.some(([k]) => k === LL_UI.tab);
+  document.getElementById("ll-body").innerHTML = !asLandlords ? llGroup(list, urgent).map(groupHtml).join("") : list.map((r) => `
     <tr class="hb-row" tabindex="0" data-ll-open="${esc(r.l.id)}">
       <td><div class="tn-name">${esc(r.l.name)}</div><div class="hb-sub">${esc([r.l.company, LL_ROLES[r.l.role]].filter(Boolean).join(" · ") || r.city)}</div></td>
       <td>${esc(r.l.email || "—")}<div class="hb-sub">${esc(r.l.phone || "")}</div></td>
       <td>${r.props.length ? `${r.props.length} · ${esc(r.props.slice(0, 2).join(", "))}${r.props.length > 2 ? "…" : ""}` : `<span class="hb-sub">${r.stale.length || (r.l.properties || []).length ? "none in inventory" : "none linked"}</span>`}</td>
       <td>${r.nextEnd ? esc(fmtDate(r.nextEnd)) : "—"}</td>
       <td>${llStatusHtml(r.status, r.l.archived ? (r.l.archivedReason || "") : "")}</td>
-    </tr>` : `
-    <tr class="hb-row" tabindex="0" data-ll-prop="${esc(r.name)}">
-      <td><div class="tn-name">${esc(r.name)}</div><div class="hb-sub">${esc([r.addr, r.city].filter(Boolean).join(" · "))}</div></td>
-      <td>${r.landlord ? `${esc(r.landlord.name)}<div class="hb-sub">${esc(r.landlord.email || r.landlord.phone || "")}</div>` : `<span class="hb-sub">—</span>`}</td>
-      <td>${r.contract ? `${esc(llTerm(r.contract))}<div class="hb-sub">${esc(llContractSub(r.contract))}</div>` : `<span class="hb-sub">—</span>`}</td>
-      <td>${llStatusHtml(r.status, r.contract ? llWhen(r.daysLeft, r.contract.end, r.contract.monthToMonth) : "")}</td>
     </tr>`).join("");
   document.getElementById("ll-empty").hidden = list.length > 0;
   document.getElementById("ll-count").textContent = `${list.length} ${asLandlords ? "landlord" : "propert"}${asLandlords ? (list.length === 1 ? "" : "s") : (list.length === 1 ? "y" : "ies")}`;
@@ -9529,6 +9573,10 @@ function llInit() {
   if (!view || view.dataset.llWired) return;
   view.dataset.llWired = "1";
   view.addEventListener("click", (e) => {
+    const doc = e.target.closest("[data-ll-doc]");
+    if (doc) { e.stopPropagation(); llOpenDoc(doc.dataset.llOwner, doc.dataset.llDoc); return; }
+    const grp = e.target.closest("[data-ll-grp]");
+    if (grp) { const k = grp.dataset.llGrp; LL_UI.shut.has(k) ? LL_UI.shut.delete(k) : LL_UI.shut.add(k); renderLandlords(); return; }
     const t = e.target.closest("[data-ll-tab],[data-ll-view],[data-ll-prop],[data-ll-open]");
     if (!t) return;
     if (t.dataset.llTab) { LL_UI.tab = t.dataset.llTab; renderLandlords(); }
@@ -9538,7 +9586,7 @@ function llInit() {
   });
   view.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
-    const t = e.target.closest("tr[data-ll-prop],tr[data-ll-open]");
+    const t = e.target.closest("tr[data-ll-prop],tr[data-ll-open],tr[data-ll-grp]");
     if (t) t.click();
   });
   document.getElementById("ll-q").addEventListener("input", (e) => { LL_UI.q = e.target.value; renderLandlords(); });
