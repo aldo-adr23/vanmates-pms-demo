@@ -504,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-housesample2"></script>
+<script src="arrivals-core.js?v=2026-10-07-rowreopen1"></script>
 <script>
 (function () {
   'use strict';
@@ -858,7 +858,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
               '<span class="c-room">' + esc(roomText(r)) + '</span>' +
               '<span class="c-date">' + esc(shortDate(r.arrival_date)) + (str(r.arrival_time) ? ' · ' + esc(r.arrival_time) : '') + '</span>' +
               '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) +
-              (canSend(r) ? '<button type="button" class="btn btn-primary rsend" data-rsend="' + esc(r.id) + '">' + (r.status === 'failed' ? 'Retry' : 'Send') + '</button>' : '') + '</span></div>';
+              (canSend(r) ? '<button type="button" class="btn btn-primary rsend" data-rsend="' + esc(r.id) + '">' + (r.status === 'failed' ? 'Retry' : 'Send') + '</button>' : '') +
+              (r.status === 'handled' ? '<button type="button" class="btn btn-ghost rsend" data-rreopen="' + esc(r.id) + '">Reopen</button>' : '') + '</span></div>';
           }).join('') + '</section>';
       }).join('');
     }
@@ -1033,6 +1034,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var ok = await confirmSheet('Send to ' + (r.student_name || 'this student') + '?',
       '<p class="note">Their arrival email goes to ' + esc(r.student_email) + ' right away.</p>', 'Send');
     if (ok) await sendIds([r.id], false);
+  }
+  // Handled → open again, straight from the list (same RPC as the panel's Reopen). Reversible: no confirm.
+  async function rowReopen(btn) {
+    var r = byId(btn.getAttribute('data-rreopen'));
+    if (!r || r.status !== 'handled') return;
+    btn.disabled = true;
+    if (await rpc('arrivals_set_status', { p_id: r.id, p_status: 'open' })) { toast('Reopened'); await loadArrivals(); }
+    else btn.disabled = false;
   }
   async function act(name) {
     var r = byId(S.openId);
@@ -3127,6 +3136,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('groups').addEventListener('click', function (e) {
       var sb = e.target.closest('[data-rsend]');
       if (sb) { rowSend(sb.getAttribute('data-rsend')); return; }
+      var rb = e.target.closest('[data-rreopen]');
+      if (rb) { rowReopen(rb); return; }
       var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id'));
     });
     $('groups').addEventListener('keydown', function (e) {
