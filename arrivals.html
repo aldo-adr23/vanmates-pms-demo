@@ -177,6 +177,8 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
   text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 9px 14px; min-height: 48px; }
 .arow:last-child { border-bottom: 0; }
 .arow:hover { background: var(--cream); }
+.arow { cursor: pointer; }
+.arow .rsend { min-height: 26px; padding: 3px 12px; margin-top: 2px; }
 .arow.on { background: var(--cream-2); box-shadow: inset 3px 0 0 var(--red); }
 .arow .c-who, .arow .c-chip { min-width: 0; }
 .arow .c-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
@@ -502,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-housesample1"></script>
+<script src="arrivals-core.js?v=2026-10-07-rowsend1"></script>
 <script>
 (function () {
   'use strict';
@@ -850,11 +852,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         return '<section class="grp card"><div class="ghead"><b>' + esc(g.building) + '</b><span class="muted">' + esc(g.city) + ' · ' + n + ' arriving</span>' +
           (unreviewed ? '<span class="tag warn">Template not reviewed</span>' : '') + '</div>' +
           g.arrivals.map(function (r) {
-            return '<button type="button" class="arow' + (r.id === S.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
+            // a div, not a <button>: it holds the row's own Send button (no nested buttons)
+            return '<div role="button" tabindex="0" class="arow' + (r.id === S.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
               '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + (isContract(r) ? contractTag() + ' ' + esc(r.booking_ref || '') : esc(r.school || '—')) + '</small></span>' +
               '<span class="c-room">' + esc(roomText(r)) + '</span>' +
               '<span class="c-date">' + esc(shortDate(r.arrival_date)) + (str(r.arrival_time) ? ' · ' + esc(r.arrival_time) : '') + '</span>' +
-              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) + '</span></button>';
+              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) +
+              (canSend(r) ? '<button type="button" class="btn btn-primary rsend" data-rsend="' + esc(r.id) + '">' + (r.status === 'failed' ? 'Retry' : 'Send') + '</button>' : '') + '</span></div>';
           }).join('') + '</section>';
       }).join('');
     }
@@ -992,7 +996,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     await loadArrivals();
   }
   function setBusy(on) {
-    Array.prototype.forEach.call(document.querySelectorAll('#sendAll, [data-act="send"], [data-act="resend"]'), function (b) { b.disabled = on || (b.id === 'sendAll' && !A.batchReady(S.rows).length); });
+    Array.prototype.forEach.call(document.querySelectorAll('#sendAll, [data-act="send"], [data-act="resend"], [data-rsend]'), function (b) { b.disabled = on || (b.id === 'sendAll' && !A.batchReady(S.rows).length); });
     if (on) $('sendAll').textContent = 'Sending…';
   }
   function showResults(j, ids) {
@@ -1021,6 +1025,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<ul class="mlist">' + Object.keys(byB).sort().map(function (b) { return '<li><span>' + esc(b) + '</span><b>' + byB[b] + '</b></li>'; }).join('') + '</ul>',
       'Send ' + ready.length);
     if (ok) await sendIds(ready.map(function (r) { return r.id; }), false);
+  }
+  // The list row's own Send: one email, after a quick confirm (a row is easy to mis-click).
+  async function rowSend(id) {
+    var r = byId(id);
+    if (!r || !canSend(r)) return;
+    var ok = await confirmSheet('Send to ' + (r.student_name || 'this student') + '?',
+      '<p class="note">Their arrival email goes to ' + esc(r.student_email) + ' right away.</p>', 'Send');
+    if (ok) await sendIds([r.id], false);
   }
   async function act(name) {
     var r = byId(S.openId);
@@ -2362,7 +2374,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var u = Object.keys(m.units).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
     var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
     var sat = S.wk.saturday;
-    var unit = sampleUnit(m, (u && u.unit) || (r && r.unit));
+    var unit = (u && u.unit) || (r && r.unit) || '1203';
     var z = zSampleAccess(m, unit, r);
     return {
       arrival: { student_name: 'Alex Sample', building: t.building, unit: unit, bed: 'B', arrival_date: sat, checkout_date: addDaysYmd(sat, 27) },
@@ -2379,9 +2391,6 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return { unit_door_code: str(ud.unit_door_code), buzzer: str(ud.buzzer), floor: str(ud.floor), whatsapp_url: str(ud.whatsapp_url),
       checkin_video_url: str(m && m.checkin_video_url), contact_url: str(m && m.contact_url), bed_type: str(r && r.bed_type) };
   }
-  // The sample's unit: a house has none (unit ''), so its preview shows no Apartment row; an apartment building without a
-  // saved unit gets a placeholder.
-  function sampleUnit(m, unit) { return unit || (m && m.building_type === 'house' ? '' : '1203'); }
   function renderTplPreview() {
     if (!S.tpl || !$('tplPv')) return;
     var s = sampleFor(S.tpl);
@@ -2537,7 +2546,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function coSample(t) {
     var m = S.acc[t.building] || { units: {}, rooms: {} };
     var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
-    return { student_name: 'Alex Sample', building: t.building, unit: sampleUnit(m, r && r.unit), bed: 'B', room_label: (r && r.room_label) || 'Room B',
+    return { student_name: 'Alex Sample', building: t.building, unit: (r && r.unit) || '1203', bed: 'B', room_label: (r && r.room_label) || 'Room B',
       checkout_date: S.mo.wk.saturday, template_reviewed: true, subject: t.subject, intro: t.intro, checkout_time: t.checkout_time,
       keys_text: t.keys_text, sections: t.sections, closing: t.closing };
   }
@@ -2647,7 +2656,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function bkSample(t) {
     var m = S.acc[t.building] || { units: {}, rooms: {} };
     var r = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
-    var unit = sampleUnit(m, r && r.unit), z = zSampleAccess(m, unit, r), sat = S.wk.saturday;
+    var unit = (r && r.unit) || '1203', z = zSampleAccess(m, unit, r), sat = S.wk.saturday;
     return {
       arrival: { student_name: 'Alex Sample', student_email: 'alex@example.com', building: t.building, unit: unit, bed: 'B',
         arrival_date: sat, checkout_date: addDaysYmd(sat, 120), lease_type: 'Fixed term', booking_ref: 'VM-SAMPLE' },
@@ -3006,7 +3015,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var m = S.acc[f.building] || { units: {}, rooms: {} };
     var u = Object.keys(m.units || {}).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
     var rm = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
-    var unit = sampleUnit(m, (u && u.unit) || (rm && rm.unit)), z = zSampleAccess(m, unit, rm);
+    var unit = (u && u.unit) || (rm && rm.unit) || '1203', z = zSampleAccess(m, unit, rm);
     return { student_name: 'Alex Sample', student_email: 'alex@example.com', building: f.building, city: f.city,
       unit_door_code: z.unit_door_code, buzzer: z.buzzer, floor: z.floor, whatsapp_url: z.whatsapp_url, checkin_video_url: z.checkin_video_url,
       contact_url: z.contact_url, bed_type: z.bed_type,
@@ -3112,7 +3121,15 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('uploadRoster').addEventListener('click', function () { if (!S.uploading) $('rosterFile').click(); });
     $('rosterFile').addEventListener('change', function () { var f = this.files && this.files[0]; $('rosterFile').value = ''; if (f) uploadRoster(f); });
     $('uploadRefresh').addEventListener('click', function () { clearTimeout(S.uploadReload); $('uploadRefresh').hidden = true; loadArrivals(); });
-    $('groups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id')); });
+    $('groups').addEventListener('click', function (e) {
+      var sb = e.target.closest('[data-rsend]');
+      if (sb) { rowSend(sb.getAttribute('data-rsend')); return; }
+      var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id'));
+    });
+    $('groups').addEventListener('keydown', function (e) {
+      var b = e.target.classList && e.target.classList.contains('arow') ? e.target : null;
+      if (b && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRow(b.getAttribute('data-id')); }
+    });
     $('panel').addEventListener('click', function (e) {
       var f = e.target.closest('[data-fu]');
       if (f) { if (!f.disabled) fuAct(f.getAttribute('data-fu'), +f.getAttribute('data-fk')); return; }
