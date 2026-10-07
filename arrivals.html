@@ -504,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-merge3"></script>
+<script src="arrivals-core.js?v=2026-10-07-nounit1"></script>
 <script>
 (function () {
   'use strict';
@@ -2400,9 +2400,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return { unit_door_code: str(ud.unit_door_code), buzzer: str(ud.buzzer), floor: str(ud.floor), whatsapp_url: str(ud.whatsapp_url),
       checkin_video_url: str(m && m.checkin_video_url), contact_url: str(m && m.contact_url), bed_type: str(r && r.bed_type) };
   }
-  // The sample's unit: a house has none (unit ''), so its preview shows no Apartment row; an apartment building without a
-  // saved unit gets a placeholder.
-  function sampleUnit(m, unit) { return unit || (m && m.building_type === 'house' ? '' : '1203'); }
+  // The sample's unit: the one given, else the building's first real saved unit (from its units or rooms). A house, or a
+  // building with no units saved, gets none (unit ''), so its preview shows no Apartment row: never a made-up number.
+  function sampleUnit(m, unit) {
+    if (unit) return unit;
+    if (!m || m.building_type === 'house') return '';
+    var names = Object.keys(m.units || {}).concat(Object.keys(m.rooms || {}).map(function (k) { return str(m.rooms[k].unit); }));
+    return names.filter(Boolean).sort(natSort)[0] || '';
+  }
   function renderTplPreview() {
     if (!S.tpl || !$('tplPv')) return;
     var s = sampleFor(S.tpl);
