@@ -966,7 +966,7 @@ function rmMissing(r) { return Array.isArray(r && r.missing) ? r.missing : []; }
 function rmSortRooms(a, b) { return rmCmp(a.building, b.building) || rmCmp(a.unit, b.unit) || rmCmp(roomTitle(a), roomTitle(b)) || rmCmp(a.room_key, b.room_key); }
 
 // rows -> [{building, city, rooms, ready, missing, upcoming, units:[{unit, wifi_name, wifi_password, unit_note,
-// rooms:[row], ready, missing, upcoming}]}], buildings / units / rooms in natural order.
+// whole_unit, rooms:[row], ready, missing, upcoming}]}], buildings / units / rooms in natural order.
 function roomsTree(rows) {
   var by = {};
   (rows || []).slice().sort(rmSortRooms).forEach(function (r) {
@@ -975,7 +975,8 @@ function roomsTree(rows) {
     if (!g.city && str(r.city)) g.city = str(r.city);
     var uk = str(r.unit);
     var u = g._u[uk];
-    if (!u) { u = g._u[uk] = { unit: uk, wifi_name: "", wifi_password: "", unit_note: "", rooms: [], ready: 0, missing: 0, upcoming: 0 }; g.units.push(u); }
+    if (!u) { u = g._u[uk] = { unit: uk, wifi_name: "", wifi_password: "", unit_note: "", whole_unit: false, rooms: [], ready: 0, missing: 0, upcoming: 0 }; g.units.push(u); }
+    if (r.whole_unit === true) u.whole_unit = true;
     if (!u.wifi_name && str(r.wifi_name)) u.wifi_name = str(r.wifi_name);
     if (!u.wifi_password && str(r.wifi_password)) u.wifi_password = str(r.wifi_password);
     if (!u.unit_note && str(r.unit_note)) u.unit_note = str(r.unit_note);
