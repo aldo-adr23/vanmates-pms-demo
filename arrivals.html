@@ -177,6 +177,8 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
   text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 9px 14px; min-height: 48px; }
 .arow:last-child { border-bottom: 0; }
 .arow:hover { background: var(--cream); }
+.arow { cursor: pointer; }
+.arow .rsend { min-height: 26px; padding: 3px 12px; margin-top: 2px; }
 .arow.on { background: var(--cream-2); box-shadow: inset 3px 0 0 var(--red); }
 .arow .c-who, .arow .c-chip { min-width: 0; }
 .arow .c-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
@@ -502,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-tplside1"></script>
+<script src="arrivals-core.js?v=2026-10-07-merge3"></script>
 <script>
 (function () {
   'use strict';
@@ -850,11 +852,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         return '<section class="grp card"><div class="ghead"><b>' + esc(g.building) + '</b><span class="muted">' + esc(g.city) + ' · ' + n + ' arriving</span>' +
           (unreviewed ? '<span class="tag warn">Template not reviewed</span>' : '') + '</div>' +
           g.arrivals.map(function (r) {
-            return '<button type="button" class="arow' + (r.id === S.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
+            // a div, not a <button>: it holds the row's own Send button (no nested buttons)
+            return '<div role="button" tabindex="0" class="arow' + (r.id === S.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
               '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + (isContract(r) ? contractTag() + ' ' + esc(r.booking_ref || '') : esc(r.school || '—')) + '</small></span>' +
               '<span class="c-room">' + esc(roomText(r)) + '</span>' +
               '<span class="c-date">' + esc(shortDate(r.arrival_date)) + (str(r.arrival_time) ? ' · ' + esc(r.arrival_time) : '') + '</span>' +
-              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) + '</span></button>';
+              '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) +
+              (canSend(r) ? '<button type="button" class="btn btn-primary rsend" data-rsend="' + esc(r.id) + '">' + (r.status === 'failed' ? 'Retry' : 'Send') + '</button>' : '') +
+              (r.status === 'handled' ? '<button type="button" class="btn btn-ghost rsend" data-rreopen="' + esc(r.id) + '">Reopen</button>' : '') + '</span></div>';
           }).join('') + '</section>';
       }).join('');
     }
@@ -907,6 +912,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<div class="frow"><input class="inp" type="email" name="email" value="' + esc(r.student_email) + '" placeholder="student@example.com" autocomplete="off" /><button class="btn btn-ghost" type="submit">Save</button></div>');
     if (r.keys_only) {
       fx += '<p class="note">' + esc(r.building) + ' uses keys / FOB — no bedroom door code needed.</p>';
+    } else if (r.whole_unit === true) {
+      fx += '<p class="note">Unit ' + esc(r.unit) + ' is rented as a whole unit — no bedroom door code needed' +
+        (str(r.unit_door_code) ? '' : '. Add the apartment door code in Rooms if it has one') + '.</p>';
     } else if (str(r.room_key)) {
       fx += fxBlock('room', str(r.room_label) || ('Room ' + (str(r.bed) || str(r.room_key))), has('door_code'),
         '<div class="frow"><input class="inp" name="room_label" value="' + esc(r.room_label) + '" placeholder="Room label (e.g. Room B)" />' + secret('door_code', r.door_code, 'Door code') +
@@ -989,7 +997,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     await loadArrivals();
   }
   function setBusy(on) {
-    Array.prototype.forEach.call(document.querySelectorAll('#sendAll, [data-act="send"], [data-act="resend"]'), function (b) { b.disabled = on || (b.id === 'sendAll' && !A.batchReady(S.rows).length); });
+    Array.prototype.forEach.call(document.querySelectorAll('#sendAll, [data-act="send"], [data-act="resend"], [data-rsend]'), function (b) { b.disabled = on || (b.id === 'sendAll' && !A.batchReady(S.rows).length); });
     if (on) $('sendAll').textContent = 'Sending…';
   }
   function showResults(j, ids) {
@@ -1018,6 +1026,22 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<ul class="mlist">' + Object.keys(byB).sort().map(function (b) { return '<li><span>' + esc(b) + '</span><b>' + byB[b] + '</b></li>'; }).join('') + '</ul>',
       'Send ' + ready.length);
     if (ok) await sendIds(ready.map(function (r) { return r.id; }), false);
+  }
+  // The list row's own Send: one email, after a quick confirm (a row is easy to mis-click).
+  async function rowSend(id) {
+    var r = byId(id);
+    if (!r || !canSend(r)) return;
+    var ok = await confirmSheet('Send to ' + (r.student_name || 'this student') + '?',
+      '<p class="note">Their arrival email goes to ' + esc(r.student_email) + ' right away.</p>', 'Send');
+    if (ok) await sendIds([r.id], false);
+  }
+  // Handled → open again, straight from the list (same RPC as the panel's Reopen). Reversible: no confirm.
+  async function rowReopen(btn) {
+    var r = byId(btn.getAttribute('data-rreopen'));
+    if (!r || r.status !== 'handled') return;
+    btn.disabled = true;
+    if (await rpc('arrivals_set_status', { p_id: r.id, p_status: 'open' })) { toast('Reopened'); await loadArrivals(); }
+    else btn.disabled = false;
   }
   async function act(name) {
     var r = byId(S.openId);
@@ -1757,6 +1781,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         S.fuRules = res[6];
         S.bkTpls = res[9];
         S.zoho = res[9] !== null;
+        // whole units (arrivals-whole-unit-2026-10-07.sql): the column shows on every access_units / access_rooms_v row
+        S.whole = (res[1] || []).concat(res[7] || []).some(function (r) { return r && 'whole_unit' in r; });
         S.acc = buildModel(res[0], res[1], res[2], res[3], res[4], res[5] || [], res[6] || [], res[9] || []);
       } catch (e) {
         if (seq !== S.accSeq) return;
@@ -1788,7 +1814,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     us.forEach(function (u) {
       var m = B(u.building); if (!m) return;
       m.units[u.unit] = { unit: u.unit, wifi_name: str(u.wifi_name), wifi_password: str(u.wifi_password), unit_note: str(u.unit_note), unit_door_code: str(u.door_code),
-        buzzer: str(u.buzzer), floor: str(u.floor), whatsapp_url: str(u.whatsapp_url), saved: true, upcoming: 0 };
+        buzzer: str(u.buzzer), floor: str(u.floor), whatsapp_url: str(u.whatsapp_url), whole_unit: u.whole_unit === true, saved: true, upcoming: 0 };
     });
     rs.forEach(function (r) {
       var m = B(r.building); if (!m) return;
@@ -1823,7 +1849,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!m.address) out.push('no address');
     var nu = m.tpl && m.tpl.wifi_in_unit ? 0 : Object.keys(m.units).filter(function (k) { return m.units[k].upcoming && !m.units[k].wifi_name; }).length;
     if (nu) out.push(nu + ' unit' + (nu === 1 ? '' : 's') + ' without Wi-Fi');
-    var nr = keys ? 0 : Object.keys(m.rooms).filter(function (k) { return m.rooms[k].upcoming && !m.rooms[k].door_code; }).length;
+    var nr = keys ? 0 : Object.keys(m.rooms).filter(function (k) {
+      var x = m.rooms[k]; return x.upcoming && !x.door_code && !(m.units[x.unit] && m.units[x.unit].whole_unit);
+    }).length;
     if (nr) out.push(nr + ' room' + (nr === 1 ? '' : 's') + ' without a door code');
     if (!(m.tpl && m.tpl.reviewed)) out.push('template not reviewed');
     return out;
@@ -1947,6 +1975,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function zBadUrl(form) {
     return Z_URLS.some(function (n) { var el = form.elements[n]; var val = el ? String(el.value || '').trim() : ''; return !!val && !/^https?:\/\//i.test(val); });
   }
+  // The Whole unit box: p_whole_unit only when it changed, so an unchanged save leaves the flag alone.
+  function wholeChanged(form, was) {
+    var el = S.whole && form.elements.whole_unit;
+    return el && el.checked !== !!(was && was.whole_unit) ? { p_whole_unit: el.checked } : {};
+  }
   function isHouse(b) { return !!(S.acc && S.acc[b] && S.acc[b].building_type === 'house'); }
   function buildingWas(b) { return (S.acc && S.acc[b]) || {}; }
   function unitWas(b, unit) { return (S.acc && S.acc[b] && S.acc[b].units[unit]) || {}; }
@@ -1992,6 +2025,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var q = $('accQ').value.trim(), city = $('accCity').value;
     var rows = A.roomsFilter(S.rv.rows, q, city);
     var tree = A.roomsTree(rows);
+    // A building with no rooms yet still gets its card (+ Add unit), e.g. from an arrival's "Add them in Rooms".
+    var empty = A.roomsEmptyBuildings(Object.keys(S.acc || {}).map(function (n) { return S.acc[n]; }), S.rv.rows, q, city);
+    tree = tree.concat(empty);
     var html = roomsCheckHtml(city) + (S.zoho ? '' : zohoNoteHtml());
     if (q) html += '<p class="rcount">' + esc(rows.length + ' room' + (rows.length === 1 ? '' : 's') + ' match') + '</p>';
     if (!tree.length) {
@@ -2046,6 +2082,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       var uopen = searching || S.rOpenU[uk] || (S.rsel && S.rsel.b === g.building && S.rsel.unit === u.unit);
       var wifi = u.wifi_name ? ['Wi-Fi', u.wifi_name].join(' ') : (u.rooms[0] && u.rooms[0].wifi_in_unit ? 'Wi-Fi posted in the apartment' : 'No Wi-Fi saved');
       return '<details class="ucard" data-uk="' + esc(uk) + '"' + (uopen ? ' open' : '') + '><summary><b>' + esc(unitName(u.unit)) + '</b>' +
+        (u.whole_unit ? '<span class="tag ctr">Whole unit</span>' : '') +
         '<span class="muted">' + esc([wifi, u.rooms.length + ' room' + (u.rooms.length === 1 ? '' : 's'), u.missing ? u.missing + ' missing' : '', u.upcoming ? u.upcoming + ' upcoming' : ''].filter(Boolean).join(' · ')) + '</span>' +
         (u.unit_note ? '<span class="unote">' + esc(u.unit_note) + '</span>' : '') + '</summary>' +
         u.rooms.map(roomRowHtml).join('') +
@@ -2060,7 +2097,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var miss = Array.isArray(x.missing) ? x.missing : [];
     return '<div class="rrow' + (on ? ' on' : '') + '" role="button" tabindex="0" data-room="' + esc(x.room_key) + '" data-b="' + esc(x.building) + '">' +
       '<span class="rt"><b>' + esc(A.roomTitle(x)) + '</b>' + (str(x.room_label) ? '<small>' + esc(x.room_key) + '</small>' : '') + '</span>' +
-      '<span class="rc" style="justify-content:flex-start">' + (x.keys_only ? '<span class="muted" style="font-size:12px">keys / FOB</span>' : maskedCode(x.door_code)) + '</span>' +
+      '<span class="rc" style="justify-content:flex-start">' + (x.keys_only ? '<span class="muted" style="font-size:12px">keys / FOB</span>' : x.whole_unit === true && !str(x.door_code) ? '<span class="muted" style="font-size:12px">whole unit</span>' : maskedCode(x.door_code)) + '</span>' +
       '<span class="rc">' + (miss.length ? missChips(miss) : '<span class="st st-ready sub">Ready</span>') +
       (x.upcoming_arrivals ? '<span class="st st-sent sub">' + esc(x.upcoming_arrivals + ' upcoming') + '</span>' : '') + '</span>' +
       (str(x.room_note) ? '<span class="rn">' + esc(x.room_note) + '</span>' : '') + '</div>';
@@ -2081,12 +2118,13 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   function roomFormHtml(b, x, isNew, unit) {
     var keys = x ? x.keys_only : !!(S.acc[b] && S.acc[b].tpl && S.acc[b].tpl.keys_only);
+    var whole = x ? x.whole_unit === true : !!unitWas(b, unit).whole_unit;
     var miss = x && Array.isArray(x.missing) ? x.missing : [];
     return '<form class="fx' + (miss.indexOf('door_code') !== -1 ? ' miss' : '') + '" data-rf="room" data-b="' + esc(b) + '" data-rk="' + esc(x ? x.room_key : '') + '">' +
       '<div class="fh"><span>' + (isNew ? 'New room' : 'Room') + '</span>' + (miss.indexOf('door_code') !== -1 ? '<small>Door code missing</small>' : '') + '</div><div class="frow">' +
       (isNew ? textField('room_key', 'Room key', '', 'e.g. 1104-c') : '') +
       textField('unit', 'Unit', x ? x.unit : unit, 'e.g. 1104') + textField('room_label', 'Label', x ? x.room_label : '', 'e.g. Room C') +
-      '<label class="fl">Door code' + (keys ? ' (optional: keys / FOB)' : '') + secret('door_code', x ? x.door_code : '', 'Door code') + '</label>' +
+      '<label class="fl">Door code' + (keys ? ' (optional: keys / FOB)' : whole ? ' (optional: whole unit)' : '') + secret('door_code', x ? x.door_code : '', 'Door code') + '</label>' +
       (S.zoho ? textField('bed_type', 'Bed type', x ? x.bed_type : '', 'e.g. Double bed') : '') +
       noteField('room_note', 'Room note · in this room’s email', x ? x.room_note : '', 'e.g. Top bunk, the key is in the lockbox') +
       '<button class="btn btn-ghost" type="submit">' + (isNew ? 'Add room' : 'Save room') + '</button></div>' +
@@ -2105,6 +2143,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         textField('buzzer', 'Buzzer', u ? u.buzzer : '', 'e.g. 1104') + textField('floor', 'Floor', u ? u.floor : '', 'e.g. 11') +
         '<label class="fl">WhatsApp group URL<input class="inp" name="whatsapp_url" type="url" value="' + esc(u ? u.whatsapp_url : '') + '" placeholder="https://chat.whatsapp.com/…" autocomplete="off" /></label>' : '') +
       noteField('unit_note', house ? 'House note · in every email for this house' : 'Apartment note · in every email for this unit', u ? u.unit_note : '', 'e.g. Shared kitchen, the recycling goes downstairs') +
+      (S.whole && !house ? '<label class="fl" style="flex-basis:100%;display:flex;align-items:center;gap:8px"><input type="checkbox" name="whole_unit"' + (u && u.whole_unit ? ' checked' : '') + ' /> Whole unit: rented as one, no bedroom door codes</label>' : '') +
       '<button class="btn btn-ghost" type="submit">' + (isNew ? 'Add unit' : house ? 'Save house details' : 'Save unit') + '</button></div></form>';
   }
   // end unitFormHtml
@@ -2127,7 +2166,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var miss = Array.isArray(x.missing) ? x.missing : [];
     var next = A.roomNext(S.rvNext, x);
     var unitRow = { wifi_name: x.wifi_name, wifi_password: x.wifi_password, unit_note: x.unit_note, missing: miss,
-      unit_door_code: x.unit_door_code, buzzer: x.buzzer, floor: x.floor, whatsapp_url: x.whatsapp_url };
+      unit_door_code: x.unit_door_code, buzzer: x.buzzer, floor: x.floor, whatsapp_url: x.whatsapp_url, whole_unit: x.whole_unit === true };
     var facts = [
       ['Building', [x.building, x.city, S.zoho && str(x.building_type) ? (x.building_type === 'house' ? 'House' : 'Building') : ''].filter(str).join(' · ')],
       ['Room key', x.room_key],
@@ -2171,7 +2210,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         unit = house ? '' : form.getAttribute('data-unit') || v('unit');
         if (!unit && !house) { toast('Enter the unit first.'); return; }
         ok = await rpc('arrivals_save_access', Object.assign({ p_building: b, p_unit: unit, p_room_key: '', p_room_label: null, p_door_code: null,
-          p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password'), p_room_note: null, p_unit_note: v('unit_note') }, zChanged(form, Z_UNIT, unitWas(b, unit))));
+          p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password'), p_room_note: null, p_unit_note: v('unit_note') }, zChanged(form, Z_UNIT, unitWas(b, unit)),
+          wholeChanged(form, unitWas(b, unit))));
       }
     } finally { if (btn) btn.disabled = false; }
     if (!ok) return;
@@ -2343,7 +2383,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var u = Object.keys(m.units).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
     var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
     var sat = S.wk.saturday;
-    var unit = (u && u.unit) || (r && r.unit) || '1203';
+    var unit = sampleUnit(m, (u && u.unit) || (r && r.unit));
     var z = zSampleAccess(m, unit, r);
     return {
       arrival: { student_name: 'Alex Sample', building: t.building, unit: unit, bed: 'B', arrival_date: sat, checkout_date: addDaysYmd(sat, 27) },
@@ -2360,6 +2400,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return { unit_door_code: str(ud.unit_door_code), buzzer: str(ud.buzzer), floor: str(ud.floor), whatsapp_url: str(ud.whatsapp_url),
       checkin_video_url: str(m && m.checkin_video_url), contact_url: str(m && m.contact_url), bed_type: str(r && r.bed_type) };
   }
+  // The sample's unit: a house has none (unit ''), so its preview shows no Apartment row; an apartment building without a
+  // saved unit gets a placeholder.
+  function sampleUnit(m, unit) { return unit || (m && m.building_type === 'house' ? '' : '1203'); }
   function renderTplPreview() {
     if (!S.tpl || !$('tplPv')) return;
     var s = sampleFor(S.tpl);
@@ -2515,7 +2558,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function coSample(t) {
     var m = S.acc[t.building] || { units: {}, rooms: {} };
     var r = Object.keys(m.rooms).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
-    return { student_name: 'Alex Sample', building: t.building, unit: (r && r.unit) || '1203', bed: 'B', room_label: (r && r.room_label) || 'Room B',
+    return { student_name: 'Alex Sample', building: t.building, unit: sampleUnit(m, r && r.unit), bed: 'B', room_label: (r && r.room_label) || 'Room B',
       checkout_date: S.mo.wk.saturday, template_reviewed: true, subject: t.subject, intro: t.intro, checkout_time: t.checkout_time,
       keys_text: t.keys_text, sections: t.sections, closing: t.closing };
   }
@@ -2625,7 +2668,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function bkSample(t) {
     var m = S.acc[t.building] || { units: {}, rooms: {} };
     var r = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.room_label; })[0];
-    var unit = (r && r.unit) || '1203', z = zSampleAccess(m, unit, r), sat = S.wk.saturday;
+    var unit = sampleUnit(m, r && r.unit), z = zSampleAccess(m, unit, r), sat = S.wk.saturday;
     return {
       arrival: { student_name: 'Alex Sample', student_email: 'alex@example.com', building: t.building, unit: unit, bed: 'B',
         arrival_date: sat, checkout_date: addDaysYmd(sat, 120), lease_type: 'Fixed term', booking_ref: 'VM-SAMPLE' },
@@ -2984,7 +3027,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var m = S.acc[f.building] || { units: {}, rooms: {} };
     var u = Object.keys(m.units || {}).sort(natSort).map(function (k) { return m.units[k]; }).filter(function (x) { return x.wifi_name; })[0];
     var rm = Object.keys(m.rooms || {}).sort(natSort).map(function (k) { return m.rooms[k]; }).filter(function (x) { return x.door_code; })[0];
-    var unit = (u && u.unit) || (rm && rm.unit) || '1203', z = zSampleAccess(m, unit, rm);
+    var unit = sampleUnit(m, (u && u.unit) || (rm && rm.unit)), z = zSampleAccess(m, unit, rm);
     return { student_name: 'Alex Sample', student_email: 'alex@example.com', building: f.building, city: f.city,
       unit_door_code: z.unit_door_code, buzzer: z.buzzer, floor: z.floor, whatsapp_url: z.whatsapp_url, checkin_video_url: z.checkin_video_url,
       contact_url: z.contact_url, bed_type: z.bed_type,
@@ -3090,7 +3133,17 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('uploadRoster').addEventListener('click', function () { if (!S.uploading) $('rosterFile').click(); });
     $('rosterFile').addEventListener('change', function () { var f = this.files && this.files[0]; $('rosterFile').value = ''; if (f) uploadRoster(f); });
     $('uploadRefresh').addEventListener('click', function () { clearTimeout(S.uploadReload); $('uploadRefresh').hidden = true; loadArrivals(); });
-    $('groups').addEventListener('click', function (e) { var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id')); });
+    $('groups').addEventListener('click', function (e) {
+      var sb = e.target.closest('[data-rsend]');
+      if (sb) { rowSend(sb.getAttribute('data-rsend')); return; }
+      var rb = e.target.closest('[data-rreopen]');
+      if (rb) { rowReopen(rb); return; }
+      var b = e.target.closest('.arow'); if (b) openRow(b.getAttribute('data-id'));
+    });
+    $('groups').addEventListener('keydown', function (e) {
+      var b = e.target.classList && e.target.classList.contains('arow') ? e.target : null;
+      if (b && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRow(b.getAttribute('data-id')); }
+    });
     $('panel').addEventListener('click', function (e) {
       var f = e.target.closest('[data-fu]');
       if (f) { if (!f.disabled) fuAct(f.getAttribute('data-fu'), +f.getAttribute('data-fk')); return; }
