@@ -1531,7 +1531,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-07-rowreopen1"></script>
+<script src="pms-supabase.js?v=2026-10-07-pubhosts1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -32109,11 +32109,14 @@ async function loadHomestayMatching(){
   if (!sb || HM.loading) return;
   HM.loading = true;
   try {
-    const [c, p, l, st] = await Promise.all([
+    const [c, p, l, st, rd, geo] = await Promise.all([
       sb.from("hm_cases").select("*").order("created_at", { ascending: false }).range(0, 999),
       sb.from("hm_host_profiles").select("*").range(0, 999),
       sb.from("hm_listings").select("host_id,status,approved,updated_at").range(0, 999),
       sb.from("hm_settings").select("city,auto_release_partner"),
+      // Website settings completeness only: a read error leaves these empty (reported as missing, never guessed).
+      sb.from("hm_room_details").select("room_id,host_id,bathroom").range(0, 999),
+      sb.from("hm_host_geo").select("host_id,neighbourhood,status").range(0, 999),
     ]);
     if (c.error) throw c.error;
     if (p.error) throw p.error;
@@ -32131,6 +32134,8 @@ async function loadHomestayMatching(){
     // Listings are extra: a read error (e.g. the table not there yet) must not blank the cases page.
     HM.listings = l.error ? [] : (l.data || []);
     HM.settings = st.error ? [] : (st.data || []);
+    HM.roomDetails = rd.error ? [] : (rd.data || []);
+    HM.geo = geo.error ? [] : (geo.data || []);
     HM.openCount = hmQueue(HM.cases, "open").length;
     if (typeof updateSidebarCounts === "function") updateSidebarCounts();
     await hmLoadAgencyExtras(sb);
@@ -32612,6 +32617,7 @@ async function hmOpenCase(id){
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
       <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
+    ${hmPreferredHostsText(c.preferred_host_ids, hmWebNames()) ? `<div class="card-sub">Student liked on website: ${hmEsc(hmPreferredHostsText(c.preferred_host_ids, hmWebNames()))}</div>` : ""}
     ${readyForOffer ? nextBox : offerOut ? offerTop : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
@@ -33333,6 +33339,263 @@ document.addEventListener("submit", async (ev) => {
   }
 });
 
+/* ---- Website settings (public host profiles on vanmates.com/homestay). Spec: matching repo
+   docs/superpowers/specs/2026-10-07-public-host-profiles-design.md. The Worker enforces the same rules on every
+   public request; this copy only decides what the portal shows and whether Show on website can be ticked. ---- */
+/* HM-WEBSITE-CORE-START */
+const HM_SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const HM_WEBSITE_MAX_PHOTOS = 10;
+// "García Family — Burnaby!" → "garcia-family-burnaby". Accents folded, anything else a single dash, capped at 80.
+function hmSlugify(name){
+  return String(name == null ? "" : name).normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80).replace(/-+$/, "");
+}
+// The approved listing's photo ids (numbers), in the approved order.
+function hmApprovedPhotoIds(listing){
+  const a = listing && listing.approved;
+  const photos = a && Array.isArray(a.photos) ? a.photos : [];
+  return photos.map(p => Number(p && p.id)).filter(n => Number.isSafeInteger(n) && n > 0);
+}
+// The website gallery: the staff pick narrowed to photos still in the approved snapshot; no pick = every approved
+// photo. At most 10 are shown.
+function hmWebsiteGallery(profile, listing){
+  const approved = hmApprovedPhotoIds(listing);
+  const pick = (profile && Array.isArray(profile.website_photo_ids) ? profile.website_photo_ids : []).map(Number);
+  const ids = pick.length ? approved.filter(id => pick.includes(id)) : approved;
+  return ids.slice(0, HM_WEBSITE_MAX_PHOTOS);
+}
+// What stops this host being on the website: [] when it can be published. Same rules as the Worker's completeness()
+// plus the publish conditions. rooms === null means the rooms list hasn't loaded, which is reported, not guessed.
+function hmWebsiteCompleteness({ profile, host, rooms, roomDetails, listing, geo } = {}){
+  const p = profile || {};
+  const t = v => String(v == null ? "" : v).trim();
+  const out = [];
+  if (!host) out.push("Host is not in the hosts list");
+  else if (host.archived_at) out.push("Host is archived");
+  if (!p.matching_active) out.push("Active for matching is off");
+  if (host && !host.payable) out.push("Stripe payouts are not set up");
+  const approved = listing && listing.approved;
+  if (!approved) out.push("No approved listing");
+  if (!t(p.city)) out.push("City");
+  if (!t(p.public_area) && !t(p.area) && !t(geo && geo.neighbourhood)) out.push("Neighbourhood (public neighbourhood or area)");
+  const intro = approved && approved.about ? approved.about.intro : "";
+  if (!t(p.public_description) && !t(intro)) out.push("Description (public description or the listing introduction)");
+  const n = hmWebsiteGallery(p, listing).length;
+  if (n < 3) out.push(`At least 3 website photos (${n} now)`);
+  if (rooms == null) out.push("Rooms not loaded yet");
+  else {
+    const override = Math.round(Number(p.public_price_from_cents) || 0) > 0;
+    const bookable = rooms.filter(r => r && String(r.host_id) === String(p.host_id || (host && host.host_id)) && r.bookable === true && !r.archived_at);
+    if (!bookable.some(r => override || Math.round(Number(r.weekly_rate) || 0) > 0)) out.push("A bookable room with a weekly price");
+  }
+  if (!(roomDetails || []).some(d => d && (d.bathroom === "private" || d.bathroom === "shared"))) out.push("Room details with a bathroom type");
+  return out;
+}
+// The Website settings fields from the form → { ok, value } | { ok:false, error }. public_id is never sent.
+function hmWebsiteFromForm(f){
+  const t = v => String(v == null ? "" : v).trim();
+  const orNull = v => t(v) || null;
+  const v = { show_on_website: !!f.show_on_website, featured: !!f.featured,
+    public_name: orNull(f.public_name), public_description: orNull(f.public_description), public_area: orNull(f.public_area) };
+  const price = t(f.public_price).replace(/^\$/, "").replace(/,/g, "");
+  if (price === "") v.public_price_from_cents = null;
+  else {
+    if (!/^\d+(\.\d{1,2})?$/.test(price) || Number(price) <= 0) return { ok: false, error: "Public starting price must be a dollar amount above 0" };
+    v.public_price_from_cents = Math.round(Number(price) * 100);
+  }
+  const pri = t(f.website_priority);
+  if (pri === "") v.website_priority = 0;
+  else if (!/^-?\d+$/.test(pri) || Math.abs(Number(pri)) > 1e6) return { ok: false, error: "Website priority must be a whole number" };
+  else v.website_priority = Number(pri);
+  const slug = t(f.seo_slug).toLowerCase();
+  if (slug && !HM_SLUG_RE.test(slug)) return { ok: false, error: "SEO slug: only a-z, 0-9 and single dashes between words" };
+  v.seo_slug = slug || null;
+  v.website_photo_ids = [...new Set((f.website_photo_ids || []).map(Number).filter(n => Number.isSafeInteger(n) && n > 0))];
+  return { ok: true, value: v };
+}
+// What the database said when a Website settings save failed, in words.
+function hmWebsiteSaveError(error){
+  const e = error || {}, m = String(e.message || "") + " " + String(e.details || "");
+  if (e.code === "23505" && /seo_slug/.test(m)) return "That SEO slug is already used by another host: pick another.";
+  if (e.code === "23514" && /seo_slug/.test(m)) return "SEO slug: only a-z, 0-9 and single dashes between words.";
+  if (e.code === "PGRST204" || e.code === "42703" || /column .* does not exist|Could not find the .* column/i.test(m))
+    return "Website settings need the 2026-10-07 database update.";
+  return "Error: " + (e.message || "could not save");
+}
+// "HST-1001 (Garcia family), HST-1004" for a case's preferred_host_ids. names: Map public_id → name.
+function hmPreferredHostsText(ids, names){
+  return (Array.isArray(ids) ? ids : []).filter(x => String(x || "").trim()).map(id => {
+    const n = names && names.get(String(id));
+    return n ? `${id} (${n})` : String(id);
+  }).join(", ");
+}
+/* HM-WEBSITE-CORE-END */
+
+/* ---- Website settings UI (in each Host profiles row, saved by Save profile). Before the 2026-10-07 SQL the columns
+   are absent: hmWebCols() is false and the block shows the update note instead of saving anything. ---- */
+const HM_WEB_SITE = "https://vanmates.com/homestay/host/";
+// true: the columns exist; false: profiles loaded without them (SQL not applied); null: no profile rows to tell.
+function hmWebCols(){
+  const ps = HM.profiles || [];
+  return ps.length ? ps.some(p => p && "public_id" in p) : null;
+}
+// public_id → the name staff know the host by, for the case view.
+function hmWebNames(){
+  const hosts = new Map((HM.hosts || []).map(h => [h.host_id, h.display_name]));
+  const m = new Map();
+  for (const p of HM.profiles || []) if (p && p.public_id) m.set(String(p.public_id), p.public_name || hosts.get(p.host_id) || "");
+  return m;
+}
+function hmWebRoot(hostId){ return document.querySelector(`[data-hm-web="${CSS.escape(String(hostId))}"]`); }
+function hmWebPicked(hostId){
+  const root = hmWebRoot(hostId);
+  return root ? [...root.querySelectorAll("[data-hm-web-photo]:checked")].map(x => Number(x.value)) : null;
+}
+// The Website settings inputs → the raw object hmWebsiteFromForm reads.
+function hmWebReadForm(hostId){
+  const root = hmWebRoot(hostId);
+  if (!root) return null;
+  const g = n => root.querySelector(`[name="${n}"]`);
+  return { show_on_website: g("web_show").checked, featured: g("web_featured").checked, public_name: g("public_name").value,
+    public_description: g("public_description").value, public_area: g("public_area").value, public_price: g("public_price").value,
+    website_priority: g("website_priority").value, seo_slug: g("seo_slug").value, website_photo_ids: hmWebPicked(hostId) || [] };
+}
+// The saved profile with what is typed now laid over it, so the checklist follows the form before Save.
+function hmWebOverlay(hostId){
+  const saved = (HM.profiles || []).find(p => p.host_id === hostId) || {};
+  const o = Object.assign({}, saved, { host_id: hostId });
+  const prof = document.querySelector(`[data-hm-profile="${CSS.escape(String(hostId))}"]`);
+  if (prof) {
+    const g = n => prof.querySelector(`[name="${n}"]`);
+    if (g("city")) o.city = g("city").value;
+    if (g("area")) o.area = g("area").value;
+    if (g("matching_active")) o.matching_active = g("matching_active").checked;
+  }
+  const f = hmWebReadForm(hostId);
+  if (f) {
+    o.public_area = f.public_area; o.public_description = f.public_description; o.website_photo_ids = f.website_photo_ids;
+    const d = Number(String(f.public_price).replace(/^\$/, "").replace(/,/g, "").trim());
+    o.public_price_from_cents = Number.isFinite(d) && d > 0 ? Math.round(d * 100) : null;
+  }
+  return o;
+}
+function hmWebMissing(hostId, profile){
+  const id = String(hostId);
+  return hmWebsiteCompleteness({ profile: profile || hmWebOverlay(hostId),
+    host: (HM.hosts || []).find(h => String(h.host_id) === id) || null,
+    rooms: HM.roomsLoaded ? (HM.rooms || []).filter(r => String(r.host_id) === id) : null,
+    roomDetails: (HM.roomDetails || []).filter(d => String(d.host_id) === id),
+    listing: (HM.listings || []).find(l => String(l.host_id) === id) || null,
+    geo: (HM.geo || []).find(g => String(g.host_id) === id) || null });
+}
+function hmWebBadges(p){
+  if (!p || !p.show_on_website) return "";
+  return ' <span class="badge badge-green" title="Show on website is on"><span class="dot"></span>Web</span>'
+    + (p.featured ? ' <span class="badge badge-amber" title="Featured on the website"><span class="dot"></span>Featured</span>' : "");
+}
+// Thumbnails come from the Listing box (it loads signed URLs when the row opens); the ids from the approved snapshot.
+function hmWebPhotosHtml(hostId, picked){
+  const listing = (HM.listings || []).find(l => l.host_id === hostId);
+  const ids = hmApprovedPhotoIds(listing);
+  if (!ids.length) return '<div class="card-sub">No approved listing photos yet: approve the listing below first.</div>';
+  const urls = (HM.photoUrls && HM.photoUrls[hostId]) || null;
+  const pick = new Set((picked || []).map(Number));
+  const n = ids.filter(id => pick.has(id)).length;
+  return `<div class="card-sub">Website photos: tick the ones to show. None ticked = all ${hmEsc(ids.length)} approved photos.${urls ? "" : " (Thumbnails appear once the Listing below has loaded.)"}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin:6px 0">
+    ${ids.map(id => {
+      const u = urls && urls[id];
+      return `<label style="display:block;cursor:pointer">
+        ${u ? `<img src="${hmEsc(u)}" alt="" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px;background:#eee">`
+            : `<div class="card-sub" style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line);border-radius:6px">Photo #${hmEsc(id)}</div>`}
+        <input type="checkbox" data-hm-web-photo value="${hmEsc(id)}" ${pick.has(id) ? "checked" : ""}> Show</label>`;
+    }).join("")}</div>
+    <div class="card-sub" data-hm-web-photo-note ${n > HM_WEBSITE_MAX_PHOTOS ? 'style="color:var(--red)"' : ""}>${n > HM_WEBSITE_MAX_PHOTOS
+      ? `${hmEsc(n)} ticked: only the first ${HM_WEBSITE_MAX_PHOTOS} are shown on the website.` : n ? `${hmEsc(n)} ticked.` : ""}</div>`;
+}
+function hmWebRedrawPhotos(hostId){
+  const root = hmWebRoot(hostId);
+  const box = root && root.querySelector("[data-hm-web-photos]");
+  if (!box) return;
+  const saved = (HM.profiles || []).find(p => p.host_id === hostId) || {};
+  const picked = box.dataset.touched ? hmWebPicked(hostId) : (saved.website_photo_ids || []);
+  box.innerHTML = hmWebPhotosHtml(hostId, picked);
+}
+function hmWebBox(h, p){
+  const k = hmEsc(h.host_id), cols = hmWebCols();
+  const cents = Math.round(Number(p.public_price_from_cents) || 0);
+  const slug = p.seo_slug || (p.public_name ? hmSlugify(p.public_name) : "");
+  return `<div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px" data-hm-web="${k}">
+    <div class="card-title" style="font-size:15px">Website settings <span class="card-sub">(vanmates.com/homestay)</span></div>
+    ${cols === false ? '<div class="card-sub" style="color:var(--red)">Website settings need the 2026-10-07 database update.</div>' : ""}
+    <fieldset ${cols === false ? "disabled" : ""} style="border:0;padding:0;margin:0;min-width:0">
+    <div class="hm-grid">
+      <label><input type="checkbox" name="web_show" ${p.show_on_website ? "checked" : ""}> Show on website</label>
+      <label><input type="checkbox" name="web_featured" ${p.featured ? "checked" : ""}> Featured</label>
+      <label>Public ID <input class="form-input" value="${hmEsc(p.public_id || "")}" placeholder="${p.public_id ? "" : "assigned when saved"}" disabled data-hm-web-pid></label>
+      <label>Public display name <input class="form-input" name="public_name" maxlength="80" value="${hmEsc(p.public_name)}" placeholder="e.g. Garcia family"></label>
+      <label>Public neighbourhood <input class="form-input" name="public_area" maxlength="80" value="${hmEsc(p.public_area)}" placeholder="${hmEsc(p.area || "uses Area")}"></label>
+      <label>Public starting price ($/week) <input class="form-input" name="public_price" inputmode="decimal" value="${cents > 0 ? hmEsc(String(cents / 100)) : ""}" placeholder="lowest bookable room"></label>
+      <label>Website priority <input class="form-input" name="website_priority" inputmode="numeric" value="${hmEsc(p.website_priority == null ? 0 : p.website_priority)}"></label>
+      <label>SEO slug <input class="form-input" name="seo_slug" maxlength="80" value="${hmEsc(slug)}" data-auto="${p.seo_slug ? "0" : "1"}" placeholder="${hmEsc(hmSlugify(h.display_name))}">
+        <span class="card-sub" data-hm-web-slug-note></span></label>
+      <label style="grid-column:1/-1">Public description <textarea class="form-input" name="public_description" rows="3" maxlength="2000" placeholder="Empty: the approved listing introduction is used">${hmEsc(p.public_description)}</textarea></label>
+    </div>
+    <div data-hm-web-photos style="margin-top:6px">${hmWebPhotosHtml(h.host_id, p.website_photo_ids || [])}</div>
+    </fieldset>
+    <div data-hm-web-check style="margin-top:6px"></div>
+  </div>`;
+}
+// The checklist, the toggle's lock and the website link, from what is typed now. Never touches the typed values.
+function hmWebRefresh(hostId){
+  const root = hmWebRoot(hostId);
+  if (!root) return;
+  const saved = (HM.profiles || []).find(p => p.host_id === hostId) || {};
+  const cols = hmWebCols();
+  const missing = hmWebMissing(hostId);
+  const box = root.querySelector('[name="web_show"]');
+  // Incomplete: can't be ticked on, but a host already on can still be switched off.
+  box.disabled = cols === false || (missing.length > 0 && !box.checked);
+  box.title = box.disabled && cols !== false ? "Profile incomplete — cannot publish" : "";
+  const list = missing.map(m => `<li>${hmEsc(m)}</li>`).join("");
+  const pid = saved.public_id ? String(saved.public_id) : "";
+  const link = pid ? `<a href="${hmEsc(HM_WEB_SITE + encodeURIComponent(pid))}" target="_blank" rel="noopener">View on website</a>` : "";
+  let html;
+  if (missing.length && saved.show_on_website) html = `<div class="card-sub" style="color:var(--red)"><b>Hidden from website until:</b></div><ul class="card-sub" style="margin:2px 0 0 18px">${list}</ul>`;
+  else if (missing.length) html = `<div class="card-sub"><b>Profile incomplete — cannot publish.</b> Missing:</div><ul class="card-sub" style="margin:2px 0 0 18px">${list}</ul>`;
+  else if (saved.show_on_website) html = `<div class="card-sub"><b>On the website.</b> ${link}</div>`;
+  else html = '<div class="card-sub"><b>Complete:</b> tick Show on website and Save profile to publish.</div>';
+  root.querySelector("[data-hm-web-check]").innerHTML = html;
+  const slug = root.querySelector('[name="seo_slug"]'), note = root.querySelector("[data-hm-web-slug-note]");
+  const sv = slug.value.trim().toLowerCase();
+  note.textContent = sv && !HM_SLUG_RE.test(sv) ? "Only a-z, 0-9 and single dashes between words" : "";
+  note.style.color = note.textContent ? "var(--red)" : "";
+}
+document.addEventListener("input", (ev) => hmWebOnEdit(ev));
+document.addEventListener("change", (ev) => hmWebOnEdit(ev));
+function hmWebOnEdit(ev){
+  const t = ev.target;
+  const prof = t && t.closest && t.closest("[data-hm-profile]");
+  if (!prof) return;
+  const hostId = prof.dataset.hmProfile;
+  const root = hmWebRoot(hostId);
+  if (!root) return;
+  if (t.name === "public_name") {
+    const slug = root.querySelector('[name="seo_slug"]');
+    if (slug.dataset.auto === "1") slug.value = hmSlugify(t.value);
+  }
+  if (t.name === "seo_slug") t.dataset.auto = "0";
+  if (t.hasAttribute && t.hasAttribute("data-hm-web-photo")) {
+    root.querySelector("[data-hm-web-photos]").dataset.touched = "1";
+    const n = hmWebPicked(hostId).length, note = root.querySelector("[data-hm-web-photo-note]");
+    if (note) {
+      note.textContent = n > HM_WEBSITE_MAX_PHOTOS ? `${n} ticked: only the first ${HM_WEBSITE_MAX_PHOTOS} are shown on the website.` : n ? `${n} ticked.` : "";
+      note.style.color = n > HM_WEBSITE_MAX_PHOTOS ? "var(--red)" : "";
+    }
+  }
+  hmWebRefresh(hostId);
+}
+
 /* ---- "Ready to match" on each Host profiles row: payouts, a sellable room, an active profile, an approved listing. ---- */
 function hmHostEmail(h){ return lc((h && (h.host_email || h.email || h.contact_email)) || "").trim(); }
 // The portal host card (Hosts page, homestayHosts) for an n8n host, joined on email like the payout badges.
@@ -33383,6 +33646,7 @@ function hmReadyUpdate(hostId){
     if (chips) chips.innerHTML = hmReadyChips(h);
     const list = document.querySelector(`[data-hm-ready-list="${k}"]`);
     if (list) list.innerHTML = hmReadyList(h);
+    hmWebRefresh(h.host_id);
   }
 }
 // rooms-list is an n8n execution: loaded (once, cached) only when the Host profiles tab is shown.
@@ -33409,7 +33673,7 @@ function hmRenderProfiles(){
     const card = hmHostCard(h);
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
         <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}${p.crc_path ? " · criminal record check on file" : ""}</span>
-        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span>
+        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span><span data-hm-web-badge="${k}">${hmWebBadges(p)}</span>
         ${p.application_id != null ? `<button type="button" class="hb-link" style="font-size:12.5px" data-ha-open-app="${hmEsc(p.application_id)}">Application ${hmEsc((HM.appRefs && HM.appRefs.get(Number(p.application_id))) || "#" + p.application_id)}</button>` : ""}
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px" data-hm-ready-chips="${k}">${hmReadyChips(h)}</div>
         ${card && lc(card.name).trim() !== lc(h.display_name).trim() ? `<div class="card-sub">Host card: ${hmEsc(card.name)} · Payout account: ${hmEsc(h.display_name)}</div>` : ""}</summary>
@@ -33439,6 +33703,7 @@ function hmRenderProfiles(){
         <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center"><span class="card-sub" style="font-size:12px">Can cook for</span>
           ${HM_DIETS.map(d => `<label><input type="checkbox" name="diet_${d}" ${(p.diets || []).includes(d) ? "checked" : ""}> ${hmDietWord(d)}</label>`).join("")}</div>
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
+        ${hmWebBox(h, p)}
         <div style="grid-column:1/-1"><button class="btn" type="button" data-hm-save-profile="${k}">Save profile</button>
           <span class="card-sub" id="hm-pmsg-${k}"></span></div>
         <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
@@ -33455,6 +33720,7 @@ function hmRenderProfiles(){
     const b = det.querySelector("[data-hml-box]");
     if (det.open && b && !b.dataset.loaded) hmlLoad(b.dataset.hmlBox);
   }));
+  for (const h of rows) hmWebRefresh(h.host_id);
   const pane = document.getElementById("hm-profiles-pane");
   if (pane && pane.style.display !== "none") hmReadyEnsureRooms();
 }
@@ -33477,6 +33743,21 @@ async function hmSaveProfile(hostId){
   f.diets = HM_DIETS.filter(d => get("diet_" + d).checked);
   const r = hmProfileFromForm(f);
   if (!r.ok) { done((phoneMsg ? "Profile not saved: check " : "Check ") + hmFieldLabel(r.error)); return; }
+  // Website settings ride along unless the profiles loaded without the columns (the 2026-10-07 SQL not applied).
+  // When nothing can tell (no profile rows yet) they are sent and dropped on an unknown-column error below.
+  let webKeys = [];
+  const webForm = hmWebCols() === false ? null : hmWebReadForm(hostId);
+  if (webForm) {
+    const w = hmWebsiteFromForm(webForm);
+    if (!w.ok) { done((phoneMsg ? "Profile not saved: " : "") + w.error); return; }
+    const was = (HM.profiles.find(p => p.host_id === hostId) || {}).show_on_website;
+    if (w.value.show_on_website && !was) {
+      const missing = hmWebMissing(hostId);
+      if (missing.length) { done((phoneMsg ? "Profile not saved: " : "") + "Profile incomplete — cannot publish: " + missing.join("; ") + "."); return; }
+    }
+    webKeys = Object.keys(w.value);
+    Object.assign(r.value, w.value);
+  }
   const sb = window.vmDb.sb;
   const { data } = await sb.auth.getSession();
   const me = data && data.session && data.session.user;
@@ -33495,14 +33776,31 @@ async function hmSaveProfile(hostId){
     updated_by: me ? me.id : null, updated_at: now, verified_at: now,
   });
   out.textContent = "Saving…";
-  const { data: saved, error } = await sb.from("hm_host_profiles").upsert(row, { onConflict: "host_id" }).select().single();
-  done(error ? "Error: " + error.message : "Saved.");
+  let { data: saved, error } = await sb.from("hm_host_profiles").upsert(row, { onConflict: "host_id" }).select().single();
+  let note = "Saved.";
+  const NEED_SQL = "Website settings need the 2026-10-07 database update.";
+  if (error && webKeys.length && hmWebsiteSaveError(error) === NEED_SQL) {
+    // The columns aren't there yet: save the rest of the profile without them.
+    webKeys.forEach(k => delete row[k]);
+    ({ data: saved, error } = await sb.from("hm_host_profiles").upsert(row, { onConflict: "host_id" }).select().single());
+    note = "Profile saved. " + NEED_SQL;
+  }
+  done(error ? hmWebsiteSaveError(error) : note);
   if (!error) {
     const fresh = saved || row;
     if (isNew) HM.profiles.push(fresh); else Object.assign(prev, fresh);
     const line = document.getElementById("hm-consent-" + hostId);
     if (line) line.textContent = hmSmsConsentText(fresh);
     if (isNew) hmCrcRedraw(hostId);
+    const web = hmWebRoot(hostId);
+    if (web) {
+      const pid = web.querySelector("[data-hm-web-pid]");
+      if (pid && fresh.public_id) pid.value = fresh.public_id;
+      const ph = web.querySelector("[data-hm-web-photos]");
+      if (ph) delete ph.dataset.touched;
+    }
+    const badge = document.querySelector(`[data-hm-web-badge="${CSS.escape(hostId)}"]`);
+    if (badge) badge.innerHTML = hmWebBadges(fresh);
     hmReadyUpdate(hostId);
   }
 }
@@ -34171,6 +34469,7 @@ async function hmlRefreshStatuses(){
   if (error || !data) return;
   HM.listings = data;
   document.querySelectorAll("[data-hml-badge]").forEach(el => { el.innerHTML = hmlBadge(el.dataset.hmlBadge); });
+  document.querySelectorAll("[data-hm-web]").forEach(el => hmWebRedrawPhotos(el.dataset.hmWeb));
   hmReadyUpdate();
 }
 
@@ -34218,6 +34517,10 @@ async function hmlLoad(hostId, flash){
     <button class="btn btn-ghost" type="button" data-hml-act="changes">Send change request</button>
     <span class="card-sub" data-hml-msg></span>`;
   box.dataset.photoIds = JSON.stringify(photos.map(p => p.id));
+  // Website settings photo picker: thumbnails for the approved ids still in the listing (signed 1-hour URLs).
+  HM.photoUrls = HM.photoUrls || {};
+  HM.photoUrls[hostId] = Object.fromEntries(photos.filter(p => p.url).map(p => [Number(p.id), p.url]));
+  hmWebRedrawPhotos(hostId);
 }
 
 document.addEventListener("click", async (ev) => {
