@@ -854,6 +854,7 @@ function bookingEmailParts(arrival, template, access) {
   var rows = [
     ["Building", building],
     ["Address", acc.address],
+    ["Apartment", str(a.unit)],
     ["Room", acc.room_label || str(a.bed)],
     ["Bed", acc.bed_type],
     ["Move-in", str(a.arrival_date) ? longDate(a.arrival_date) : ""],
