@@ -504,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-07-bkunit2"></script>
+<script src="arrivals-core.js?v=2026-10-07-unitaddr1"></script>
 <script>
 (function () {
   'use strict';
@@ -1814,7 +1814,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     us.forEach(function (u) {
       var m = B(u.building); if (!m) return;
       m.units[u.unit] = { unit: u.unit, wifi_name: str(u.wifi_name), wifi_password: str(u.wifi_password), unit_note: str(u.unit_note), unit_door_code: str(u.door_code),
-        buzzer: str(u.buzzer), floor: str(u.floor), whatsapp_url: str(u.whatsapp_url), whole_unit: u.whole_unit === true, saved: true, upcoming: 0 };
+        buzzer: str(u.buzzer), floor: str(u.floor), whatsapp_url: str(u.whatsapp_url), whole_unit: u.whole_unit === true, address: str(u.address), saved: true, upcoming: 0 };
     });
     rs.forEach(function (r) {
       var m = B(r.building); if (!m) return;
@@ -1893,7 +1893,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       return '<form class="erow u' + (u.upcoming && !u.wifi_name ? ' flag' : '') + '" data-kind="unit" data-b="' + nb + '" data-unit="' + esc(u.unit) + '">' +
         '<span class="key">' + esc(u.unit) + (u.upcoming ? '<small>' + u.upcoming + ' upcoming</small>' : '') + '</span>' +
         '<input class="inp" name="wifi_name" value="' + esc(u.wifi_name) + '" placeholder="Network name" aria-label="Wi-Fi network" autocomplete="off" />' +
-        secret('wifi_password', u.wifi_password, 'Wi-Fi password') + '<button class="btn btn-ghost" type="submit">Save</button></form>';
+        secret('wifi_password', u.wifi_password, 'Wi-Fi password') + unitAddressInput(u.address) + '<button class="btn btn-ghost" type="submit">Save</button></form>';
     }).join('');
     for (var i = 0; i < news.units; i++) {
       h += '<form class="erow u" data-kind="unit" data-b="' + nb + '" data-unit=""><input class="inp" name="unit" placeholder="Unit" aria-label="Unit" />' +
@@ -1931,6 +1931,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         if (!unit) { toast('Enter the unit first.'); return; }
         ok = await rpc('arrivals_save_access', { p_building: b, p_unit: unit, p_room_key: '', p_room_label: null, p_door_code: null,
           p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password') });
+        if (ok) ok = await saveUnitAddress(form, b, unit);
       } else if (kind === 'room') {
         var rk = form.getAttribute('data-room') || v('room_key');
         if (!rk) { toast('Enter the room key first.'); return; }
@@ -1983,6 +1984,16 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   function isHouse(b) { return !!(S.acc && S.acc[b] && S.acc[b].building_type === 'house'); }
   function buildingWas(b) { return (S.acc && S.acc[b]) || {}; }
   function unitWas(b, unit) { return (S.acc && S.acc[b] && S.acc[b].units[unit]) || {}; }
+  // Unit address (unit-address-2026-10-07.sql): a unit at another street number than its building (Gateway 307 / 315).
+  // Blank = the building's address. Sent only when edited, so the portal still saves before that SQL is applied.
+  function unitAddressInput(value) {
+    return '<input class="inp" name="unit_address" value="' + esc(value) + '" data-was="' + esc(value) + '" placeholder="Own street address (blank = building’s)" aria-label="Unit address" autocomplete="off" />';
+  }
+  async function saveUnitAddress(form, b, unit) {
+    var el = form.elements.unit_address;
+    if (!el || el.value.trim() === (el.getAttribute('data-was') || '')) return true;
+    return rpc('arrivals_save_unit_address', { p_building: b, p_unit: unit, p_address: el.value.trim() });
+  }
   function roomWas(b, rk) { return (S.acc && S.acc[b] && S.acc[b].rooms[rk]) || {}; }
   function typeOpts(sel) {
     return [['', 'Type —'], ['house', 'House'], ['building', 'Building']].map(function (o) {
@@ -2142,6 +2153,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       (S.zoho ? '<label class="fl">' + esc(house ? 'House main door code' : 'Apartment / main door code') + secret('unit_door_code', u ? u.unit_door_code : '', 'Door code') + '</label>' +
         textField('buzzer', 'Buzzer', u ? u.buzzer : '', 'e.g. 1104') + textField('floor', 'Floor', u ? u.floor : '', 'e.g. 11') +
         '<label class="fl">WhatsApp group URL<input class="inp" name="whatsapp_url" type="url" value="' + esc(u ? u.whatsapp_url : '') + '" placeholder="https://chat.whatsapp.com/…" autocomplete="off" /></label>' : '') +
+      (house ? '' : '<label class="fl">Unit address · only if not the building’s' + unitAddressInput(u ? str(u.address) : '') + '</label>') +
       noteField('unit_note', house ? 'House note · in every email for this house' : 'Apartment note · in every email for this unit', u ? u.unit_note : '', 'e.g. Shared kitchen, the recycling goes downstairs') +
       (S.whole && !house ? '<label class="fl" style="flex-basis:100%;display:flex;align-items:center;gap:8px"><input type="checkbox" name="whole_unit"' + (u && u.whole_unit ? ' checked' : '') + ' /> Whole unit: rented as one, no bedroom door codes</label>' : '') +
       '<button class="btn btn-ghost" type="submit">' + (isNew ? 'Add unit' : house ? 'Save house details' : 'Save unit') + '</button></div></form>';
@@ -2166,7 +2178,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var miss = Array.isArray(x.missing) ? x.missing : [];
     var next = A.roomNext(S.rvNext, x);
     var unitRow = { wifi_name: x.wifi_name, wifi_password: x.wifi_password, unit_note: x.unit_note, missing: miss,
-      unit_door_code: x.unit_door_code, buzzer: x.buzzer, floor: x.floor, whatsapp_url: x.whatsapp_url, whole_unit: x.whole_unit === true };
+      unit_door_code: x.unit_door_code, buzzer: x.buzzer, floor: x.floor, whatsapp_url: x.whatsapp_url, whole_unit: x.whole_unit === true,
+      address: unitWas(x.building, str(x.unit)).address };
     var facts = [
       ['Building', [x.building, x.city, S.zoho && str(x.building_type) ? (x.building_type === 'house' ? 'House' : 'Building') : ''].filter(str).join(' · ')],
       ['Room key', x.room_key],
@@ -2182,7 +2195,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     h += str(x.unit) ? unitFormHtml(x.building, x.unit, unitRow, false)
       : S.zoho && isHouse(x.building) ? unitFormHtml(x.building, '', unitRow, false, true)
       : '<p class="note">This room has no unit: set the unit above to save Wi-Fi and an apartment note' + (S.zoho ? ' (or make ' + esc(x.building) + ' a house in its card)' : '') + '.</p>';
-    if (miss.indexOf('address') !== -1) h += '<p class="note">The building address is missing: fill it in the ' + esc(x.building) + ' card.</p>';
+    if (miss.indexOf('address') !== -1) h += '<p class="note">The address is missing: fill it in the ' + esc(x.building) + ' card, or on the unit if it has its own.</p>';
     if (!(m.tpl && m.tpl.reviewed)) h += '<div class="fx miss"><div class="fh"><span>Email template</span><small>' + (m.tpl ? 'Not reviewed' : 'None yet') + '</small></div><button type="button" class="btn btn-ghost" data-ract="tpl">Open the ' + esc(x.building) + ' template</button></div>';
     var pin = A.roomPreviewInput(x, m.tpl || null, next);
     var mail = A.buildArrivalEmail(pin.arrival, pin.template, pin.access, { pixelBase: '' });
@@ -2212,6 +2225,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         ok = await rpc('arrivals_save_access', Object.assign({ p_building: b, p_unit: unit, p_room_key: '', p_room_label: null, p_door_code: null,
           p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password'), p_room_note: null, p_unit_note: v('unit_note') }, zChanged(form, Z_UNIT, unitWas(b, unit)),
           wholeChanged(form, unitWas(b, unit))));
+        if (ok && !house) ok = await saveUnitAddress(form, b, unit);
       }
     } finally { if (btn) btn.disabled = false; }
     if (!ok) return;
@@ -2387,7 +2401,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var z = zSampleAccess(m, unit, r);
     return {
       arrival: { student_name: 'Alex Sample', building: t.building, unit: unit, bed: 'B', arrival_date: sat, checkout_date: addDaysYmd(sat, 27) },
-      access: { address: m.address || '123 Sample Street', house_code: t.house_code !== undefined ? str(t.house_code) : (m.house_code || ''), wifi_name: (u && u.wifi_name) || (t.wifi_in_unit ? '' : 'Sample-WiFi'), wifi_password: (u && u.wifi_password) || (t.wifi_in_unit ? '' : 'sample-password'),
+      access: { address: (m.units && m.units[unit] && m.units[unit].address) || m.address || '123 Sample Street', house_code: t.house_code !== undefined ? str(t.house_code) : (m.house_code || ''), wifi_name: (u && u.wifi_name) || (t.wifi_in_unit ? '' : 'Sample-WiFi'), wifi_password: (u && u.wifi_password) || (t.wifi_in_unit ? '' : 'sample-password'),
         door_code: (r && r.door_code) || '1234', room_label: (r && r.room_label) || 'Room B',
         unit_door_code: z.unit_door_code, buzzer: z.buzzer, floor: z.floor, whatsapp_url: z.whatsapp_url, checkin_video_url: z.checkin_video_url,
         contact_url: z.contact_url, bed_type: z.bed_type }
@@ -2677,7 +2691,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return {
       arrival: { student_name: 'Alex Sample', student_email: 'alex@example.com', building: t.building, unit: unit, bed: 'B',
         arrival_date: sat, checkout_date: addDaysYmd(sat, 120), lease_type: 'Fixed term', booking_ref: 'VM-SAMPLE' },
-      access: { address: m.address || '123 Sample Street', room_label: (r && r.room_label) || 'Room B', bed_type: z.bed_type,
+      access: { address: (m.units && m.units[unit] && m.units[unit].address) || m.address || '123 Sample Street', room_label: (r && r.room_label) || 'Room B', bed_type: z.bed_type,
         whatsapp_url: z.whatsapp_url || 'https://chat.whatsapp.com/sample', contact_url: z.contact_url || 'https://example.com/contact' }
     };
   }
@@ -3037,7 +3051,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       unit_door_code: z.unit_door_code, buzzer: z.buzzer, floor: z.floor, whatsapp_url: z.whatsapp_url, checkin_video_url: z.checkin_video_url,
       contact_url: z.contact_url, bed_type: z.bed_type,
       unit: unit, bed: 'B', room_label: (rm && rm.room_label) || 'Room B', door_code: (rm && rm.door_code) || '1234',
-      address: m.address || '123 Sample Street', house_code: m.house_code || '', wifi_name: (u && u.wifi_name) || 'Sample-WiFi', wifi_password: (u && u.wifi_password) || 'sample-password',
+      address: (m.units && m.units[unit] && m.units[unit].address) || m.address || '123 Sample Street', house_code: m.house_code || '', wifi_name: (u && u.wifi_name) || 'Sample-WiFi', wifi_password: (u && u.wifi_password) || 'sample-password',
       keys_only: !!(m.tpl && m.tpl.keys_only), followup_name: f.name, subject: f.subject, intro: f.intro, sections: f.sections,
       rules_url: f.rules_url, docs_url: f.docs_url, show_codes: f.show_codes, secret_label: f.secret_label, secret_valid_hours: f.secret_valid_hours,
       secret_token: 'preview', open_token: '', template_reviewed: true, followup_enabled: true };
