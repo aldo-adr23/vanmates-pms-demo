@@ -966,7 +966,7 @@ function rmMissing(r) { return Array.isArray(r && r.missing) ? r.missing : []; }
 function rmSortRooms(a, b) { return rmCmp(a.building, b.building) || rmCmp(a.unit, b.unit) || rmCmp(roomTitle(a), roomTitle(b)) || rmCmp(a.room_key, b.room_key); }
 
 // rows -> [{building, city, rooms, ready, missing, upcoming, units:[{unit, wifi_name, wifi_password, unit_note,
-// whole_unit, rooms:[row], ready, missing, upcoming}]}], buildings / units / rooms in natural order.
+// rooms:[row], ready, missing, upcoming}]}], buildings / units / rooms in natural order.
 function roomsTree(rows) {
   var by = {};
   (rows || []).slice().sort(rmSortRooms).forEach(function (r) {
@@ -975,8 +975,7 @@ function roomsTree(rows) {
     if (!g.city && str(r.city)) g.city = str(r.city);
     var uk = str(r.unit);
     var u = g._u[uk];
-    if (!u) { u = g._u[uk] = { unit: uk, wifi_name: "", wifi_password: "", unit_note: "", whole_unit: false, rooms: [], ready: 0, missing: 0, upcoming: 0 }; g.units.push(u); }
-    if (r.whole_unit === true) u.whole_unit = true;
+    if (!u) { u = g._u[uk] = { unit: uk, wifi_name: "", wifi_password: "", unit_note: "", rooms: [], ready: 0, missing: 0, upcoming: 0 }; g.units.push(u); }
     if (!u.wifi_name && str(r.wifi_name)) u.wifi_name = str(r.wifi_name);
     if (!u.wifi_password && str(r.wifi_password)) u.wifi_password = str(r.wifi_password);
     if (!u.unit_note && str(r.unit_note)) u.unit_note = str(r.unit_note);
@@ -991,19 +990,6 @@ function roomsToCheck(rows) {
   return (rows || []).filter(function (r) { return rmMissing(r).length && (+r.upcoming_arrivals || 0) > 0; }).sort(rmSortRooms);
 }
 
-// Buildings with no room rows yet (only a roster, contract or saved building names them) -> empty roomsTree groups,
-// so the Rooms page still shows their card with + Add unit. blds: [{building, city, upcoming}]. With a search, the
-// building name must match it; without one, only buildings with someone coming show.
-function roomsEmptyBuildings(blds, rows, q, city) {
-  var have = {};
-  (rows || []).forEach(function (r) { have[str(r.building)] = 1; });
-  return (blds || []).filter(function (b) {
-    var n = str(b && b.building);
-    if (!n || have[n] || (city && b.city !== city)) return false;
-    return str(q) ? roomMatches({ building: n }, q) : (+b.upcoming || 0) > 0;
-  }).map(function (b) { return { building: str(b.building), city: str(b.city), rooms: 0, ready: 0, missing: 0, upcoming: +b.upcoming || 0, units: [] }; })
-    .sort(function (a, b) { return rmCmp(a.building, b.building); });
-}
 // access_import_issues row -> "Row 34 in tab ‘Cherry S’: unit unreadable" (reason codes read as words).
 function importIssueText(i) {
   var x = i || {};
@@ -1115,7 +1101,7 @@ var ArrCore = {
   checkoutMissingLabel: checkoutMissingLabel, CO_MISSING_ORDER: CO_MISSING_ORDER,
   buildFollowupEmail: buildFollowupEmail, followupEmailSpec: followupEmailSpec, followupReadiness: followupReadiness,
   followupMissingLabel: followupMissingLabel, FU_MISSING_ORDER: FU_MISSING_ORDER,
-  roomMatches: roomMatches, roomsFilter: roomsFilter, roomsTree: roomsTree, roomsEmptyBuildings: roomsEmptyBuildings, roomsToCheck: roomsToCheck, roomTitle: roomTitle,
+  roomMatches: roomMatches, roomsFilter: roomsFilter, roomsTree: roomsTree, roomsToCheck: roomsToCheck, roomTitle: roomTitle,
   roomOptionLabel: roomOptionLabel, roomSaved: roomSaved, roomMissingLabel: roomMissingLabel, importIssueText: importIssueText,
   groupImportIssues: groupImportIssues, nextArrivalByRoom: nextArrivalByRoom, roomNext: roomNext, roomPreviewInput: roomPreviewInput,
   roomPick: roomPick,
