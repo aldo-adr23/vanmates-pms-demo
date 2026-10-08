@@ -821,7 +821,7 @@
      Same language as Homestay bookings: portal tokens only, statuses in words,
      terracotta only for what waits on Vanmates, the primary button and the
      active tab. Scoped to the view, the drawer (.ct-panel) and the sign modal. */
-  .ct-view [hidden],.ct-panel [hidden],#ct-sign-backdrop [hidden]{display:none !important}
+  .ct-view [hidden],.ct-panel [hidden],#ct-sign-backdrop [hidden],#ct-new-backdrop [hidden]{display:none !important}
   .ct-view .ct-top{display:flex;justify-content:flex-end;margin-bottom:16px}
   .ct-view .ct-search{width:300px;max-width:100%}
   .ct-view .ct-tabbar{display:flex;gap:22px;align-items:flex-end;border-bottom:1px solid var(--line);margin:4px 0 0;flex-wrap:wrap}
@@ -866,6 +866,8 @@
   .ct-padclear{position:absolute;right:8px;top:8px}
   .ct-person-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--cream-2)}
   .ct-person-row:first-child{border-top:0}
+  #ct-new-form [aria-invalid="true"]{border-color:var(--red)}
+  #ct-new-backdrop .modal-foot{flex-wrap:wrap}
   @media (max-width: 600px){
     .ct-panel .ct-kv,.ct-timeline li{grid-template-columns:minmax(0,1fr);gap:2px}
   }
@@ -1533,7 +1535,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-08-ptnrow1"></script>
+<script src="pms-supabase.js?v=2026-10-08-manualct2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2850,8 +2852,8 @@
       </div>
       <div class="ct-tabbar" id="ct-tabs" role="tablist"></div>
       <div class="ct-toolbar">
-        <span id="ct-list-status" class="card-sub">Co-living subleases sent by Hugo. Tenants sign on vanmates.com; Vanmates signs last, here.</span>
-        <span class="hb-links"><button type="button" class="hb-link" id="ct-refresh">Refresh</button></span>
+        <span id="ct-list-status" class="card-sub">Co-living subleases sent by Hugo or made here by hand. Tenants sign on vanmates.com; Vanmates signs last, here.</span>
+        <span class="hb-links"><button type="button" class="btn btn-primary btn-mini" id="ct-new" data-ct-new-for="page" style="margin-right:12px" hidden>+ New contract</button><button type="button" class="hb-link" id="ct-refresh">Refresh</button></span>
       </div>
       <div class="card">
         <div style="overflow-x:auto">
@@ -14977,17 +14979,19 @@ function openHomestayClient(id){
 
   // Agreements the client has signed (phase 1: the homestay agreement, matched
   // by client id, else by email). Download = 60-minute signed URL on click.
-  const agreements = typeof hcAgreementsFor === "function" ? hcAgreementsFor(c, window.contracts || []) : [];
+  // Voided ones stay listed, greyed and labelled Void, but are not counted.
+  const agreements = typeof hcAgreementsFor === "function" ? hcAgreementsFor(c, window.contracts || [], true) : [];
+  const agreementsLive = agreements.filter(a => String(a.status || "") !== "void").length;
   body.insertAdjacentHTML("beforeend", `
     <div class="panel-section" id="hc-agreements">
-      <div class="panel-section-title">Agree<em>ments</em> <span class="ct">${agreements.length}</span></div>
-      ${agreements.length ? agreements.map(a => `
-        <div class="list-row">
-          <div class="list-icon green">✓</div>
-          <div class="list-main"><div class="list-title">${esc(hbAgreementKindLabel(a.kind))}</div>
-            <div class="list-sub">Signed ${a.signed_at ? esc(fmtDate(String(a.signed_at).slice(0,10))) : "—"}${a.booking_ref ? " · " + esc(a.booking_ref) : ""}${a.status && a.status !== "signed" ? " · " + esc(a.status) : ""}</div></div>
+      <div class="panel-section-title">Agree<em>ments</em> <span class="ct">${agreementsLive}</span></div>
+      ${agreements.length ? agreements.map(a => { const isVoid = String(a.status || "") === "void"; return `
+        <div class="list-row"${isVoid ? ' style="opacity:.55"' : ""}>
+          <div class="list-icon${isVoid ? "" : " green"}">${isVoid ? "✕" : "✓"}</div>
+          <div class="list-main"><div class="list-title">${esc(hbAgreementKindLabel(a.kind))}${isVoid ? " · Void" : ""}</div>
+            <div class="list-sub">Signed ${a.signed_at ? esc(fmtDate(String(a.signed_at).slice(0,10))) : "—"}${a.booking_ref ? " · " + esc(a.booking_ref) : ""}${isVoid ? (a.voided_at ? " · voided " + esc(fmtDate(String(a.voided_at).slice(0,10))) : "") + (a.void_reason ? " · " + esc(a.void_reason) : "") : a.status && a.status !== "signed" ? " · " + esc(a.status) : ""}</div></div>
           ${a.pdf_path ? `<button class="btn btn-ghost btn-mini" type="button" data-hb-agreement="${esc(a.pdf_path)}">Download</button>` : ""}
-        </div>`).join("") : `<div class="card-sub">No agreements yet.</div>`}
+        </div>`; }).join("") : `<div class="card-sub">No agreements yet.</div>`}
     </div>`);
 
   // Wire host link
@@ -17311,8 +17315,13 @@ function hbAgreementFor(booking, contracts){
 // 'signed' when a contract exists (or the booking row already carries the
 // stamp and the contracts table has not caught up); 'stale' when staff edited
 // the booking after the student signed — the PDF still says what was signed.
+// A voided agreement reopens the booking (agreement_reopened_at, stamp cleared):
+// a contract signed before the reopen is the void one realtime has not brought
+// back yet, so it does not count.
 function hbAgreementState(booking, contract){
   const b = booking || {};
+  const reopened = String(b.agreement_reopened_at || '');
+  if(contract && reopened && !String(b.agreement_signed_at || '') && String(contract.signed_at || '') <= reopened) contract = null;
   if(!contract){
     const at = String(b.agreement_signed_at || '');
     if(!at) return { state:'none', signedAt:'', contractId:'', pdfPath:'' };
@@ -17323,11 +17332,13 @@ function hbAgreementState(booking, contract){
   const stale = !!(signedAt && updated && updated > signedAt);
   return { state: stale ? 'stale' : 'signed', signedAt, contractId: String(contract.id || ''), pdfPath: String(contract.pdf_path || '') };
 }
-function hcAgreementsFor(client, contracts){
+// withVoid: keep voided agreements too (the client drawer lists them greyed as
+// history); without it, only the agreements that still stand.
+function hcAgreementsFor(client, contracts, withVoid){
   if(!client || !Array.isArray(contracts)) return [];
   const id = String(client.id || ''), email = String(client.email || '').toLowerCase();
   // Homestay agreements only: co-living subleases share the contracts table.
-  const live = contracts.filter(c => c && String(c.status || '') !== 'void' && String(c.kind || '') !== 'coliving-sublease');
+  const live = contracts.filter(c => c && (withVoid || String(c.status || '') !== 'void') && String(c.kind || '') !== 'coliving-sublease');
   let rows = id ? live.filter(c => String(c.client_id || '') === id) : [];
   if(!rows.length && email) rows = live.filter(c => String(c.client_email || '').toLowerCase() === email);
   return rows.slice().sort((a, b) => String(b.signed_at || '').localeCompare(String(a.signed_at || '')));
@@ -30184,11 +30195,13 @@ function ahsPayLinkMessage(status, body){
   if (d.error === 'not_found') return { ok: false, link: '', message: 'Booking not found: reload the list.' };
   return { ok: false, link: '', message: 'Could not get the payment link (' + (d.error || ('HTTP ' + status)) + ').' };
 }
-// Resend signing link: an agency student who has not signed the Homestay Agreement on a
-// booking still running. `agreementState` is hbAgreementState's answer from the contracts
-// table; the row's own agreement_signed_at counts too when the list carries it.
+// Send signing link: any student (agency or student-paid) who has not signed the
+// Homestay Agreement on a booking still running — including one whose agreement was
+// voided (agreement_reopened_at, stamp cleared). `agreementState` is hbAgreementState's
+// answer from the contracts table; the row's own agreement_signed_at counts too when the
+// list carries it.
 function ahsCanResendAgreement(b, agreementState){
-  if (!b || b.payer_type !== 'agency' || !(b.status === 'created' || b.status === 'paid')) return false;
+  if (!b || !(b.status === 'created' || b.status === 'paid' || b.status === 'payment_failed')) return false;
   if (String(b.agreement_signed_at || '').trim()) return false;
   const st = agreementState && agreementState.state;
   return st !== 'signed' && st !== 'stale';
@@ -30231,8 +30244,35 @@ function ahsResendMessage(status, body){
   if (status >= 200 && status < 300 && d.sent === true) return { ok: true, message: 'Signing link sent to the student' };
   if (status === 429 || code === 'TOO_SOON') return { ok: false, message: 'A link was sent less than an hour ago' };
   if (status === 404) return { ok: false, message: 'Booking not found' };
-  if (status === 409) return { ok: false, message: 'This booking cannot take a signing link' + (code ? ' (' + code + ')' : ' (not an agency booking, or no longer active)') };
+  if (status === 409) return { ok: false, message: 'This booking cannot take a signing link' + (code ? ' (' + code + ')' : ' (no longer active)') };
   return { ok: false, message: 'Could not send the signing link (' + (code || ('HTTP ' + status)) + ')' };
+}
+// Void agreement: who may. A signed (or changed-after-signing) agreement on any booking.
+function ahsCanVoidAgreement(b, agreementState){
+  const st = agreementState && agreementState.state;
+  return !!b && !!b.booking_ref && (st === 'signed' || st === 'stale');
+}
+// The homestay-agreement-resend webhook's answer to a void (void: true), as the line
+// staff read. ok = the agreement is void now (even when the new link did not go out).
+function ahsVoidMessage(status, body){
+  const d = body || {};
+  const code = String(d.error || d.code || d.reason || '');
+  if (d.voided === true) {
+    if (d.sent === true || d.resent === true) return { ok: true, message: 'Agreement voided — a new signing link was emailed to the student' };
+    if (code === 'EMAIL_FAILED') return { ok: true, message: 'Agreement voided — but the new signing link email failed; use Send signing link' };
+    if (code === 'TOO_SOON' || status === 429) return { ok: true, message: 'Agreement voided — no new link went out (one was sent less than an hour ago); use Send signing link later' };
+    if (status >= 200 && status < 300) return { ok: true, message: 'Agreement voided — the booking shows Unsigned' };
+    return { ok: true, message: 'Agreement voided — but the new signing link did not go out (' + (code || ('HTTP ' + status)) + ')' };
+  }
+  if (status === 404 || code === 'not_found') return { ok: false, message: 'Booking not found' };
+  if (code === 'not_signed') return { ok: false, message: 'There is no signed agreement to void on this booking' };
+  if (code === 'cancelled') return { ok: false, message: 'This booking is cancelled, so its agreement cannot be voided' };
+  if (code === 'INVALID') return { ok: false, message: d.field === 'reason' ? 'A reason is required' : 'Something in the request was not valid' + (d.field ? ' (' + d.field + ')' : '') };
+  if (status === 403 || code === 'FORBIDDEN') return { ok: false, message: 'This staff token cannot void agreements — ask an admin for the full staff token' };
+  if (code === 'void_failed') return { ok: false, message: 'The agreement could not be voided (contracts service failed) — nothing changed; try again' };
+  if (status === 429 || code === 'TOO_SOON') return { ok: false, message: 'A signing link was sent less than an hour ago — reload to see whether the agreement was voided' };
+  if (status === 409) return { ok: false, message: 'This agreement cannot be voided' + (code ? ' (' + code + ')' : '') };
+  return { ok: false, message: 'Could not void the agreement (' + (code || ('HTTP ' + status)) + ')' };
 }
 const ahsMoney = cents => {
   const c = Math.round(Number(cents) || 0), abs = Math.abs(c);
@@ -30718,7 +30758,9 @@ function ahsArrivalText(row, city){
         (tailWords ? hbKv('Final charge', tail === 'failed' ? '<span class="hb-need">failed</span>' : esc(tailWords)) : '')) +
       hbSection('Letter', hbKv('Status', hbWords(letter)) + hbLetterActions(b)) +
       hbSection('Agreement', hbKv('Status', hbWords({ text: agr.text, sub: agr.sub, need: false })) +
-        (agr.pdfPath ? '<div class="hb-panel-actions"><button class="btn btn-ghost btn-mini" type="button" data-hb-agreement="' + esc(agr.pdfPath) + '">Download</button></div>' : '')) +
+        (agr.pdfPath || hbVoidAgreementBtn(b) ? '<div class="hb-panel-actions">' +
+          (agr.pdfPath ? '<button class="btn btn-ghost btn-mini" type="button" data-hb-agreement="' + esc(agr.pdfPath) + '">Download</button>' : '') +
+          hbVoidAgreementBtn(b) + '</div>' : '')) +
       hbSection('Host payouts', hbKv('Status', hbWords(payout))) +
       hbSection('Actions', '<div class="hb-panel-actions">' + hbExtendAction(b) + hbMoveOutAction(b) + hbResendAgreementBtn(b) + hbAgencyCancelBtn(b) + '</div>') +
       '</div>';
@@ -31001,11 +31043,63 @@ function ahsArrivalText(row, city){
     if (!ahsCanResendAgreement(b, ag)) return '';
     if (!hbCanWrite()) {
       return '<button type="button" class="btn btn-ghost btn-mini hb-need-token" ' +
-        'title="Resending the signing link emails the student, so it needs the full staff token.">Resend signing link — needs full token</button>';
+        'title="Sending the signing link emails the student, so it needs the full staff token.">Send signing link — needs full token</button>';
     }
     const busy = hbResendInFlight.has(String(b.booking_ref || ''));
     return '<button type="button" class="btn btn-ghost btn-mini hb-agreement-resend" data-ref="' + esc(b.booking_ref) + '"' +
-      (busy ? ' disabled' : '') + '>' + (busy ? 'Sending…' : 'Resend signing link') + '</button>';
+      (busy ? ' disabled' : '') + '>' + (busy ? 'Sending…' : 'Send signing link') + '</button>';
+  }
+  // A signed agreement can be voided (wrong terms, booking changed): the student
+  // can then sign again, and the box below emails them a fresh link. Takes the
+  // full staff token, like the signing link.
+  function hbVoidAgreementBtn(b) {
+    const ag = hbAgreementState(b, hbAgreementFor(b, window.contracts || []));
+    if (!ahsCanVoidAgreement(b, ag)) return '';
+    if (!hbCanWrite()) {
+      return '<button type="button" class="btn btn-ghost btn-mini hb-need-token" ' +
+        'title="Voiding the agreement can email the student, so it needs the full staff token.">Void agreement — needs full token</button>';
+    }
+    return '<button type="button" class="btn btn-ghost btn-mini hb-agreement-void" data-ref="' + esc(b.booking_ref) + '">Void agreement…</button>';
+  }
+  function hbOpenVoidAgreement(ref) {
+    const b = (hbLastRows || []).find((x) => x.booking_ref === ref);
+    if (!b || typeof rcvModalOpen !== 'function') return;
+    const ag = hbAgreementState(b, hbAgreementFor(b, window.contracts || []));
+    const active = b.status === 'created' || b.status === 'paid' || b.status === 'payment_failed';
+    rcvModalOpen({
+      title: 'Void <em>agreement</em>',
+      sub: ref + (b.student_name ? ' · ' + b.student_name : ''),
+      body: '<p style="margin:0 0 12px;line-height:1.5">The signed Homestay Agreement stops counting and the booking shows Unsigned, so the student can sign again. ' +
+        'The PDF stays in the history, marked Void.</p>' +
+        rcvFormField('Reason *', '<textarea class="form-input" name="reason" rows="3" maxlength="300" placeholder="e.g. dates changed after signing"></textarea>') +
+        (active ? '<label style="display:flex;gap:8px;align-items:center;font-size:13.5px;margin:4px 0 0"><input type="checkbox" name="resend" checked> Email the student a new signing link</label>'
+          : '<div class="card-sub">This booking is ' + esc(b.status || 'closed') + ', so no new signing link can go out.</div>'),
+      submit: 'Void agreement',
+      onSubmit: async (form, err) => {
+        const reason = String(form.elements.reason.value || '').trim();
+        if (!reason) { err.textContent = 'A reason is required'; return; }
+        const resend = !!(active && form.elements.resend && form.elements.resend.checked);
+        const who = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.email) || '';
+        let msg;
+        try {
+          // Void rides on the resend webhook (void: true); resend says whether a new link goes out too.
+          const r = await hbPost('homestay-agreement-resend', { booking_ref: ref, requested_by: who, sent_at: new Date().toISOString(), void: true, reason, resend }, { raw: true });
+          msg = ahsVoidMessage(r.status, r.data);
+        } catch (e) {
+          msg = { ok: false, message: e.message || 'Could not void the agreement' };
+        }
+        if (!msg.ok) { err.textContent = msg.message; return; }
+        rcvModalDone(ref + ': ' + msg.message);
+        if (typeof showToast === 'function') showToast(ref + ': ' + msg.message);
+        hbStatusFor(hbPanelRef, ref + ': ' + msg.message, false);
+        // The contracts row is void now; realtime brings it, but re-read it so the
+        // panel does not keep saying Signed in the meantime.
+        if (ag.contractId && typeof ctReloadRow === 'function') await ctReloadRow(ag.contractId);
+        try { await hbLoadBookings(); } catch (e) { hbStatus(e.message, true); }
+        if (typeof window.hbRerenderAgreements === 'function') window.hbRerenderAgreements();
+        return true;
+      },
+    });
   }
   // Read-only token is enough: the link only lets the student pay their own
   // booking, and Booking Pay re-checks everything when they use it.
@@ -31051,7 +31145,7 @@ function ahsArrivalText(row, city){
     const row = (hbLastRows || []).find((x) => x.booking_ref === ref);
     document.querySelectorAll('.hb-agreement-resend').forEach((el) => {
       if (el.getAttribute('data-ref') !== ref) return;
-      if (!row) { el.disabled = false; el.textContent = 'Resend signing link'; return; }
+      if (!row) { el.disabled = false; el.textContent = 'Send signing link'; return; }
       const html = hbResendAgreementBtn(row);
       if (html) el.outerHTML = html; else el.remove();
     });
@@ -31910,6 +32004,8 @@ function ahsArrivalText(row, city){
       if (agencyCancel) return hbOpenAgencyCancel(agencyCancel.getAttribute('data-ref'));
       const agResend = e.target.closest('.hb-agreement-resend');
       if (agResend) return hbResendAgreement(agResend);
+      const agVoid = e.target.closest('.hb-agreement-void');
+      if (agVoid) return hbOpenVoidAgreement(agVoid.getAttribute('data-ref'));
       const payLink = e.target.closest('.hb-paylink');
       if (payLink) return hbGetPayLink(payLink);
       if (e.target.closest('.hb-need-token')) {
@@ -35934,7 +36030,8 @@ function ctActions(row, me) {
   if (s === 'customer_signed' && ctIsCountersigner(me)) out.push('sign');
   if (s === 'draft') out.push('send');
   if (s === 'sent') out.push('resend');
-  if (s === 'draft' || s === 'sent' || s === 'customer_signed') out.push('void');
+  if (s === 'draft' || s === 'sent' || s === 'customer_signed') out.push('replace', 'void');
+  if (s === 'completed') out.push('extend');
   return out;
 }
 
@@ -36040,6 +36137,7 @@ function ctErrorText(status, body) {
     conflict: 'Someone else changed this contract at the same time. It has been reloaded; try again.',
     not_ready: 'This contract is not waiting for Vanmates any more' + (d.status ? ' (it is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '. Reload the page.',
     cannot_void: 'This contract is already ' + (ctStr(d.status) || 'closed') + ' and cannot be voided.',
+    already_signed: 'This booking already has a signed contract, so it cannot be created or replaced again. Reload the page.',
     not_sendable: 'Only drafts and sent contracts can be sent' + (d.status ? ' (this one is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '.',
     name_required: 'Type your name before signing.',
     signature_invalid: 'The signature did not come through. Draw it again and retry.',
@@ -36051,6 +36149,156 @@ function ctErrorText(status, body) {
   if (status === 403) return words.forbidden;
   if (status >= 500) return 'The contracts service had a problem (' + status + '). Reload the page to see whether it went through before trying again.';
   return 'The contracts service refused this' + (code ? ' (' + code + ')' : status ? ' (' + status + ')' : '') + '.';
+}
+
+/* ---- New / Replace / Extend form ----
+   One form, three modes. Values are flat strings keyed like the inputs
+   (t1_name, t2_email, …); ctFormToBooking turns them into the `booking` the
+   Worker's POST /coliving takes. Hidden keys ride along untouched:
+   room_gid, asana_tenant_gid, lead_id and original_start (an extension). */
+const CT_FORM_KEYS = ['province', 'lease_type', 't1_name', 't1_email', 't2_name', 't2_email', 'house', 'room', 'address',
+  'rent', 'start', 'end', 'utilities', 'deposit', 'deposit_due', 'room_gid', 'asana_tenant_gid', 'lead_id', 'original_start'];
+const CT_CITY_PROVINCE = { vancouver: 'bc', 'north vancouver': 'bc', burnaby: 'bc', richmond: 'bc', toronto: 'on', montreal: 'qc', 'montréal': 'qc' };
+function ctIsDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ctStr(v));
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+}
+function ctAddDays(iso, n) {
+  if (!ctIsDate(iso)) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n)).toISOString().slice(0, 10);
+}
+function ctIsEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ctStr(v)); }
+function ctProvinceFor(city) { return CT_CITY_PROVINCE[ctStr(city).toLowerCase()] || ''; }
+
+// Prefilled values for the form. src: { contract (replace/extend), tenant (a
+// Tenants record: name, email, property, room, rent, moveIn, leaseEnd,
+// leaseType 'fixed'|'month_to_month', asanaGid, city), address (the tenant's
+// house address, looked up by the page), lead ({id, name, email, city}) }.
+function ctFormDefaults(mode, src) {
+  const x = src || {};
+  const v = {};
+  for (const k of CT_FORM_KEYS) v[k] = '';
+  v.lease_type = 'fixed'; v.utilities = 'Yes';
+  if ((mode === 'replace' || mode === 'extend') && x.contract) {
+    const r = x.contract, b = ctBooking(r);
+    const tenants = ctTenants(r);
+    v.province = ctStr(b.province || r.province).toLowerCase();
+    v.lease_type = ctStr(b.lease_type || r.lease_type) || 'fixed';
+    tenants.slice(0, 2).forEach((t, i) => { v['t' + (i + 1) + '_name'] = t.name; v['t' + (i + 1) + '_email'] = t.email; });
+    for (const k of ['house', 'room', 'address', 'start', 'end', 'utilities', 'deposit_due', 'room_gid']) v[k] = ctStr(b[k]);
+    v.rent = b.rent == null ? '' : ctStr(b.rent);
+    v.deposit = b.deposit == null ? '' : ctStr(b.deposit);
+    v.utilities = v.utilities || 'Yes';
+    v.asana_tenant_gid = ctStr(b.asana_tenant_gid || r.asana_tenant_gid);
+    v.lead_id = ctStr(b.lead_id || r.lead_id);
+    const orig = ctStr(b.extension && b.extension.original_start);
+    if (mode === 'replace') { v.original_start = orig; return v; }
+    // Extend: the new term starts the day after the old one ends; the
+    // tenancy keeps its first start date.
+    v.original_start = orig || ctStr(b.start);
+    v.start = ctAddDays(ctStr(b.end), 1);
+    v.end = '';
+    return v;
+  }
+  if (x.tenant) {
+    const t = x.tenant;
+    v.t1_name = ctStr(t.name); v.t1_email = ctStr(t.email).toLowerCase();
+    v.house = ctStr(t.property); v.room = ctStr(t.room) === '—' ? '' : ctStr(t.room);
+    v.address = ctStr(x.address);
+    v.rent = Number(t.rent) ? String(Number(t.rent)) : '';
+    v.start = ctIsDate(t.moveIn) ? t.moveIn : '';
+    v.end = ctIsDate(t.leaseEnd) ? t.leaseEnd : '';
+    v.lease_type = ctStr(t.leaseType) === 'month_to_month' ? 'open' : 'fixed';
+    if (v.lease_type === 'open') v.end = '';
+    v.province = ctProvinceFor(t.city);
+    v.asana_tenant_gid = ctStr(t.asanaGid);
+    v.deposit_due = v.start;
+  }
+  if (x.lead) {
+    const l = x.lead;
+    v.t1_name = v.t1_name || ctStr(l.name); v.t1_email = v.t1_email || ctStr(l.email).toLowerCase();
+    v.province = v.province || ctProvinceFor(l.city);
+    v.lead_id = ctStr(l.id);
+  }
+  return v;
+}
+
+// Form values → { booking, errors: [{field, text}] }. A draft only refuses
+// what is wrong (a bad email, end before start); sending and replacing also
+// refuse what is missing, because the Worker would.
+function ctFormToBooking(values, mode, contract, draft) {
+  const v = {};
+  for (const k of CT_FORM_KEYS) v[k] = ctStr((values || {})[k]);
+  const errors = [];
+  const err = (field, text) => errors.push({ field, text });
+  const need = !draft || mode === 'replace';
+  const booking = {};
+  if (['bc', 'on', 'qc'].includes(v.province.toLowerCase())) booking.province = v.province.toLowerCase();
+  else if (v.province) err('province', 'Province must be BC, ON or QC.');
+  else if (need) err('province', 'Choose the province.');
+  booking.lease_type = v.lease_type === 'open' ? 'open' : 'fixed';
+  const tenants = [];
+  for (const n of [1, 2]) {
+    const name = v['t' + n + '_name'], email = v['t' + n + '_email'].toLowerCase();
+    if (n === 2 && !name && !email) continue;
+    if (email && !ctIsEmail(email)) err('t' + n + '_email', 'Tenant ' + n + ' email is not a valid email.');
+    else if (!email && (need || n === 2)) err('t' + n + '_email', 'Tenant ' + n + ' email is missing.');
+    if (!name && (need || n === 2)) err('t' + n + '_name', 'Tenant ' + n + ' name is missing.');
+    tenants.push({ name, email });
+  }
+  if (tenants.length === 2 && tenants[0].email && tenants[0].email === tenants[1].email) err('t2_email', 'The two tenants need different emails.');
+  booking.tenants = tenants;
+  for (const [k, label] of [['address', 'Address'], ['house', 'House'], ['room', 'Room']]) {
+    if (v[k]) booking[k] = v[k]; else if (need) err(k, label + ' is missing.');
+  }
+  for (const [k, label] of [['rent', 'Rent'], ['deposit', 'Deposit']]) {
+    if (v[k] === '') { if (need) err(k, label + ' is missing.'); continue; }
+    const n = Number(v[k].replace(/[$,\s]/g, ''));
+    if (!isFinite(n) || n < 0) err(k, label + ' must be a number of dollars, 0 or more.');
+    else if (k === 'rent' && n % 1) err(k, 'Rent must be whole dollars.');
+    else booking[k] = n;
+  }
+  if (booking.rent === 0 && need) err('rent', 'Rent cannot be $0.');
+  for (const [k, label] of [['start', 'Start date'], ['deposit_due', 'Deposit due date']]) {
+    if (ctIsDate(v[k])) booking[k] = v[k];
+    else if (v[k]) err(k, label + ' is not a valid date.');
+    else if (need) err(k, label + ' is missing.');
+  }
+  if (booking.lease_type === 'fixed') {
+    if (ctIsDate(v.end)) {
+      booking.end = v.end;
+      if (booking.start && v.end <= booking.start) err('end', 'End date must be after the start date.');
+    } else if (v.end) err('end', 'End date is not a valid date.');
+    else if (need) err('end', 'End date is missing (or choose an open lease).');
+  }
+  if (v.utilities === 'Yes' || v.utilities === 'No') booking.utilities = v.utilities;
+  else if (need) err('utilities', 'Say whether utilities are included.');
+  for (const k of ['room_gid', 'asana_tenant_gid', 'lead_id']) if (v[k]) booking[k] = v[k];
+  // An extension keeps the tenancy's first start (wording of clauses 1.1 and 1.6).
+  const prev = ctBooking(contract);
+  const orig = v.original_start || ctStr(prev.extension && prev.extension.original_start) || (mode === 'extend' ? ctStr(prev.start) : '');
+  if (mode === 'extend' || (mode === 'replace' && orig)) {
+    if (ctIsDate(orig)) booking.extension = { original_start: orig };
+    else err('start', 'The original tenancy start date is missing.');
+  }
+  return { booking, errors };
+}
+
+// The line above the buttons: who it goes to and on what terms.
+function ctFormPreview(booking) {
+  const b = booking || {};
+  const day = (s) => ctDay(s).replace(',', '');
+  const emails = (Array.isArray(b.tenants) ? b.tenants : []).map((t) => ctStr(t && t.email)).filter(Boolean);
+  const dates = b.start ? day(b.start) + ' → ' + (b.lease_type === 'open' ? 'open-ended' : (day(b.end) || '?')) : '';
+  return [
+    emails.length ? 'Sends to ' + emails.join(', ') : '',
+    ctStr(b.province).toUpperCase(),
+    b.rent != null && b.rent !== '' ? ctMoney(b.rent) + '/mo' : '',
+    dates,
+  ].filter(Boolean).join(' · ');
 }
 /* CONTRACTS-CORE-END */
 
@@ -36134,6 +36382,8 @@ function renderContracts() {
   const nav = document.querySelector('.nav-item[data-view="contracts"] .nav-count');
   if (nav) nav.textContent = counts.waiting;
   if (!view) return;
+  const newBtn = document.getElementById('ct-new');
+  if (newBtn) newBtn.hidden = !ctCanAct(ctMe());
   const tabs = document.getElementById('ct-tabs');
   if (tabs) {
     tabs.innerHTML = CT_TABS.map(([k, label]) =>
@@ -36200,7 +36450,7 @@ function ctRenderPanel(row) {
   const acts = ctActions(row, me);
   const btn = (k, label, primary) => acts.includes(k) ? '<button class="btn ' + (primary ? 'btn-primary' : 'btn-ghost') + ' btn-mini" type="button" data-ct-act="' + k + '">' + label + '</button>' : '';
   const actionsHtml = acts.length
-    ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('void', 'Void…', false) + '</div>'
+    ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('replace', 'Replace…', false) + btn('extend', 'Extend…', false) + btn('void', 'Void…', false) + '</div>'
     : (ctCanAct(me) ? '' : '<div class="ct-sub">Only admins and people with the Contracts page can sign, send or void.</div>');
   const signerNote = ctStr(row.status) === 'customer_signed' && !ctIsCountersigner(me)
     ? '<div class="ct-sub">' + esc(CT_COUNTERSIGNER.name) + ' (' + esc(CT_COUNTERSIGNER.title) + ') signs for Vanmates.</div>' : '';
@@ -36341,6 +36591,7 @@ async function ctAction(kind) {
   const row = ctFind(CT_STATE.openId); if (!row) return;
   if (kind === 'cancel') { CT_STATE.form = null; ctRenderPanel(row); return; }
   if (kind === 'sign') { ctOpenSignModal(row); return; }
+  if (kind === 'replace' || kind === 'extend') { ctOpenContractForm(kind, { contract: row }); return; }
   if (kind === 'void' || kind === 'send') { CT_STATE.msg = ''; ctRenderPanel(row); ctShowForm(kind, row); const f = document.querySelector('#ct-form input, #ct-form textarea, #ct-form select'); if (f) f.focus(); return; }
   if (kind === 'resend') {
     await ctRun(row.id, 'Re-sending the signing link', async () => {
@@ -36479,6 +36730,210 @@ async function ctSignGo() {
   err.textContent = CT_STATE.msg; err.classList.add('show'); ctSignReady();
 }
 
+/* ---------- New / Replace / Extend contract (modal) ----------
+   One modal over ctFormDefaults / ctFormToBooking. Everything goes to the
+   Worker's POST /coliving with the staff session: Save draft (send:false),
+   Send now (send:true), or Replace & send (replaces + reason; the Worker voids
+   the old contract only once the new one validates). A manual Extend does not
+   hold the room in Asana; that stays Hugo's. */
+const CT_NEW = { mode: 'new', contract: null, busy: false, rooms: null };
+const CT_NEW_TITLES = { new: 'New <em>contract</em>', replace: 'Replace <em>contract</em>', extend: 'Extend <em>contract</em>' };
+// Inventory rooms for the picker (the Vacancies model: every Asana room with
+// its house, address and rent). Loaded on first use; typing by hand always works.
+function ctInvRooms() {
+  const m = (typeof VAC_STATE !== 'undefined' && VAC_STATE && Array.isArray(VAC_STATE.model)) ? VAC_STATE.model : null;
+  return m ? m.filter((r) => r && r.gid && r.room) : null;
+}
+function ctPickLabel(r) { return r.room + (r.prop && r.room.toLowerCase().indexOf(r.prop.toLowerCase()) === -1 ? ' · ' + r.prop : '') + (r.city ? ' · ' + r.city : ''); }
+function ctFillRoomList() {
+  const dl = document.getElementById('ct-n-rooms'); if (!dl) return;
+  const rooms = ctInvRooms() || [];
+  CT_NEW.rooms = rooms;
+  dl.innerHTML = rooms.map((r) => '<option value="' + esc(ctPickLabel(r)) + '"></option>').join('');
+  const hint = document.getElementById('ct-n-pick-hint');
+  if (hint) hint.textContent = rooms.length ? 'Pick a room to fill house, room, address and rent; or type them below.' : 'Inventory not loaded; type the house, room and address below.';
+}
+async function ctLoadRooms() {
+  if (ctInvRooms()) { ctFillRoomList(); return; }
+  if (typeof loadVacancies !== 'function') { ctFillRoomList(); return; }
+  try { await loadVacancies(); } catch (_) { /* manual entry still works */ }
+  ctFillRoomList();
+}
+function ctEnsureContractModal() {
+  if (document.getElementById('ct-new-backdrop')) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop'; wrap.id = 'ct-new-backdrop'; wrap.setAttribute('aria-hidden', 'true');
+  wrap.innerHTML =
+    '<div class="modal-dialog" role="dialog" aria-labelledby="ct-new-title" style="max-width:680px">' +
+      '<div class="modal-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M9 14h6M9 18h4"/></svg></div>' +
+        '<div><div class="modal-title" id="ct-new-title">New <em>contract</em></div><div class="modal-sub" id="ct-new-sub"></div></div>' +
+        '<button class="modal-close" type="button" data-ct-new-act="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
+      '<form class="modal-body" id="ct-new-form" autocomplete="off" novalidate></form>' +
+      '<div class="modal-foot" style="align-items:center">' +
+        '<div class="ct-sub" id="ct-new-preview" style="margin:0 auto 0 0;min-width:0"></div>' +
+        '<button class="btn btn-ghost" type="button" data-ct-new-act="close">Cancel</button>' +
+        '<button class="btn btn-ghost" type="button" data-ct-new-act="draft">Save draft</button>' +
+        '<button class="btn btn-primary" type="button" data-ct-new-act="send">Send now</button>' +
+        '<button class="btn btn-primary" type="button" data-ct-new-act="replace">Replace &amp; send</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  wrap.addEventListener('click', (e) => {
+    if (e.target === wrap) { if (!CT_NEW.busy) ctCloseContractForm(); return; }
+    const b = e.target.closest('[data-ct-new-act]'); if (!b || b.disabled) return;
+    const k = b.dataset.ctNewAct;
+    if (k === 'close') { if (!CT_NEW.busy) ctCloseContractForm(); }
+    else ctSubmitContractForm(k);
+  });
+  wrap.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.id === 'ct-n-pick') { ctPickRoom(el.value); }
+    // A hand-typed house or room is no longer the inventory room that was picked.
+    else if (el.name === 'house' || el.name === 'room') { const g = wrap.querySelector('[name="room_gid"]'); if (g) g.value = ''; }
+    if (el.name === 'lease_type') ctLeaseTypeShown();
+    if (el.getAttribute && el.getAttribute('aria-invalid')) el.removeAttribute('aria-invalid');
+    ctPreviewContractForm();
+  });
+  wrap.addEventListener('change', (e) => { if (e.target.name === 'lease_type') ctLeaseTypeShown(); ctPreviewContractForm(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wrap.classList.contains('open') && !CT_NEW.busy) ctCloseContractForm(); });
+}
+function ctPickRoom(label) {
+  const r = (CT_NEW.rooms || []).find((x) => ctPickLabel(x) === label); if (!r) return;
+  const f = document.getElementById('ct-new-form');
+  const set = (k, val, onlyEmpty) => { const el = f.querySelector('[name="' + k + '"]'); if (el && (!onlyEmpty || !el.value)) el.value = val; };
+  set('house', r.prop || ''); set('room', r.room); set('room_gid', r.gid);
+  if (r.addr) set('address', r.addr);
+  if (r.rent != null) set('rent', String(r.rent), true);
+  const prov = ctProvinceFor(r.city); if (prov) set('province', prov, true);
+}
+function ctLeaseTypeShown() {
+  const f = document.getElementById('ct-new-form'); if (!f) return;
+  const open = f.querySelector('[name="lease_type"]').value === 'open';
+  const end = f.querySelector('[data-ct-end]'); if (end) end.style.display = open ? 'none' : '';
+}
+function ctContractFormValues() {
+  const f = document.getElementById('ct-new-form'); const v = {};
+  if (f) f.querySelectorAll('[name]').forEach((el) => { v[el.name] = el.value; });
+  return v;
+}
+function ctPreviewContractForm() {
+  const el = document.getElementById('ct-new-preview'); if (!el) return;
+  el.textContent = ctFormPreview(ctFormToBooking(ctContractFormValues(), CT_NEW.mode, CT_NEW.contract, true).booking);
+}
+// mode 'new' | 'replace' | 'extend'; src as ctFormDefaults takes it.
+function ctOpenContractForm(mode, src) {
+  if (!ctCanAct(ctMe())) { if (typeof showToast === 'function') showToast('Only admins and people with the Contracts page can create contracts.'); return; }
+  ctEnsureContractModal();
+  const x = src || {};
+  CT_NEW.mode = mode; CT_NEW.contract = x.contract || null; CT_NEW.busy = false;
+  const v = ctFormDefaults(mode, x);
+  const s = x.contract ? ctSummary(x.contract) : null;
+  document.getElementById('ct-new-title').innerHTML = CT_NEW_TITLES[mode] || CT_NEW_TITLES.new;
+  document.getElementById('ct-new-sub').textContent = s ? s.tenantNames + ' · ' + s.place + ' · ' + s.datesText
+    : (x.tenant ? 'For ' + ctStr(x.tenant.name) : x.lead ? 'For ' + ctStr(x.lead.name || x.lead.email) : 'Co-living sublease');
+  const fld = (name, label, type, opts) => {
+    const o = opts || {};
+    const id = 'ct-n-' + name;
+    const ctl = type === 'select'
+      ? '<select class="form-input" id="' + id + '" name="' + name + '">' + (o.choose ? '<option value="">Choose…</option>' : '') +
+          o.options.map(([val, l]) => '<option value="' + esc(val) + '"' + (val === v[name] ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>'
+      : '<input class="form-input" id="' + id + '" name="' + name + '" type="' + type + '"' + (type === 'number' ? ' min="0" step="1" inputmode="numeric"' : '') +
+          (o.ph ? ' placeholder="' + esc(o.ph) + '"' : '') + ' value="' + esc(v[name]) + '">';
+    return '<div class="form-field"' + (o.attr || '') + '><label for="' + id + '">' + esc(label) + '</label>' + ctl + '</div>';
+  };
+  const row2 = (a, b) => '<div class="form-row">' + a + b + '</div>';
+  const hidden = ['room_gid', 'asana_tenant_gid', 'lead_id', 'original_start'].map((k) => '<input type="hidden" name="' + k + '" value="' + esc(v[k]) + '">').join('');
+  const note = mode === 'extend'
+    ? '<div class="ct-sub" style="margin-bottom:12px">A new term for the same tenancy' + (v.original_start ? ' (since ' + esc(ctDay(v.original_start)) + ')' : '') + '. Set the new end date. The room is <b>not</b> held in Asana; do that by hand if needed.</div>'
+    : mode === 'replace'
+      ? '<div class="ct-sub" style="margin-bottom:12px">The current contract is voided and this one is sent in its place. If anything below is missing, nothing changes.</div>'
+      : '';
+  document.getElementById('ct-new-form').innerHTML = note + hidden +
+    row2(fld('province', 'Province', 'select', { choose: true, options: [['bc', 'BC'], ['on', 'ON'], ['qc', 'QC']] }),
+      fld('lease_type', 'Lease type', 'select', { options: [['fixed', 'Fixed term'], ['open', 'Month to month (open)']] })) +
+    row2(fld('t1_name', 'Tenant 1 name', 'text'), fld('t1_email', 'Tenant 1 email', 'email')) +
+    row2(fld('t2_name', 'Tenant 2 name (optional)', 'text'), fld('t2_email', 'Tenant 2 email (optional)', 'email')) +
+    '<div class="form-row single"><div class="form-field"><label for="ct-n-pick">Room from inventory</label>' +
+      '<input class="form-input" id="ct-n-pick" list="ct-n-rooms" placeholder="Search rooms…" autocomplete="off"><datalist id="ct-n-rooms"></datalist>' +
+      '<div class="ct-sub" id="ct-n-pick-hint">Loading rooms…</div></div></div>' +
+    row2(fld('house', 'House', 'text'), fld('room', 'Room', 'text')) +
+    '<div class="form-row single">' + fld('address', 'Address', 'text') + '</div>' +
+    row2(fld('rent', 'Rent ($ / month)', 'number'), fld('utilities', 'Utilities included', 'select', { options: [['Yes', 'Yes'], ['No', 'No']] })) +
+    row2(fld('start', 'Start date', 'date'), fld('end', 'End date', 'date', { attr: ' data-ct-end' })) +
+    row2(fld('deposit', 'Deposit ($)', 'number'), fld('deposit_due', 'Deposit due', 'date')) +
+    (mode === 'replace' ? '<div class="form-row single"><div class="form-field"><label for="ct-n-reason">Reason for replacing *</label>' +
+      '<textarea class="form-input" id="ct-n-reason" rows="2" maxlength="300" placeholder="e.g. rent corrected to $1,100"></textarea></div></div>' : '') +
+    '<div class="form-error" id="ct-new-err" role="alert"></div>';
+  const foot = document.querySelector('#ct-new-backdrop .modal-foot');
+  foot.querySelector('[data-ct-new-act="draft"]').hidden = mode === 'replace';
+  foot.querySelector('[data-ct-new-act="send"]').hidden = mode === 'replace';
+  foot.querySelector('[data-ct-new-act="replace"]').hidden = mode !== 'replace';
+  foot.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  ctLeaseTypeShown();
+  ctPreviewContractForm();
+  ctLoadRooms();
+  const bk = document.getElementById('ct-new-backdrop');
+  bk.classList.add('open'); bk.setAttribute('aria-hidden', 'false');
+  setTimeout(() => { const f = document.querySelector('#ct-new-form select, #ct-new-form input:not([type=hidden])'); if (f) f.focus(); }, 50);
+}
+window.ctOpenContractForm = ctOpenContractForm;
+function ctCloseContractForm() {
+  const bk = document.getElementById('ct-new-backdrop');
+  if (bk) { bk.classList.remove('open'); bk.setAttribute('aria-hidden', 'true'); }
+}
+function ctContractFormError(msg) {
+  const el = document.getElementById('ct-new-err'); if (!el) return;
+  el.textContent = msg || ''; el.classList.toggle('show', !!msg);
+}
+// k: 'draft' | 'send' | 'replace'
+async function ctSubmitContractForm(k) {
+  if (CT_NEW.busy) return;
+  const form = document.getElementById('ct-new-form');
+  form.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+  const send = k !== 'draft';
+  const { booking, errors } = ctFormToBooking(ctContractFormValues(), CT_NEW.mode, CT_NEW.contract, !send);
+  const reasonEl = document.getElementById('ct-n-reason');
+  const reason = reasonEl ? String(reasonEl.value || '').trim() : '';
+  if (k === 'replace' && !reason) errors.push({ field: 'reason', text: 'Say why the contract is being replaced.' });
+  if (errors.length) {
+    errors.forEach((x) => { const el = x.field === 'reason' ? reasonEl : form.querySelector('[name="' + x.field + '"]'); if (el) el.setAttribute('aria-invalid', 'true'); });
+    ctContractFormError(errors.map((x) => x.text).join(' '));
+    return;
+  }
+  const body = { booking, send };
+  if (k === 'replace') { body.replaces = CT_NEW.contract && CT_NEW.contract.id; body.reason = reason; }
+  CT_NEW.busy = true;
+  ctContractFormError('');
+  const buttons = document.querySelectorAll('#ct-new-backdrop .modal-foot button');
+  buttons.forEach((b) => { b.disabled = true; });
+  const label = document.querySelector('#ct-new-backdrop [data-ct-new-act="' + k + '"]');
+  const was = label ? label.textContent : '';
+  if (label) label.textContent = k === 'draft' ? 'Saving…' : 'Sending… (making the PDF)';
+  let d = null, failure = '';
+  try { d = await ctCall('/coliving', body); }
+  catch (e) {
+    failure = (e && e.message) || String(e);
+    if (k === 'replace' && e && e.body && e.body.error === 'missing') failure += ' The old contract was not voided.';
+  }
+  CT_NEW.busy = false;
+  buttons.forEach((b) => { b.disabled = false; });
+  if (label) label.textContent = was;
+  if (failure) { ctContractFormError(failure); return; }
+  const id = ctStr(d.contract_id);
+  const to = (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' and ') || 'the tenant';
+  const missing = Array.isArray(d.missing) ? d.missing : [];
+  let msg;
+  if (d.status === 'sent') msg = ctEmailWords(d.email_sent, (k === 'replace' ? 'Replaced. The new contract was sent to ' : 'Sent for signature to ') + to);
+  else if (send && missing.length) msg = 'Saved as draft — still missing: ' + missing.map(ctMissingLabel).join(', ') + '.';
+  else msg = 'Saved as draft.';
+  if (d.existing) msg = 'This booking already had a contract; opened it. ' + msg;
+  ctCloseContractForm();
+  if (typeof showToast === 'function') showToast(msg);
+  try { await ctReloadAll(); } catch (e) { console.warn('[contracts] reload after create', e); }
+  renderContracts();
+  if (id && ctFind(id)) { ctOpenFromElsewhere(id); ctStatus(msg, false); }
+}
+
 /* ---------- PDFs: a fresh signed URL per click (lease-docs is private) ---------- */
 async function ctOpenPdf(btn) {
   let tab = null;
@@ -36514,24 +36969,55 @@ function ctPersonListHtml(list) {
   }).join('');
 }
 // Tenant drawer section (inline in openTenant's template).
+// The person a "+ New contract" button in these drawers prefills from (one
+// drawer or lead modal is open at a time).
+const CT_PERSON = { tenant: null, lead: null };
+function ctNewForBtn(who) { return '<button type="button" class="btn btn-ghost btn-mini" data-ct-new-for="' + who + '">+ New contract</button>'; }
 function ctTenantSectionHtml(t) {
   const x = t || {};
+  CT_PERSON.tenant = t || null;
   const list = ctForPerson(ctRows(), { emails: [x.email, x.email2, x.altEmail], asanaGid: x.asanaGid || x.asana_gid || x.gid });
-  if (!list.length) return '';
+  // Guadalajara has no co-living sublease (BC, ON and QC only).
+  const canNew = ctCanAct(ctMe()) && ctStr(x.city) !== 'Guadalajara';
+  if (!list.length && !canNew) return '';
   return '<div class="panel-section"><div class="panel-section-title"><span>Co-living <em>contracts</em></span><span class="ct">' + list.length + '</span></div>' +
-    '<div class="card card-pad ct-person">' + ctPersonListHtml(list) + '</div></div>';
+    '<div class="card card-pad ct-person">' + (list.length ? ctPersonListHtml(list) : '<div class="ct-sub">No contracts yet.</div>') +
+    (canNew ? '<div class="ct-actions">' + ctNewForBtn('tenant') + '</div>' : '') + '</div></div>';
 }
 window.ctTenantSectionHtml = ctTenantSectionHtml;
 // Lead modal block (#lead-contracts).
 function ctRenderLeadContracts(l) {
   const el = document.getElementById('lead-contracts'); if (!el) return;
   const x = l || {};
+  CT_PERSON.lead = l || null;
   const list = ctForPerson(ctRows(), { emails: [x.email], leadId: x.id });
-  if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const canNew = ctCanAct(ctMe()) && !!x.id;
+  if (!list.length && !canNew) { el.style.display = 'none'; el.innerHTML = ''; return; }
   el.style.display = '';
-  el.innerHTML = '<div class="form-field"><label>Contracts</label><div class="ct-person">' + ctPersonListHtml(list) + '</div></div>';
+  el.innerHTML = '<div class="form-field"><label>Contracts</label><div class="ct-person">' + ctPersonListHtml(list) + '</div>' +
+    (canNew ? '<div class="ct-actions" style="margin-top:4px">' + ctNewForBtn('lead') + '</div>' : '') + '</div>';
 }
 window.ctRenderLeadContracts = ctRenderLeadContracts;
+// The house address for a tenant: the inventory's when it is loaded, else the
+// portal's property card (some carry an "Address" / "Location:" prefix).
+function ctAddressFor(house) {
+  const h = ctStr(house).toLowerCase(); if (!h) return '';
+  const inv = (ctInvRooms() || []).find((r) => ctStr(r.prop).toLowerCase() === h && r.addr);
+  if (inv) return inv.addr;
+  const p = (typeof properties !== 'undefined' && Array.isArray(properties) ? properties : []).find((x) => ctStr(x && x.name).toLowerCase() === h);
+  return p ? ctStr(p.addr).replace(/^(address|location)\s*:?\s*/i, '') : '';
+}
+function ctNewFor(who) {
+  if (who === 'tenant' && CT_PERSON.tenant) {
+    const t = CT_PERSON.tenant;
+    const leaseType = typeof tnLeaseType === 'function' ? tnLeaseType(t) : ctStr(t.leaseType);
+    ctOpenContractForm('new', { tenant: Object.assign({}, t, { leaseType }), address: ctAddressFor(t.property) });
+  } else if (who === 'lead' && CT_PERSON.lead) {
+    ctOpenContractForm('new', { lead: CT_PERSON.lead });
+  } else {
+    ctOpenContractForm('new', {});
+  }
+}
 
 /* ---------- wiring ---------- */
 (function ctWire() {
@@ -36556,6 +37042,8 @@ window.ctRenderLeadContracts = ctRenderLeadContracts;
     renderContracts();
   };
   document.addEventListener('click', (e) => {
+    const nw = e.target.closest('[data-ct-new-for]');
+    if (nw && !nw.disabled) { e.preventDefault(); ctNewFor(nw.dataset.ctNewFor); return; }
     const pdf = e.target.closest('[data-ct-pdf]');
     if (pdf && !pdf.disabled) { e.preventDefault(); ctOpenPdf(pdf); return; }
     const go = e.target.closest('[data-ct-goto]');
@@ -36570,6 +37058,6 @@ window.ctRenderLeadContracts = ctRenderLeadContracts;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-08-roomswap1"></script>
+<script src="room-changes.js?v=2026-10-08-manualct2"></script>
 </body>
 </html>
