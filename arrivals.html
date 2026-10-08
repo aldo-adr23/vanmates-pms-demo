@@ -504,7 +504,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-08-rta1"></script>
+<script src="arrivals-core.js?v=2026-10-08-fuaud2"></script>
 <script>
 (function () {
   'use strict';
@@ -673,7 +673,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       return;
     }
     if (seq !== S.seq) return;
-    S.rows = rows.filter(function (r) { return srcMatch(r, S.source); });
+    // source 'departure' (roster-departures-2026-10-08.sql): a stay known only from a roster's check-out — Move-outs only
+    S.rows = rows.filter(function (r) { return r.source !== 'departure' && srcMatch(r, S.source); });
     fuIndex(fu);
     sendsIndex(sends);
     if (S.openId && !byId(S.openId)) S.openId = null;
@@ -1767,7 +1768,10 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
           // null = the move-out messages SQL isn't applied yet (the check-in editor keeps working)
           selectAll('checkout_templates', '*', function (q) { return q.order('building'); }).catch(function (e) { if (moSetupMissing(e)) return null; throw e; }),
           // null = the after-hours follow-ups SQL isn't applied yet
-          selectAll('arrival_followups', FU_RULE_COLS, function (q) { return q.order('building').order('name').order('id'); }).catch(function (e) { if (fuSetupMissing(e)) return null; throw e; }),
+          // audience (followup-audience-2026-10-08.sql): read when the column exists, else the rules as before
+          selectAll('arrival_followups', FU_RULE_COLS + ',audience', function (q) { return q.order('building').order('name').order('id'); })
+            .catch(function (e) { if (fuAudienceMissing(e)) return selectAll('arrival_followups', FU_RULE_COLS, function (q) { return q.order('building').order('name').order('id'); }); throw e; })
+            .catch(function (e) { if (fuSetupMissing(e)) return null; throw e; }),
           // null = rooms-2026-10-04.sql isn't applied yet: the tab stays the old Access editor
           selectAll('access_rooms_v', '*', function (q) { return q.order('building').order('room_key'); }).catch(function (e) { if (roomsSetupMissing(e)) return null; throw e; }),
           selectAll('access_import_issues', 'source,building,tab,row_number,reason', function (q) { return q.order('tab').order('row_number'); }).catch(function (e) { if (roomsSetupMissing(e)) return []; throw e; }),
@@ -2759,6 +2763,19 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     return /(followup_messages_v|arrival_followups|followup_messages)/.test(String(e.message || '')) && /(does not exist|schema cache|could not find)/i.test(String(e.message || ''));
   }
   // end fuSetupMissing
+  // arrival_followups.audience not there yet (followup-audience-2026-10-08.sql): Postgres 42703 / PostgREST "column ... does not exist".
+  function fuAudienceMissing(e) {
+    return !!e && (e.code === '42703' || /audience/.test(String(e.message || '')) && /does not exist|schema cache|could not find/i.test(String(e.message || '')));
+  }
+  // end fuAudienceMissing
+  // Who a rule goes to (arrival_followups.audience): every arrival, school-roster students (Kaplan), or Vanmates clients
+  // (arrivals from a signed Vanmates contract).
+  var FU_AUDIENCES = [['all', 'Everyone arriving'], ['roster', 'School-roster students only (e.g. Kaplan)'], ['contract', 'Vanmates clients only']];
+  function fuCap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+  function fuWhoWords(a) {
+    return a === 'roster' ? 'every school-roster arrival' : a === 'contract' ? 'every Vanmates client arriving' : 'every arrival';
+  }
+  // end fuWhoWords
   function fuSetupHtml() { return '<div class="empty card"><b>After-hours messages are being set up</b>They appear here once the after-hours follow-ups update is applied.</div>'; }
 
   // '18:00:00' -> '6:00 pm'
@@ -2957,7 +2974,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!r) {
       return { id: null, building: b, city: m.city || '', name: 'After-hours check-in', send_time: '18:00', day_offset: 0, enabled: false, subject: '', intro: '', sections: [],
         rules_url: '', docs_url: '', show_codes: true, also_buildings: [], secret_label: 'Lockbox code', secret_value: '', code_saved: '',
-        secret_valid_hours: 24, reviewed: false, reviewed_by: '', reviewed_at: '', exists: false };
+        secret_valid_hours: 24, reviewed: false, reviewed_by: '', reviewed_at: '', exists: false,
+        audience: 'all', audience_saved: 'all', has_audience: (S.fuRules || []).some(function (x) { return 'audience' in x; }) };
     }
     return { id: r.id, building: r.building, city: str(r.city), name: str(r.name), send_time: str(r.send_time).slice(0, 5) || '18:00', day_offset: parseInt(r.day_offset, 10) || 0, enabled: !!r.enabled,
       subject: r.subject || '', intro: r.intro || '',
@@ -2965,7 +2983,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       rules_url: r.rules_url || '', docs_url: r.docs_url || '', show_codes: r.show_codes !== false,
       also_buildings: Array.isArray(r.also_buildings) ? r.also_buildings.slice() : [], secret_label: r.secret_label || '',
       secret_value: str(r.secret_value), code_saved: str(r.secret_value),
-      secret_valid_hours: r.secret_valid_hours || 24, reviewed: !!r.reviewed, reviewed_by: r.reviewed_by || '', reviewed_at: r.reviewed_at || '', exists: true };
+      secret_valid_hours: r.secret_valid_hours || 24, reviewed: !!r.reviewed, reviewed_by: r.reviewed_by || '', reviewed_at: r.reviewed_at || '', exists: true,
+      audience: r.audience || 'all', audience_saved: r.audience || 'all', has_audience: 'audience' in r };
   }
   function renderFur(pick) {
     if (S.fuRules === null) { $('tplState').textContent = ''; $('tplBody').innerHTML = fuSetupHtml(); return; }
@@ -2994,7 +3013,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (!f.enabled) out.push('<p class="warnbox">Off — nothing sends.</p>');
     if (!f.reviewed) out.push('<p class="warnbox bad">Not reviewed — won’t send.</p>');
     if (str(f.secret_label) && !str(f.code_saved)) out.push('<p class="warnbox bad">' + esc(str(f.secret_label)) + ' not set — won’t send.</p>');
-    if (!out.length) out.push('<p class="warnbox good">On and reviewed — every arrival gets it ' + esc(fuDayWords(f.day_offset)) + ' at ' + esc(hm12(f.send_time)) + ' ' + esc(fuTzName(f.city)) + '.</p>');
+    if (!out.length) out.push('<p class="warnbox good">On and reviewed — ' + esc(fuWhoWords(f.audience)) + ' gets it ' + esc(fuDayWords(f.day_offset)) + ' at ' + esc(hm12(f.send_time)) + ' ' + esc(fuTzName(f.city)) + '.</p>');
     return out.join('');
   }
   function renderFurForm(picker) {
@@ -3022,6 +3041,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<label class="chk"><input type="checkbox" name="enabled"' + (f.enabled ? ' checked' : '') + ' /> On — sends automatically to every arrival it covers</label>' +
       '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Buildings covered <small class="muted" style="font-weight:500">· ' + esc(f.building) + ' plus:</small></div>' +
       (cov ? '<div class="fucov">' + cov + '</div>' : '<p class="note">No other buildings known yet.</p>') + '</div>' +
+      (f.has_audience ? '<label><span>Who gets it <small>· Vanmates clients = arrivals from a signed Vanmates contract</small></span><select class="sel" name="audience">' +
+        FU_AUDIENCES.map(function (o) { return '<option value="' + o[0] + '"' + (f.audience === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select></label>' : '') +
       '<label><span>Subject <small>· {first_name} and {building} are filled in; blank = “' + esc((str(f.name) || 'Check-in update') + ' | {building}') + '”</small></span><input class="inp" name="subject" value="' + esc(f.subject) + '" /></label>' +
       '<label><span>Intro <small>· after “Hi {first_name},” · blank line = new paragraph</small></span><textarea class="inp" name="intro" placeholder="It looks like you’re arriving after our front desk closes. Here is how to get in.">' + esc(f.intro) + '</textarea></label>' +
       '<div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px">Sections</div><div id="secs" style="display:grid;gap:8px">' + sec + '</div>' +
@@ -3074,7 +3095,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (el.checked) {
         var where = [f.building].concat(f.also_buildings);
         var yes = await confirmSheet('Switch on ' + (str(f.name) || 'this follow-up') + '?',
-          '<p class="note">' + (f.day_offset ? 'Every arrival at these buildings will get this ' + esc(fuDayWords(f.day_offset)) + ' at ' : 'Every arrival of the day at these buildings will get this at ') + esc(str(f.send_time) || '18:00') + ' (' + esc(hm12(f.send_time)) + ', ' + esc(fuTzName(f.city)) + '):</p>' +
+          '<p class="note">' + (f.day_offset ? esc(fuCap(fuWhoWords(f.audience))) + ' at these buildings will get this ' + esc(fuDayWords(f.day_offset)) + ' at ' : esc(fuCap(fuWhoWords(f.audience))) + ' of the day at these buildings will get this at ') + esc(str(f.send_time) || '18:00') + ' (' + esc(hm12(f.send_time)) + ', ' + esc(fuTzName(f.city)) + '):</p>' +
           '<ul class="mlist">' + where.map(function (b) { return '<li><span>' + esc(b) + '</span></li>'; }).join('') + '</ul>' +
           '<p class="note" style="margin-top:8px">It takes effect when you Save, and only sends once it is reviewed' + (str(f.secret_label) ? ' and the ' + esc(str(f.secret_label).toLowerCase()) + ' is set' : '') + '.</p>', 'Switch on');
         if (!yes) { el.checked = false; return; }
@@ -3084,6 +3105,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       renderFurForm();
       return;
     }
+    else if (el.name === 'audience') { if (f.audience === el.value) return; f.audience = el.value; S.tplDirty = true; renderFurForm(); return; }
     else if (el.name === 'show_codes') f.show_codes = el.checked;
     else if (el.name === 'secret_value') f.secret_value = el.value;
     else if (el.name && el.name in f) f[el.name] = el.value;
@@ -3121,6 +3143,12 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       p_secret_label: str(f.secret_label), p_secret_value: str(f.secret_value) !== str(f.code_saved) ? str(f.secret_value) : null,
       p_secret_valid_hours: hours, p_reviewed: reviewed });
     if (!ok) return;
+    // the audience has its own RPC (followup_save keeps its signature); on failure the rule reloads as saved
+    if (f.has_audience && f.audience !== f.audience_saved && !(await rpc('followup_set_audience', { p_id: ok.id || f.id, p_audience: f.audience }))) {
+      S.tplDirty = false; S.tplPick = f.building; S.furPick = ok.id || f.id; S.fur = null; S.acc = null;
+      await loadAccess();
+      return;
+    }
     toast(reviewed === true ? 'Saved and marked reviewed' : reviewed === false ? 'Marked not reviewed'
       : ok.unreviewed ? 'Changes saved — mark reviewed again to send' : 'Saved');
     S.tplDirty = false; S.tplPick = f.building; S.furPick = ok.id || f.id; S.fur = null; S.acc = null;
