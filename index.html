@@ -1531,7 +1531,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-07-unitaddr1"></script>
+<script src="pms-supabase.js?v=2026-10-07-extensions1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -35689,6 +35689,8 @@ function ctSummary(row, now) {
     depositText: b.deposit == null || b.deposit === '' ? '' : ctMoney(b.deposit),
     depositDueText: ctDay(b.deposit_due),
     utilities: ctStr(b.utilities),
+    isExtension: !!b.extension,
+    extensionText: b.extension ? 'Extension' + (ctDay(b.extension.original_start) ? ' · tenancy since ' + ctDay(b.extension.original_start) : '') : '',
     signedCount,
     signedWords,
     countersignedText: cs && cs.signed_at ? (cs.name || cs.email || 'Vanmates') + (cs.title ? ', ' + cs.title : '') + ' · ' + ctWhen(cs.signed_at) : '',
@@ -35939,7 +35941,8 @@ function renderContracts() {
       const need = s.bucket === 'waiting' || (s.bucket === 'draft' && s.missing.length);
       return '<tr class="ct-row" tabindex="0" data-ct-open="' + esc(s.id) + '">' +
         '<td><div class="ct-name">' + esc(s.tenantNames) + '</div><div class="ct-sub">' + esc(s.emails.join(', ')) + '</div></td>' +
-        '<td>' + esc(s.place) + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + '</div>' : '') + '</td>' +
+        '<td>' + esc(s.place) + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + '</div>' : '') +
+          (s.isExtension ? '<div class="ct-sub">' + esc(s.extensionText) + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.datesText) + (s.leaseTypeText ? '<div class="ct-sub">' + esc(s.leaseTypeText) + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.rent ? ctMoney(s.rent) : '—') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.depositText || '—') + '</td>' +
@@ -36001,6 +36004,7 @@ function ctRenderPanel(row) {
     (emailProblem ? '<div class="ct-note ct-need">' + esc(emailProblem) + '</div>' : '') +
     (s.bucket === 'draft' && s.missing.length ? ctSection('Needs <em>you</em>', '<div class="ct-need-dot">Missing: ' + esc(s.missing.map((m) => m.label).join(', ')) + '</div>') : '') +
     ctSection('Booking',
+      (s.isExtension ? ctKv('Type', esc(s.extensionText) + '<div class="ct-sub">Continues a current tenancy; no new deposit</div>') : '') +
       ctKv('Room', esc(s.place) + (s.address ? '<div class="ct-sub">' + esc(s.address) + '</div>' : '')) +
       ctKv('Dates', esc(s.datesText) + (s.months ? '<div class="ct-sub">' + s.months + (s.months === 1 ? ' month' : ' months') + '</div>' : '')) +
       ctKv('Lease', esc(s.leaseTypeText || '—') + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + ' sublease</div>' : '')) +
