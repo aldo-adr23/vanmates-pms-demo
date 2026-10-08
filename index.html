@@ -150,6 +150,8 @@
   /* Small one-line pill for secondary actions (the homestay booking panel):
      a full-size button per action made the action rows wrap. */
   .btn-mini{padding:3px 9px;font-size:12px;border-radius:999px;white-space:nowrap}
+  .ptn-name-link{background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
+  .ptn-name-link:hover strong,.ptn-name-link:focus-visible strong{text-decoration:underline;color:var(--red)}
   .btn-ghost:hover{background:var(--cream-2)}
   /* WhatsApp's own "Open app" button: green fill, dark label, dark hairline.
      The outline is --ink rather than black so it matches the warm palette, and
@@ -1531,7 +1533,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-08-roomswap1"></script>
+<script src="pms-supabase.js?v=2026-10-08-ptnrow1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21162,6 +21164,16 @@ function ptnAgencySteps(agency, users, agencies){
     out.next = 'No one has signed in yet: send the sign-in link.';
   return out;
 }
+// The one sign-in action shown on an agency's row in the Agencies table:
+// pending -> activate (which emails every active user who never signed in);
+// active with such users -> resend to them; otherwise nothing.
+function ptnAgencyRowAction(agency, users){
+  const a = agency || {};
+  const waiting = (users || []).filter(u => u.agency_id === a.id && u.status === 'active' && !u.last_login_at);
+  if (a.status === 'pending') return { kind: 'activate', label: waiting.length ? 'Activate & send link' : 'Activate', ids: [] };
+  if (a.status === 'active' && waiting.length) return { kind: 'resend', label: waiting.length === 1 ? 'Resend sign-in link' : `Resend sign-in links (${waiting.length})`, ids: waiting.map(u => u.id) };
+  return { kind: '', label: '', ids: [] };
+}
 // A new agency's status from the create form's "Activate now" box.
 function ptnNewAgencyStatus(activateNow){ return activateNow ? 'active' : 'pending'; }
 /* PARTNER-ONBOARD-CORE-END */
@@ -21410,17 +21422,25 @@ function ptnAgenciesHtml(){
     ${d.agencies.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
       <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Country</th><th>Contact</th><th>Billing email</th><th>Language</th><th>Status</th>${fin ? '<th>Billing</th>' : ''}${linksOn ? '<th>Rep</th>' : ''}<th>Users</th><th>Bookings</th><th></th></tr></thead>
       <tbody>${d.agencies.map(a => `<tr style="border-top:1px solid var(--line)">
-        <td style="padding:8px"><strong>${esc(a.name)}</strong>${a.legal_name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}</td>
+        <td style="padding:8px"><button type="button" class="ptn-name-link" data-ptn-agency-users="${esc(a.id)}" title="Open ${esc(a.name)}: users and sign-in links"><strong>${esc(a.name)}</strong></button>${a.legal_name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}</td>
         <td>${esc(a.country || '—')}</td>
         <td>${esc(a.contact_name || '')}${a.contact_email ? `<br><span class="name-sub">${esc(a.contact_email)}</span>` : ''}</td>
         <td>${esc(a.billing_email || '—')}</td><td>${esc(a.language)}</td>
-        <td>${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}</td>
+        <td style="white-space:nowrap">${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}${ptnAgencyRowActionHtml(a)}</td>
         ${fin ? `<td style="white-space:nowrap">${ptnBillingLine(a)}</td>` : ''}
         ${linksOn ? `<td>${esc(ptnRepName(PTN_REPS || [], a.rep_id))}</td>` : ''}
         <td>${count(d.users, a.id)}${count(d.users, a.id) ? '' : ptnNoUsersHtml(a, true)}</td><td>${count(d.bookings, a.id)}</td>
         <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
           <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button></td>
       </tr>`).join('')}</tbody></table></div>` : '<p class="name-sub">No agencies yet.</p>'}`;
+}
+// Activate / Resend button under an agency's status pill (see ptnAgencyRowAction); the
+// actions column is off-screen on a laptop, so it lives where staff already look.
+function ptnAgencyRowActionHtml(a){
+  const act = ptnAgencyRowAction(a, ptnData.users);
+  if (act.kind === 'activate') return `<br><button class="btn btn-primary btn-mini" type="button" style="margin-top:4px" data-ptn-activate="${esc(a.id)}">${esc(act.label)}</button>`;
+  if (act.kind === 'resend') return `<br><button class="btn btn-ghost btn-mini" type="button" style="margin-top:4px" data-ptn-agency-resend="${esc(a.id)}" title="Emails a new sign-in link to everyone at this agency who has never signed in">${esc(act.label)}</button>`;
+  return '';
 }
 // Old (pre-perm_*) user form: role select + one "sees all bookings" checkbox, written
 // straight to partner_users. Left untouched — see ptnUserFormHtml's ptnPermsOn() branch.
@@ -21587,6 +21607,7 @@ function ptnWire(root){
   on('[data-ptn-invite]', 'click', b => ptnInvite(b));
   on('[data-ptn-first-user]', 'click', b => ptnCreateFirstUser(b));
   on('[data-ptn-activate]', 'click', b => ptnActivateAgency(b));
+  on('[data-ptn-agency-resend]', 'click', b => ptnResendAgency(b));
   on('[data-ptn-filter]', 'change', s => { PTN_STATE.filters[s.dataset.ptnFilter] = s.value; PTN_STATE.cancelId = null; renderPartners(); });
   on('[data-ptn-cancel-open]', 'click', b => {
     PTN_STATE.cancelId = b.closest('[data-ptn-booking]').dataset.ptnBooking; renderPartners();
@@ -21741,6 +21762,16 @@ async function ptnActivateAgency(btn){
     showToast(`${agency.name} is active` + invited);
     await ptnReload();
   } catch (e) { showToast('Could not activate: ' + (e.message || e)); btn.disabled = false; }
+}
+// "Resend sign-in link" on an agency row: emails every active user there who never signed in.
+async function ptnResendAgency(btn){
+  const agency = ptnData && ptnData.agencies.find(a => a.id === btn.dataset.ptnAgencyResend);
+  if (!agency) { showToast('That agency is not loaded; press Refresh'); return; }
+  const ids = ptnAgencyRowAction(agency, ptnData.users).ids;
+  if (!ids.length) { showToast('Everyone at ' + agency.name + ' has already signed in'); return; }
+  btn.disabled = true;
+  try { showToast(agency.name + ((await ptnInviteSummary(ids, [])) || ': nothing sent')); }
+  finally { btn.disabled = false; }
 }
 // PATCH the user's role/permissions/status/name/language (edits only, once ptnPermsOn());
 // the route itself refuses a change that would leave the agency with no active admin.
