@@ -1,4 +1,4 @@
-/* Room changes (portal): requests from vanmates.com/change-room.
+/* Room changes (portal): requests from vanmates.com/room-swap.
    Reads room_change_requests / _feedback / _events through RLS (room-changes-2026-10-08.sql);
    the only write is the room_change_staff_update RPC (status, owner, tenant message, note) with
    an optimistic version check. Raw tenant comments live in room_change_comments, which RLS
@@ -176,7 +176,7 @@
       <form data-rc-form="${e(r.id)}" style="display:grid;gap:10px">
         <label class="name-sub" style="display:grid;gap:4px">Status<select class="form-input" name="status">${RC_STATUSES.map(s => `<option value="${s}" ${s === r.status ? 'selected' : ''}>${e(RC_STATUS_LABEL[s])}</option>`).join('')}</select></label>
         <label class="name-sub" style="display:grid;gap:4px">Owner<select class="form-input" name="owner">${teamOpts.join('')}</select></label>
-        <label class="name-sub" style="display:grid;gap:4px">Message the tenant sees on vanmates.com/change-room<textarea class="form-input" name="staff_message" rows="3" maxlength="1000">${e(d.staff_message || '')}</textarea></label>
+        <label class="name-sub" style="display:grid;gap:4px">Message the tenant sees on vanmates.com/room-swap<textarea class="form-input" name="staff_message" rows="3" maxlength="1000">${e(d.staff_message || '')}</textarea></label>
         <label class="name-sub" style="display:grid;gap:4px">Internal note (audit history only)<input class="form-input" name="note" maxlength="1000" /></label>
         <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit">Save</button></div>
         <p class="name-sub" style="margin:0">Before <b>Confirmed</b>: check the room is free from the move date to ${e(day(r.lease_end))} in Asana, agree any transfer fee, prorated rent and deposit change with the tenant in writing, and send the amendment. At <b>Completed</b>: the move happened, keys and cleaning done, Asana and the register updated (Hugo can do the room moves). Email the tenant at each step; their status page updates as you save.</p>
