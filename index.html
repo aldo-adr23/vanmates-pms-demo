@@ -1531,7 +1531,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-08-roomchanges1"></script>
+<script src="pms-supabase.js?v=2026-10-08-hsdocs1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20396,14 +20396,14 @@ function haTimeline(app){
   const items = [
     [app.created_at, "Application started"],
     [app.link_sent_at, "Continue link emailed"],
-    [app.crc_uploaded_at, "Criminal record check uploaded"],
-    [app.agreement_signed_at, "Agreement signed"],
+    [app.crc_uploaded_at, "Criminal record check uploaded", app.crc_path ? "crc" : ""],
+    [app.agreement_signed_at, "Agreement signed", app.agreement_id || app.agreement_signed_at ? "agreement" : ""],
     [app.submitted_at, "Submitted"],
     [app.reviewed_at, (app.status === "changes_requested" ? "More information asked" : app.status === "rejected" ? "Rejected" : "Review started") + by(app.reviewed_by)],
     [app.approved_at, "Approved" + by(app.approved_by)],
     [app.last_reminded_at, `Reminder emailed (${app.reminders_sent || 0} so far)`],
   ];
-  return items.filter(([at]) => haMs(at) != null).map(([at, text]) => ({ at, text }))
+  return items.filter(([at]) => haMs(at) != null).map(([at, text, doc]) => doc ? { at, text, doc } : { at, text })
     .sort((a, b) => haMs(a.at) - haMs(b.at));
 }
 const HA_HOME_TYPE = { house: "House", townhouse: "Townhouse", condo: "Condo / apartment", basement_suite: "Basement suite", other: "Other" };
@@ -20557,6 +20557,28 @@ function haGeoHtml(geo, whenFmt){
   if (!v.ok) return `<div class="ha-line ha-need">Travel times: not calculated</div>` + (v.reason ? `<div class="ha-sub">${haGeoEsc(v.reason)}</div>` : "");
   return (geo.partial ? `<div class="ha-sub ha-need">Google matched this address approximately \u2014 check it.</div>` : "")
     + v.rows.map(([l, t]) => `<div class="ha-kv"><span>${haGeoEsc(l)}</span><span>${haGeoEsc(l === "Calculated" && whenFmt ? whenFmt(t) : t)}</span></div>`).join("");
+}
+// The signed link from a Worker get, and the file name a download is saved under.
+function haDocLink(out, kind){
+  const o = out || {};
+  const url = String((kind === "crc" ? o.crc_url : (o.agreement_url || o.agreement_pdf_url)) || "");
+  return /^https:\/\//.test(url) ? url : "";
+}
+function haDocFileName(app, kind){
+  const ref = String((app && app.ref) || "host").replace(/[^A-Za-z0-9_-]/g, "");
+  if (kind === "agreement") return `Vanmates Host Agreement - ${ref}.pdf`;
+  const ext = (/\.([A-Za-z0-9]{2,5})$/.exec(String((app && (app.crc_file_name || app.crc_path)) || "")) || [, "pdf"])[1].toLowerCase();
+  return `Criminal record check - ${haName(app).replace(/[\\/:*?"<>|]/g, "")} - ${ref}.${ext}`;
+}
+// Supabase serves a signed object as a download when ?download=<name> is added.
+const haDownloadUrl = (url, name) => url + (url.indexOf("?") === -1 ? "?" : "&") + "download=" + encodeURIComponent(name);
+// A host's signed Host Program Agreement among contracts rows (kind host-agreement):
+// the newest live signed one; a superseded one only when nothing newer is signed.
+function haPickAgreement(rows){
+  const live = (Array.isArray(rows) ? rows : []).filter(r => r && !r.deleted_at && String(r.pdf_path || "").trim());
+  const t = r => Date.parse(r.signed_at || r.created_at || "") || 0;
+  const by = list => list.slice().sort((a, b) => t(b) - t(a))[0] || null;
+  return by(live.filter(r => r.status === "signed")) || by(live);
 }
 /* HA-APPS-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
@@ -30113,6 +30135,24 @@ function ahsCreateResult(d){
 function ahsCanCancelAgency(b){
   return !!b && b.payer_type === 'agency' && (b.status === 'created' || b.status === 'paid');
 }
+// Payment link (homestay-pay-link): a fresh copy of the link Booking Create emailed, for
+// staff to paste into WhatsApp / LINE. Only while the student still owes the first
+// payment; agency-billed bookings never have one.
+function ahsCanPayLink(b){
+  return !!b && String(b.payer_type || 'student') !== 'agency' && (b.status === 'created' || b.status === 'payment_failed');
+}
+// The homestay-pay-link webhook's answer, as the line staff read.
+function ahsPayLinkMessage(status, body){
+  const d = body || {};
+  const link = String(d.link || '');
+  if (status >= 200 && status < 300 && /^https:\/\/vanmates\.com\/homestay-booking\.html\?t=/.test(link)) {
+    return { ok: true, link, message: 'Payment link ready — copy it into WhatsApp or LINE. It works for about a year.' };
+  }
+  if (d.error === 'not_payable') return { ok: false, link: '', message: d.status === 'paid' ? 'Already paid — no payment link needed.' : 'This booking is ' + (d.status || 'closed') + ', so there is nothing to pay.' };
+  if (d.error === 'agency_billed') return { ok: false, link: '', message: 'The agency pays this booking, so the student has no payment link.' };
+  if (d.error === 'not_found') return { ok: false, link: '', message: 'Booking not found: reload the list.' };
+  return { ok: false, link: '', message: 'Could not get the payment link (' + (d.error || ('HTTP ' + status)) + ').' };
+}
 // Resend signing link: an agency student who has not signed the Homestay Agreement on a
 // booking still running. `agreementState` is hbAgreementState's answer from the contracts
 // table; the row's own agreement_signed_at counts too when the list carries it.
@@ -30642,6 +30682,8 @@ function ahsArrivalText(row, city){
         hbKv('Host is paid', esc(cad(b.host_weekly_rate)) + ' / week') +
         hbKv('Fees', (feesText ? esc(feesText) : dash) + (placementSub ? '<div class="hb-sub">' + esc(placementSub) + '</div>' : '')) +
         hbKv('Billing', esc(String(b.status || '—')) + (b.billing_status ? '<div class="hb-sub">billing ' + esc(b.billing_status) + '</div>' : '')) +
+        (ahsCanPayLink(b) ? hbKv('Payment link', '<button type="button" class="btn btn-ghost btn-mini hb-paylink" data-ref="' + esc(b.booking_ref) + '">Get payment link</button>' +
+          '<div class="hb-sub">The same link the student was emailed, to send again by WhatsApp or LINE.</div>') : '') +
         (tailWords ? hbKv('Final charge', tail === 'failed' ? '<span class="hb-need">failed</span>' : esc(tailWords)) : '')) +
       hbSection('Letter', hbKv('Status', hbWords(letter)) + hbLetterActions(b)) +
       hbSection('Agreement', hbKv('Status', hbWords({ text: agr.text, sub: agr.sub, need: false })) +
@@ -30933,6 +30975,24 @@ function ahsArrivalText(row, city){
     const busy = hbResendInFlight.has(String(b.booking_ref || ''));
     return '<button type="button" class="btn btn-ghost btn-mini hb-agreement-resend" data-ref="' + esc(b.booking_ref) + '"' +
       (busy ? ' disabled' : '') + '>' + (busy ? 'Sending…' : 'Resend signing link') + '</button>';
+  }
+  // Read-only token is enough: the link only lets the student pay their own
+  // booking, and Booking Pay re-checks everything when they use it.
+  async function hbGetPayLink(btn) {
+    const ref = btn && btn.getAttribute('data-ref');
+    if (!ref || btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Getting link…';
+    const ref0 = hbPanelRef;
+    let msg;
+    try {
+      const r = await hbPost('homestay-pay-link', { booking_ref: ref }, { raw: true });
+      msg = ahsPayLinkMessage(r.status, r.data);
+    } catch (e) {
+      msg = { ok: false, link: '', message: e.message || 'Could not get the payment link' };
+    }
+    btn.disabled = false; btn.textContent = 'Get payment link';
+    hbStatusFor(ref0, ref + ': ' + msg.message, !msg.ok, msg.link);
+    if (msg.ok) { const el = $('hb-panel-link'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   }
   // Keyed by booking: a panel redraw mid-request rebuilds the button, so the
   // guard cannot live on the element alone.
@@ -31819,6 +31879,8 @@ function ahsArrivalText(row, city){
       if (agencyCancel) return hbOpenAgencyCancel(agencyCancel.getAttribute('data-ref'));
       const agResend = e.target.closest('.hb-agreement-resend');
       if (agResend) return hbResendAgreement(agResend);
+      const payLink = e.target.closest('.hb-paylink');
+      if (payLink) return hbGetPayLink(payLink);
       if (e.target.closest('.hb-need-token')) {
         if (typeof closeProperty === 'function') closeProperty();
         return hbAskForToken('This action needs the full staff token, not the view-only one.');
@@ -33750,6 +33812,14 @@ function hmRenderProfiles(){
           <div data-hm-crc="${k}">${hmCrcBox(h.host_id)}</div>
         </div>
         <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
+          <div class="card-title" style="font-size:15px">Host agreement</div>
+          <div class="card-sub" style="margin-bottom:6px">The Host Program Agreement they signed when they applied.</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-mini" type="button" data-hm-agr="${k}" data-hm-agr-mode="view" data-hm-agr-email="${hmEsc(h.email)}">View</button>
+            <button class="btn btn-ghost btn-mini" type="button" data-hm-agr="${k}" data-hm-agr-mode="download" data-hm-agr-email="${hmEsc(h.email)}">Download</button>
+            <span class="card-sub" id="hm-agr-msg-${k}"></span></div>
+        </div>
+        <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
           <div class="card-title" style="font-size:15px">Listing</div>
           <div data-hml-box="${k}" class="card-sub">Open to load…</div>
         </div>
@@ -33875,6 +33945,51 @@ document.addEventListener("input", (ev) => {
   if (!t || !t.dataset || t.dataset.hmPhone === undefined) return;
   const note = document.querySelector(`[data-hm-phone-note="${CSS.escape(t.dataset.hmPhone)}"]`);
   if (note) note.textContent = hmPhoneNote(t.value).text;
+});
+
+/* ---- Host agreement on Host profiles: contracts (kind host-agreement) written by the matching Worker when the
+   host signs their application; the PDF is in lease-docs. Matched by the host's email, else by their application ref. ---- */
+async function hmAgreementOpen(btn){
+  const hostId = btn.dataset.hmAgr, mode = btn.dataset.hmAgrMode;
+  const email = String(btn.dataset.hmAgrEmail || "").trim();
+  const out = document.getElementById("hm-agr-msg-" + hostId);
+  const say = t => { if (out) out.textContent = t; };
+  const tab = mode === "view" ? window.open("", "_blank") : null;
+  if (tab) { try { tab.opener = null; } catch (_) {} }
+  const fail = t => { if (tab) tab.close(); say(t); };
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) return fail("Not connected: reload the page.");
+  say("Looking it up…");
+  const cols = "id,status,booking_ref,client_email,signed_at,created_at,pdf_path,deleted_at";
+  let rows = [];
+  if (email) {
+    const r = await sb.from("contracts").select(cols).eq("kind", "host-agreement").in("client_email", Array.from(new Set([email, email.toLowerCase()])));
+    if (r.error) return fail("Couldn't look it up: " + r.error.message);
+    rows = r.data || [];
+  }
+  const refs = (typeof HA !== "undefined" && HA.apps ? HA.apps : []).filter(a => a.host_id === hostId && a.ref).map(a => a.ref);
+  if (!haPickAgreement(rows) && refs.length) {
+    const r = await sb.from("contracts").select(cols).eq("kind", "host-agreement").in("booking_ref", refs);
+    if (!r.error) rows = rows.concat(r.data || []);
+  }
+  const c = haPickAgreement(rows);
+  if (!c) return fail("No signed agreement on file for " + (email || "this host") + ". Hosts onboarded before the online application won't have one here.");
+  let url = null;
+  try { url = await window.vmDb.fileUrl(c.pdf_path, 300); } catch (e) { url = null; }
+  if (!/^https:\/\//i.test(String(url || ""))) return fail("The agreement is on record but its PDF couldn't be opened. Try again in a moment.");
+  say((c.status === "signed" ? "Signed " : "Signed (since replaced) ") + hmDay(c.signed_at || c.created_at));
+  if (tab) { tab.location.href = url; return; }
+  const a = document.createElement("a");
+  a.href = haDownloadUrl(url, `Vanmates Host Agreement - ${String(c.booking_ref || hostId).replace(/[^A-Za-z0-9_-]/g, "")}.pdf`); a.rel = "noopener";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hm-agr]");
+  if (!t || !t.closest("#hm-profiles")) return;
+  t.disabled = true;
+  try { await hmAgreementOpen(t); }
+  catch (e) { const o = document.getElementById("hm-agr-msg-" + t.dataset.hmAgr); if (o) o.textContent = "Couldn't open it: " + ((e && e.message) || e); }
+  finally { t.disabled = false; }
 });
 
 /* ---- Criminal record check (optional): private bucket hm-host-docs, path on hm_host_profiles.crc_* ---- */
@@ -34248,28 +34363,52 @@ function haActionsHtml(a){
     return `<button type="button" class="btn ${primary ? "btn-primary" : "btn-ghost"} btn-mini" ${attr}>${HA_ACTION_WORDS[k]}</button>`;
   }).join("") + "</div>";
 }
+// View / Download for the CRC and the signed agreement. Every click asks the Worker for a
+// fresh 5-minute link, so a drawer left open never hands out an expired one.
+const HA_DOC_WORDS = { crc: "criminal record check", agreement: "host agreement" };
+const haDocButtons = kind => `<div class="ha-actions" style="margin-top:6px">`
+  + `<button type="button" class="btn btn-ghost btn-mini" data-ha-doc="${kind}" data-ha-doc-mode="view">View</button>`
+  + `<button type="button" class="btn btn-ghost btn-mini" data-ha-doc="${kind}" data-ha-doc-mode="download">Download</button></div>`;
+async function haOpenDoc(a, kind, mode, btn){
+  const say = (t, bad) => { const m = document.getElementById("ha-doc-msg"); if (m) { m.textContent = t; m.style.color = bad ? "var(--red)" : ""; } };
+  // Opened before the await: a tab opened after it is a popup the browser blocks.
+  const w = mode === "view" ? window.open("", "_blank") : null;
+  if (btn) btn.disabled = true;
+  say(`Getting the ${HA_DOC_WORDS[kind]}…`);
+  let url = "";
+  try { url = haDocLink(await hmWorker(`/staff/applications/${a.id}/get`, {}), kind); }
+  catch (e) { if (w) w.close(); if (btn) btn.disabled = false; return say(`Couldn't get the ${HA_DOC_WORDS[kind]}: ${(e && e.message) || e}`, true); }
+  if (btn) btn.disabled = false;
+  if (!url) { if (w) w.close(); return say(`The ${HA_DOC_WORDS[kind]} is on record but its file couldn't be opened. Try again; if it keeps failing, tell Aldo (application ${a.ref || a.id}).`, true); }
+  say("");
+  if (w) { w.opener = null; w.location.href = url; return; }
+  const link = document.createElement("a");
+  link.href = haDownloadUrl(url, haDocFileName(a, kind)); link.rel = "noopener";
+  document.body.appendChild(link); link.click(); link.remove();
+}
 function haFilesHtml(a){
   const d = HA.detail.get(a.id) || {};
   const reload = `<button type="button" class="btn btn-ghost btn-mini" data-ha-files-reload>Reload links</button>`;
   const sec = (a.progress && a.progress.sections && a.progress.sections.agreement) || null;
   const contract = a.agreement_signed_at
     ? `Signed ${hmEsc(hmDay(a.agreement_signed_at))}${sec && sec.done === false ? ' · <span class="ha-need">out of date: the host must sign again</span>' : ""}`
-      + (d.agreement_url ? " · " + haLink(d.agreement_url, "Open PDF") : "")
+      + haDocButtons("agreement")
     : '<span class="ha-need">Not signed</span>';
   const crc = a.crc_path
-    ? `${hmEsc(a.crc_file_name || "On file")}${a.crc_issued_on ? " · issued " + hmEsc(a.crc_issued_on) : ""}${d.crc_url ? " · " + haLink(d.crc_url, "Open") : ""}`
+    ? `${hmEsc(a.crc_file_name || "On file")}${a.crc_issued_on ? " · issued " + hmEsc(a.crc_issued_on) : ""}` + haDocButtons("crc")
     : '<span class="ha-need">Not uploaded</span>';
   const payouts = a.payouts === "complete" ? "Complete" : a.payouts === "started" ? "Started on Stripe, not finished" : "Not set up";
   let note = "";
   if (d.loading) note = '<div class="ha-sub">Loading links…</div>';
   else if (d.error) note = `<div class="ha-sub ha-need">Links couldn't load: ${hmEsc(d.error)} ${reload}</div>`;
-  else if (d.photos) note = `<div class="ha-sub">Links work for 5 minutes. ${reload}</div>`;
+  else if (d.photos) note = `<div class="ha-sub">Photo links work for an hour. ${reload}</div>`;
   const photos = d.photos && d.photos.length
     ? `<div class="ha-photos">${d.photos.map(p => /^https:\/\//.test(String(p.url || p.signed_url || ""))
         ? `<figure><a href="${hmEsc(p.url || p.signed_url)}" target="_blank" rel="noopener"><img src="${hmEsc(p.url || p.signed_url)}" alt="${hmEsc(p.tag || "photo")}" loading="lazy"></a><figcaption>${hmEsc(String(p.tag || "").replace(/_/g, " "))}</figcaption></figure>` : "").join("")}</div>`
     : d.photos ? '<div class="card-sub">No photos yet.</div>' : "";
   return haSection("Contract, <em>documents</em> &amp; payouts",
-      haKv("Host agreement", contract) + haKv("Criminal record check", crc) + haKv("Stripe payouts", hmEsc(payouts))
+      haKv("Host agreement", contract) + haKv("Criminal record check", crc)
+      + `<div class="ha-sub" id="ha-doc-msg"></div>` + haKv("Stripe payouts", hmEsc(payouts))
       + (a.host_id ? haKv("Payout account", hmEsc(a.host_id)) : "") + note)
     + haSection("Photos", photos || '<div class="card-sub">Loading…</div>');
 }
@@ -34305,10 +34444,11 @@ function haRestHtml(a){
   const timeline = haTimeline(a);
   return (a.review_note ? haSection("Note to the <em>host</em>", `<div class="ha-line" style="white-space:pre-line">${hmEsc(a.review_note)}</div>`) : "")
     + (missing.length ? haSection("Still <em>missing</em>", missing.map(m => `<div class="ha-line">• ${hmEsc(m)}</div>`).join("")) : "")
-    + haGettingAroundHtml(a)
     + haFilesHtml(a)
+    + haGettingAroundHtml(a)
     + haAnswerSections(a.answers).map(s => haSection(hmEsc(s.title), s.rows.map(([l, v]) => haKv(l, hmEsc(v))).join(""))).join("")
-    + haSection("Timeline", timeline.length ? timeline.map(e => haKv(hmWhen(e.at), hmEsc(e.text))).join("") : '<div class="card-sub">—</div>');
+    + haSection("Timeline", timeline.length ? timeline.map(e => haKv(hmWhen(e.at), hmEsc(e.text)
+      + (e.doc ? ` <button type="button" class="btn btn-ghost btn-mini" data-ha-doc="${e.doc}" data-ha-doc-mode="view">View</button>` : ""))).join("") : '<div class="card-sub">—</div>');
 }
 function haRenderPanel(a){
   const name = haName(a);
@@ -34428,7 +34568,7 @@ async function haOpenFromProfile(appId){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest && ev.target.closest("[data-hh-tab],[data-ha-filter],[data-ha-open],#ha-refresh,[data-ha-open-app],[data-ha-act],[data-ha-form],[data-ha-cancel],[data-ha-host-profile],[data-ha-files-reload],[data-ha-locate],[data-ha-skip-ask],[data-ha-skip-cancel],[data-ha-skip-do]");
+  const t = ev.target.closest && ev.target.closest("[data-hh-tab],[data-ha-filter],[data-ha-open],#ha-refresh,[data-ha-open-app],[data-ha-act],[data-ha-form],[data-ha-cancel],[data-ha-host-profile],[data-ha-files-reload],[data-ha-doc],[data-ha-locate],[data-ha-skip-ask],[data-ha-skip-cancel],[data-ha-skip-do]");
   if (!t) return;
   if (t.dataset.hhTab) return haShowTab(t.dataset.hhTab);
   if (t.dataset.haFilter) { HA.filter = t.dataset.haFilter; return haRender(); }
@@ -34440,6 +34580,7 @@ document.addEventListener("click", async (ev) => {
   if (!a) return;
   if (t.dataset.haHostProfile) return haOpenHostProfile(t.dataset.haHostProfile);
   if (t.hasAttribute("data-ha-files-reload")) return haLoadDetail(a.id);
+  if (t.dataset.haDoc) return haOpenDoc(a, t.dataset.haDoc, t.dataset.haDocMode, t);
   if (t.hasAttribute("data-ha-locate")) return haLocate(a.id);
   if (t.hasAttribute("data-ha-skip-ask")) { HA.skipId = a.id; return haRefreshPanel(); }
   if (t.hasAttribute("data-ha-skip-cancel")) { HA.skipId = null; return haRefreshPanel(); }
@@ -36398,6 +36539,6 @@ window.ctRenderLeadContracts = ctRenderLeadContracts;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-08-roomchanges1"></script>
+<script src="room-changes.js?v=2026-10-08-hsdocs1"></script>
 </body>
 </html>
