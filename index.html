@@ -867,6 +867,10 @@
   .ct-person-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--cream-2)}
   .ct-person-row:first-child{border-top:0}
   #ct-new-form [aria-invalid="true"]{border-color:var(--red)}
+  #ct-new-form .ct-includes{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 12px;font-size:13px}
+  #ct-new-form .ct-includes label{display:flex;align-items:center;gap:6px;margin:0;font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink);cursor:pointer}
+  #ct-new-form select:disabled{opacity:.7;cursor:not-allowed}
+  .ct-tag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:99px;background:var(--cream-2);color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.3px;vertical-align:1px}
   #ct-new-backdrop .modal-foot{flex-wrap:wrap}
   @media (max-width: 600px){
     .ct-panel .ct-kv,.ct-timeline li{grid-template-columns:minmax(0,1fr);gap:2px}
@@ -1535,7 +1539,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-08-rcreq1"></script>
+<script src="pms-supabase.js?v=2026-10-08-rta1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2852,7 +2856,7 @@
       </div>
       <div class="ct-tabbar" id="ct-tabs" role="tablist"></div>
       <div class="ct-toolbar">
-        <span id="ct-list-status" class="card-sub">Co-living subleases sent by Hugo or made here by hand. Tenants sign on vanmates.com; Vanmates signs last, here.</span>
+        <span id="ct-list-status" class="card-sub">Co-living subleases (and the odd BC Residential Tenancy Agreement) sent by Hugo or made here by hand. Tenants sign on vanmates.com; Vanmates signs last, here.</span>
         <span class="hb-links"><button type="button" class="btn btn-primary btn-mini" id="ct-new" data-ct-new-for="page" style="margin-right:12px" hidden>+ New contract</button><button type="button" class="hb-link" id="ct-refresh">Refresh</button></span>
       </div>
       <div class="card">
@@ -10461,7 +10465,7 @@ const titles = {
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
-  contracts: ["<em>Contracts</em>", "Co-living subleases: who has signed, and what waits for Vanmates"],
+  contracts: ["<em>Contracts</em>", "Co-living subleases and BC tenancy agreements: who has signed, and what waits for Vanmates"],
   "partner-inventory": ["<em>Partner inventory</em>", "Live Asana rooms by building: the terms agencies will see, and which rooms are partner-ready"],
   partners: ["<em>Partners</em>", "Agencies on partners.vanmates.com: accounts, users and their bookings"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
@@ -35816,6 +35820,18 @@ const CT_STATUS_WORDS = {
 };
 const CT_PROVINCES = { bc: 'British Columbia', on: 'Ontario', qc: 'Quebec' };
 const CT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// The second contract type: BC's Residential Tenancy Agreement (RTB-1), sent
+// rarely (a whole unit). Same kind and lifecycle; booking.form === 'rta'.
+// RTB-1 3 b), in the form's order. Mirrors the Worker's rta-bc.js INCLUDES.
+const CT_RTA_INCLUDES = [
+  ['water', 'Water'], ['cablevision', 'Cablevision'], ['electricity', 'Electricity'], ['internet', 'Internet'], ['heat', 'Heat'],
+  ['natural_gas', 'Natural gas'], ['sewage', 'Sewage disposal'], ['snow_removal', 'Snow removal'], ['storage', 'Storage'],
+  ['recreation', 'Recreation facilities'], ['garbage', 'Garbage collection'], ['recycling', 'Recycling services'],
+  ['kitchen_scrap', 'Kitchen scrap collection'], ['laundry_coin', 'Laundry (coin-op)'], ['free_laundry', 'Free laundry'],
+  ['refrigerator', 'Refrigerator'], ['dishwasher', 'Dishwasher'], ['stove_oven', 'Stove and oven'],
+  ['window_coverings', 'Window coverings'], ['furniture', 'Furniture'], ['carpets', 'Carpets'], ['parking', 'Parking for vehicles'],
+];
+const CT_RTA_VACATE_HINT = 'Only allowed in circumstances under section 13.1 of the Residential Tenancy Regulation, or for a sublease.';
 
 function ctStr(v) { return v == null ? '' : String(v).trim(); }
 function ctBooking(row) { const r = row || {}; return r.booking || (r.data && r.data.booking) || {}; }
@@ -35832,6 +35848,12 @@ function ctTenants(row) {
   return out;
 }
 function ctIsColiving(row) { return !!row && row.kind === CT_KIND && !row.deleted_at; }
+function ctIsRta(row) { return !!row && (ctBooking(row).form === 'rta' || /^rta-/.test(ctStr(row.template_version))); }
+// 1 → '1st', 22 → '22nd', 13 → '13th'.
+function ctOrdinal(n) {
+  const v = Number(n), t = v % 100;
+  return v + (t >= 11 && t <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th');
+}
 
 // Status → tab. customer_signed is the one that needs Vanmates.
 function ctBucket(row) {
@@ -35893,6 +35915,8 @@ function ctMissingLabel(field) {
     province: 'Province', tenants: 'Tenants (at most 2)', lease_type: 'Lease type', address: 'Address',
     house: 'House', room: 'Room', rent: 'Rent', start: 'Start date', end: 'End date',
     deposit: 'Deposit', deposit_due: 'Deposit due date', utilities: 'Utilities included',
+    rent_due_day: 'Rent due day', vacate_reason: 'Reason the tenant must move out', pet_deposit: 'Pet damage deposit',
+    pet_deposit_due: 'Pet damage deposit due date',
   })[f] || f;
 }
 // How each missing field is asked for in the Send form.
@@ -35900,8 +35924,8 @@ function ctFieldInput(field) {
   const f = ctStr(field);
   if (/^tenants\[\d+\]\.email$/.test(f)) return 'email';
   if (/^tenants\[\d+\]\.name$/.test(f)) return 'text';
-  if (f === 'start' || f === 'end' || f === 'deposit_due') return 'date';
-  if (f === 'rent' || f === 'deposit') return 'number';
+  if (f === 'start' || f === 'end' || f === 'deposit_due' || f === 'pet_deposit_due') return 'date';
+  if (f === 'rent' || f === 'deposit' || f === 'rent_due_day' || f === 'pet_deposit') return 'number';
   if (f === 'province' || f === 'lease_type' || f === 'utilities') return 'select';
   return 'text';
 }
@@ -35934,7 +35958,7 @@ function ctBookingPatch(booking, values) {
       const i = Number(t[1]);
       while (tenants.length <= i) tenants.push({ name: '', email: '' });
       tenants[i][t[2]] = t[2] === 'email' ? v.toLowerCase() : v;
-    } else if (field === 'rent' || field === 'deposit') {
+    } else if (field === 'rent' || field === 'deposit' || field === 'rent_due_day' || field === 'pet_deposit') {
       if (v !== '') patch[field] = Number(v);
     } else if (v !== '') {
       patch[field] = v;
@@ -35974,7 +35998,19 @@ function ctSummary(row, now) {
   } else if (bucket === 'void') {
     statusLine = 'Voided ' + ctDay(r.voided_at) + (r.void_reason ? ' · ' + r.void_reason : '');
   }
+  const rta = ctIsRta(r);
+  const includes = Array.isArray(b.includes) ? b.includes : [];
+  const pet = b.pet_deposit == null || b.pet_deposit === '' ? null : Number(b.pet_deposit);
   return {
+    isRta: rta,
+    docTitle: rta ? 'Residential Tenancy Agreement' : 'Sublease agreement',
+    rentDueText: rta ? 'due the ' + ctOrdinal(Number(b.rent_due_day) || 1) : '',
+    includesText: rta ? CT_RTA_INCLUDES.filter(([k]) => includes.includes(k)).map(([, l]) => l)
+      .concat(ctStr(b.includes_other) ? [ctStr(b.includes_other)] : []).join(', ') : '',
+    petDepositText: rta ? (pet == null ? 'Not applicable' : ctMoney(pet)) : '',
+    petDepositDueText: rta && pet != null ? ctDay(b.pet_deposit_due) : '',
+    fixedEndText: rta && lease === 'fixed' ? (b.fixed_end === 'vacate' ? 'Tenant must move out' + (ctStr(b.vacate_reason) ? ': ' + ctStr(b.vacate_reason) : '') : 'Continues month to month') : '',
+    additionalTerms: rta ? ctStr(b.additional_terms).split('\n').map(ctStr).filter(Boolean) : [],
     id: ctStr(r.id),
     status: ctStr(r.status),
     bucket,
@@ -36064,7 +36100,7 @@ function ctMatches(row, q) {
   const s = ctStr(q).toLowerCase();
   if (!s) return true;
   const b = ctBooking(row);
-  const hay = [row && row.id, b.house, b.room, b.address, row && row.client_name, row && row.client_email]
+  const hay = [row && row.id, b.house, b.room, b.address, row && row.client_name, row && row.client_email, ctIsRta(row) ? 'rta residential tenancy agreement' : '']
     .concat(ctTenants(row).map((t) => t.name + ' ' + t.email)).map((x) => ctStr(x).toLowerCase()).join(' \u0001 ');
   return s.split(/\s+/).every((w) => hay.includes(w));
 }
@@ -36158,9 +36194,13 @@ function ctErrorText(status, body) {
    One form, three modes. Values are flat strings keyed like the inputs
    (t1_name, t2_email, …); ctFormToBooking turns them into the `booking` the
    Worker's POST /coliving takes. Hidden keys ride along untouched:
-   room_gid, asana_tenant_gid, lead_id and original_start (an extension). */
+   room_gid, asana_tenant_gid, lead_id and original_start (an extension).
+   `form` picks the contract: 'sublease' (the default) or 'rta'. The RTA keys
+   are read only for an RTA; `includes` is the one array (checked boxes). */
 const CT_FORM_KEYS = ['province', 'lease_type', 't1_name', 't1_email', 't2_name', 't2_email', 'house', 'room', 'address',
   'rent', 'start', 'end', 'utilities', 'deposit', 'deposit_due', 'room_gid', 'asana_tenant_gid', 'lead_id', 'original_start'];
+const CT_RTA_KEYS = ['form', 'rent_due_day', 'fixed_end', 'vacate_reason', 'vacate_reg_section', 'includes_other',
+  'pet_deposit', 'pet_deposit_due', 'additional_terms'];
 const CT_CITY_PROVINCE = { vancouver: 'bc', 'north vancouver': 'bc', burnaby: 'bc', richmond: 'bc', toronto: 'on', montreal: 'qc', 'montréal': 'qc' };
 function ctIsDate(v) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ctStr(v));
@@ -36183,11 +36223,21 @@ function ctProvinceFor(city) { return CT_CITY_PROVINCE[ctStr(city).toLowerCase()
 function ctFormDefaults(mode, src) {
   const x = src || {};
   const v = {};
-  for (const k of CT_FORM_KEYS) v[k] = '';
+  for (const k of CT_FORM_KEYS.concat(CT_RTA_KEYS)) v[k] = '';
   v.lease_type = 'fixed'; v.utilities = 'Yes';
+  v.form = 'sublease'; v.rent_due_day = '1'; v.fixed_end = 'continue'; v.includes = [];
   if ((mode === 'replace' || mode === 'extend') && x.contract) {
     const r = x.contract, b = ctBooking(r);
     const tenants = ctTenants(r);
+    // An RTA is replaced or extended as an RTA (the page locks the type).
+    if (ctIsRta(r)) {
+      v.form = 'rta';
+      for (const k of ['fixed_end', 'vacate_reason', 'vacate_reg_section', 'includes_other', 'pet_deposit_due', 'additional_terms']) v[k] = ctStr(b[k]);
+      v.fixed_end = v.fixed_end === 'vacate' ? 'vacate' : 'continue';
+      v.rent_due_day = ctStr(b.rent_due_day) || '1';
+      v.pet_deposit = b.pet_deposit == null ? '' : ctStr(b.pet_deposit);
+      v.includes = (Array.isArray(b.includes) ? b.includes : []).map(ctStr).filter(Boolean);
+    }
     v.province = ctStr(b.province || r.province).toLowerCase();
     v.lease_type = ctStr(b.lease_type || r.lease_type) || 'fixed';
     tenants.slice(0, 2).forEach((t, i) => { v['t' + (i + 1) + '_name'] = t.name; v['t' + (i + 1) + '_email'] = t.email; });
@@ -36238,8 +36288,13 @@ function ctFormToBooking(values, mode, contract, draft) {
   const errors = [];
   const err = (field, text) => errors.push({ field, text });
   const need = !draft || mode === 'replace';
+  const rta = ctStr((values || {}).form) === 'rta';
   const booking = {};
-  if (['bc', 'on', 'qc'].includes(v.province.toLowerCase())) booking.province = v.province.toLowerCase();
+  // RTB-1 is British Columbia's form; the page locks the select to BC.
+  if (rta) {
+    if (v.province && v.province.toLowerCase() !== 'bc') err('province', 'The Residential Tenancy Agreement is for British Columbia only.');
+    else booking.province = 'bc';
+  } else if (['bc', 'on', 'qc'].includes(v.province.toLowerCase())) booking.province = v.province.toLowerCase();
   else if (v.province) err('province', 'Province must be BC, ON or QC.');
   else if (need) err('province', 'Choose the province.');
   booking.lease_type = v.lease_type === 'open' ? 'open' : 'fixed';
@@ -36254,8 +36309,9 @@ function ctFormToBooking(values, mode, contract, draft) {
   }
   if (tenants.length === 2 && tenants[0].email && tenants[0].email === tenants[1].email) err('t2_email', 'The two tenants need different emails.');
   booking.tenants = tenants;
+  // An RTA may be a whole unit: no room.
   for (const [k, label] of [['address', 'Address'], ['house', 'House'], ['room', 'Room']]) {
-    if (v[k]) booking[k] = v[k]; else if (need) err(k, label + ' is missing.');
+    if (v[k]) booking[k] = v[k]; else if (need && !(rta && k === 'room')) err(k, label + ' is missing.');
   }
   for (const [k, label] of [['rent', 'Rent'], ['deposit', 'Deposit']]) {
     if (v[k] === '') { if (need) err(k, label + ' is missing.'); continue; }
@@ -36277,7 +36333,8 @@ function ctFormToBooking(values, mode, contract, draft) {
     } else if (v.end) err('end', 'End date is not a valid date.');
     else if (need) err('end', 'End date is missing (or choose an open lease).');
   }
-  if (v.utilities === 'Yes' || v.utilities === 'No') booking.utilities = v.utilities;
+  if (rta) ctRtaToBooking(values, booking, err, need);
+  else if (v.utilities === 'Yes' || v.utilities === 'No') booking.utilities = v.utilities;
   else if (need) err('utilities', 'Say whether utilities are included.');
   for (const k of ['room_gid', 'asana_tenant_gid', 'lead_id']) if (v[k]) booking[k] = v[k];
   // An extension keeps the tenancy's first start (wording of clauses 1.1 and 1.6).
@@ -36290,16 +36347,64 @@ function ctFormToBooking(values, mode, contract, draft) {
   return { booking, errors };
 }
 
+// The RTB-1 fill-ins of an RTA, onto `booking` (mirrors the Worker's
+// validateRta). Same rule as ctFormToBooking: a draft only refuses what is
+// wrong; `need` also refuses what is missing.
+function ctRtaToBooking(values, booking, err, need) {
+  const x = values || {};
+  const v = {};
+  for (const k of CT_RTA_KEYS) v[k] = ctStr(x[k]);
+  booking.form = 'rta';
+  const due = v.rent_due_day === '' ? 1 : Number(v.rent_due_day);
+  if (Number.isInteger(due) && due >= 1 && due <= 31) booking.rent_due_day = due;
+  else err('rent_due_day', 'Rent due day must be a day of the month, 1 to 31.');
+  // A fixed term ends one of two ways: RTB-1 option D (continues) or E (vacate).
+  if (booking.lease_type === 'fixed') {
+    booking.fixed_end = v.fixed_end === 'vacate' ? 'vacate' : 'continue';
+    if (booking.fixed_end === 'vacate') {
+      if (v.vacate_reason) booking.vacate_reason = v.vacate_reason;
+      else if (need) err('vacate_reason', 'Say why the tenant must move out at the end of the term.');
+      if (v.vacate_reg_section) booking.vacate_reg_section = v.vacate_reg_section;
+    }
+  }
+  const picked = (Array.isArray(x.includes) ? x.includes : ctStr(x.includes).split(',')).map(ctStr);
+  booking.includes = CT_RTA_INCLUDES.map(([k]) => k).filter((k) => picked.includes(k));
+  booking.includes_other = v.includes_other;
+  // 4 1) a): each deposit is at most half a month's rent.
+  const cap = booking.rent > 0 ? booking.rent / 2 : null;
+  const capText = 'A deposit can be at most half a month\'s rent (' + ctMoney(cap) + ').';
+  if (cap != null && booking.deposit > cap) err('deposit', capText);
+  booking.pet_deposit = null;   // blank: not applicable
+  if (v.pet_deposit !== '') {
+    const n = Number(v.pet_deposit.replace(/[$,\s]/g, ''));
+    if (!isFinite(n) || n < 0) err('pet_deposit', 'Pet damage deposit must be a number of dollars, 0 or more.');
+    else { booking.pet_deposit = n; if (cap != null && n > cap) err('pet_deposit', capText); }
+    if (ctIsDate(v.pet_deposit_due)) booking.pet_deposit_due = v.pet_deposit_due;
+    else if (v.pet_deposit_due) err('pet_deposit_due', 'Pet damage deposit due date is not a valid date.');
+    else if (need) err('pet_deposit_due', 'Pet damage deposit due date is missing.');
+  }
+  // One term per line (the Addendum page); blank lines dropped.
+  const terms = v.additional_terms.split('\n').map(ctStr).filter(Boolean).join('\n');
+  if (terms.length > 6000) err('additional_terms', 'Additional terms are too long (6,000 characters at most).');
+  booking.additional_terms = terms;
+}
+
 // The line above the buttons: who it goes to and on what terms.
 function ctFormPreview(booking) {
   const b = booking || {};
+  const rta = b.form === 'rta';
   const day = (s) => ctDay(s).replace(',', '');
   const emails = (Array.isArray(b.tenants) ? b.tenants : []).map((t) => ctStr(t && t.email)).filter(Boolean);
-  const dates = b.start ? day(b.start) + ' → ' + (b.lease_type === 'open' ? 'open-ended' : (day(b.end) || '?')) : '';
+  let dates = '';
+  if (b.start && rta) {
+    dates = day(b.start) + ' → ' + (b.lease_type === 'open' ? 'month to month'
+      : (day(b.end) || '?') + (b.fixed_end === 'vacate' ? ' (tenant must vacate)' : ' (continues month to month)'));
+  } else if (b.start) dates = day(b.start) + ' → ' + (b.lease_type === 'open' ? 'open-ended' : (day(b.end) || '?'));
   return [
+    rta ? 'RTA' : '',
     emails.length ? 'Sends to ' + emails.join(', ') : '',
     ctStr(b.province).toUpperCase(),
-    b.rent != null && b.rent !== '' ? ctMoney(b.rent) + '/mo' : '',
+    b.rent != null && b.rent !== '' ? ctMoney(b.rent) + '/mo' + (rta ? ' due the ' + ctOrdinal(b.rent_due_day || 1) : '') : '',
     dates,
   ].filter(Boolean).join(' · ');
 }
@@ -36405,7 +36510,8 @@ function renderContracts() {
       const need = s.bucket === 'waiting' || (s.bucket === 'draft' && s.missing.length);
       return '<tr class="ct-row" tabindex="0" data-ct-open="' + esc(s.id) + '">' +
         '<td><div class="ct-name">' + esc(s.tenantNames) + '</div><div class="ct-sub">' + esc(s.emails.join(', ')) + '</div></td>' +
-        '<td>' + esc(s.place) + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + '</div>' : '') +
+        '<td>' + esc(s.place) + (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') +
+          (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + '</div>' : '') +
           (s.isExtension ? '<div class="ct-sub">' + esc(s.extensionText) + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.datesText) + (s.leaseTypeText ? '<div class="ct-sub">' + esc(s.leaseTypeText) + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.rent ? ctMoney(s.rent) : '—') + '</td>' +
@@ -36441,7 +36547,8 @@ function ctRenderPanel(row) {
   if (hero) { hero.textContent = initials; hero.style.background = 'linear-gradient(135deg,#6b5a4a,#2B211A)'; }
   document.getElementById('panel-title').textContent = s.tenantNames;
   document.getElementById('panel-sub').textContent = [s.place, s.id].filter(Boolean).join(' · ');
-  document.getElementById('panel-meta').innerHTML = '<span class="ct-meta' + (s.bucket === 'waiting' ? ' ct-need' : '') + '">' + esc(s.statusText) + '</span>';
+  document.getElementById('panel-meta').innerHTML = '<span class="ct-meta' + (s.bucket === 'waiting' ? ' ct-need' : '') + '">' + esc(s.statusText) + '</span>' +
+    (s.isRta ? ' <span class="ct-meta">Residential Tenancy Agreement</span>' : '');
 
   const emailProblem = ctEmailProblem(row);
   const tenantsHtml = s.tenants.map((t, n) =>
@@ -36469,12 +36576,18 @@ function ctRenderPanel(row) {
     (s.bucket === 'draft' && s.missing.length ? ctSection('Needs <em>you</em>', '<div class="ct-need-dot">Missing: ' + esc(s.missing.map((m) => m.label).join(', ')) + '</div>') : '') +
     ctSection('Booking',
       (s.isExtension ? ctKv('Type', esc(s.extensionText) + '<div class="ct-sub">Continues a current tenancy; no new deposit</div>') : '') +
-      ctKv('Room', esc(s.place) + (s.address ? '<div class="ct-sub">' + esc(s.address) + '</div>' : '')) +
-      ctKv('Dates', esc(s.datesText) + (s.months ? '<div class="ct-sub">' + s.months + (s.months === 1 ? ' month' : ' months') + '</div>' : '')) +
-      ctKv('Lease', esc(s.leaseTypeText || '—') + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + ' sublease</div>' : '')) +
-      ctKv('Rent', s.rentText ? esc(s.rentText) : dash) +
+      ctKv('Contract', esc(s.docTitle) + (s.isRta ? '<div class="ct-sub">BC form RTB-1 · Vanmates is the landlord</div>' : '')) +
+      ctKv(s.isRta ? 'Unit' : 'Room', esc(s.place) + (s.address ? '<div class="ct-sub">' + esc(s.address) + '</div>' : '')) +
+      ctKv('Dates', esc(s.datesText) + (s.months ? '<div class="ct-sub">' + s.months + (s.months === 1 ? ' month' : ' months') + '</div>' : '') +
+        (s.fixedEndText ? '<div class="ct-sub">At the end: ' + esc(s.fixedEndText) + '</div>' : '')) +
+      ctKv('Lease', esc(s.leaseTypeText || '—') + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + (s.isRta ? ' tenancy' : ' sublease') + '</div>' : '')) +
+      ctKv('Rent', s.rentText ? esc(s.rentText) + (s.rentDueText ? '<div class="ct-sub">' + esc(s.rentDueText) + '</div>' : '') : dash) +
       ctKv('Deposit', s.depositText ? esc(s.depositText) + (s.depositDueText ? '<div class="ct-sub">due ' + esc(s.depositDueText) + '</div>' : '') : dash) +
-      ctKv('Utilities included', s.utilities ? esc(s.utilities) : dash)) +
+      (s.isRta
+        ? ctKv('Pet damage deposit', esc(s.petDepositText) + (s.petDepositDueText ? '<div class="ct-sub">due ' + esc(s.petDepositDueText) + '</div>' : '')) +
+          ctKv('Included in rent', s.includesText ? esc(s.includesText) : dash) +
+          ctKv('Additional terms', s.additionalTerms.length ? s.additionalTerms.map((t) => '<div>' + esc(t) + '</div>').join('') : dash)
+        : ctKv('Utilities included', s.utilities ? esc(s.utilities) : dash))) +
     ctSection('Signatures', tenantsHtml +
       ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash : '<span class="ct-sub">not signed yet</span>')) +
       (s.voidReason ? ctKv('Void reason', esc(s.voidReason)) : '') +
@@ -36739,7 +36852,7 @@ async function ctSignGo() {
    Send now (send:true), or Replace & send (replaces + reason; the Worker voids
    the old contract only once the new one validates). A manual Extend does not
    hold the room in Asana; that stays Hugo's. */
-const CT_NEW = { mode: 'new', contract: null, busy: false, rooms: null };
+const CT_NEW = { mode: 'new', contract: null, busy: false, rooms: null, who: '' };
 const CT_NEW_TITLES = { new: 'New <em>contract</em>', replace: 'Replace <em>contract</em>', extend: 'Extend <em>contract</em>' };
 // Inventory rooms for the picker (the Vacancies model: every Asana room with
 // its house, address and rent). Loaded on first use; typing by hand always works.
@@ -36793,11 +36906,11 @@ function ctEnsureContractModal() {
     if (el.id === 'ct-n-pick') { ctPickRoom(el.value); }
     // A hand-typed house or room is no longer the inventory room that was picked.
     else if (el.name === 'house' || el.name === 'room') { const g = wrap.querySelector('[name="room_gid"]'); if (g) g.value = ''; }
-    if (el.name === 'lease_type') ctLeaseTypeShown();
+    if (el.name === 'lease_type' || el.name === 'form' || el.name === 'fixed_end') ctLeaseTypeShown();
     if (el.getAttribute && el.getAttribute('aria-invalid')) el.removeAttribute('aria-invalid');
     ctPreviewContractForm();
   });
-  wrap.addEventListener('change', (e) => { if (e.target.name === 'lease_type') ctLeaseTypeShown(); ctPreviewContractForm(); });
+  wrap.addEventListener('change', (e) => { if (['lease_type', 'form', 'fixed_end'].includes(e.target.name)) ctLeaseTypeShown(); ctPreviewContractForm(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wrap.classList.contains('open') && !CT_NEW.busy) ctCloseContractForm(); });
 }
 function ctPickRoom(label) {
@@ -36809,14 +36922,32 @@ function ctPickRoom(label) {
   if (r.rent != null) set('rent', String(r.rent), true);
   const prov = ctProvinceFor(r.city); if (prov) set('province', prov, true);
 }
+// Show what the chosen contract type and lease type ask for. An RTA is BC
+// only (the province is locked), has no utilities question and may have no room.
 function ctLeaseTypeShown() {
   const f = document.getElementById('ct-new-form'); if (!f) return;
   const open = f.querySelector('[name="lease_type"]').value === 'open';
   const end = f.querySelector('[data-ct-end]'); if (end) end.style.display = open ? 'none' : '';
+  const typeEl = f.querySelector('[name="form"]');
+  const rta = !!typeEl && typeEl.value === 'rta';
+  const vacate = rta && !open && f.querySelector('[name="fixed_end"]').value === 'vacate';
+  f.querySelectorAll('[data-ct-rta]').forEach((el) => { el.hidden = !rta; });
+  f.querySelectorAll('[data-ct-sub]').forEach((el) => { el.hidden = rta; });
+  f.querySelectorAll('[data-ct-fixed]').forEach((el) => { el.hidden = !rta || open; });
+  f.querySelectorAll('[data-ct-vacate]').forEach((el) => { el.hidden = !vacate; });
+  const prov = f.querySelector('[name="province"]');
+  if (prov) { if (rta) prov.value = 'bc'; prov.disabled = rta; }
+  const roomLabel = f.querySelector('label[for="ct-n-room"]'); if (roomLabel) roomLabel.textContent = rta ? 'Room (optional)' : 'Room';
+  const sub = document.getElementById('ct-new-sub');
+  if (sub && CT_NEW.mode === 'new' && !CT_NEW.who) sub.textContent = rta ? 'BC Residential Tenancy Agreement (RTB-1)' : 'Co-living sublease';
 }
+// Flat values by input name; the checked "included in rent" boxes are one array.
 function ctContractFormValues() {
   const f = document.getElementById('ct-new-form'); const v = {};
-  if (f) f.querySelectorAll('[name]').forEach((el) => { v[el.name] = el.value; });
+  if (f) f.querySelectorAll('[name]').forEach((el) => {
+    if (el.type === 'checkbox') { v[el.name] = v[el.name] || []; if (el.checked) v[el.name].push(el.value); }
+    else v[el.name] = el.value;
+  });
   return v;
 }
 function ctPreviewContractForm() {
@@ -36831,8 +36962,9 @@ function ctOpenContractForm(mode, src) {
   CT_NEW.mode = mode; CT_NEW.contract = x.contract || null; CT_NEW.busy = false;
   const v = ctFormDefaults(mode, x);
   const s = x.contract ? ctSummary(x.contract) : null;
+  CT_NEW.who = s ? 'contract' : x.tenant ? 'tenant' : x.lead ? 'lead' : '';
   document.getElementById('ct-new-title').innerHTML = CT_NEW_TITLES[mode] || CT_NEW_TITLES.new;
-  document.getElementById('ct-new-sub').textContent = s ? s.tenantNames + ' · ' + s.place + ' · ' + s.datesText
+  document.getElementById('ct-new-sub').textContent = s ? (s.isRta ? 'RTA · ' : '') + s.tenantNames + ' · ' + s.place + ' · ' + s.datesText
     : (x.tenant ? 'For ' + ctStr(x.tenant.name) : x.lead ? 'For ' + ctStr(x.lead.name || x.lead.email) : 'Co-living sublease');
   const fld = (name, label, type, opts) => {
     const o = opts || {};
@@ -36845,6 +36977,11 @@ function ctOpenContractForm(mode, src) {
     return '<div class="form-field"' + (o.attr || '') + '><label for="' + id + '">' + esc(label) + '</label>' + ctl + '</div>';
   };
   const row2 = (a, b) => '<div class="form-row">' + a + b + '</div>';
+  // Replace and Extend keep the contract's type; only a new one can switch.
+  const typeSel = fld('form', 'Contract type', 'select', { options: [['sublease', 'Sublease agreement (co-living room)'], ['rta', 'Residential Tenancy Agreement (BC, RTB-1)']] });
+  const includes = '<div class="form-row single" data-ct-rta><div class="form-field"><label>Included in the rent</label><div class="ct-includes">' +
+    CT_RTA_INCLUDES.map(([k, l]) => '<label><input type="checkbox" name="includes" value="' + esc(k) + '"' + (v.includes.includes(k) ? ' checked' : '') + '>' + esc(l) + '</label>').join('') +
+    '</div></div></div>';
   const hidden = ['room_gid', 'asana_tenant_gid', 'lead_id', 'original_start'].map((k) => '<input type="hidden" name="' + k + '" value="' + esc(v[k]) + '">').join('');
   const note = mode === 'extend'
     ? '<div class="ct-sub" style="margin-bottom:12px">A new term for the same tenancy' + (v.original_start ? ' (since ' + esc(ctDay(v.original_start)) + ')' : '') + '. Set the new end date. The room is <b>not</b> held in Asana; do that by hand if needed.</div>'
@@ -36852,6 +36989,7 @@ function ctOpenContractForm(mode, src) {
       ? '<div class="ct-sub" style="margin-bottom:12px">The current contract is voided and this one is sent in its place. If anything below is missing, nothing changes.</div>'
       : '';
   document.getElementById('ct-new-form').innerHTML = note + hidden +
+    '<div class="form-row single">' + typeSel + '</div>' +
     row2(fld('province', 'Province', 'select', { choose: true, options: [['bc', 'BC'], ['on', 'ON'], ['qc', 'QC']] }),
       fld('lease_type', 'Lease type', 'select', { options: [['fixed', 'Fixed term'], ['open', 'Month to month (open)']] })) +
     row2(fld('t1_name', 'Tenant 1 name', 'text'), fld('t1_email', 'Tenant 1 email', 'email')) +
@@ -36861,9 +36999,20 @@ function ctOpenContractForm(mode, src) {
       '<div class="ct-sub" id="ct-n-pick-hint">Loading rooms…</div></div></div>' +
     row2(fld('house', 'House', 'text'), fld('room', 'Room', 'text')) +
     '<div class="form-row single">' + fld('address', 'Address', 'text') + '</div>' +
-    row2(fld('rent', 'Rent ($ / month)', 'number'), fld('utilities', 'Utilities included', 'select', { options: [['Yes', 'Yes'], ['No', 'No']] })) +
+    row2(fld('rent', 'Rent ($ / month)', 'number'), fld('utilities', 'Utilities included', 'select', { attr: ' data-ct-sub', options: [['Yes', 'Yes'], ['No', 'No']] }) +
+      fld('rent_due_day', 'Rent due on day (1–31)', 'number', { attr: ' data-ct-rta' })) +
     row2(fld('start', 'Start date', 'date'), fld('end', 'End date', 'date', { attr: ' data-ct-end' })) +
+    '<div class="form-row single" data-ct-fixed>' + fld('fixed_end', 'At the end of the fixed term', 'select',
+      { options: [['continue', 'Continues month to month (RTB-1 option D)'], ['vacate', 'Tenant must move out (RTB-1 option E)']] }) + '</div>' +
+    '<div data-ct-vacate><div class="ct-sub" style="margin:-4px 0 8px">' + esc(CT_RTA_VACATE_HINT) + '</div>' +
+      row2(fld('vacate_reason', 'Reason the tenant must move out', 'text'), fld('vacate_reg_section', 'Regulation section (optional)', 'text', { ph: 'e.g. 13.1 (2) (c)' })) + '</div>' +
     row2(fld('deposit', 'Deposit ($)', 'number'), fld('deposit_due', 'Deposit due', 'date')) +
+    '<div data-ct-rta>' + row2(fld('pet_deposit', 'Pet damage deposit ($, optional)', 'number', { ph: 'blank = not applicable' }), fld('pet_deposit_due', 'Pet deposit due', 'date')) +
+      '<div class="ct-sub" style="margin:-6px 0 12px">Each deposit can be at most half a month\'s rent (RTB-1 4.1a).</div></div>' +
+    includes +
+    '<div class="form-row single" data-ct-rta>' + fld('includes_other', 'Also included (optional)', 'text', { ph: 'anything not in the list' }) + '</div>' +
+    '<div class="form-row single" data-ct-rta><div class="form-field"><label for="ct-n-additional_terms">Additional terms (optional, one per line)</label>' +
+      '<textarea class="form-input" id="ct-n-additional_terms" name="additional_terms" rows="4" maxlength="6000" placeholder="Printed on an Addendum page">' + esc(v.additional_terms) + '</textarea></div></div>' +
     (mode === 'replace' ? '<div class="form-row single"><div class="form-field"><label for="ct-n-reason">Reason for replacing *</label>' +
       '<textarea class="form-input" id="ct-n-reason" rows="2" maxlength="300" placeholder="e.g. rent corrected to $1,100"></textarea></div></div>' : '') +
     '<div class="form-error" id="ct-new-err" role="alert"></div>';
@@ -36872,6 +37021,7 @@ function ctOpenContractForm(mode, src) {
   foot.querySelector('[data-ct-new-act="send"]').hidden = mode === 'replace';
   foot.querySelector('[data-ct-new-act="replace"]').hidden = mode !== 'replace';
   foot.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  document.getElementById('ct-n-form').disabled = mode !== 'new';
   ctLeaseTypeShown();
   ctPreviewContractForm();
   ctLoadRooms();
@@ -36966,7 +37116,8 @@ function ctPersonListHtml(list) {
   const canOpen = !!nav && !nav.classList.contains('role-hidden');
   return list.map((r) => {
     const s = ctSummary(r, new Date());
-    return '<div class="ct-person-row"><div style="min-width:0"><div class="ct-name">' + esc(s.place) + ' · ' + esc(s.datesText) + '</div>' +
+    return '<div class="ct-person-row"><div style="min-width:0"><div class="ct-name">' + esc(s.place) + ' · ' + esc(s.datesText) +
+      (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') + '</div>' +
       '<div class="ct-sub">' + esc(s.statusText) + (s.statusLine ? ' · ' + esc(s.statusLine) : '') + '</div></div>' +
       (canOpen ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-goto="' + esc(s.id) + '">Open</button>' : '') + '</div>';
   }).join('');
@@ -37061,6 +37212,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-08-rcreq1"></script>
+<script src="room-changes.js?v=2026-10-08-rta1"></script>
 </body>
 </html>
