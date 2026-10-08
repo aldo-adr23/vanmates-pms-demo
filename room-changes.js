@@ -188,7 +188,7 @@
       ${kv('Move date', `${e(day(r.move_date))}${p.flexible_until ? ' · flexible to ' + e(day(p.flexible_until)) : ''}`)}
       ${kv('Contract end', `${e(day(r.lease_end))} (keep)`)}
       ${kv('Budget', e(money(r.budget)))}
-      ${kv('Preferences', e([p.room_type && 'Room type: ' + p.room_type, p.private_bathroom && 'Private bathroom: ' + p.private_bathroom, p.neighbourhood && 'Area: ' + p.neighbourhood, p.near && 'Near: ' + p.near, p.notes && 'Notes: ' + p.notes].filter(Boolean).join(' · ') || '—'))}
+      ${kv('Preferences', e([p.requirements && 'Wants: ' + p.requirements, p.room_type && 'Room type: ' + p.room_type, p.private_bathroom && 'Private bathroom: ' + p.private_bathroom, p.neighbourhood && 'Area: ' + p.neighbourhood, p.near && 'Near: ' + p.near, p.notes && 'Notes: ' + p.notes].filter(Boolean).join(' · ') || '—'))}
       ${kv('Other rooms shown', e((d.options_shown || []).map(o => `${o.name} (${money(o.price)})`).join(' · ') || '—'))}
       ${kv('Policy version', e(d.policy_version || 'none approved yet: staff quote'))}
       ${h('Feedback')}
