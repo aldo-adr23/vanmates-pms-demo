@@ -1539,7 +1539,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-08-readyinv1"></script>
+<script src="pms-supabase.js?v=2026-10-08-invitetop1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -32348,7 +32348,7 @@ async function loadHomestayMatching(){
       sb.from("hm_cases").select("*").order("created_at", { ascending: false }).range(0, 999),
       sb.from("hm_host_profiles").select("*").range(0, 999),
       sb.from("hm_listings").select("host_id,status,approved,updated_at").range(0, 999),
-      sb.from("hm_settings").select("city,auto_release_partner"),
+      sb.from("hm_settings").select("city,auto_release_partner,wave_size"),
       // Website settings completeness only: a read error leaves these empty (reported as missing, never guessed).
       sb.from("hm_room_details").select("room_id,host_id,bathroom").range(0, 999),
       sb.from("hm_host_geo").select("host_id,neighbourhood,status").range(0, 999),
@@ -32705,7 +32705,6 @@ async function hmOpenCase(id){
   const invitations = `
     <div class="card-title" style="margin-top:16px">Invitations <span class="card-sub">${hmEsc(hmNextAction(c, nowMs, invs))}</span></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0">
-      ${hmCanInvite(c) ? '<button class="btn" type="button" data-hm-inv="invite">Start inviting</button>' : ""}
       ${c.status === "INVITING" ? `${(!sending && uninvited.length) ? '<button class="btn btn-ghost" type="button" data-hm-inv="wave">Send next wave now</button>' : ""}
         <button class="btn btn-ghost" type="button" data-hm-inv="${c.paused ? "resume" : "pause"}">${c.paused ? "Resume" : "Pause"}</button>` : ""}
     </div>
@@ -32853,6 +32852,10 @@ async function hmOpenCase(id){
       <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
     ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
     ${hmPreferredHostsText(c.preferred_host_ids, hmWebNames()) ? `<div class="card-sub">Student liked on website: ${hmEsc(hmPreferredHostsText(c.preferred_host_ids, hmWebNames()))}</div>` : ""}
+    ${hmCanInvite(c) ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0">
+      <button class="btn btn-primary" type="button" data-hm-inv="invite">Start inviting</button>
+      <span class="card-sub">Emails the first ${hmEsc(String((HM.settings || []).find(x => x.city === c.city)?.wave_size || 5))} hosts on the shortlist (and texts those who agreed to SMS). Change the shortlist below first if needed.</span>
+    </div>` : ""}
     ${readyForOffer ? nextBox : offerOut ? offerTop : matchCard}
     <form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
@@ -37212,6 +37215,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-08-readyinv1"></script>
+<script src="room-changes.js?v=2026-10-08-invitetop1"></script>
 </body>
 </html>
