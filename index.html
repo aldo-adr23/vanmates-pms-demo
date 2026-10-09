@@ -1568,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-09-propspnl2"></script>
+<script src="pms-supabase.js?v=2026-10-09-rchandoff1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -26198,7 +26198,11 @@ async function openCheckout(id, banner, refocus, ok){
     ${ins.result ? kv('Inspection result', `${esc(ckoOptionLabel(CKO_RESULT_OPTIONS, ins.result))}${ins.source === 'limpio' ? ` <span class="name-sub">· by ${esc(ins.by || 'the cleaner')}, from the Limpio cleaning report</span>` : ''}${ins.notes && ins.source !== 'limpio' ? `<div class="name-sub">${esc(ins.notes)}</div>` : ''}`) : ''}
     ${cln.report ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}`;
   const reviewOpen = (c.flags || []).indexOf('short_notice_review_required') !== -1;
+  // A room change's move-out (room-change-handoff-2026-10-09.sql): the tenant stays, no refund.
+  const tr = d.transfer || null;
+  const transferBanner = tr ? `<div class="tag-pill blue" style="display:block;text-transform:none;letter-spacing:0;font-size:13px;padding:10px 12px;margin:6px 0 10px">Room change <a href="#room-change=${esc(tr.room_change_id || '')}">${esc(tr.room_change_id || '')}</a>: moving to ${esc([tr.to_house, tr.to_room].filter(Boolean).join(' · ') || 'a new room')}${tr.move_date ? ' on ' + esc(day(tr.move_date)) : ''}. The deposit${tr.deposit_held != null ? ' (' + esc('$' + Number(tr.deposit_held).toLocaleString('en-CA')) + ')' : ''} moves to the new contract: record any cleaning or damage charges, then close the case. No refund is paid out.</div>` : '';
   document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}">
+    ${transferBanner}
     ${ckoStageTrackerHtml(c, stg, waited, slaParts)}
     ${ckoActionBarHtml(c)}
     ${ckoChargesHtml(c, lines, kv, h)}
@@ -26210,7 +26214,7 @@ async function openCheckout(id, banner, refocus, ok){
     ${kv('Forwarding address', esc(d.forwarding_address || '—'))}
     ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + ' · will return')}
     ${kv('Reason', esc(d.reason || '—') + (d.reason_details ? `<div class="name-sub">${esc(d.reason_details)}</div>` : ''))}
-    ${kv('Refund method', esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
+    ${kv('Refund method', d.refund_method === 'deposit_transfer' ? 'Deposit carried over (room change)' : esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
     ${kv('Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
     ${kv('Submitted', when(c.createdAt))}`, false)}
     ${fold('Notice & acknowledgements', `
@@ -37531,6 +37535,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-09-propspnl2"></script>
+<script src="room-changes.js?v=2026-10-09-rchandoff1"></script>
 </body>
 </html>
