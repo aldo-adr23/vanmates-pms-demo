@@ -958,6 +958,35 @@
     .tn-view .tn-room{grid-template-columns:70px minmax(0,1fr)}
     .tn-view .tn-room .num{display:none}
   }
+  /* ---------- Properties & rooms P&L (redesign 2026-10-09) ----------
+     Rides on .hb-view/.tn-view (tabs, slim table). Money right-aligned; terracotta only
+     for losses and missing landlord rent. */
+  .pp-view .pp-kpis{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .pp-view .pp-kpis .kpi-trend{color:var(--muted);font-weight:500}
+  .pp-view .pp-of{font-size:.55em;color:var(--muted);font-weight:500}
+  .pp-view .pp-neg .kpi-value,.pp-view .pp-loss{color:var(--red)}
+  .pp-view .tn-banner{margin-bottom:6px}
+  .pp-view .tn-banner a{color:var(--red);font-weight:600}
+  .pp-view .pp-sort{margin-left:auto}
+  .pp-view .pp-table{min-width:720px}
+  .pp-view .pp-num{text-align:right;white-space:nowrap}
+  .pp-view th.pp-num{text-align:right}
+  .pp-view .pp-grp td{cursor:pointer;user-select:none}
+  .pp-view .pp-grp:hover td{background:var(--cream-2)}
+  .pp-view .pp-caret{display:inline-block;width:18px;font-size:15px;line-height:1;color:var(--muted);transition:transform .15s}
+  .pp-view .pp-grp.pp-shut .pp-caret{transform:rotate(-90deg)}
+  .pp-view .pp-indent{padding-left:18px}
+  .pp-view .pp-unit td:first-child{padding-left:34px}
+  .pp-view .pp-unit td{background:var(--cream)}
+  .pp-view .pp-occ{display:flex;align-items:center;gap:8px;min-width:96px}
+  .pp-view .pp-occ span{font-variant-numeric:tabular-nums;min-width:38px}
+  .pp-view .pp-occ i{flex:1;max-width:70px;height:5px;border-radius:99px;background:var(--cream-2);overflow:hidden}
+  .pp-view .pp-occ b{display:block;height:100%;background:var(--ink);opacity:.55}
+  .pp-view .tn-foot .tn-head-actions{align-items:center}
+  @media (max-width: 860px){
+    .pp-view .pp-sort{margin-left:0}
+    .pp-view .tn-foot{flex-direction:column;align-items:flex-start}
+  }
   /* ---------- Landlords (redesign 2026-10-06) ----------
      Rides on .hb-view/.tn-view (tabs, slim table) and the .ct-panel drawer rows. Words,
      not traffic-light chips; terracotta only for what needs someone. */
@@ -1539,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-09-casepage1"></script>
+<script src="pms-supabase.js?v=2026-10-09-propspnl2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2352,22 +2381,33 @@
     </section>
 
     <!-- ============ PROPERTIES & ROOMS ============ -->
-    <section class="view" data-view="properties">
-      <div class="pill-row">
-        <div class="tabs" id="props-city-tabs">
-          <div class="tab active" data-city="">All cities</div>
-          <div class="tab" data-city="Toronto">Toronto</div>
-          <div class="tab" data-city="Montréal">Montréal</div>
-          <div class="tab" data-city="Vancouver">Vancouver</div>
-          <div class="tab" data-city="Guadalajara">Guadalajara</div>
-        </div>
-        <div style="flex:1"></div>
-        <button class="btn btn-ghost" id="props-map-btn">Map view</button>
-        <button class="btn btn-primary" id="props-add-btn">+ Add property</button>
+    <section class="view hb-view tn-view pp-view" data-view="properties">
+      <div class="kpi-grid pp-kpis" id="pp-kpis"></div>
+      <div id="pp-note" class="card-sub hb-note tn-banner" hidden></div>
+      <div class="hb-tabbar" role="tablist" id="props-city-tabs"></div>
+      <div class="tn-tools">
+        <input class="form-input tn-search" id="pp-q" type="search" placeholder="Search property, address or landlord" autocomplete="off" spellcheck="false">
+        <div class="tn-pills" id="pp-filters"></div>
+        <select class="form-input tn-select pp-sort" id="pp-sort" aria-label="Sort"></select>
       </div>
-
-      <div class="prop-grid" id="props-grid">
-        <!-- filled by JS -->
+      <div id="pp-map" hidden></div>
+      <div class="card tn-card" id="props-grid">
+        <div class="tn-table-wrap">
+          <table class="hb-table tn-table pp-table">
+            <thead id="pp-thead"></thead>
+            <tbody id="pp-body"></tbody>
+          </table>
+        </div>
+        <div id="pp-empty" class="tn-empty" hidden>No properties match.</div>
+        <div class="tn-foot">
+          <span class="card-sub" id="pp-count"></span>
+          <span class="tn-head-actions">
+            <button type="button" class="btn btn-ghost tn-mini" id="pp-expand">Expand all</button>
+            <button type="button" class="btn btn-ghost tn-mini" id="pp-export">Export CSV</button>
+            <button type="button" class="btn btn-ghost tn-mini" id="props-map-btn">Map view</button>
+            <button type="button" class="btn btn-primary tn-mini" id="props-add-btn">+ Add property</button>
+          </span>
+        </div>
       </div>
     </section>
 
@@ -7317,73 +7357,277 @@ async function tnMailSendAll() {
   if (open) { const t = tnFind(open.dataset.tnPanel); if (t) tnLoadHistory(t); }
 }
 
-/* Properties grid */
-let PROPS_CITY = "";
-// Rebuilt every render from the *current* tenants list — the static const
-// version missed properties added/edited after page boot and never saw the
-// new p.city field that Add/Edit Property now writes. Order of precedence:
-//   1. p.city (authoritative — set by Add/Edit Property)
-//   2. tenant-derived map (a tenant living there knows the city)
-//   3. address substring match (last-ditch fallback for legacy data)
-function buildPropertyCityMap(){
-  const map = {};
-  (window.tenants || []).forEach(t => {
-    if(t.property && t.city && !map[t.property]) map[t.property] = t.city;
+/* Properties grid → Properties & rooms P&L (redesign 2026-10-09) */
+/* PP-CORE-START */
+/* Monthly revenue, landlord rent and profit per property, from the live lists only.
+   Revenue = rent of every tenant living there now (tenant stage "living", plus "ended":
+   still marked active after the lease date, which is nearly always a renewal nobody dated).
+   Landlord rent = the lease that governs the property (LL-CORE llModel). A lease that covers
+   several properties (a bulk lease, a landlord-wide lease) is split across them by room count,
+   so the building and city totals add up to the leases exactly once.
+   Profit is only computed where a landlord rent is on file; without one it is null, never
+   "all revenue". Archived landlord = lease ended: shown only while tenants still live there.
+   Pure: needs only the LL-CORE functions and the tenant-stage function passed in. */
+function ppModel(properties, tenants, landlords, todayYmd, stageOf) {
+  const LL = llModel(landlords, properties, todayYmd);
+  const byName = new Map(LL.props.map((r) => [r.name, r]));
+  const live = new Map();
+  for (const t of tenants || []) {
+    const s = stageOf(t);
+    if (!t || !t.property) continue;
+    const e = live.get(t.property) || { n: 0, rev: 0, noRent: 0, moving: 0 };
+    if (s === "living" || s === "ended") { e.n++; const r = Number(t.rent) || 0; e.rev += r; if (!r) e.noRent++; }
+    else if (s === "moving") e.moving++;
+    live.set(t.property, e);
+  }
+  // Room weights per lease, for splitting a lease's rent across the properties it governs.
+  const leaseKey = (r) => (r.landlord && r.contract && !r.landlord.archived && Number(r.contract.rent) ? r.landlord.id + "|" + r.contract.id : null);
+  const weight = (p) => Math.max(1, Number(p.rooms) || 0);
+  const lease = new Map();
+  for (const p of properties) {
+    const k = leaseKey(byName.get(p.name));
+    if (k) lease.set(k, (lease.get(k) || 0) + weight(p));
+  }
+  const rows = [];
+  for (const p of properties) {
+    const ll = byName.get(p.name);
+    const t = live.get(p.name) || { n: 0, rev: 0, noRent: 0, moving: 0 };
+    const ended = ll.status === "archived";
+    if (ended && !t.n && !t.moving) continue;
+    const k = leaseKey(ll);
+    const c = ll.contract;
+    const cost = k ? Math.round(Number(c.rent) * weight(p) / lease.get(k)) : null;
+    const city = ll.city;
+    const cur = (c && c.currency) || (city === "Guadalajara" ? "MXN" : "CAD");
+    const rooms = Math.max(Number(p.rooms) || 0, t.n);
+    rows.push({
+      name: p.name, addr: p.addr || "", city, building: llBuilding(p.name), cur,
+      rooms, occupied: t.n, vacant: Math.max(0, rooms - t.n), moving: t.moving, noRent: t.noRent,
+      revenue: t.rev, cost, profit: cost == null ? null : t.rev - cost,
+      shared: k ? lease.get(k) > weight(p) : false, leaseEnded: ended,
+      landlord: ll.landlord ? ll.landlord.name : "", lease: ll.status,
+    });
+  }
+  return rows;
+}
+// Totals for a set of rows. Profit and margin only over rows with a landlord rent on file.
+function ppTotals(rows) {
+  const o = { units: rows.length, rooms: 0, occupied: 0, revenue: 0, cost: 0, profit: 0, costedRevenue: 0, uncosted: 0, uncostedRevenue: 0, losing: 0 };
+  for (const r of rows) {
+    o.rooms += r.rooms; o.occupied += r.occupied; o.revenue += r.revenue;
+    if (r.cost == null) { o.uncosted++; o.uncostedRevenue += r.revenue; continue; }
+    o.cost += r.cost; o.profit += r.profit; o.costedRevenue += r.revenue;
+    if (r.profit < 0) o.losing++;
+  }
+  o.margin = o.costedRevenue ? o.profit / o.costedRevenue : null;
+  o.occPct = o.rooms ? o.occupied / o.rooms : null;
+  return o;
+}
+// Rows grouped by building (llBuilding): one group per house or building, with its totals.
+function ppGroups(rows) {
+  const by = new Map();
+  for (const r of rows) { if (!by.has(r.building)) by.set(r.building, []); by.get(r.building).push(r); }
+  return [...by].map(([key, rs]) => {
+    const t = ppTotals(rs);
+    const cities = [...new Set(rs.map((r) => r.city))];
+    return { key, rows: rs, city: cities[0] || "", cur: rs[0].cur, t, profit: t.uncosted === rs.length ? null : t.profit };
   });
-  return map;
 }
-function renderPropertiesGrid(){
-  const propertyCity = buildPropertyCityMap();
-  const list = PROPS_CITY ? properties.filter(p => {
-    if(p.city) return p.city === PROPS_CITY;
-    if(propertyCity[p.name]) return propertyCity[p.name] === PROPS_CITY;
-    return (p.addr || "").toLowerCase().includes(PROPS_CITY.toLowerCase());
-  }) : properties;
-  document.getElementById("props-grid").innerHTML = list.map(p => `
-  <div class="prop-card" data-prop-name="${p.name.replace(/"/g,"&quot;")}">
-    <div class="prop-img" style="background:linear-gradient(135deg, ${p.color}33, ${p.color}66), radial-gradient(circle at 30% 30%, #FFFFFF55, transparent 60%)">
-      <div class="prop-tag ${p.ratePct===100?'red':''}">${p.ratePct===100?'Fully booked':esc(p.type)}</div>
-      <svg viewBox="0 0 200 110" width="100%" height="100%" preserveAspectRatio="none" style="opacity:.45">
-        <rect x="20" y="40" width="60" height="55" fill="${p.color}" />
-        <rect x="85" y="25" width="50" height="70" fill="${shade(p.color,-15)}" />
-        <rect x="140" y="50" width="45" height="45" fill="${shade(p.color,15)}" />
-        <rect x="32" y="55" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="55" y="55" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="32" y="78" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="55" y="78" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="95" y="40" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="115" y="40" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="95" y="65" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="115" y="65" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="150" y="65" width="10" height="14" fill="#FAF5ED"/>
-        <rect x="170" y="65" width="10" height="14" fill="#FAF5ED"/>
-      </svg>
-    </div>
-    <div class="prop-body">
-      <div class="prop-name">${esc(p.name)}</div>
-      <div class="prop-addr">${esc(p.addr)}</div>
-      <div class="prop-meta">
-        <div><div class="lbl">Rooms</div><b>${p.occ}/${p.rooms}</b></div>
-        <div><div class="lbl">Occupied</div><b>${p.ratePct}%</b></div>
-        <div><div class="lbl">Rent</div><b style="font-size:13px">${p.rent}</b></div>
-      </div>
-      <div class="occ-bar" style="margin-top:10px"><div class="occ-fill" style="width:${p.ratePct}%"></div></div>
-    </div>
-  </div>
-`).join("");
-  if(typeof wirePropertyCards === "function") wirePropertyCards();
+const PP_FILTERS = [["all", "All"], ["losing", "Losing money"], ["vacant", "Empty rooms"], ["nolease", "No landlord rent"]];
+function ppInFilter(r, f) {
+  if (f === "losing") return r.profit != null && r.profit < 0;
+  if (f === "vacant") return r.vacant > 0;
+  if (f === "nolease") return r.cost == null;
+  return true;
 }
-renderPropertiesGrid();
+// Sort keys: profit / revenue / margin (high first, unknown last) or name (A–Z, unit numbers natural).
+function ppCompare(key) {
+  const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  const val = (x) => {
+    const t = x.t || x;
+    if (key === "revenue") return t.revenue;
+    if (key === "margin") return x.t ? x.t.margin : (x.revenue && x.profit != null ? x.profit / x.revenue : null);
+    return x.t ? (x.t.uncosted === x.t.units ? null : x.t.profit) : x.profit;
+  };
+  return (a, b) => {
+    // Never rank pesos against dollars: CAD properties first, then MXN (Guadalajara).
+    if (a.cur !== b.cur) return a.cur === "MXN" ? 1 : b.cur === "MXN" ? -1 : 0;
+    if (key === "name") return nat(a.key || a.name, b.key || b.name);
+    const x = val(a), y = val(b);
+    if (x == null && y == null) return nat(a.key || a.name, b.key || b.name);
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return y - x || nat(a.key || a.name, b.key || b.name);
+  };
+}
+function ppCsv(rows) {
+  const head = ["Property", "Building", "City", "Currency", "Rooms", "Occupied", "Moving in", "Monthly revenue", "Landlord rent", "Profit", "Margin", "Landlord", "Shared lease", "Lease ended"];
+  const q = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return [head.join(",")].concat(rows.map((r) => [r.name, r.building, r.city, r.cur, r.rooms, r.occupied, r.moving, r.revenue,
+    r.cost == null ? "" : r.cost, r.profit == null ? "" : r.profit, r.profit == null || !r.revenue ? "" : Math.round(r.profit / r.revenue * 100) + "%",
+    r.landlord, r.shared ? "yes" : "", r.leaseEnded ? "yes" : ""].map(q).join(","))).join("\n");
+}
+/* PP-CORE-END */
 
-// Wire city filter tabs on Properties page
-document.querySelectorAll("#props-city-tabs .tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll("#props-city-tabs .tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    PROPS_CITY = tab.dataset.city || "";
+// Who sees money here: admins, and anyone whose pages include Landlords, Financials or Portfolio
+// (Ops and property managers open this page for rooms, not for landlord rent). Cosmetic, like all
+// page gating in the portal: RLS is the real gate.
+function ppCanSeeMoney() {
+  const u = typeof activeRole === "function" ? activeRole() : null;
+  if (!u) return false;
+  if (u.role === "admin") return true;
+  const r = (typeof roles !== "undefined" && roles[u.role]) || { nav: [] };
+  const pages = Array.isArray(u.allowed_pages) && u.allowed_pages.length ? u.allowed_pages : r.nav || [];
+  return ["landlords", "financials", "portfolio"].some((p) => pages.includes(p));
+}
+const PP_UI = { city: "", q: "", filter: "all", sort: "profit", open: new Set() };
+try { const s = JSON.parse(localStorage.getItem("vm_pp_ui") || "{}"); if (s.city != null) PP_UI.city = s.city; if (s.sort) PP_UI.sort = s.sort; } catch (e) {}
+function ppSave() { try { localStorage.setItem("vm_pp_ui", JSON.stringify({ city: PP_UI.city, sort: PP_UI.sort })); } catch (e) {} }
+function ppMoney(n, cur) {
+  if (n == null) return "—";
+  const v = Math.round(n), s = Math.abs(v).toLocaleString();
+  return (v < 0 ? "−" : "") + (cur === "MXN" ? "MX$" : "$") + s;
+}
+function ppPct(x) { return x == null ? "—" : Math.round(x * 100) + "%"; }
+function ppRows() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let rows = ppModel(properties || [], tenants || [], landlords || [], llYmd(today), (t) => tnStage(t, today));
+  const u = typeof activeRole === "function" ? activeRole() : null;
+  if (u && u.role === "property" && u.assigned) rows = rows.filter((r) => r.name === u.assigned);
+  return rows;
+}
+// "The Parker · 2902" inside The Parker's group reads as "Unit 2902".
+function ppUnitLabel(r) {
+  const rest = r.name.replace(r.building, "").replace(/^\s*·?\s*/, "").trim();
+  return !rest ? r.name : /^\d/.test(rest) ? "Unit " + rest : rest;
+}
+function renderPropertiesGrid() {
+  const grid = document.getElementById("props-grid"), map = document.getElementById("pp-map");
+  if (!grid || (map && map.dataset.mode === "map")) return;
+  const money = ppCanSeeMoney();
+  const all = ppRows();
+  const cities = [...new Set(all.map((r) => r.city))].sort((a, b) => (a === "Guadalajara") - (b === "Guadalajara") || a.localeCompare(b));
+  if (PP_UI.city && !cities.includes(PP_UI.city)) PP_UI.city = "";
+  const inCity = all.filter((r) => !PP_UI.city || r.city === PP_UI.city);
+  // Money is never added across currencies: All cities totals are CAD; Guadalajara (MXN) shows on its own tab.
+  const cur = PP_UI.city === "Guadalajara" ? "MXN" : "CAD";
+  const tot = ppTotals(inCity.filter((r) => r.cur === cur));
+  const houses = ppGroups(inCity);
+  const multi = houses.filter((g) => g.rows.length > 1);
+
+  // City tabs
+  document.getElementById("props-city-tabs").innerHTML = [["", "All cities", all.length]].concat(cities.map((c) => [c, c, all.filter((r) => r.city === c).length]))
+    .map(([k, label]) => `<button type="button" class="hb-tab${PP_UI.city === k ? " on" : ""}" data-pp-city="${esc(k)}" role="tab">${esc(label)}<span class="hb-n">${ppGroups(all.filter((r) => !k || r.city === k)).length}</span></button>`).join("");
+
+  // KPIs
+  const mxNote = !PP_UI.city && cities.includes("Guadalajara") ? `<div class="kpi-trend">CAD only · Guadalajara on its own tab</div>` : "";
+  const kpi = (label, value, trend, cls) => `<div class="kpi${cls ? " " + cls : ""}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${trend || ""}</div>`;
+  const nHouse = houses.length - multi.length, nUnits = multi.reduce((s, g) => s + g.rows.length, 0);
+  document.getElementById("pp-kpis").innerHTML = [
+    kpi("Properties", houses.length.toLocaleString(), `<div class="kpi-trend">${nHouse} house${nHouse === 1 ? "" : "s"}${multi.length ? ` · ${multi.length} building${multi.length === 1 ? "" : "s"} with ${nUnits} units` : ""}</div>`),
+    kpi("Rooms occupied", `${tot.occupied}<span class="pp-of">/${tot.rooms}</span>`, `<div class="kpi-trend">${ppPct(tot.occPct)} occupied · ${Math.max(0, tot.rooms - tot.occupied)} empty</div>`),
+    money ? kpi("Monthly revenue", ppMoney(tot.revenue, cur), `<div class="kpi-trend">tenant rent, current tenants</div>${mxNote}`) : "",
+    money ? kpi("Monthly profit", ppMoney(tot.costedRevenue || tot.cost ? tot.profit : null, cur),
+      `<div class="kpi-trend">${ppPct(tot.margin)} margin · ${ppMoney(tot.cost, cur)} landlord rent</div>`, tot.profit < 0 ? "pp-neg" : "") : "",
+  ].join("");
+  const note = document.getElementById("pp-note");
+  note.hidden = !money || !tot.uncosted;
+  note.innerHTML = note.hidden ? "" : `<b>${tot.uncosted} propert${tot.uncosted === 1 ? "y has" : "ies have"} no landlord rent on file</b> (${ppMoney(tot.uncostedRevenue, cur)}/month of revenue), so ${tot.uncosted === 1 ? "it is" : "they are"} left out of profit. Add the rent on the lease under <a href="#" data-pp-go="landlords">Landlords</a>, or <a href="#" data-pp-filter="nolease">show them</a>.`;
+
+  // Filters + sort
+  document.getElementById("pp-filters").innerHTML = (money ? PP_FILTERS : PP_FILTERS.filter(([k]) => k === "all" || k === "vacant")).map(([k, label]) => {
+    const n = inCity.filter((r) => ppInFilter(r, k)).length;
+    return `<button type="button" class="tn-pill${PP_UI.filter === k ? " on" : ""}" data-pp-filter="${k}">${esc(label)}${k === "all" ? "" : `<span class="hb-n">${n}</span>`}</button>`;
+  }).join("");
+  if (!money && !["all", "vacant"].includes(PP_UI.filter)) PP_UI.filter = "all";
+  const sorts = money ? [["profit", "Profit"], ["revenue", "Revenue"], ["margin", "Margin"], ["name", "Name"]] : [["name", "Name"]];
+  const sortKey = money ? PP_UI.sort : "name";
+  document.getElementById("pp-sort").innerHTML = sorts.map(([k, label]) => `<option value="${k}"${k === sortKey ? " selected" : ""}>Sort: ${label}</option>`).join("");
+
+  // Table
+  const list = inCity.filter((r) => ppInFilter(r, PP_UI.filter) && llMatches(PP_UI.q, [r.name, r.addr, r.city, r.landlord, r.building]));
+  const groups = ppGroups(list).sort(ppCompare(sortKey));
+  groups.forEach((g) => g.rows.sort(ppCompare(sortKey)));
+  const cols = money ? 6 : 3;
+  document.getElementById("pp-thead").innerHTML = `<tr><th>Property</th><th>Rooms</th>${money ? `<th class="pp-num">Revenue</th><th class="pp-num">Landlord rent</th><th class="pp-num">Profit</th>` : ""}<th${money ? ` class="pp-num"` : ""}>${money ? "Margin" : "Moving in"}</th></tr>`;
+  const occ = (o, n) => `<div class="pp-occ"><span>${o}/${n}</span><i><b style="width:${n ? Math.min(100, Math.round(o / n * 100)) : 0}%"></b></i></div>`;
+  const profitCell = (p, c) => p == null ? `<span class="hb-sub">—</span>` : `<span class="num${p < 0 ? " pp-loss" : ""}">${ppMoney(p, c)}</span>`;
+  const unitRow = (r, unit) => `
+    <tr class="hb-row${unit ? " pp-unit" : ""}" tabindex="0" data-pp-prop="${esc(r.name)}">
+      <td><div class="tn-name">${esc(unit ? ppUnitLabel(r) : r.name)}</div><div class="hb-sub">${esc(unit ? (r.landlord || "") : [r.addr.split(",")[0], r.city].filter(Boolean).join(" · "))}${r.leaseEnded ? ` · <span class="hb-need">lease ended</span>` : ""}</div></td>
+      <td>${occ(r.occupied, r.rooms)}${r.moving ? `<div class="hb-sub">+${r.moving} moving in</div>` : ""}</td>
+      ${money ? `<td class="pp-num"><span class="num">${ppMoney(r.revenue, r.cur)}</span>${r.noRent ? `<div class="hb-sub">${r.noRent} without rent</div>` : ""}</td>
+      <td class="pp-num">${r.cost == null ? `<span class="hb-need">${r.leaseEnded ? "lease ended" : "not on file"}</span>` : `<span class="num">${ppMoney(r.cost, r.cur)}</span>${r.shared ? `<div class="hb-sub" title="One lease covers several units; its rent is split by rooms">share of lease</div>` : ""}`}</td>
+      <td class="pp-num">${profitCell(r.profit, r.cur)}</td>
+      <td class="pp-num">${r.profit == null || !r.revenue ? `<span class="hb-sub">—</span>` : ppPct(r.profit / r.revenue)}</td>`
+      : `<td>${r.moving || `<span class="hb-sub">—</span>`}</td>`}
+    </tr>`;
+  const groupRow = (g) => {
+    if (g.rows.length < 2) return unitRow(g.rows[0], false);
+    const open = PP_UI.open.has(g.key) || !!PP_UI.q.trim();
+    const t = g.t;
+    return `<tr class="hb-row pp-grp${open ? "" : " pp-shut"}" data-pp-grp="${esc(g.key)}" tabindex="0" aria-expanded="${open}">
+      <td><div class="tn-name"><span class="pp-caret">▾</span>${esc(g.key)}</div><div class="hb-sub pp-indent">${g.rows.length} units · ${esc(g.city)}${t.uncosted && money ? ` · <span class="hb-need">${t.uncosted} without landlord rent</span>` : ""}</div></td>
+      <td>${occ(t.occupied, t.rooms)}</td>
+      ${money ? `<td class="pp-num"><span class="num">${ppMoney(t.revenue, g.cur)}</span></td>
+      <td class="pp-num">${t.uncosted === t.units ? `<span class="hb-need">not on file</span>` : `<span class="num">${ppMoney(t.cost, g.cur)}</span>`}</td>
+      <td class="pp-num">${profitCell(g.profit, g.cur)}</td>
+      <td class="pp-num">${ppPct(t.margin)}</td>` : `<td>${g.rows.reduce((s, r) => s + r.moving, 0) || `<span class="hb-sub">—</span>`}</td>`}
+    </tr>` + (open ? g.rows.map((r) => unitRow(r, true)).join("") : "");
+  };
+  document.getElementById("pp-body").innerHTML = groups.map(groupRow).join("");
+  document.getElementById("pp-empty").hidden = groups.length > 0;
+  const lt = ppTotals(list.filter((r) => r.cur === cur));
+  document.getElementById("pp-count").textContent = `${groups.length} propert${groups.length === 1 ? "y" : "ies"} · ${list.length} unit${list.length === 1 ? "" : "s"}` +
+    (money && list.length ? ` · ${ppMoney(lt.revenue, cur)} revenue` + (lt.uncosted < lt.units ? ` · ${ppMoney(lt.profit, cur)} profit where rent is on file` : "") : "");
+  document.getElementById("pp-export").hidden = !money;
+  if (document.querySelector('.view[data-view="properties"].active')) {
+    const sub = document.getElementById("page-sub");
+    if (sub) sub.textContent = `${ppGroups(all).length} properties · ${all.reduce((s, r) => s + r.rooms, 0)} rooms · ${cities.length} cities`;
+  }
+}
+(function wireProperties() {
+  const view = document.querySelector('.view[data-view="properties"]');
+  if (!view) return;
+  view.addEventListener("click", (e) => {
+    const city = e.target.closest("[data-pp-city]");
+    if (city) { PP_UI.city = city.dataset.ppCity; PP_UI.filter = "all"; ppSave(); renderPropertiesGrid(); return; }
+    const f = e.target.closest("[data-pp-filter]");
+    if (f) { e.preventDefault(); PP_UI.filter = f.dataset.ppFilter; renderPropertiesGrid(); return; }
+    const go = e.target.closest("[data-pp-go]");
+    if (go) { e.preventDefault(); goToView(go.dataset.ppGo); return; }
+    const g = e.target.closest("[data-pp-grp]");
+    if (g) { const k = g.dataset.ppGrp; PP_UI.open.has(k) ? PP_UI.open.delete(k) : PP_UI.open.add(k); renderPropertiesGrid(); return; }
+    const row = e.target.closest("[data-pp-prop]");
+    if (row && typeof openProperty === "function") openProperty(row.dataset.ppProp);
+  });
+  view.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const t = e.target.closest("[data-pp-grp],[data-pp-prop]");
+    if (t) { e.preventDefault(); t.click(); }
+  });
+  let qt = null;
+  document.getElementById("pp-q").addEventListener("input", (e) => { clearTimeout(qt); qt = setTimeout(() => { PP_UI.q = e.target.value; renderPropertiesGrid(); }, 120); });
+  document.getElementById("pp-sort").addEventListener("change", (e) => { PP_UI.sort = e.target.value; ppSave(); renderPropertiesGrid(); });
+  document.getElementById("pp-expand").addEventListener("click", () => {
+    const keys = ppGroups(ppRows()).filter((g) => g.rows.length > 1).map((g) => g.key);
+    const allOpen = keys.every((k) => PP_UI.open.has(k));
+    PP_UI.open = allOpen ? new Set() : new Set(keys);
+    document.getElementById("pp-expand").textContent = allOpen ? "Expand all" : "Collapse all";
     renderPropertiesGrid();
   });
-});
+  document.getElementById("pp-export").addEventListener("click", () => {
+    const rows = ppRows().filter((r) => !PP_UI.city || r.city === PP_UI.city);
+    const blob = new Blob([ppCsv(rows)], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `vanmates-properties-pnl-${llYmd(new Date())}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+})();
+// First render waits for hydrate (scheduleRerender) or for the page to be opened: at this point
+// in the script LL-CORE's consts are not initialised yet.
 
 /* ============ PROPERTY DETAIL PANEL ============ */
 // Vacancy history helpers
@@ -10515,6 +10759,7 @@ function goToView(v, savedView){
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
   if(v === "room-changes" && typeof loadRoomChanges === "function") loadRoomChanges();
   if(v === "contracts" && typeof renderContracts === "function") renderContracts();
+  if(v === "properties" && typeof renderPropertiesGrid === "function") renderPropertiesGrid();
   if(v === "settings" && typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();
   if(v === "partner-inventory" && typeof loadPartnerInventory === "function") loadPartnerInventory();
   if(v === "vacancies" && typeof loadVacancies === "function") loadVacancies();
@@ -14724,13 +14969,15 @@ document.getElementById("props-add-btn")?.addEventListener("click", () => {
 });
 document.getElementById("props-map-btn")?.addEventListener("click", () => {
   // Simple inline map view: show all property locations as a list with city pins
-  const grid = document.getElementById("props-grid");
-  if(!grid) return;
+  const grid = document.getElementById("pp-map");
+  const table = document.getElementById("props-grid");
+  if(!grid || !table) return;
   if(grid.dataset.mode === "map"){
     // toggle back to grid — must re-render the cards (wirePropertyCards
     // alone only re-binds handlers on the *current* HTML, which is still
     // the map view). Also reset the single-column layout the map sets.
     delete grid.dataset.mode;
+    grid.hidden = true; grid.innerHTML = ""; table.hidden = false;
     grid.style.gridTemplateColumns = "";
     if(typeof renderPropertiesGrid === "function") renderPropertiesGrid();
     else if(typeof wirePropertyCards === "function") wirePropertyCards();
@@ -14740,6 +14987,7 @@ document.getElementById("props-map-btn")?.addEventListener("click", () => {
     return;
   }
   grid.dataset.mode = "map";
+  grid.hidden = false; table.hidden = true;
   // Flip the toggle button label so users always see how to exit
   const btn = document.getElementById("props-map-btn");
   if(btn) btn.textContent = "Back to grid";
@@ -37283,6 +37531,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-09-casepage1"></script>
+<script src="room-changes.js?v=2026-10-09-propspnl2"></script>
 </body>
 </html>
