@@ -1539,7 +1539,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-08-invitetop1"></script>
+<script src="pms-supabase.js?v=2026-10-09-casepage1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20178,6 +20178,31 @@ function hmNextAction(c, nowMs, invs){
   const ms = Date.parse(c.next_action_at) - nowMs;
   return ms <= 0 ? `${what} due now` : `${what} in ${hmElapsed(new Date(nowMs - ms).toISOString(), nowMs)}`;
 }
+// Case page "Hosts" table: shortlist and invitations merged, one row per host. Shortlist order first (rank =
+// position), then invited hosts that are not on the shortlist (phone answers, matched by hand). Pure.
+function hmHostRows(ordered, invRows){
+  const byHost = new Map((invRows || []).map(r => [r.host_id, r]));
+  const rows = (ordered || []).map((e, i) => ({ host_id: e.host_id, rank: i + 1, name: e.display_name || e.host_id,
+    weekly: e.weekly_rate, met: e.met || [], inv: byHost.get(e.host_id) || null }));
+  const onList = new Set(rows.map(r => r.host_id));
+  for (const r of (invRows || [])) if (!onList.has(r.host_id)) rows.push({ host_id: r.host_id, rank: null, name: null, weekly: null, met: [], inv: r });
+  return rows;
+}
+// Counts for the Next step card. fit = hosts on the shortlist; invited = of those, how many have an invitation;
+// left = not invited yet; replied / waiting = every invitation on the case with / without an answer. Pure.
+function hmNextCounts(ordered, invs){
+  const invited = new Set((invs || []).map(i => i.host_id));
+  const fit = (ordered || []).length;
+  const onList = (ordered || []).filter(e => invited.has(e.host_id)).length;
+  const answered = (invs || []).filter(i => i.response).length;
+  return { fit, invited: onList, left: fit - onList, replied: answered, waiting: (invs || []).length - answered };
+}
+// The invite button's label: "Invite all 8 hosts" on a fresh case, "Invite the 10 new hosts" once some were invited.
+function hmInviteLabel(n){
+  if (n.left <= 0) return "";
+  if (n.invited === 0) return n.left === 1 ? "Invite the 1 host" : `Invite all ${n.left} hosts`;
+  return n.left === 1 ? "Invite the 1 new host" : `Invite the ${n.left} new hosts`;
+}
 function hmCanInvite(c){
   return ["SHORTLISTING", "MANUAL_REVIEW", "OFFER_REVIEW"].includes(c.status) && !!c.consent_to_share
     && hmOrderedShortlist(c.shortlist, c.shortlist_override).length > 0;
@@ -32702,25 +32727,6 @@ async function hmOpenCase(id){
   // refused (not_payable). data-payable drives the can-host guard below.
   const hostOpts = [...hostMap.entries()]
     .map(([hid, v]) => `<option value="${hmEsc(hid)}" data-payable="${v.payable ? "1" : "0"}">${hmEsc(v.name || hid)}${v.payable ? "" : " (not payable)"}</option>`).join("");
-  const invitations = `
-    <div class="card-title" style="margin-top:16px">Invitations <span class="card-sub">${hmEsc(hmNextAction(c, nowMs, invs))}</span></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0">
-      ${c.status === "INVITING" ? `${(!sending && uninvited.length) ? '<button class="btn btn-ghost" type="button" data-hm-inv="wave">Send next wave now</button>' : ""}
-        <button class="btn btn-ghost" type="button" data-hm-inv="${c.paused ? "resume" : "pause"}">${c.paused ? "Resume" : "Pause"}</button>` : ""}
-    </div>
-    ${iv.error ? `<div class="card-sub">Could not load invitations: ${hmEsc(iv.error.message || iv.error)}</div>`
-      : (invRows.map(r => `<div class="list-row"><div class="list-main"><div class="list-title">${hmEsc(nameOf(r.host_id))}</div>
-      <div class="list-sub">${r.wave ? "wave " + r.wave : "recorded by staff"}${r.room ? " · " + hmEsc(r.room) : ""}${r.reminded ? " · reminded" : ""}${r.withdrew ? " · withdrew" : ""}${r.reason ? " · " + hmEsc(r.reason) : ""}${r.error ? " · " + hmEsc(r.error) : ""}${r.smsError ? " · text: " + hmEsc(r.smsError) : ""}</div></div>
-      ${r.sms ? `<span class="badge badge-${r.sms[1]}" style="margin-right:4px">${hmEsc(r.sms[0])}</span>` : ""}<span class="badge badge-${r.chip[1]}">${hmEsc(r.chip[0])}</span></div>`).join("") || '<div class="card-sub">No invitations yet.</div>')}
-    ${HM_RESPONDABLE.includes(c.status) ? `<details id="hm-phone-details" style="margin-top:8px"><summary class="card-sub">Record a phone answer</summary>
-      <form id="hm-phone" class="hm-grid" style="margin-top:8px">
-        <label>Host <select class="form-input" name="host_id" required><option value="">—</option>${hostOpts}</select></label>
-        <label>Answer <select class="form-input" name="response"><option value="available">Can host</option><option value="unavailable">Can't host</option></select></label>
-        <label>Room (if they can host) <select class="form-input" name="room_id"><option value="">—</option></select></label>
-        <label style="grid-column:1/-1">Note <input class="form-input" name="reason" maxlength="500"></label>
-        <div style="grid-column:1/-1"><button class="btn" type="submit">Save answer</button></div>
-        <div class="card-sub" id="hm-phone-msg" style="grid-column:1/-1"></div>
-      </form></details>` : ""}`;
   const offers = of.error ? [] : (of.data || []);
   HM.offers = offers;
   HM.offerDraft = null; // the preview box is re-rendered empty below
@@ -32847,17 +32853,91 @@ async function hmOpenCase(id){
       ${matchAnother}
     </div>
     ${earlierHtml}`;
+  // Next step card (spec 2026-10-09): one action for the status; #hm-msg sits in it so every message shows by the button.
+  const counts = hmNextCounts(ordered, invs);
+  const invLabel = hmInviteLabel(counts);
+  const closed = HM_CLOSED.includes(c.status);
+  const findMore = c.status === "SHORTLISTING"
+    ? '<button class="btn btn-ghost" type="button" data-hm-act="shortlist">Find more hosts</button>'
+    : allowedNext.has("SHORTLISTING") ? '<button class="btn btn-ghost" type="button" data-hm-act="SHORTLISTING">Find more hosts</button>' : "";
+  const mealWord = { two_meals: "2 meals", three_meals: "3 meals", no_meals: "No meals" }[c.meal_plan] || "meals not set";
+  let nextInner;
+  if (readyForOffer) nextInner = nextBox;
+  else if (offerOut) nextInner = offerTop;
+  else if (closed) nextInner = `<div class="card-title">Closed</div><div class="card-sub">${hmEsc(c.status_reason || (HM_STATUS[c.status] || [c.status])[0])}</div>`;
+  else if (c.status === "NEW" || c.status === "NEEDS_INFO") nextInner = `<div class="card-title">Next: complete the request</div>
+      <div class="card-sub">${(c.missing || []).length ? "Missing: " + c.missing.map(hmMissingLabel).map(hmEsc).join(", ") : "Waiting for the request to be checked."}</div>
+      <button class="btn btn-primary" type="button" data-hm-open-student style="margin-top:8px">Edit student details</button>`;
+  else if (c.status === "INVITING") nextInner = `<div class="card-title">Waiting for hosts to answer</div>
+      <div class="card-sub">${hmEsc(counts.replied)} of ${hmEsc(invs.length)} replied${hmNextAction(c, nowMs, invs) ? " · " + hmEsc(hmNextAction(c, nowMs, invs)) : ""}. The case moves on by itself when a host says yes.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        ${(!sending && uninvited.length) ? `<button class="btn btn-ghost" type="button" data-hm-inv="wave">Invite the ${hmEsc(uninvited.length)} not yet invited now</button>` : ""}
+        <button class="btn btn-ghost" type="button" data-hm-inv="${c.paused ? "resume" : "pause"}">${c.paused ? "Resume" : "Pause"}</button></div>`;
+  else {
+    const why = c.status === "MANUAL_REVIEW" && c.status_reason ? `<div class="card-sub">Needs you: ${hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id)))}</div>` : "";
+    const head = !counts.fit ? "No host fits this student yet"
+      : `${counts.fit} host${counts.fit === 1 ? " fits" : "s fit"}${counts.invited ? ` · ${counts.invited} already invited` : ""}${counts.waiting ? ` · ${counts.waiting} waiting for an answer` : ""}`;
+    nextInner = `<div class="card-title">${hmEsc(head)}</div>${why}
+      ${!c.consent_to_share && counts.left ? `<div class="card-sub" style="margin-top:6px;color:var(--red)">Hosts can't be invited until the student agrees to share placement details: tick consent in Student details below.</div>
+        <button class="btn btn-ghost" type="button" data-hm-open-student style="margin-top:8px">Edit student details</button>`
+      : hmCanInvite(c) && invLabel ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+        <button class="btn btn-primary" type="button" data-hm-inv="invite">${hmEsc(invLabel)}</button>
+        <span class="card-sub">Emails them (and texts those who agreed to SMS). Change the list below first if needed.</span></div>`
+      : `<div class="card-sub" style="margin-top:6px">${counts.fit ? "Everyone on the list has been invited." : "Nobody on the list."} Find more hosts re-checks every host (new rooms, prices or availability), or pick a host by hand below.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${findMore}</div>`}`;
+  }
+  // A plain box when the inner block already draws its own frame (offer builder / offer section).
+  const framed = !(readyForOffer || offerOut);
+  const nextCard = `<div id="hm-next" style="margin-top:12px;${framed ? "padding:12px;border:2px solid " + (closed ? "var(--line)" : "var(--red)") + ";border-radius:10px" : ""}">
+      ${framed ? '<div class="card-sub" style="text-transform:uppercase;letter-spacing:.06em;font-size:11px;margin-bottom:4px">Next step</div>' : ""}
+      ${nextInner}
+      <div id="hm-msg" class="card-sub" style="margin-top:8px;font-weight:600">${hmEsc(flash)}</div>
+    </div>`;
+  // Hosts table: shortlist + invitations in one list.
+  const hostRows = hmHostRows(ordered, invRows);
+  const firstOpen = hostRows.findIndex(r => r.rank && !r.inv);
+  const hostsHtml = hostRows.map(r => {
+    const inv = r.inv;
+    const label = r.name || nameOf(r.host_id);
+    const invited = !inv ? "Not invited yet" : inv.wave ? "Invited · wave " + inv.wave : "Recorded by staff";
+    const detail = [r.weekly != null ? "$" + (r.weekly / 100).toFixed(0) + "/wk" : "", inv && inv.room ? hmEsc(inv.room) : "",
+      inv && inv.reminded ? "reminded" : "", inv && inv.withdrew ? "withdrew" : "", inv && inv.reason ? hmEsc(inv.reason) : "",
+      inv && inv.error ? hmEsc(inv.error) : "", inv && inv.smsError ? "text: " + hmEsc(inv.smsError) : "",
+      r.met.length ? "meets " + r.met.map(hmEsc).join(", ") : ""].filter(Boolean).join(" · ");
+    const canMove = !notesLocked && r.rank && !inv;
+    return `<div class="list-row"><div class="list-main"><div class="list-title">${r.rank ? r.rank + ". " : ""}${hmEsc(label)}</div>
+      <div class="list-sub">${hmEsc(invited)}${detail ? " · " + detail : ""}</div></div>
+      <div style="display:flex;gap:4px;align-items:center;flex:none;flex-wrap:wrap">
+        ${inv && inv.sms ? `<span class="badge badge-${inv.sms[1]}">${hmEsc(inv.sms[0])}</span>` : ""}
+        ${inv ? `<span class="badge badge-${inv.chip[1]}">${hmEsc(inv.chip[0])}</span>` : ""}
+        ${canMove ? `<button class="btn btn-ghost btn-mini" data-hm-up="${hmEsc(r.host_id)}" ${hostRows.indexOf(r) === firstOpen ? "disabled" : ""} title="Move up">↑</button>
+        <button class="btn btn-ghost btn-mini" data-hm-remove="${hmEsc(r.host_id)}">Remove</button>` : ""}</div></div>`;
+  }).join("");
+  const phoneForm = HM_RESPONDABLE.includes(c.status) ? `<details id="hm-phone-details" style="margin-top:8px"><summary class="card-sub">Record a phone answer</summary>
+      <form id="hm-phone" class="hm-grid" style="margin-top:8px">
+        <label>Host <select class="form-input" name="host_id" required><option value="">—</option>${hostOpts}</select></label>
+        <label>Answer <select class="form-input" name="response"><option value="available">Can host</option><option value="unavailable">Can't host</option></select></label>
+        <label>Room (if they can host) <select class="form-input" name="room_id"><option value="">—</option></select></label>
+        <label style="grid-column:1/-1">Note <input class="form-input" name="reason" maxlength="500"></label>
+        <div style="grid-column:1/-1"><button class="btn" type="submit">Save answer</button></div>
+        <div class="card-sub" id="hm-phone-msg" style="grid-column:1/-1"></div>
+      </form></details>` : "";
+  const fold = (id, title, body, open) => `<details ${id ? `id="${id}"` : ""} style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px" ${open ? "open" : ""}>
+      <summary class="card-title" style="cursor:pointer;font-size:15px">${title}</summary>${body}</details>`;
   document.getElementById("hm-case").innerHTML = `
-    <div class="card-head"><div><div class="card-title">${hmEsc(c.id)} ${hmChip(c.status)}</div>
+    <div class="card-head"><div><div class="card-title">${hmEsc(c.id)}${c.student_name ? " · " + hmEsc(c.student_name) : ""} ${hmChip(c.status)} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
+      <div class="card-sub">${hmEsc(c.city ? c.city.charAt(0).toUpperCase() + c.city.slice(1) : "city not set")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmEsc(mealWord)}</div>
       <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
-    ${(c.missing || []).length ? `<div class="card-sub" style="color:var(--red)">Missing: ${c.missing.map(hmMissingLabel).map(hmEsc).join(", ")}</div>` : ""}
     ${hmPreferredHostsText(c.preferred_host_ids, hmWebNames()) ? `<div class="card-sub">Student liked on website: ${hmEsc(hmPreferredHostsText(c.preferred_host_ids, hmWebNames()))}</div>` : ""}
-    ${hmCanInvite(c) ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0">
-      <button class="btn btn-primary" type="button" data-hm-inv="invite">Start inviting</button>
-      <span class="card-sub">Emails the first ${hmEsc(String((HM.settings || []).find(x => x.city === c.city)?.wave_size || 5))} hosts on the shortlist (and texts those who agreed to SMS). Change the shortlist below first if needed.</span>
-    </div>` : ""}
-    ${readyForOffer ? nextBox : offerOut ? offerTop : matchCard}
-    <form id="hm-edit" class="hm-grid" style="margin-top:10px">
+    ${nextCard}
+    ${readyForOffer || offerOut ? "" : (cur || earlierHtml ? `<div style="margin-top:8px">${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : ""}${earlierHtml}</div>` : "")}
+    ${!sl.computed_at && !invRows.length ? "" : `<div class="card-title" style="margin-top:16px">Hosts <span class="card-sub">${sl.computed_at ? "list checked " + hmElapsed(sl.computed_at, Date.now()) + " ago" : ""}</span></div>
+    ${iv.error ? `<div class="card-sub">Could not load invitations: ${hmEsc(iv.error.message || iv.error)}</div>` : ""}
+    <div id="hm-shortlist">${hostsHtml || '<div class="card-sub">No host fits this student yet.</div>'}</div>
+    ${phoneForm}
+    <details style="margin-top:8px"><summary class="card-sub">Hosts that don't fit (${(sl.excluded || []).length})</summary>
+      ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>`}
+    ${fold("hm-student", "Student details", `<form id="hm-edit" class="hm-grid" style="margin-top:10px">
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
       <label>Date of birth <input class="form-input" type="date" name="student_dob" value="${hmEsc(c.student_dob)}" ${disabled}></label>
@@ -32878,35 +32958,23 @@ async function hmOpenCase(id){
       <label>Accessibility <input class="form-input" name="accessibility" value="${hmEsc(c.accessibility)}" ${disabled}></label>
       <label><input type="checkbox" name="consent_to_share" ${c.consent_to_share ? "checked" : ""} ${disabled}> Consent to share placement details with hosts</label>
       <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes" ${notesLocked ? "disabled" : ""}>${hmEsc(c.notes)}</textarea></label>
-      <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap">
-        ${notesLocked ? "" : '<button class="btn" type="submit">Save</button>'}
-        ${c.status === "SHORTLISTING" ? '<button class="btn btn-ghost" type="button" data-hm-act="shortlist">Recompute shortlist</button>' : ""}
+      <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap">${notesLocked ? "" : '<button class="btn" type="submit">Save</button>'}</div>
+    </form>`, c.status === "NEW" || c.status === "NEEDS_INFO")}
+    ${!readyForOffer && matchCard ? fold("", "Pick a host by hand", `<div class="card-sub" style="margin-top:6px">For when you already know the family (e.g. after a call): skips inviting and goes straight to the offer.</div>${matchCard}`, false) : ""}
+    ${!findMore && !allowedNext.size ? "" : fold("", "Case actions", `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        ${findMore}
         ${actBtn("MANUAL_REVIEW", "Manual review")}
-        ${actBtn("SHORTLISTING", "Back to shortlisting")}
         ${actBtn("NO_MATCH", "No match")}
         ${actBtn("CANCELLED", "Cancel case")}
-        <input class="form-input" id="hm-reason-${hmEsc(c.id)}" placeholder="Reason (for status changes)" style="flex:1;min-width:180px">
-      </div>
-      <div id="hm-msg" class="card-sub" style="grid-column:1/-1">${hmEsc(flash)}</div>
-    </form>
-    ${!sl.computed_at ? "" : `<div class="card-title" style="margin-top:16px">Shortlist <span class="card-sub">${sl.computed_at ? "computed " + hmElapsed(sl.computed_at, Date.now()) + " ago" : "not computed"}</span></div>
-    <div id="hm-shortlist">${ordered.map((e, i) => `
-      <div class="list-row"><div class="list-main"><div class="list-title">${i + 1}. ${hmEsc(e.display_name)}</div>
-        <div class="list-sub">$${(e.weekly_rate / 100).toFixed(0)}/wk · score ${e.score}${e.met.length ? " · meets " + e.met.map(hmEsc).join(", ") : ""}</div></div>
-        ${notesLocked ? "" : `<button class="btn btn-ghost" data-hm-up="${hmEsc(e.host_id)}" ${i === 0 ? "disabled" : ""}>↑</button>
-        <button class="btn btn-ghost" data-hm-remove="${hmEsc(e.host_id)}">Remove</button>`}</div>`).join("") || '<div class="card-sub">No eligible hosts.</div>'}</div>
-    <details style="margin-top:8px"><summary class="card-sub">Excluded hosts (${(sl.excluded || []).length})</summary>
-      ${(sl.excluded || []).map(x => `<div class="list-sub">${hmEsc(x.display_name)}: ${x.reasons.map(hmEsc).join("; ")}</div>`).join("")}</details>`}
-    ${invitations}
-    ${readyForOffer || offerOut ? "" : offerSection}
-    <div class="card-title" style="margin-top:16px">Timeline</div>
-    ${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
-    ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`;
-  // A case that still needs a host: show who fits straight away (one /fit call), instead of making staff press a button first.
-  if (!readyForOffer && matchCard && ["SHORTLISTING", "MANUAL_REVIEW"].includes(c.status)) {
-    const openBtn = document.querySelector("#hm-case [data-hm-match-case] [data-hm-fit-open]");
-    if (openBtn) setTimeout(() => { if (openBtn.isConnected) openBtn.click(); }, 0);
-  }
+        <input class="form-input" id="hm-reason-${hmEsc(c.id)}" placeholder="Reason (needed for No match and Cancel)" style="flex:1;min-width:180px">
+      </div>`, false)}
+    ${fold("", `Timeline <span class="card-sub">(${events.length})</span>`, `${ev.error ? `<div class="card-sub">Could not load the timeline: ${hmEsc(ev.error.message || ev.error)}</div>` : ""}
+    ${events.map(e => `<div class="list-sub">${new Date(e.created_at).toLocaleString()} · ${hmEsc(e.type)} · ${hmEsc(e.actor)}${e.after && e.after.status ? " → " + hmEsc(e.after.status) : ""}${e.after && e.after.reason ? " (" + hmEsc(e.after.reason) + ")" : ""}</div>`).join("")}`, false)}`;
+  const studentBtn = document.querySelector("#hm-case [data-hm-open-student]");
+  if (studentBtn) studentBtn.addEventListener("click", () => {
+    const d = document.getElementById("hm-student"); if (!d) return;
+    d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   if (autoIds.size) hmWatchRelease(c.id, [...autoIds]); else if (HM.releaseWatch && HM.releaseWatch.id === c.id) hmStopReleaseWatch();
 }
 
@@ -37215,6 +37283,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-08-invitetop1"></script>
+<script src="room-changes.js?v=2026-10-09-casepage1"></script>
 </body>
 </html>
