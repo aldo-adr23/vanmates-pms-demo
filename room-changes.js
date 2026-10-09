@@ -3,8 +3,10 @@
    the only write is the room_change_staff_update RPC (status, owner, tenant message, note) with
    an optimistic version check. Raw tenant comments live in room_change_comments, which RLS
    returns only to admins and the request's owner; everyone else sees "restricted".
-   Nothing here books a room or changes billing: staff do the move in Asana / Hugo / contracts
-   and record it here. Loaded by index.html after the main script (uses esc, showToast,
+   "Confirm & send" (room-change-handoff-2026-10-09.sql) sends the new room's contract through the
+   letters Worker (ctCall, booking.transfer: the deposit is carried over) and then opens the
+   transfer move-out case for the old room (room_change_handoff), which emails the tenant the
+   hand-back form. Nothing here moves the room in Asana or changes billing. Loaded by index.html after the main script (uses esc, showToast,
    goToView, CURRENT_USER, teamMembers, window.vmDb.sb and the shared detail panel). */
 (function(){
   const RC_STATUSES = ['NEEDS_REVIEW', 'IN_PROGRESS', 'CONFIRMED', 'COMPLETED', 'DECLINED', 'CANCELLED'];
@@ -27,6 +29,24 @@
   const chip = (f) => { const [l, c] = RC_FLAGS[f] || [f, 'blue']; return `<span class="tag-pill ${c}" style="font-size:11px;margin:1px">${e(l)}</span>`; };
   const statusPill = (s) => `<span class="tag-pill ${s === 'NEEDS_REVIEW' ? 'red' : RC_OPEN.includes(s) ? 'blue' : ''}" style="font-size:11px">${e(RC_STATUS_LABEL[s] || s)}</span>`;
   const sb = () => window.vmDb && window.vmDb.sb;
+  const lc = (s) => String(s == null ? '' : s).trim().toLowerCase();
+
+  // Asana names rooms "<room> - <house>" ("Phoenix - Willow House"); the contract wants both.
+  function roomParts(name){
+    const parts = String(name || '').split(/\s+[-–]\s+/).map(x => x.trim()).filter(Boolean);
+    if (parts.length < 2) return { house: parts[0] || '', room: '' };
+    return { house: parts[parts.length - 1], room: parts.slice(0, -1).join(' - ') };
+  }
+  const provinceOf = (city) => { const c = lc(city).normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return c.startsWith('tor') ? 'on' : c.startsWith('mon') ? 'qc' : 'bc'; };
+  // The tenant's signed contract (deposit, utilities) and portal record (Asana gid), when the portal has them.
+  function currentContract(email){
+    const list = (window.contracts || []).filter(c => c && c.booking && ['customer_signed', 'completed'].includes(c.status) && !c.booking.transfer
+      && (c.booking.tenants || []).some(t => lc(t.email) === lc(email)));
+    return list.sort((a, b) => String(b.booking.start || '').localeCompare(String(a.booking.start || '')))[0] || null;
+  }
+  const tenantRecord = (email) => (typeof tenants !== 'undefined' && Array.isArray(tenants) ? tenants : []).find(t => lc(t.email) === lc(email) && t.status !== 'past') || null;
+  const contractById = (id) => (window.contracts || []).find(c => c && String(c.id) === String(id)) || null;
+  const CT_STATUS = { draft: 'Draft', sent: 'Sent, waiting for the tenant', customer_signed: 'Signed by the tenant', completed: 'Completed', void: 'Void' };
 
   const SELECT = 'id,email,status,flags,city,current_house,current_room,current_rent,lease_end,move_date,budget,currency,primary_reason,target_name,target_price,owner,data,version,created_at,updated_at,closed_at';
 
@@ -179,8 +199,9 @@
         <label class="name-sub" style="display:grid;gap:4px">Message the tenant sees on vanmates.com/room-swap<textarea class="form-input" name="staff_message" rows="3" maxlength="1000">${e(d.staff_message || '')}</textarea></label>
         <label class="name-sub" style="display:grid;gap:4px">Internal note (audit history only)<input class="form-input" name="note" maxlength="1000" /></label>
         <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit">Save</button></div>
-        <p class="name-sub" style="margin:0">Before <b>Confirmed</b>: check the room is free from the move date to ${e(day(r.lease_end))} in Asana, agree any transfer fee, prorated rent and deposit change with the tenant in writing, and send the amendment. At <b>Completed</b>: the move happened, keys and cleaning done, Asana and the register updated (Hugo can do the room moves). Email the tenant at each step; their status page updates as you save.</p>
+        <p class="name-sub" style="margin:0">Before confirming: check the room is free from the move date to ${e(day(r.lease_end))} in Asana and agree any transfer fee or rent difference with the tenant. Then use <b>Confirm &amp; send</b> below. At <b>Completed</b>: the move happened, keys and cleaning done, Asana and the register updated (Hugo can do the room moves).</p>
       </form>
+      ${handoffHtml(r, d, sel)}
       ${h('Request')}
       ${kv('Tenant', `${e(d.name || '')} <span class="name-sub">${e(r.email)}</span>`)}
       ${kv('From', `${e([r.current_house, r.current_room].filter(Boolean).join(' · '))} · ${e(money(r.current_rent))}/mo · ${e(r.city || '')}`)}
@@ -203,6 +224,107 @@
       ${(ev.data || []).map(x => `<div style="padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub">${e(when(x.at))} · ${e(String(x.actor || '').replace(/^staff:/, '').replace(/^tenant:.*/, 'tenant'))}</div><div>${e(x.type.replace(/_/g, ' '))}${x.after && x.after.status && (!x.before || x.before.status !== x.after.status) ? ' → ' + e(RC_STATUS_LABEL[x.after.status] || x.after.status) : ''}${x.after && x.after.note ? ': ' + e(x.after.note) : ''}</div></div>`).join('') || '<span class="name-sub">No events.</span>'}
     </div>`;
     return true;
+  }
+
+  // "Confirm & send": the new contract (deposit carried over) + the transfer move-out case.
+  function handoffHtml(r, d, sel){
+    const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${e(t)}</h4>`;
+    const ho = d.handoff || null;
+    if (ho) {
+      const c = contractById(ho.contract_id);
+      return `${h('Contract and move-out')}
+        <div style="display:grid;gap:6px">
+          <div>New contract: <b>${e(c ? (CT_STATUS[c.status] || c.status) : 'sent')}</b>${ho.contract_id ? ` · <a href="#" data-rc-goto-contract="${e(ho.contract_id)}">open in Contracts</a>` : ''}</div>
+          <div>Move-out of ${e([r.current_house, r.current_room].filter(Boolean).join(' · '))}: <a href="#checkout=${e(ho.checkout_case_id)}">${e(ho.checkout_case_id)}</a> (transfer: deposit carried over, no refund)</div>
+          <div class="name-sub">Confirmed by ${e(nameOf(ho.by))} · ${e(when(ho.at))}</div>
+        </div>`;
+    }
+    if (!RC_OPEN.includes(r.status)) return '';
+    if (!sel) return `${h('Confirm & send')}<p class="name-sub">The tenant didn't pick a room. Agree one with them, then confirm it from the Contracts page.</p>`;
+    const parts = roomParts(sel.name);
+    const cc = currentContract(r.email);
+    const tr = tenantRecord(r.email);
+    const held = cc && cc.booking.deposit != null && Number(cc.booking.deposit) > 0 ? Number(cc.booking.deposit) : (r.current_rent ? Math.round(Number(r.current_rent) / 2) : '');
+    const util = cc && (cc.booking.utilities === 'Yes' || cc.booking.utilities === 'No') ? cc.booking.utilities : 'Yes';
+    const f = (label, input) => `<label class="name-sub" style="display:grid;gap:4px">${label}${input}</label>`;
+    return `${h('Confirm & send')}
+      <form data-rc-handoff="${e(r.id)}" style="display:grid;gap:10px">
+        <p class="name-sub" style="margin:0">Sends ${e(d.name || r.email)} a contract for the new room (the deposit is carried over, no new deposit due), then emails them a short move-out form for ${e([r.current_house, r.current_room].filter(Boolean).join(' · '))}. The request becomes <b>Confirmed</b>.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${f('New house', `<input class="form-input" name="house" value="${e(parts.house)}" required maxlength="200">`)}
+          ${f('New room', `<input class="form-input" name="room" value="${e(parts.room)}" required maxlength="200">`)}
+        </div>
+        ${f('Address', `<input class="form-input" name="address" value="${e(sel.address || '')}" required maxlength="300">`)}
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          ${f('Rent / month', `<input class="form-input" name="rent" inputmode="numeric" value="${e(sel.price != null ? Math.round(Number(sel.price)) : '')}" required>`)}
+          ${f('Move date (start)', `<input class="form-input" type="date" name="start" value="${e(String(r.move_date || '').slice(0, 10))}" required>`)}
+          ${f('Contract end (keep)', `<input class="form-input" type="date" name="end" value="${e(String(r.lease_end || '').slice(0, 10))}" required>`)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          ${f('Deposit carried over', `<input class="form-input" name="deposit_held" inputmode="numeric" value="${e(held)}">`)}
+          ${f('Utilities included', `<select class="form-input" name="utilities"><option ${util === 'Yes' ? 'selected' : ''}>Yes</option><option ${util === 'No' ? 'selected' : ''}>No</option></select>`)}
+          ${f('Province', `<select class="form-input" name="province">${['bc', 'on', 'qc'].map(x => `<option value="${x}" ${x === provinceOf(r.city) ? 'selected' : ''}>${x.toUpperCase()}</option>`).join('')}</select>`)}
+        </div>
+        <input type="hidden" name="room_gid" value="${e(sel.gid || '')}">
+        <input type="hidden" name="asana_tenant_gid" value="${e((tr && tr.asanaGid) || '')}">
+        ${f('Message the tenant sees on vanmates.com/room-swap', `<textarea class="form-input" name="staff_message" rows="2" maxlength="1000">${e(d.staff_message || `Your room change is confirmed. Please sign your new contract for ${parts.house}${parts.room ? ' · ' + parts.room : ''} and fill in the move-out form for your current room; both are in your email.`)}</textarea>`)}
+        <p class="form-error" data-rc-handoff-err style="margin:0"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit">Confirm &amp; send</button></div>
+        <p class="name-sub" style="margin:0">${cc ? `Deposit and utilities come from their signed contract ${e(cc.id)}.` : 'No signed contract found for this email in Contracts: check the deposit amount.'}${tr && tr.asanaGid ? '' : ' No Asana tenant link on their portal record.'}</p>
+      </form>`;
+  }
+
+  async function handoff(form){
+    const id = form.dataset.rcHandoff, r = (rows || []).find(x => x.id === id);
+    if (!r) return;
+    const d = r.data || {};
+    const fd = new FormData(form);
+    const v = (k) => String(fd.get(k) || '').trim();
+    const err = form.querySelector('[data-rc-handoff-err]');
+    const fail = (m) => { if (err) { err.textContent = m; err.classList.add('show'); } };
+    if (err) { err.textContent = ''; err.classList.remove('show'); }
+    const rent = Number(v('rent').replace(/[$,\s]/g, '')), held = v('deposit_held') === '' ? null : Number(v('deposit_held').replace(/[$,\s]/g, ''));
+    if (!v('house') || !v('address')) return fail('House and address are needed for the contract.');
+    if (!isFinite(rent) || rent <= 0 || rent % 1) return fail('Rent must be whole dollars.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v('start')) || !/^\d{4}-\d{2}-\d{2}$/.test(v('end')) || v('end') <= v('start')) return fail('Check the move date and the contract end.');
+    if (held !== null && (!isFinite(held) || held < 0)) return fail('The deposit carried over must be a number of dollars.');
+    if (typeof ctCall !== 'function') return fail('The contracts service is not loaded on this page. Reload and try again.');
+    if (!confirm(`Send ${d.name || r.email} the contract for ${v('house')}${v('room') ? ' · ' + v('room') : ''} and the move-out form for their current room?`)) return;
+    const booking = {
+      province: v('province') || 'bc', lease_type: 'fixed',
+      tenants: [{ name: d.name || '', email: r.email }],
+      address: v('address'), house: v('house'), room: v('room'), rent,
+      start: v('start'), end: v('end'), deposit: 0, deposit_due: v('start'), utilities: v('utilities') === 'No' ? 'No' : 'Yes',
+      transfer: { from_house: r.current_house || '', from_room: r.current_room || '', deposit_held: held },
+    };
+    if (v('room_gid')) booking.room_gid = v('room_gid');
+    if (v('asana_tenant_gid')) booking.asana_tenant_gid = v('asana_tenant_gid');
+    const btn = form.querySelector('button[type="submit"]'); if (btn) { btn.disabled = true; btn.textContent = 'Sending the contract…'; }
+    let ct = null;
+    try { ct = await ctCall('/coliving', { booking, send: true }); }
+    catch (e2) { if (btn) { btn.disabled = false; btn.textContent = 'Confirm & send'; } return fail('Contract not sent: ' + ((e2 && e2.message) || e2)); }
+    if (!ct || !ct.contract_id || ct.status !== 'sent') {
+      if (btn) { btn.disabled = false; btn.textContent = 'Confirm & send'; }
+      const missing = ct && Array.isArray(ct.missing) && ct.missing.length ? ' Missing: ' + ct.missing.join(', ') + '.' : '';
+      return fail('The contract was saved but not sent (' + ((ct && ct.status) || 'unknown') + ').' + missing + ' Finish it in Contracts.');
+    }
+    if (btn) btn.textContent = 'Opening the move-out…';
+    const { data, error } = await sb().rpc('room_change_handoff', { p: {
+      id, version: r.version, contract_id: ct.contract_id, move_out_date: v('start'), deposit_held: held,
+      to_house: v('house'), to_room: v('room'), staff_message: v('staff_message'),
+    } });
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm & send'; }
+    const why = { open_checkout: 'The tenant already has an open move-out (' + ((data && data.case_id) || '') + '). Close or update it in Move-outs, then press Confirm & send again (the contract is not sent twice).',
+      version_conflict: 'Someone else changed this request. It reloaded; press Confirm & send again.', bad_date: 'The move date must be today or later.',
+      bad_status: 'This request is closed.', forbidden: 'You are not on the team.' };
+    if (error || !data || !data.ok) {
+      await load(true); open(id);
+      toast('Contract sent, but the move-out was not opened: ' + (error ? (error.message || error) : (why[data && data.error] || (data && data.error) || 'unknown')));
+      return;
+    }
+    toast(ct.email_sent === false ? 'Confirmed. The contract email did not go out: resend it from Contracts.' : 'Confirmed: contract and move-out form sent to ' + r.email);
+    await load(true);
+    open(id);
   }
 
   async function save(form){
@@ -252,7 +374,17 @@
     on('rc-body', 'click', ev => { const tr = ev.target.closest('[data-rc-open]'); if (tr) open(tr.dataset.rcOpen); });
     on('rc-body', 'keydown', ev => { if (ev.key === 'Enter') { const tr = ev.target.closest('[data-rc-open]'); if (tr) open(tr.dataset.rcOpen); } });
     const pb = document.getElementById('panel-body');
-    if (pb) pb.addEventListener('submit', ev => { if (ev.target.matches('[data-rc-form]')) { ev.preventDefault(); save(ev.target); } });
+    if (pb) pb.addEventListener('submit', ev => {
+      if (ev.target.matches('[data-rc-form]')) { ev.preventDefault(); save(ev.target); }
+      else if (ev.target.matches('[data-rc-handoff]')) { ev.preventDefault(); handoff(ev.target); }
+    });
+    if (pb) pb.addEventListener('click', ev => {
+      const a = ev.target.closest('[data-rc-goto-contract]');
+      if (!a) return;
+      ev.preventDefault();
+      if (typeof window.ctOpenFromElsewhere === 'function') window.ctOpenFromElsewhere(a.dataset.rcGotoContract);
+      else if (typeof goToView === 'function') goToView('contracts');
+    });
     // Badge on load, so a new request shows without opening the page.
     setTimeout(() => { if (sb()) load().catch(() => {}); fromHash(); }, 2500);
   }
