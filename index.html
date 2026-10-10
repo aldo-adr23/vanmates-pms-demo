@@ -1568,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-10-cel2"></script>
+<script src="pms-supabase.js?v=2026-10-10-affil2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1644,6 +1644,10 @@
     <button class="nav-item" data-view="partners">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/></svg>
       Partners
+    </button>
+    <button class="nav-item" data-view="affiliates">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+      Affiliates &amp; codes
     </button>
     <button class="nav-item" data-view="portfolio">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/><path d="M9 11h.01M15 11h.01"/></svg>
@@ -2773,6 +2777,10 @@
 
     <section class="view" data-view="partners">
       <div id="ptn-root"><p class="name-sub">Loading…</p></div>
+    </section>
+
+    <section class="view" data-view="affiliates">
+      <div id="aff-root"><p class="name-sub">Loading…</p></div>
     </section>
 
         <!-- ============ DAMAGE DEPOSITS ============ -->
@@ -4083,6 +4091,17 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
       <button class="modal-close" id="rcv-modal-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <form class="modal-body" id="rcv-modal-form" autocomplete="off" novalidate></form>
+  </div>
+</div>
+<!-- ============ AFFILIATES & PROMO CODES MODAL ============ -->
+<div class="modal-backdrop" id="aff-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="aff-modal-title" style="max-width:560px">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg></div>
+      <div><div class="modal-title" id="aff-modal-title">Affiliates</div><div class="modal-sub" id="aff-modal-sub"></div></div>
+      <button class="modal-close" id="aff-modal-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <form class="modal-body" id="aff-modal-form" autocomplete="off" novalidate></form>
   </div>
 </div>
 <div class="modal-backdrop" id="deal-backdrop" aria-hidden="true">
@@ -8499,6 +8518,10 @@ function showToast(msg){
 // This gating is cosmetic either way: it hides nav, it does not secure data.
 // The booking webhooks are what actually gate that, via the staff token. Do not
 // treat an unticked box as a control over who can move money.
+// Sidebar pages with no checkbox of their own: visible to whoever has the parent page.
+// Affiliates & promo codes (2026-10-10) is the Partners page's people, the same rule as
+// vm_partners_member() on its tables. test/page-access.test.js reads this.
+const PAGE_ALIASES = {"affiliates": "partners"};
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
   ["leads",            "Leads"],
@@ -9150,17 +9173,20 @@ function applyRolePermissions(){
     // back to the role's default nav.
     const allowed = (Array.isArray(u.allowed_pages) && u.allowed_pages.length > 0)
                     ? u.allowed_pages : r.nav;
+    // Pages with no checkbox of their own follow a parent page (PAGE_ALIASES, next to ALL_PAGES).
+    const aliases = (typeof PAGE_ALIASES === "object" && PAGE_ALIASES) || {};
     // Show/hide nav items
     document.querySelectorAll(".nav-item[data-view]").forEach(el => {
       const v = el.dataset.view;
       // Arrivals is part of the CS team's work: a CS member sees it without an explicit 'arrivals' page.
-      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs"));
+      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs")) || (aliases[v] && allowed.includes(aliases[v]));
       el.classList.toggle("role-hidden", !ok);
     });
     // If currently active view is not allowed, switch to dashboard (or first
     // allowed page if dashboard isn't on the list).
     const activeView = document.querySelector(".view.active");
-    if(activeView && !allowed.includes(activeView.dataset.view)){
+    const av = activeView && activeView.dataset.view;
+    if(activeView && !allowed.includes(av) && !(aliases[av] && allowed.includes(aliases[av]))){
       goToView(allowed.includes("dashboard") ? "dashboard" : (allowed[0] || "dashboard"));
     }
   }
@@ -10712,6 +10738,7 @@ const titles = {
   contracts: ["<em>Contracts</em>", "Co-living subleases and BC tenancy agreements: who has signed, and what waits for Vanmates"],
   "partner-inventory": ["<em>Partner inventory</em>", "Live Asana rooms by building: the terms agencies will see, and which rooms are partner-ready"],
   partners: ["<em>Partners</em>", "Agencies on partners.vanmates.com: accounts, users and their bookings"],
+  affiliates: ["Affiliates &amp; <em>promo codes</em>", "Promo codes and referral links, affiliate partners, partner sales and their analytics"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
   assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
@@ -10765,6 +10792,7 @@ function goToView(v, savedView){
   if(v === "vacancies" && typeof loadVacancies === "function") loadVacancies();
   if(v === "homestay-matching" && typeof loadHomestayMatching === "function") loadHomestayMatching();
   if(v === "partners" && typeof loadPartners === "function") loadPartners();
+  if(v === "affiliates" && typeof loadAffiliates === "function") loadAffiliates();
 
   // Dashboard / financials links pass an old saved-view name; map it to a tab.
   if(v === "tenants" && savedView && typeof tnSetTab === "function") tnSetTab(tnTabForSaved(savedView));
@@ -21094,6 +21122,996 @@ async function invLinkRoom(row){
   if (btn) btn.disabled = true;
   try { await invUpdate('inventory_rooms', row.dataset.invRoom, { property_id: pid }); showToast('Room linked'); await invReload(); }
   catch (e) { showToast('Could not save: ' + (e.message || e)); if (btn) btn.disabled = false; }
+}
+/* AFFILIATES-CORE-START */
+/* Affiliates & promo codes (view 'affiliates'). Pure: rows in, display shapes out.
+   Tables come from the partners app's sql/2026-10-10-referrals.sql: referral_codes,
+   partner_link_payments (the sales: room-link + referral bookings), referral_events
+   (visit / lead beacons) and partner_agencies (kind 'agency' | 'affiliate').
+   Money is integer cents throughout. Rules (spec 2026-10-10-affiliate-referrals-design.md):
+   - a sale counts (sales, revenue, discount cost) only when status = 'paid' and it is not
+     a duplicate_of a direct portal booking (that booking is the one counted, in Partners);
+   - commissions earned = eligible + paid, outstanding = pending + eligible, both without
+     duplicates (a duplicate carries no referral commission);
+   - conversion = referral sales (code_id set) / link visits, null when there are no visits. */
+const AFF_CODE_RE = /^[A-Z0-9_-]{3,32}$/;
+const AFF_CITIES = ['Vancouver', 'Toronto', 'Montréal', 'Guadalajara'];
+const AFF_SERVICES = [['coliving', 'Co-living'], ['homestay', 'Homestay']];
+const AFF_DISCOUNT_TYPES = [['pct', 'Percent of membership fee'], ['fixed', 'Fixed amount (CAD)'], ['none', 'No discount (tracking only)']];
+const AFF_COMMISSION_MODES = [['agreement', "Partner's agreement"], ['pct', '% of booking amount'], ['fixed', 'Fixed per sale (CAD)'], ['none', 'No commission']];
+const AFF_AGENCY_MODELS = [['pct', '% of rent'], ['flat', 'Flat per booking (CAD)'], ['monthly', 'Per month of stay (CAD)']];
+const AFF_LANGS = [['en', 'English'], ['es', 'Español'], ['ja', '日本語']];
+const AFF_SALE_STATUSES = [['', 'All statuses'], ['paid', 'Paid'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'], ['duplicate', 'Duplicate of a direct booking']];
+const AFF_FIELD_LABELS = {
+  agency_id: 'Partner', code: 'Code', campaign: 'Campaign', discount_type: 'Discount type', discount_pct: 'Discount %',
+  discount_cents: 'Discount amount', cities: 'Cities', property_ids: 'Buildings', room_gids: 'Room IDs', services: 'Services',
+  starts_at: 'Starts', expires_at: 'Expires', max_uses: 'Max uses', attribution_days: 'Attribution days',
+  commission_mode: 'Commission', commission_pct: 'Commission %', commission_cents: 'Commission amount', active: 'Active',
+  notes: 'Notes', name: 'Name', contact_name: 'Contact name', email: 'Email', language: 'Language',
+  commission_model: 'Commission model', commission_flat_cents: 'Flat commission', commission_monthly_cents: 'Monthly commission',
+};
+const AFF_MAX_CENTS = 10000000;
+
+function affText(v){ return String(v == null ? '' : v).trim(); }
+function affValidCode(code){ return typeof code === 'string' && AFF_CODE_RE.test(code); }
+function affNormCode(code){ return affText(code).toUpperCase(); }
+function affAscii(s){ return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+function affValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(affText(s)); }
+function affLink(code){ return 'https://vanmates.com/?ref=' + encodeURIComponent(affText(code)); }
+
+// "$1,234.56"; null/'' -> '—'.
+function affMoney(cents){
+  if (cents == null || cents === '') return '—';
+  const c = Math.round(Number(cents));
+  if (!isFinite(c)) return '—';
+  const abs = Math.abs(c);
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${c < 0 ? '-' : ''}$${whole}.${String(abs % 100).padStart(2, '0')}`;
+}
+// "$25" for whole dollars, "$25.50" otherwise.
+function affMoneyShort(cents){ const s = affMoney(cents); return s.endsWith('.00') ? s.slice(0, -3) : s; }
+// Cents -> "12.50" (a plain number string, for CSV and form fields); null -> ''.
+function affDollars(cents){ if (cents == null || cents === '' || !isFinite(Number(cents))) return ''; return (Math.round(Number(cents)) / 100).toFixed(2); }
+// 0.125 -> "12.5%"; null -> '—'.
+function affPct(ratio){ if (ratio == null || !isFinite(ratio)) return '—'; return (Math.round(ratio * 1000) / 10).toFixed(1).replace(/\.0$/, '') + '%'; }
+
+// "1,500.25" / "$12" / ".5" -> cents. opts.blank: blank -> null; opts.zero: $0 allowed; opts.max (cents).
+function affParseCents(s, opts){
+  opts = opts || {};
+  const t = String(s == null ? '' : s).trim().replace(/^\$/, '').replace(/[,\s]/g, '');
+  if (t === '') return opts.blank ? { ok: true, cents: null } : { ok: false, error: 'required' };
+  const m = /^(\d*)(?:\.(\d{0,2}))?$/.exec(t);
+  if (!m || (m[1] === '' && !m[2])) return { ok: false, error: 'not a dollar amount' };
+  const whole = m[1] === '' ? 0 : Number(m[1]);
+  const cents = whole * 100 + Number(((m[2] || '') + '00').slice(0, 2));
+  if (!Number.isSafeInteger(cents) || cents > (opts.max || AFF_MAX_CENTS)) return { ok: false, error: 'too large' };
+  if (cents === 0 && !opts.zero) return { ok: false, error: 'must be more than $0' };
+  return { ok: true, cents };
+}
+// A number from a form field. opts: {blank, integer, min, max, minExclusive}.
+function affParseNumber(s, opts){
+  opts = opts || {};
+  const t = String(s == null ? '' : s).trim().replace(/%$/, '').trim();
+  if (t === '') return opts.blank ? { ok: true, value: null } : { ok: false, error: 'required' };
+  if (!/^-?(\d+(\.\d*)?|\.\d+)$/.test(t)) return { ok: false, error: 'not a number' };
+  const n = Number(t);
+  if (!isFinite(n)) return { ok: false, error: 'not a number' };
+  if (opts.integer && !Number.isInteger(n)) return { ok: false, error: 'must be a whole number' };
+  if (opts.min != null && (opts.minExclusive ? n <= opts.min : n < opts.min)) return { ok: false, error: `must be ${opts.minExclusive ? 'more than' : 'at least'} ${opts.min}` };
+  if (opts.max != null && n > opts.max) return { ok: false, error: `must be at most ${opts.max}` };
+  return { ok: true, value: n };
+}
+// "123, 456 789" -> ['123','456','789'] (trimmed, de-duplicated, order kept).
+function affList(s){
+  const out = [];
+  String(s == null ? '' : s).split(/[\s,;]+/).forEach(x => { x = x.trim(); if (x && !out.includes(x)) out.push(x); });
+  return out;
+}
+
+// Upper-case code from the partner's name + the discount: "María López", pct 10 -> "MARIALOPEZ10".
+// taken: existing codes (any case); a clash gets "-2", "-3", ...
+function affSuggestCode(name, discountType, value, taken){
+  let base = affAscii(name).toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 16);
+  let suffix = '';
+  const n = parseFloat(String(value == null ? '' : value).replace(/[$,\s%]/g, ''));
+  if ((discountType === 'pct' || discountType === 'fixed') && isFinite(n) && n > 0) suffix = String(Math.round(n));
+  if (!base) base = 'VM';
+  let code = base + suffix;
+  if (code.length < 3) code = base + 'PROMO' + suffix;
+  code = code.slice(0, 32);
+  const used = new Set((taken || []).map(t => affText(t).toUpperCase()));
+  if (!used.has(code)) return code;
+  for (let k = 2; k < 1000; k++) {
+    const tail = '-' + k, c = code.slice(0, 32 - tail.length) + tail;
+    if (!used.has(c)) return c;
+  }
+  return code;
+}
+
+const AFF_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+function affPad(n){ return String(n).padStart(2, '0'); }
+function affLocalDay(d){ return `${d.getFullYear()}-${affPad(d.getMonth() + 1)}-${affPad(d.getDate())}`; }
+// 'YYYY-MM-DD' stays as is; a timestamp becomes the viewer's local day; junk -> ''.
+function affDay(v){
+  if (v == null || v === '') return '';
+  if (v instanceof Date) return isNaN(v) ? '' : affLocalDay(v);
+  const s = String(v);
+  if (AFF_DATE_RE.test(s)) return s;
+  const d = new Date(s);
+  return isNaN(d) ? '' : affLocalDay(d);
+}
+function affInRange(day, from, to){
+  if (!from && !to) return true;
+  if (!day) return false;
+  return (!from || day >= from) && (!to || day <= to);
+}
+function affSaleDay(p){ return affDay(p && (p.paid_at || p.created_at)); }
+// Preset -> {from, to} (inclusive days) for today 'YYYY-MM-DD'; 'all' -> blanks; unknown -> null.
+function affPresetRange(preset, today){
+  const [y, m] = String(today).split('-').map(Number);
+  const last = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).getUTCDate(); // mm 1-12
+  const span = (y1, m1, y2, m2) => ({ from: `${y1}-${affPad(m1)}-01`, to: `${y2}-${affPad(m2)}-${affPad(last(y2, m2))}` });
+  if (preset === 'this_month') return span(y, m, y, m);
+  if (preset === 'last_month') { const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1; return span(py, pm, py, pm); }
+  if (preset === 'this_quarter') { const q0 = Math.floor((m - 1) / 3) * 3 + 1; return span(y, q0, y, q0 + 2); }
+  if (preset === 'this_year') return span(y, 1, y, 12);
+  if (preset === 'all') return { from: '', to: '' };
+  return null;
+}
+function affPeriodKey(day, grain){
+  if (!day) return '';
+  const y = day.slice(0, 4), m = Number(day.slice(5, 7));
+  return grain === 'quarter' ? `${y}-Q${Math.floor((m - 1) / 3) + 1}` : day.slice(0, 7);
+}
+
+function affIsDuplicate(p){ return !!(p && p.duplicate_of); }
+function affStatus(p){ return (p && p.status) || 'paid'; }
+// Counts toward sales, revenue and discount cost.
+function affCounts(p){ return affStatus(p) === 'paid' && !affIsDuplicate(p); }
+function affNum(v){ const n = Number(v); return v != null && isFinite(n) ? n : 0; }
+function affAmount(p){ return affNum(p && p.booking_amount_cents); }
+function affSaleSource(p){ return p && p.code_id ? 'Referral' : 'Room link'; }
+function affCommissionIn(p, states){ return !affIsDuplicate(p) && states.includes(p.commission_status) ? affNum(p.commission_cents) : 0; }
+
+// Sales tab filters. f: {from, to, agency, city, status, code}.
+function affFilterSales(sales, f){
+  f = f || {};
+  const city = affText(f.city).toLowerCase();
+  return (sales || []).filter(p => {
+    if (!affInRange(affSaleDay(p), f.from, f.to)) return false;
+    if (f.agency && p.agency_id !== f.agency) return false;
+    if (f.code && p.code_id !== f.code) return false;
+    if (city && affText(p.city).toLowerCase() !== city) return false;
+    if (f.status === 'duplicate') return affIsDuplicate(p);
+    if (f.status && affStatus(p) !== f.status) return false;
+    return true;
+  });
+}
+// The KPI tiles for a date range.
+function affSummary(sales, events, range){
+  range = range || {};
+  const inR = (sales || []).filter(p => affInRange(affSaleDay(p), range.from, range.to));
+  const counted = inR.filter(affCounts);
+  const ev = (events || []).filter(e => affInRange(affDay(e.day || e.created_at), range.from, range.to));
+  const visits = ev.filter(e => e.type === 'visit').length, leads = ev.filter(e => e.type === 'lead').length;
+  const referralSales = counted.filter(p => p.code_id).length;
+  const sum = (list, fn) => list.reduce((s, p) => s + fn(p), 0);
+  return {
+    visits, leads,
+    sales: counted.length, referralSales, linkSales: counted.length - referralSales,
+    revenue: sum(counted, affAmount),
+    discount: sum(counted, p => affNum(p.discount_cents)),
+    earned: sum(inR, p => affCommissionIn(p, ['eligible', 'paid'])),
+    outstanding: sum(inR, p => affCommissionIn(p, ['pending', 'eligible'])),
+    paid: sum(inR, p => affCommissionIn(p, ['paid'])),
+    cancelled: inR.filter(p => !affIsDuplicate(p) && affStatus(p) !== 'paid').length,
+    duplicates: inR.filter(affIsDuplicate).length,
+    conversion: visits > 0 ? referralSales / visits : null,
+  };
+}
+// Counted sales in range grouped by keyFn -> [{key, label, sales, revenue, discount, commission}],
+// highest revenue first. commission = earned (eligible + paid).
+function affGroup(sales, range, keyFn, labelFn){
+  range = range || {};
+  const map = new Map();
+  (sales || []).forEach(p => {
+    if (!affCounts(p) || !affInRange(affSaleDay(p), range.from, range.to)) return;
+    const key = keyFn(p);
+    if (!map.has(key)) map.set(key, { key, label: labelFn ? labelFn(key) : key, sales: 0, revenue: 0, discount: 0, commission: 0 });
+    const g = map.get(key);
+    g.sales++; g.revenue += affAmount(p); g.discount += affNum(p.discount_cents); g.commission += affCommissionIn(p, ['eligible', 'paid']);
+  });
+  return [...map.values()].sort((a, b) => b.revenue - a.revenue || b.sales - a.sales || String(a.label).localeCompare(String(b.label)));
+}
+function affTopPartners(sales, agencies, range){
+  const name = new Map((agencies || []).map(a => [a.id, a.name]));
+  return affGroup(sales, range, p => p.agency_id || '', k => name.get(k) || (k ? 'Unknown partner' : 'No partner'));
+}
+function affByCity(sales, range){ return affGroup(sales, range, p => affText(p.city) || 'Unknown'); }
+function affByType(sales, range){ return affGroup(sales, range, p => affText(p.room_type) || 'Unknown'); }
+// Month ('YYYY-MM') or quarter ('YYYY-Qn') trend, oldest first.
+function affTrend(sales, range, grain){
+  return affGroup(sales, range, p => affPeriodKey(affSaleDay(p), grain)).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+}
+// Per-code link performance in range, best revenue first.
+function affCodePerformance(codes, sales, events, agencies, range){
+  range = range || {};
+  const name = new Map((agencies || []).map(a => [a.id, a.name]));
+  const rows = (codes || []).map(c => ({ id: c.id, code: c.code, partner: name.get(c.agency_id) || '—', campaign: c.campaign || '', visits: 0, leads: 0, sales: 0, revenue: 0, conversion: null }));
+  const byId = new Map(rows.map(r => [r.id, r]));
+  (events || []).forEach(e => {
+    const r = byId.get(e.code_id);
+    if (!r || !affInRange(affDay(e.day || e.created_at), range.from, range.to)) return;
+    if (e.type === 'visit') r.visits++; else if (e.type === 'lead') r.leads++;
+  });
+  (sales || []).forEach(p => {
+    const r = byId.get(p.code_id);
+    if (!r || !affCounts(p) || !affInRange(affSaleDay(p), range.from, range.to)) return;
+    r.sales++; r.revenue += affAmount(p);
+  });
+  rows.forEach(r => { r.conversion = r.visits > 0 ? r.sales / r.visits : null; });
+  return rows.sort((a, b) => b.revenue - a.revenue || b.visits - a.visits || String(a.code).localeCompare(String(b.code)));
+}
+// Paid (not cancelled / refunded) uses of a code: the max_uses meter.
+function affCodeUses(sales, codeId){ return (sales || []).filter(p => p.code_id === codeId && affStatus(p) === 'paid').length; }
+
+function affDiscountLabel(c){
+  if (!c) return '—';
+  if (c.discount_type === 'pct' && c.discount_pct != null) return `${Number(c.discount_pct)}%`;
+  if (c.discount_type === 'fixed' && c.discount_cents != null) return affMoneyShort(c.discount_cents);
+  return 'None';
+}
+function affCommissionLabel(c){
+  if (!c) return '—';
+  if (c.commission_mode === 'pct') return c.commission_pct == null ? '% (not set)' : `${Number(c.commission_pct)}% of booking`;
+  if (c.commission_mode === 'fixed') return c.commission_cents == null ? 'Fixed (not set)' : `${affMoneyShort(c.commission_cents)} per sale`;
+  if (c.commission_mode === 'none') return 'None';
+  return "Partner's agreement";
+}
+function affAgencyTermsLabel(a){
+  if (!a) return '—';
+  if (a.commission_model === 'flat') return a.commission_flat_cents == null ? '—' : `${affMoneyShort(a.commission_flat_cents)} per booking`;
+  if (a.commission_model === 'monthly') return a.commission_monthly_cents == null ? '—' : `${affMoneyShort(a.commission_monthly_cents)} per month`;
+  return a.commission_pct == null ? '—' : `${Number(a.commission_pct)}% of rent`;
+}
+// "Vancouver, Toronto · 2 buildings · 3 rooms · Co-living". propName: id -> name Map (optional).
+function affEligibilityLabel(c, propName){
+  if (!c) return '—';
+  const arr = v => Array.isArray(v) ? v : [];
+  const parts = [arr(c.cities).length ? arr(c.cities).join(', ') : 'All cities'];
+  const props = arr(c.property_ids);
+  if (props.length) {
+    const names = propName ? props.map(id => propName.get(id)).filter(Boolean) : [];
+    parts.push(names.length === props.length && names.length <= 2 ? names.join(', ') : `${props.length} building${props.length === 1 ? '' : 's'}`);
+  }
+  const rooms = arr(c.room_gids);
+  if (rooms.length) parts.push(`${rooms.length} room${rooms.length === 1 ? '' : 's'}`);
+  const svc = arr(c.services).map(s => (AFF_SERVICES.find(x => x[0] === s) || [s, s])[1]);
+  parts.push(svc.length ? svc.join(' + ') : 'Co-living');
+  return parts.join(' · ');
+}
+// The code's state today: inactive / not started / expired / used up / active.
+function affCodeState(c, uses, today){
+  if (!c) return { key: '', label: '—', tone: '' };
+  if (!c.active) return { key: 'inactive', label: 'Inactive', tone: '' };
+  if (c.starts_at && today && today < affDay(c.starts_at)) return { key: 'not_started', label: 'Not started', tone: 'blue' };
+  if (c.expires_at && today && today > affDay(c.expires_at)) return { key: 'expired', label: 'Expired', tone: 'red' };
+  if (c.max_uses != null && uses >= Number(c.max_uses)) return { key: 'used_up', label: 'Used up', tone: 'gold' };
+  return { key: 'active', label: 'Active', tone: 'green' };
+}
+function affSaleStatus(p){
+  if (affIsDuplicate(p)) return { label: 'Duplicate of ' + p.duplicate_of, tone: 'gold' };
+  const s = affStatus(p);
+  return ({ paid: { label: 'Paid', tone: 'green' }, cancelled: { label: 'Cancelled', tone: 'red' }, refunded: { label: 'Refunded', tone: 'red' } })[s] || { label: s, tone: '' };
+}
+function affCommissionStatus(s){
+  return ({ pending: { label: 'Pending', tone: 'gold' }, eligible: { label: 'Eligible', tone: 'blue' }, paid: { label: 'Paid', tone: 'green' },
+    void: { label: 'Void', tone: '' }, none: { label: '—', tone: '' } })[s] || { label: s ? String(s) : '—', tone: '' };
+}
+// Which row actions a sale offers (the partner app re-checks every one).
+function affSaleActions(p){
+  const out = [];
+  if (!p) return out;
+  if (affStatus(p) === 'paid') out.push('cancel', 'refund');
+  if (p.commission_status === 'eligible') out.push('commission_paid');
+  if (p.commission_status === 'paid') out.push('commission_unpaid');
+  return out;
+}
+
+// The POST/PATCH body for /api/staff/referrals/codes from the form's values.
+// v: {agency_id, code, campaign, discount_type, discount_value, cities[], property_ids[], room_gids (text or []),
+//     services[], starts_at, expires_at, max_uses, attribution_days, commission_mode, commission_value, active, notes}
+// -> {ok, body, errors: [{field, message}]}
+function affBuildCodeBody(v){
+  v = v || {};
+  const errors = [], err = (field, message) => errors.push({ field, message });
+  const agency_id = affText(v.agency_id);
+  if (!agency_id) err('agency_id', 'Pick the partner this code belongs to');
+  const code = affNormCode(v.code);
+  if (!affValidCode(code)) err('code', 'The code must be 3–32 characters: A–Z, 0–9, _ or -');
+  const campaign = affText(v.campaign);
+  if (campaign.length > 80) err('campaign', 'The campaign label is at most 80 characters');
+  const discount_type = ['pct', 'fixed', 'none'].includes(v.discount_type) ? v.discount_type : '';
+  if (!discount_type) err('discount_type', 'Pick a discount type');
+  let discount_pct = null, discount_cents = null;
+  if (discount_type === 'pct') {
+    const r = affParseNumber(v.discount_value, { min: 0, minExclusive: true, max: 100 });
+    if (r.ok) discount_pct = Math.round(r.value * 100) / 100; else err('discount_pct', 'The discount % must be more than 0 and at most 100');
+  } else if (discount_type === 'fixed') {
+    const r = affParseCents(v.discount_value, { max: 1000000 });
+    if (r.ok) discount_cents = r.cents; else err('discount_cents', 'The discount amount must be a dollar amount more than $0 (at most $10,000)');
+  }
+  const strs = a => (Array.isArray(a) ? a : []).map(affText).filter(Boolean).filter((x, i, l) => l.indexOf(x) === i);
+  const cities = strs(v.cities), property_ids = strs(v.property_ids);
+  const room_gids = Array.isArray(v.room_gids) ? strs(v.room_gids) : affList(v.room_gids);
+  if (room_gids.some(g => !/^\d{1,30}$/.test(g))) err('room_gids', 'Room IDs are Asana task numbers, separated by commas');
+  const services = strs(v.services);
+  if (!services.length) err('services', 'Pick at least one service');
+  else if (services.some(s => !AFF_SERVICES.some(x => x[0] === s))) err('services', 'Unknown service');
+  const date = (field, label) => {
+    const t = affText(v[field]);
+    if (!t) return null;
+    if (!AFF_DATE_RE.test(t) || isNaN(new Date(t + 'T00:00:00Z'))) { err(field, `${label} must be a date`); return null; }
+    return t;
+  };
+  const starts_at = date('starts_at', 'Starts'), expires_at = date('expires_at', 'Expires');
+  if (starts_at && expires_at && expires_at < starts_at) err('expires_at', 'Expires must be on or after Starts');
+  let max_uses = null;
+  { const r = affParseNumber(v.max_uses, { blank: true, integer: true, min: 1 }); if (r.ok) max_uses = r.value; else err('max_uses', 'Max uses must be a whole number of at least 1 (blank = unlimited)'); }
+  let attribution_days = 30;
+  { const r = affParseNumber(v.attribution_days, { blank: true, integer: true, min: 1, max: 365 }); if (r.ok) attribution_days = r.value == null ? 30 : r.value; else err('attribution_days', 'Attribution days must be a whole number from 1 to 365'); }
+  const commission_mode = ['agreement', 'pct', 'fixed', 'none'].includes(v.commission_mode) ? v.commission_mode : '';
+  if (!commission_mode) err('commission_mode', 'Pick how the partner earns commission');
+  let commission_pct = null, commission_cents = null;
+  if (commission_mode === 'pct') {
+    const r = affParseNumber(v.commission_value, { min: 0, max: 100 });
+    if (r.ok) commission_pct = Math.round(r.value * 100) / 100; else err('commission_pct', 'The commission % must be from 0 to 100');
+  } else if (commission_mode === 'fixed') {
+    const r = affParseCents(v.commission_value, { zero: true });
+    if (r.ok) commission_cents = r.cents; else err('commission_cents', 'The commission must be a dollar amount');
+  }
+  const notes = affText(v.notes);
+  if (notes.length > 1000) err('notes', 'Notes are at most 1000 characters');
+  const body = { agency_id, code, campaign: campaign || null, discount_type, discount_pct, discount_cents, cities, property_ids, room_gids,
+    services, starts_at, expires_at, max_uses, attribution_days, commission_mode, commission_pct, commission_cents,
+    active: v.active !== false && v.active !== 'false', notes: notes || null };
+  return { ok: errors.length === 0, body: errors.length ? null : body, errors };
+}
+// The POST body for /api/staff/referrals/affiliates. v: {name, contact_name, email, language, commission_model, commission_value}.
+function affBuildAffiliateBody(v){
+  v = v || {};
+  const errors = [], err = (field, message) => errors.push({ field, message });
+  const name = affText(v.name), contact_name = affText(v.contact_name), email = affText(v.email).toLowerCase();
+  if (!name) err('name', 'The affiliate needs a name'); else if (name.length > 120) err('name', 'The name is at most 120 characters');
+  if (!contact_name) err('contact_name', "The contact person's name is needed for their sign-in");
+  if (!affValidEmail(email)) err('email', 'A valid email is needed: the sign-in link goes there');
+  const language = AFF_LANGS.some(l => l[0] === v.language) ? v.language : 'en';
+  const commission_model = AFF_AGENCY_MODELS.some(m => m[0] === v.commission_model) ? v.commission_model : 'pct';
+  let commission_pct = null, commission_flat_cents = null, commission_monthly_cents = null;
+  if (commission_model === 'pct') {
+    const r = affParseNumber(v.commission_value, { blank: true, min: 0, max: 100 });
+    if (r.ok) commission_pct = r.value == null ? null : Math.round(r.value * 100) / 100; else err('commission_pct', 'The commission % must be from 0 to 100');
+  } else {
+    const r = affParseCents(v.commission_value, { zero: true });
+    if (!r.ok) err(commission_model === 'flat' ? 'commission_flat_cents' : 'commission_monthly_cents', 'The commission must be a dollar amount');
+    else if (commission_model === 'flat') commission_flat_cents = r.cents; else commission_monthly_cents = r.cents;
+  }
+  const body = { name, contact_name, email, language, commission_model, commission_pct, commission_flat_cents, commission_monthly_cents };
+  return { ok: errors.length === 0, body: errors.length ? null : body, errors };
+}
+// A friendly line for a failed /api/staff/referrals/* call.
+function affErrorMessage(status, data){
+  const code = data && data.code;
+  if (code === 'CODE_TAKEN') return 'That code is already taken by another promo code. Pick a different one.';
+  if (code === 'CODE_IS_AGENCY_TAG') return "That code is an agency's room-link tag, so it can't be a promo code. Pick a different one.";
+  if (code === 'INVALID') {
+    const label = data.field ? (AFF_FIELD_LABELS[data.field] || data.field) : '';
+    return label ? `The partner app rejected the ${label} field${data.message ? ': ' + data.message : ''}. Check it and try again.`
+      : `The partner app rejected the form${data.message ? ': ' + data.message : ''}.`;
+  }
+  if (code === 'EMAIL_TAKEN') return 'That email already belongs to a partner user; an email can belong to only one user.';
+  if (status === 401) return 'Your session expired. Reload the portal and sign in again.';
+  if (status === 403) return 'You need the Partners page to manage affiliates and promo codes. Ask an admin.';
+  const msg = data && (data.error || data.message);
+  if (status === 404) return msg ? String(msg) : "Not found. If this keeps happening, the partner app's referrals update may not be deployed yet.";
+  if (status === 409) return msg ? String(msg) : 'That change conflicts with the current state; refresh and try again.';
+  return msg ? String(msg) : `The partner app answered HTTP ${status}.`;
+}
+
+// CSV cell: quoted when needed; text starting with = + - @ (or tab / CR) gets a leading
+// apostrophe so a spreadsheet never runs it as a formula. Numbers stay numbers.
+function affCsvCell(v){
+  if (v == null) return '';
+  if (typeof v === 'number') return isFinite(v) ? String(v) : '';
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function affCsv(header, rows){
+  return [header].concat(rows || []).map(r => r.map(affCsvCell).join(',')).join('\r\n') + '\r\n';
+}
+function affSalesCsv(sales, agencies, codes){
+  const name = new Map((agencies || []).map(a => [a.id, a.name]));
+  const code = new Map((codes || []).map(c => [c.id, c.code]));
+  return affCsv(['Booking', 'Date', 'Partner', 'Source', 'Code', 'Customer', 'Email', 'City', 'Property', 'Room type', 'Move-in',
+    'Booking amount', 'Discount', 'Commission', 'Commission status', 'Status', 'Duplicate of'],
+    (sales || []).map(p => [p.booking_ref || '', affSaleDay(p), name.get(p.agency_id) || '', affSaleSource(p),
+      p.promo_code || code.get(p.code_id) || '', p.customer_name || '', p.customer_email || '', p.city || '', p.property_name || p.room_name || '',
+      p.room_type || '', affDay(p.move_in), affDollars(p.booking_amount_cents), affDollars(p.discount_cents), affDollars(p.commission_cents),
+      p.commission_status || '', affStatus(p), p.duplicate_of || '']));
+}
+// A grouped analytics table (affGroup rows) as CSV; firstCol names the key column.
+function affGroupCsv(firstCol, rows){
+  return affCsv([firstCol, 'Sales', 'Revenue', 'Discount cost', 'Commission earned'],
+    (rows || []).map(g => [g.label, g.sales, affDollars(g.revenue), affDollars(g.discount), affDollars(g.commission)]));
+}
+function affCodePerformanceCsv(rows){
+  return affCsv(['Code', 'Partner', 'Campaign', 'Visits', 'Leads', 'Sales', 'Revenue', 'Conversion'],
+    (rows || []).map(r => [r.code, r.partner, r.campaign, r.visits, r.leads, r.sales, affDollars(r.revenue), r.conversion == null ? '' : affPct(r.conversion)]));
+}
+/* AFFILIATES-CORE-END */
+/* ---- Affiliates & promo codes (DOM side of AFFILIATES-CORE) -------------------
+   Same access as the Partners page (ptnIsAdmin: admins + anyone granted 'partners';
+   vm_partners_member() RLS on the tables). Reads referral_codes, partner_link_payments,
+   referral_events and partner_agencies with the signed-in session; every write goes to
+   the partner app's /api/staff/referrals/* through rcvApi (staff JWT), which re-checks
+   access and validates. Until sql/2026-10-10-referrals.sql is applied the page says so. */
+const AFF_STATE = {
+  tab: 'codes',
+  codes: { agency: '', state: '' },
+  sales: { from: '', to: '', agency: '', city: '', status: '' },
+  range: { preset: 'this_month', from: '', to: '' },
+};
+let affData = null, affLoading = null, affLoadedAt = 0;
+function affMissingSchema(e){
+  const m = String((e && (e.message || e.details || e.hint)) || e || '');
+  return !!e && (e.code === '42P01' || e.code === '42703' || e.code === 'PGRST205' || e.code === 'PGRST204'
+    || /does not exist|schema cache|could not find the table/i.test(m));
+}
+async function loadAffiliates(force){
+  const root = document.getElementById('aff-root');
+  if (!ptnIsAdmin()) { if (root) root.innerHTML = '<p class="name-sub">You need access to the Partners page. Ask an admin.</p>'; return; }
+  if (affLoading) return affLoading;
+  if (affData && !force && Date.now() - affLoadedAt < 60000) { renderAffiliates(); return; }
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb) { if (root) root.innerHTML = '<p class="name-sub">Not connected to the database.</p>'; return; }
+  if (root && !affData) root.innerHTML = '<p class="name-sub">Loading…</p>';
+  affLoading = (async () => {
+    try {
+      const [agencies, codes, sales, events] = await Promise.all([
+        ptnSelectAll(sb, 'partner_agencies', '*', q => q.order('name').order('id')),
+        ptnSelectAll(sb, 'referral_codes', '*', q => q.order('created_at', { ascending: false }).order('id')),
+        ptnSelectAll(sb, 'partner_link_payments', '*', q => q.order('created_at', { ascending: false }).order('id')),
+        ptnSelectAll(sb, 'referral_events', 'code_id,agency_id,type,day', q => q.order('id')),
+      ]);
+      // partner_agencies.kind and the new sale columns arrive with the same SQL file.
+      if ((agencies.length && !agencies.some(a => 'kind' in a)) || (sales.length && !sales.some(p => 'commission_status' in p)))
+        throw { code: '42703', message: 'referral columns do not exist' };
+      let props = [];
+      try { props = await ptnSelectAll(sb, 'inventory_properties', 'id,name,city', q => q.order('name').order('id')); }
+      catch (e) { console.warn('[affiliates] buildings not loaded', e); }
+      affData = { agencies, codes, sales, events, props, missing: false };
+      affLoadedAt = Date.now();
+      renderAffiliates();
+    } catch (e) {
+      if (affMissingSchema(e)) { affData = { missing: true }; affLoadedAt = Date.now(); renderAffiliates(); return; }
+      console.error('[affiliates] load failed', e);
+      if (root) root.innerHTML = `<p class="name-sub">Could not load affiliates: ${esc((e && e.message) || e)}</p>`;
+    } finally { affLoading = null; }
+  })();
+  return affLoading;
+}
+function affToday(){ return affLocalDay(new Date()); }
+function affRange(){
+  const r = AFF_STATE.range;
+  if (r.preset === 'custom') return { from: r.from || '', to: r.to || '' };
+  return affPresetRange(r.preset, affToday()) || { from: '', to: '' };
+}
+function affAgencyName(id){ const a = affData && affData.agencies && affData.agencies.find(x => x.id === id); return a ? a.name : '—'; }
+function affCityOptions(){
+  const seen = new Map();
+  const add = c => { const t = affText(c); if (!t) return; const k = affAscii(t).toLowerCase(); if (!seen.has(k)) seen.set(k, t); };
+  ((affData && affData.props) || []).forEach(p => add(p.city));
+  AFF_CITIES.forEach(add);
+  return [...seen.values()];
+}
+function affSelectHtml(attr, list, selected, extra){
+  return `<select class="form-input" ${attr}${extra || ''}>${list.map(([v, l]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+}
+function affField(label, inner, full){
+  return `<label class="name-sub" style="display:flex;flex-direction:column;gap:4px${full ? ';grid-column:1/-1' : ''}">${esc(label)}${inner}</label>`;
+}
+function affInput(name, value, extra){ return `<input class="form-input" name="${name}" value="${esc(value == null ? '' : value)}"${extra || ''}>`; }
+const AFF_TD = 'style="padding:8px;vertical-align:top"';
+const AFF_TDNW = 'style="padding:8px;vertical-align:top;white-space:nowrap"';
+const AFF_NUM = 'style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top"';
+function affPill(s){ return `<span class="tag-pill ${esc(s.tone)}">${esc(s.label)}</span>`; }
+
+function renderAffiliates(){
+  const root = document.getElementById('aff-root');
+  if (!root || !affData) return;
+  affWire(root);
+  if (affData.missing) {
+    root.innerHTML = `<div class="card" style="padding:18px;max-width:720px">
+      <strong>Run sql/2026-10-10-referrals.sql first</strong>
+      <p class="name-sub" style="margin:8px 0 0">The promo code tables (referral_codes, referral_events and the new sale columns on partner_link_payments) are not in the database yet. Apply <code>sql/2026-10-10-referrals.sql</code> from the partners app in the Supabase SQL editor, then press Refresh.</p>
+      <div style="margin-top:12px"><button class="btn btn-ghost" type="button" data-aff-refresh>Refresh</button></div></div>`;
+    return;
+  }
+  const scrollY = window.scrollY;
+  const d = affData;
+  const tabs = [['codes', `Codes (${d.codes.length})`], ['affiliates', `Affiliates (${d.agencies.filter(a => a.kind === 'affiliate').length})`],
+    ['sales', `Sales (${d.sales.length})`], ['analytics', 'Analytics']];
+  const body = AFF_STATE.tab === 'affiliates' ? affAffiliatesHtml() : AFF_STATE.tab === 'sales' ? affSalesHtml()
+    : AFF_STATE.tab === 'analytics' ? affAnalyticsHtml() : affCodesHtml();
+  root.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="tabs" role="tablist">${tabs.map(([k, l]) =>
+        `<button type="button" class="tab${AFF_STATE.tab === k ? ' active' : ''}" role="tab" data-aff-tab="${k}">${esc(l)}</button>`).join('')}</div>
+      <button class="btn btn-ghost" type="button" data-aff-refresh>Refresh</button>
+    </div>
+    ${body}`;
+  window.scrollTo(0, scrollY);
+}
+
+// ---- Codes
+function affCodesHtml(){
+  const d = affData, f = AFF_STATE.codes, today = affToday();
+  const propName = new Map(d.props.map(p => [p.id, p.name]));
+  const rows = d.codes.map(c => { const uses = affCodeUses(d.sales, c.id); return { c, uses, st: affCodeState(c, uses, today) }; })
+    .filter(r => (!f.agency || r.c.agency_id === f.agency) && (!f.state || r.st.key === f.state));
+  const partnerOpts = [['', 'All partners'], ...d.agencies.filter(a => d.codes.some(c => c.agency_id === a.id)).map(a => [a.id, a.name])];
+  const stateOpts = [['', 'Any state'], ['active', 'Active'], ['inactive', 'Inactive'], ['expired', 'Expired'], ['not_started', 'Not started'], ['used_up', 'Used up']];
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn btn-primary" type="button" data-aff-code-new>New code</button>
+      ${affSelectHtml('data-aff-codes-filter="agency"', partnerOpts, f.agency, ' style="max-width:240px" aria-label="Partner"')}
+      ${affSelectHtml('data-aff-codes-filter="state"', stateOpts, f.state, ' style="max-width:180px" aria-label="State"')}
+      <span class="name-sub">Each code is also a link: <code>vanmates.com/?ref=CODE</code>. The discount comes off the membership fee only.</span>
+    </div>
+    ${rows.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Code</th><th>Partner</th><th>Campaign</th><th>Discount</th><th>Eligibility</th><th>Expires</th><th style="text-align:right">Uses</th><th>Commission</th><th>Referral link</th><th>State</th><th></th></tr></thead>
+      <tbody>${rows.map(({ c, uses, st }) => `<tr style="border-top:1px solid var(--line)">
+        <td ${AFF_TDNW}><strong style="font-family:monospace">${esc(c.code)}</strong></td>
+        <td ${AFF_TD}>${esc(affAgencyName(c.agency_id))}</td>
+        <td ${AFF_TD}>${esc(c.campaign || '—')}</td>
+        <td ${AFF_TD}>${esc(affDiscountLabel(c))}</td>
+        <td ${AFF_TD}><span class="name-sub">${esc(affEligibilityLabel(c, propName))}${c.starts_at ? `<br>from ${esc(affDay(c.starts_at))}` : ''}</span></td>
+        <td ${AFF_TDNW}>${esc(c.expires_at ? affDay(c.expires_at) : 'Never')}</td>
+        <td ${AFF_NUM}>${uses}${c.max_uses != null ? ` / ${esc(c.max_uses)}` : ''}</td>
+        <td ${AFF_TD}>${esc(affCommissionLabel(c))}</td>
+        <td ${AFF_TDNW}><span class="name-sub" style="font-family:monospace">${esc(affLink(c.code).replace('https://', ''))}</span>
+          <button class="btn btn-ghost btn-mini" type="button" data-aff-copy="${esc(affLink(c.code))}">Copy</button></td>
+        <td ${AFF_TDNW}>${affPill(st)}</td>
+        <td ${AFF_TDNW}>
+          <button class="btn btn-ghost btn-mini" type="button" data-aff-code-edit="${esc(c.id)}">Edit</button>
+          <button class="btn btn-ghost btn-mini" type="button" data-aff-code-active="${esc(c.id)}" data-active="${c.active ? '0' : '1'}">${c.active ? 'Deactivate' : 'Activate'}</button></td>
+      </tr>`).join('')}</tbody></table></div>` : `<p class="name-sub">${d.codes.length ? 'No codes match these filters.' : 'No promo codes yet. Press New code to make the first one.'}</p>`}`;
+}
+function affCodeFormHtml(c, isNew){
+  const d = affData;
+  const agencies = d.agencies.filter(a => a.status !== 'suspended' || a.id === c.agency_id);
+  const agencyOpts = [['', '— pick a partner —'], ...agencies.map(a => [a.id, `${a.name} (${a.kind === 'affiliate' ? 'affiliate' : 'agency'}${a.status && a.status !== 'active' ? ', ' + a.status : ''})`])];
+  const dtype = c.discount_type || 'pct', cmode = c.commission_mode || 'agreement';
+  const cities = affCityOptions(), myCities = Array.isArray(c.cities) ? c.cities : [];
+  cities.push(...myCities.filter(x => !cities.includes(x)));
+  const svc = Array.isArray(c.services) && c.services.length ? c.services : ['coliving'];
+  const myProps = new Set(Array.isArray(c.property_ids) ? c.property_ids : []);
+  const byCity = new Map();
+  d.props.forEach(p => { const k = p.city || 'Other'; if (!byCity.has(k)) byCity.set(k, []); byCity.get(k).push(p); });
+  const propsHtml = d.props.length
+    ? `<select class="form-input" name="property_ids" multiple size="6" aria-label="Buildings">${[...byCity.entries()].map(([city, list]) =>
+        `<optgroup label="${esc(city)}">${list.map(p => `<option value="${esc(p.id)}"${myProps.has(p.id) ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</optgroup>`).join('')}</select>
+       <span style="font-size:11px">None selected = every building. Ctrl/⌘-click to pick several.</span>`
+    : `<span>The buildings list could not be loaded${myProps.size ? ` (this code keeps its ${myProps.size} building${myProps.size === 1 ? '' : 's'})` : ''}.</span>`;
+  const box = (attr, key, current, inner) => `<div ${attr}="${key}"${key === current ? '' : ' hidden'}>${inner}</div>`;
+  const dpct = c.discount_pct == null ? '' : Number(c.discount_pct), dfix = affDollars(c.discount_cents);
+  const cpct = c.commission_pct == null ? '' : Number(c.commission_pct), cfix = affDollars(c.commission_cents);
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+    ${affField('Partner *', affSelectHtml('name="agency_id"', agencyOpts, c.agency_id || ''))}
+    ${affField('Code *', affInput('code', c.code, ' maxlength="32" autocomplete="off" style="text-transform:uppercase;font-family:monospace" placeholder="e.g. MARIA10"') +
+      `<span style="font-size:11px">A–Z, 0–9, _ or -${isNew ? ' · suggested from the partner + discount' : ''}</span>`)}
+    ${affField('Campaign', affInput('campaign', c.campaign, ' maxlength="80" placeholder="e.g. Instagram fall 2026"'))}
+    ${affField('Discount', affSelectHtml('name="discount_type"', AFF_DISCOUNT_TYPES, dtype))}
+    <div>
+      ${box('data-aff-dbox', 'pct', dtype, affField('Discount % of membership fee *', affInput('discount_pct', dpct, ' inputmode="decimal" placeholder="10"')))}
+      ${box('data-aff-dbox', 'fixed', dtype, affField('Discount (CAD) *', affInput('discount_fixed', dfix, ' inputmode="decimal" placeholder="25.00"')))}
+    </div>
+    ${affField('Attribution days', affInput('attribution_days', c.attribution_days == null ? 30 : c.attribution_days, ' inputmode="numeric"'))}
+    <div class="name-sub" style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center"><strong style="font-weight:600">Cities</strong>
+      ${cities.map(ct => `<label style="display:flex;gap:5px;align-items:center"><input type="checkbox" name="cities" value="${esc(ct)}"${myCities.includes(ct) ? ' checked' : ''}> ${esc(ct)}</label>`).join('')}
+      <span style="font-size:11px">(none = all cities)</span></div>
+    <div class="name-sub" style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center"><strong style="font-weight:600">Services *</strong>
+      ${AFF_SERVICES.map(([k, l]) => `<label style="display:flex;gap:5px;align-items:center"><input type="checkbox" name="services" value="${k}"${svc.includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}
+      <span style="font-size:11px">(the website checkout covers co-living today)</span></div>
+    <div class="name-sub" style="display:flex;flex-direction:column;gap:4px;grid-column:1/-1">Buildings ${propsHtml}</div>
+    ${affField('Room IDs (Asana gids, comma-separated)', affInput('room_gids', (c.room_gids || []).join(', '), ' placeholder="Blank = every room"'), true)}
+    ${affField('Starts', affInput('starts_at', c.starts_at ? affDay(c.starts_at) : '', ' type="date"'))}
+    ${affField('Expires', affInput('expires_at', c.expires_at ? affDay(c.expires_at) : '', ' type="date"'))}
+    ${affField('Max uses', affInput('max_uses', c.max_uses == null ? '' : c.max_uses, ' inputmode="numeric" placeholder="Unlimited"'))}
+    ${affField('Commission', affSelectHtml('name="commission_mode"', AFF_COMMISSION_MODES, cmode))}
+    <div>
+      ${box('data-aff-cbox', 'pct', cmode, affField('Commission % of booking *', affInput('commission_pct', cpct, ' inputmode="decimal"')))}
+      ${box('data-aff-cbox', 'fixed', cmode, affField('Commission per sale (CAD) *', affInput('commission_fixed', cfix, ' inputmode="decimal"')))}
+      ${box('data-aff-cbox', 'agreement', cmode, `<p class="name-sub" style="margin:18px 0 0;font-size:12px">Uses the partner's commission terms (Partners → Edit agency).</p>`)}
+    </div>
+    <label class="name-sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="active"${c.active === false ? '' : ' checked'}> Active</label>
+    ${affField('Notes (staff only)', `<textarea class="form-input" name="notes" rows="2" maxlength="1000">${esc(c.notes || '')}</textarea>`, true)}
+    <p class="name-sub" style="grid-column:1/-1;margin:0;font-size:12px">The discount applies to the membership (placement) fee only, never the deposit or rent. If a visitor arrives with one code and redeems another at checkout, the redeemed code's partner gets the sale.</p>
+  </div>`;
+}
+function affCodeValues(form){
+  const val = n => { const el = form.querySelector(`[name="${n}"]`); return el ? el.value : ''; };
+  const checked = n => [...form.querySelectorAll(`input[name="${n}"]:checked`)].map(i => i.value);
+  const dtype = val('discount_type'), cmode = val('commission_mode');
+  const propSel = form.querySelector('select[name="property_ids"]');
+  return {
+    agency_id: val('agency_id'), code: val('code'), campaign: val('campaign'), discount_type: dtype,
+    discount_value: dtype === 'pct' ? val('discount_pct') : dtype === 'fixed' ? val('discount_fixed') : '',
+    cities: checked('cities'), property_ids: propSel ? [...propSel.selectedOptions].map(o => o.value) : (form._affKeepProps || []),
+    room_gids: val('room_gids'), services: checked('services'), starts_at: val('starts_at'), expires_at: val('expires_at'),
+    max_uses: val('max_uses'), attribution_days: val('attribution_days'), commission_mode: cmode,
+    commission_value: cmode === 'pct' ? val('commission_pct') : cmode === 'fixed' ? val('commission_fixed') : '',
+    active: !!(form.querySelector('input[name="active"]') || {}).checked, notes: val('notes'),
+  };
+}
+function affOpenCode(id, preset){
+  const d = affData;
+  const c = id ? d.codes.find(x => x.id === id) : Object.assign({ discount_type: 'pct', commission_mode: 'agreement', attribution_days: 30, active: true, services: ['coliving'] }, preset || {});
+  if (!c) return;
+  const isNew = !id;
+  affModalOpen({
+    title: isNew ? 'New promo code' : 'Edit <span style="font-family:monospace">' + esc(c.code) + '</span>',
+    sub: isNew ? 'A code and its referral link for one partner' : affAgencyName(c.agency_id),
+    body: affCodeFormHtml(c, isNew), submit: isNew ? 'Create code' : 'Save code', wide: true,
+    wire(form){
+      if (!form.querySelector('select[name="property_ids"]')) form._affKeepProps = Array.isArray(c.property_ids) ? c.property_ids : [];
+      const code = form.querySelector('[name="code"]');
+      const suggest = () => {
+        if (!isNew || form.dataset.codeTouched) return;
+        const a = d.agencies.find(x => x.id === form.querySelector('[name="agency_id"]').value);
+        if (!a) return;
+        const t = form.querySelector('[name="discount_type"]').value;
+        const v = t === 'pct' ? form.querySelector('[name="discount_pct"]').value : t === 'fixed' ? form.querySelector('[name="discount_fixed"]').value : '';
+        code.value = affSuggestCode(a.name, t, v, d.codes.map(x => x.code));
+      };
+      code.addEventListener('input', () => {
+        form.dataset.codeTouched = code.value ? '1' : '';
+        const p = code.selectionStart; code.value = code.value.toUpperCase(); try { code.setSelectionRange(p, p); } catch (_) {}
+      });
+      form.querySelector('[name="discount_type"]').addEventListener('change', e => {
+        form.querySelectorAll('[data-aff-dbox]').forEach(b => { b.hidden = b.dataset.affDbox !== e.target.value; }); suggest(); });
+      form.querySelector('[name="commission_mode"]').addEventListener('change', e => {
+        form.querySelectorAll('[data-aff-cbox]').forEach(b => { b.hidden = b.dataset.affCbox !== e.target.value; }); });
+      ['agency_id', 'discount_pct', 'discount_fixed'].forEach(n => { const el = form.querySelector(`[name="${n}"]`); if (el) el.addEventListener(n === 'agency_id' ? 'change' : 'input', suggest); });
+      if (isNew && c.agency_id) suggest();
+    },
+    async onSubmit(form, errEl){
+      const built = affBuildCodeBody(affCodeValues(form));
+      if (!built.ok) { errEl.textContent = built.errors.map(e => e.message).join('. ') + '.'; return; }
+      const res = await rcvApi(isNew ? 'POST' : 'PATCH', isNew ? '/api/staff/referrals/codes' : '/api/staff/referrals/codes/' + encodeURIComponent(c.id), built.body);
+      let data = null; try { data = await res.json(); } catch (_) {}
+      if (!res.ok || (data && data.ok === false)) { errEl.textContent = affErrorMessage(res.status, data); return; }
+      affModalClose();
+      showToast(isNew ? `Code ${built.body.code} created` : `Code ${built.body.code} saved`);
+      await loadAffiliates(true);
+    },
+  });
+}
+async function affSetActive(id, active){
+  const c = affData && affData.codes.find(x => x.id === id);
+  if (!c) return;
+  try {
+    const res = await rcvApi('PATCH', '/api/staff/referrals/codes/' + encodeURIComponent(id), { active });
+    let data = null; try { data = await res.json(); } catch (_) {}
+    if (!res.ok || (data && data.ok === false)) { showToast(affErrorMessage(res.status, data)); renderAffiliates(); return; }
+    showToast(`${c.code} ${active ? 'activated' : 'deactivated'}`);
+    await loadAffiliates(true);
+  } catch (e) { showToast('Could not change the code: ' + (e.message || e)); renderAffiliates(); }
+}
+
+// ---- Affiliates
+function affAffiliatesHtml(){
+  const d = affData;
+  const list = d.agencies.filter(a => a.kind === 'affiliate');
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn btn-primary" type="button" data-aff-affiliate-new>New affiliate</button>
+      <span class="name-sub">An affiliate (influencer, independent marketer) is a partner account that shares links and codes only. It is created <strong>pending</strong>: to let them sign in, open Partners → Agencies and press <strong>Activate &amp; send link</strong>.</span>
+    </div>
+    ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Affiliate</th><th>Contact</th><th>Language</th><th>Commission terms</th><th>Status</th><th style="text-align:right">Codes</th><th style="text-align:right">Sales</th><th style="text-align:right">Revenue</th><th></th></tr></thead>
+      <tbody>${list.map(a => {
+        const sales = d.sales.filter(p => p.agency_id === a.id && affCounts(p));
+        return `<tr style="border-top:1px solid var(--line)">
+        <td ${AFF_TD}><strong>${esc(a.name)}</strong></td>
+        <td ${AFF_TD}>${esc(a.contact_name || '')}${a.contact_email ? `<br><span class="name-sub">${esc(a.contact_email)}</span>` : ''}</td>
+        <td ${AFF_TD}>${esc(a.language || 'en')}</td>
+        <td ${AFF_TD}>${esc(affAgencyTermsLabel(a))}</td>
+        <td ${AFF_TD}>${affPill({ label: a.status || '—', tone: ({ active: 'green', pending: 'gold', suspended: 'red' })[a.status] || '' })}</td>
+        <td ${AFF_NUM}>${d.codes.filter(c => c.agency_id === a.id).length}</td>
+        <td ${AFF_NUM}>${sales.length}</td>
+        <td ${AFF_NUM}>${esc(affMoney(sales.reduce((s, p) => s + affAmount(p), 0)))}</td>
+        <td ${AFF_TDNW}>
+          <button class="btn btn-ghost btn-mini" type="button" data-aff-code-for="${esc(a.id)}">New code</button>
+          <button class="btn btn-ghost btn-mini" type="button" data-aff-open-partners>Open in Partners</button></td>
+      </tr>`; }).join('')}</tbody></table></div>` : '<p class="name-sub">No affiliates yet.</p>'}`;
+}
+function affOpenAffiliate(){
+  affModalOpen({
+    title: 'New affiliate', sub: 'A links-and-codes partner account (created pending)', submit: 'Create affiliate',
+    body: `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+      ${affField('Affiliate name *', affInput('name', '', ' maxlength="120" placeholder="e.g. María López (Instagram)"'), true)}
+      ${affField("Contact person's name *", affInput('contact_name', ''))}
+      ${affField('Email *', affInput('email', '', ' type="email"'))}
+      ${affField('Language', affSelectHtml('name="language"', AFF_LANGS, 'en'))}
+      ${affField('Commission model', affSelectHtml('name="commission_model"', AFF_AGENCY_MODELS, 'pct'))}
+      ${affField('Commission amount', affInput('commission_value', '', ' inputmode="decimal" placeholder="% or CAD, per the model"'))}
+      <p class="name-sub" style="grid-column:1/-1;margin:0;font-size:12px">These are the partner's agreement terms, used by codes set to "Partner's agreement". The contact becomes the account's admin user. The account starts <strong>pending</strong>; when ready, open Partners → Agencies and press <strong>Activate &amp; send link</strong> to email them a sign-in link.</p>
+    </div>`,
+    async onSubmit(form, errEl){
+      const val = n => (form.querySelector(`[name="${n}"]`) || {}).value || '';
+      const built = affBuildAffiliateBody({ name: val('name'), contact_name: val('contact_name'), email: val('email'), language: val('language'),
+        commission_model: val('commission_model'), commission_value: val('commission_value') });
+      if (!built.ok) { errEl.textContent = built.errors.map(e => e.message).join('. ') + '.'; return; }
+      const res = await rcvApi('POST', '/api/staff/referrals/affiliates', built.body);
+      let data = null; try { data = await res.json(); } catch (_) {}
+      if (!res.ok || !data || data.ok === false) { errEl.textContent = affErrorMessage(res.status, data); return; }
+      affModalDone(`${built.body.name} was created as a pending affiliate. Next: make their promo code (Codes → New code), then open Partners → Agencies and press "Activate & send link" so they can sign in.`);
+      if (typeof ptnData !== 'undefined') ptnData = null; // the Partners page reloads with the new account
+      await loadAffiliates(true);
+    },
+  });
+}
+
+// ---- Sales
+function affSalesRows(){ return affFilterSales(affData.sales, AFF_STATE.sales); }
+function affSalesHtml(){
+  const d = affData, f = AFF_STATE.sales;
+  const rows = affSalesRows();
+  const code = new Map(d.codes.map(c => [c.id, c.code]));
+  const counted = rows.filter(affCounts);
+  const partnerOpts = [['', 'All partners'], ...d.agencies.filter(a => d.sales.some(p => p.agency_id === a.id)).map(a => [a.id, a.name])];
+  const cityOpts = [['', 'All cities'], ...[...new Set(d.sales.map(p => affText(p.city)).filter(Boolean))].sort().map(c => [c, c])];
+  const btn = (p, action, label) => `<button class="btn btn-ghost btn-mini" type="button" data-aff-sale="${esc(p.id)}" data-action="${action}">${label}</button>`;
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <input type="date" class="form-input" data-aff-sales-filter="from" value="${esc(f.from)}" style="max-width:160px" aria-label="From">
+      <input type="date" class="form-input" data-aff-sales-filter="to" value="${esc(f.to)}" style="max-width:160px" aria-label="To">
+      ${affSelectHtml('data-aff-sales-filter="agency"', partnerOpts, f.agency, ' style="max-width:220px" aria-label="Partner"')}
+      ${affSelectHtml('data-aff-sales-filter="city"', cityOpts, f.city, ' style="max-width:170px" aria-label="City"')}
+      ${affSelectHtml('data-aff-sales-filter="status"', AFF_SALE_STATUSES, f.status, ' style="max-width:230px" aria-label="Status"')}
+      <button class="btn btn-ghost" type="button" data-aff-csv="sales">Download CSV</button>
+      <span class="name-sub">${rows.length} row${rows.length === 1 ? '' : 's'} · ${counted.length} counted · ${esc(affMoney(counted.reduce((s, p) => s + affAmount(p), 0)))}</span>
+    </div>
+    ${rows.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Booking</th><th>Date</th><th>Partner</th><th>Source</th><th>Customer</th><th>City / type</th><th style="text-align:right">Amount</th><th style="text-align:right">Discount</th><th style="text-align:right">Commission</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows.map(p => {
+        const acts = affSaleActions(p);
+        return `<tr style="border-top:1px solid var(--line)${affCounts(p) ? '' : ';opacity:.7'}">
+        <td ${AFF_TDNW}><strong>${esc(p.booking_ref || '#' + p.id)}</strong>${p.move_in ? `<br><span class="name-sub">move-in ${esc(affDay(p.move_in))}</span>` : ''}</td>
+        <td ${AFF_TDNW}>${esc(affSaleDay(p) || '—')}</td>
+        <td ${AFF_TD}>${esc(affAgencyName(p.agency_id))}</td>
+        <td ${AFF_TD}>${esc(affSaleSource(p))}${p.code_id || p.promo_code ? `<br><span class="name-sub" style="font-family:monospace">${esc(p.promo_code || code.get(p.code_id) || '')}</span>` : ''}</td>
+        <td ${AFF_TD}>${esc(p.customer_name || '—')}${p.customer_email ? `<br><span class="name-sub">${esc(p.customer_email)}</span>` : ''}</td>
+        <td ${AFF_TD}>${esc(p.city || '—')}<br><span class="name-sub">${esc(p.room_type || p.property_name || p.room_name || '')}</span></td>
+        <td ${AFF_NUM}>${esc(affMoney(p.booking_amount_cents))}</td>
+        <td ${AFF_NUM}>${p.discount_cents ? esc(affMoney(p.discount_cents)) : '—'}</td>
+        <td ${AFF_NUM}>${p.commission_cents ? esc(affMoney(p.commission_cents)) : '—'}${p.commission_status && p.commission_status !== 'none' ? '<br>' + affPill(affCommissionStatus(p.commission_status)) : ''}</td>
+        <td ${AFF_TDNW}>${affPill(affSaleStatus(p))}</td>
+        <td ${AFF_TDNW}>
+          ${acts.includes('cancel') ? btn(p, 'cancel', 'Cancel') : ''}${acts.includes('refund') ? btn(p, 'refund', 'Refund') : ''}
+          ${acts.includes('commission_paid') ? btn(p, 'commission_paid', 'Mark commission paid') : ''}${acts.includes('commission_unpaid') ? btn(p, 'commission_unpaid', 'Undo paid') : ''}</td>
+      </tr>`; }).join('')}</tbody></table></div>` : `<p class="name-sub">${d.sales.length ? 'No sales match these filters.' : 'No partner sales yet.'}</p>`}`;
+}
+const AFF_SALE_ACTION_COPY = {
+  cancel: { title: 'Cancel this sale?', submit: 'Cancel sale', done: 'cancelled',
+    text: 'The booking is marked cancelled, it stops counting toward revenue and code uses, and any commission on it is voided. This does not refund the student in Stripe.' },
+  refund: { title: 'Mark this sale refunded?', submit: 'Mark refunded', done: 'marked refunded',
+    text: 'Use this after the refund was made in Stripe. The booking stops counting toward revenue and code uses, and its commission is voided.' },
+  commission_paid: { title: 'Mark the commission paid?', submit: 'Mark paid', done: 'commission marked paid',
+    text: 'Records that the partner was paid this commission.' },
+  commission_unpaid: { title: 'Undo the commission payment?', submit: 'Undo paid', done: 'commission set back to eligible',
+    text: 'Sets the commission back to eligible (unpaid).' },
+};
+function affSaleAction(id, action){
+  const p = affData && affData.sales.find(x => String(x.id) === String(id));
+  const copy = AFF_SALE_ACTION_COPY[action];
+  if (!p || !copy) return;
+  affModalOpen({
+    title: esc(copy.title), sub: `${p.booking_ref || '#' + p.id} · ${affAgencyName(p.agency_id)}${p.customer_name ? ' · ' + p.customer_name : ''}`,
+    submit: copy.submit,
+    body: `<p style="margin:0 0 10px;line-height:1.5">${esc(copy.text)}</p>
+      ${affField('Note (optional, kept in the audit log)', '<textarea class="form-input" name="note" rows="2" maxlength="500"></textarea>', true)}`,
+    async onSubmit(form, errEl){
+      const note = affText((form.querySelector('[name="note"]') || {}).value) || null;
+      const res = await rcvApi('PATCH', '/api/staff/referrals/sales/' + encodeURIComponent(p.id), { action, note });
+      let data = null; try { data = await res.json(); } catch (_) {}
+      if (!res.ok || (data && data.ok === false)) { errEl.textContent = affErrorMessage(res.status, data); return; }
+      affModalClose();
+      showToast(`${p.booking_ref || 'Sale'} ${copy.done}`);
+      await loadAffiliates(true);
+    },
+  });
+}
+
+// ---- Analytics
+function affBarCell(value, max, text){
+  const w = max > 0 && value > 0 ? Math.max(2, Math.round(value / max * 100)) : 0;
+  return `<td style="padding:8px;min-width:140px"><div style="display:flex;align-items:center;gap:8px">
+    <div style="flex:1;background:var(--cream-2);height:8px;border-radius:4px;overflow:hidden;min-width:60px"><div style="width:${w}%;height:100%;background:var(--red)"></div></div>
+    <span style="white-space:nowrap">${esc(text)}</span></div></td>`;
+}
+function affGroupTableHtml(title, firstCol, rows, csvKey){
+  const max = Math.max(0, ...rows.map(r => r.revenue));
+  return `<div class="card" style="padding:0;overflow-x:auto;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px 4px;gap:10px"><strong>${esc(title)}</strong>
+      <button class="btn btn-ghost btn-mini" type="button" data-aff-csv="${csvKey}">CSV</button></div>
+    ${rows.length ? `<table style="width:100%;border-collapse:collapse"><thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">${esc(firstCol)}</th><th style="text-align:right">Sales</th><th>Revenue</th><th style="text-align:right">Discount cost</th><th style="text-align:right;padding-right:14px">Commission</th></tr></thead>
+      <tbody>${rows.map(r => `<tr style="border-top:1px solid var(--line)"><td ${AFF_TD}>${esc(r.label)}</td><td ${AFF_NUM}>${r.sales}</td>
+        ${affBarCell(r.revenue, max, affMoney(r.revenue))}
+        <td ${AFF_NUM}>${esc(affMoney(r.discount))}</td><td style="padding:8px 14px 8px 8px;text-align:right;white-space:nowrap">${esc(affMoney(r.commission))}</td></tr>`).join('')}</tbody></table>`
+      : '<p class="name-sub" style="padding:0 14px 12px">No sales in this period.</p>'}
+  </div>`;
+}
+function affAnalyticsTables(){
+  const d = affData, r = affRange();
+  return {
+    partners: affTopPartners(d.sales, d.agencies, r), city: affByCity(d.sales, r), type: affByType(d.sales, r),
+    codes: affCodePerformance(d.codes, d.sales, d.events, d.agencies, r),
+    month: affTrend(d.sales, r, 'month'), quarter: affTrend(d.sales, r, 'quarter'),
+  };
+}
+function affAnalyticsHtml(){
+  const d = affData, rs = AFF_STATE.range, r = affRange();
+  const k = affSummary(d.sales, d.events, r), t = affAnalyticsTables();
+  const kpi = (label, value, sub) => `<div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">${esc(label)}</div><div class="kpi-value">${esc(value)}</div>${sub ? `<div class="kpi-trend">${esc(sub)}</div>` : ''}</div>`;
+  const presets = [['this_month', 'This month'], ['last_month', 'Last month'], ['this_quarter', 'This quarter'], ['this_year', 'This year'], ['all', 'All time'], ['custom', 'Custom…']];
+  const maxVisits = Math.max(0, ...t.codes.map(c => c.visits));
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      ${affSelectHtml('data-aff-range="preset"', presets, rs.preset, ' style="max-width:170px" aria-label="Period"')}
+      ${rs.preset === 'custom' ? `<input type="date" class="form-input" data-aff-range="from" value="${esc(rs.from)}" style="max-width:160px" aria-label="From">
+        <input type="date" class="form-input" data-aff-range="to" value="${esc(rs.to)}" style="max-width:160px" aria-label="To">` : ''}
+      <span class="name-sub">${r.from || r.to ? `${esc(r.from || '…')} → ${esc(r.to || '…')}` : 'All time'} · cancelled, refunded and duplicate bookings are left out of revenue and commissions${k.duplicates ? ` (${k.duplicates} duplicate${k.duplicates === 1 ? '' : 's'} counted as direct bookings)` : ''}</span>
+    </div>
+    <div class="kpi-grid">
+      ${kpi('Link visits', String(k.visits), `${k.leads} lead${k.leads === 1 ? '' : 's'}`)}
+      ${kpi('Sales', String(k.sales), `${k.referralSales} by code · ${k.linkSales} by room link${k.cancelled ? ` · ${k.cancelled} cancelled` : ''}`)}
+      ${kpi('Revenue', affMoney(k.revenue), 'booking amounts, paid')}
+      ${kpi('Conversion', affPct(k.conversion), 'code sales ÷ link visits')}
+      ${kpi('Discount cost', affMoney(k.discount), 'off membership fees')}
+      ${kpi('Commissions earned', affMoney(k.earned), 'eligible + paid')}
+      ${kpi('Outstanding', affMoney(k.outstanding), 'pending + eligible')}
+      ${kpi('Commissions paid', affMoney(k.paid), '')}
+    </div>
+    ${affGroupTableHtml('Top partners', 'Partner', t.partners, 'partners')}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:0 16px">
+      ${affGroupTableHtml('Revenue by city', 'City', t.city, 'city')}
+      ${affGroupTableHtml('Revenue by accommodation type', 'Type', t.type, 'type')}
+    </div>
+    <div class="card" style="padding:0;overflow-x:auto;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px 4px"><strong>Link performance by code</strong>
+        <button class="btn btn-ghost btn-mini" type="button" data-aff-csv="codes">CSV</button></div>
+      ${t.codes.length ? `<table style="width:100%;border-collapse:collapse"><thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Code</th><th>Partner</th><th>Visits</th><th style="text-align:right">Leads</th><th style="text-align:right">Sales</th><th style="text-align:right">Revenue</th><th style="text-align:right;padding-right:14px">Conversion</th></tr></thead>
+        <tbody>${t.codes.map(c => `<tr style="border-top:1px solid var(--line)"><td ${AFF_TD}><span style="font-family:monospace">${esc(c.code)}</span>${c.campaign ? `<br><span class="name-sub">${esc(c.campaign)}</span>` : ''}</td>
+          <td ${AFF_TD}>${esc(c.partner)}</td>${affBarCell(c.visits, maxVisits, String(c.visits))}<td ${AFF_NUM}>${c.leads}</td><td ${AFF_NUM}>${c.sales}</td>
+          <td ${AFF_NUM}>${esc(affMoney(c.revenue))}</td><td style="padding:8px 14px 8px 8px;text-align:right;white-space:nowrap">${esc(affPct(c.conversion))}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="name-sub" style="padding:0 14px 12px">No codes yet.</p>'}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:0 16px">
+      ${affGroupTableHtml('Monthly trend', 'Month', t.month, 'month')}
+      ${affGroupTableHtml('Quarterly trend', 'Quarter', t.quarter, 'quarter')}
+    </div>`;
+}
+function affDownload(name, csv){
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function affExport(key){
+  const d = affData, stamp = affToday();
+  if (key === 'sales') return affDownload(`vanmates-partner-sales-${stamp}.csv`, affSalesCsv(affSalesRows(), d.agencies, d.codes));
+  const r = affRange(), span = r.from || r.to ? `${r.from || 'start'}_${r.to || stamp}` : 'all-time';
+  const t = affAnalyticsTables();
+  if (key === 'codes') return affDownload(`vanmates-code-performance-${span}.csv`, affCodePerformanceCsv(t.codes));
+  const cols = { partners: 'Partner', city: 'City', type: 'Accommodation type', month: 'Month', quarter: 'Quarter' };
+  const file = { partners: 'top-partners', city: 'revenue-by-city', type: 'revenue-by-type', month: 'monthly-trend', quarter: 'quarterly-trend' };
+  if (cols[key]) affDownload(`vanmates-${file[key]}-${span}.csv`, affGroupCsv(cols[key], t[key]));
+}
+async function affCopy(text){
+  try { await navigator.clipboard.writeText(text); showToast('Link copied'); }
+  catch (_) {
+    const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (_) {}
+    ta.remove(); showToast(ok ? 'Link copied' : text);
+  }
+}
+
+// One delegated listener per event type on the root (the HTML is re-rendered, the root is not).
+function affWire(root){
+  if (root.dataset.affWired) return;
+  root.dataset.affWired = '1';
+  root.addEventListener('click', e => {
+    const t = e.target.closest('button');
+    if (!t || !root.contains(t)) return;
+    if (t.dataset.affTab) { AFF_STATE.tab = t.dataset.affTab; renderAffiliates(); }
+    else if (t.hasAttribute('data-aff-refresh')) loadAffiliates(true);
+    else if (t.hasAttribute('data-aff-code-new')) affOpenCode('');
+    else if (t.dataset.affCodeFor) affOpenCode('', { agency_id: t.dataset.affCodeFor });
+    else if (t.dataset.affCodeEdit) affOpenCode(t.dataset.affCodeEdit);
+    else if (t.dataset.affCodeActive) { t.disabled = true; affSetActive(t.dataset.affCodeActive, t.dataset.active === '1'); }
+    else if (t.dataset.affCopy) affCopy(t.dataset.affCopy);
+    else if (t.hasAttribute('data-aff-affiliate-new')) affOpenAffiliate();
+    else if (t.hasAttribute('data-aff-open-partners')) { if (typeof PTN_STATE !== 'undefined') PTN_STATE.tab = 'agencies'; goToView('partners'); }
+    else if (t.dataset.affSale) affSaleAction(t.dataset.affSale, t.dataset.action);
+    else if (t.dataset.affCsv) affExport(t.dataset.affCsv);
+  });
+  root.addEventListener('change', e => {
+    const t = e.target;
+    if (t.dataset.affCodesFilter) { AFF_STATE.codes[t.dataset.affCodesFilter] = t.value; renderAffiliates(); }
+    else if (t.dataset.affSalesFilter) { AFF_STATE.sales[t.dataset.affSalesFilter] = t.value; renderAffiliates(); }
+    else if (t.dataset.affRange) {
+      const k = t.dataset.affRange;
+      if (k === 'preset' && t.value === 'custom' && !AFF_STATE.range.from && !AFF_STATE.range.to) {
+        const cur = affRange(); AFF_STATE.range.from = cur.from; AFF_STATE.range.to = cur.to;
+      }
+      AFF_STATE.range[k] = t.value; renderAffiliates();
+    }
+  });
+}
+
+// ---- the Affiliates dialog (one modal, filled per action; same look as the Receivables one)
+const AFF_MODAL = { onSubmit: null, busy: false, wired: false };
+function affModalWire(){
+  if (AFF_MODAL.wired) return;
+  AFF_MODAL.wired = true;
+  const bd = document.getElementById('aff-backdrop'), form = document.getElementById('aff-modal-form');
+  bd.addEventListener('click', e => { if (e.target === bd && !AFF_MODAL.busy) affModalClose(); });
+  document.getElementById('aff-modal-close').addEventListener('click', () => { if (!AFF_MODAL.busy) affModalClose(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && bd.classList.contains('open') && !AFF_MODAL.busy) affModalClose(); });
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const submit = AFF_MODAL.onSubmit;
+    if (!submit || AFF_MODAL.busy) return;
+    const err = form.querySelector('[data-aff-err]'), btn = form.querySelector('button[type="submit"]');
+    AFF_MODAL.busy = true; if (btn) btn.disabled = true; if (err) err.textContent = '';
+    try { await submit(form, err); }
+    catch (x) { if (err) err.textContent = (x && x.message) || String(x); }
+    finally { AFF_MODAL.busy = false; if (btn) btn.disabled = false; }
+  });
+}
+// o: { title (trusted HTML), sub, body (HTML), submit, wide, wire(form), onSubmit(form, errEl) }
+function affModalOpen(o){
+  const bd = document.getElementById('aff-backdrop');
+  if (!bd) return;
+  affModalWire();
+  bd.querySelector('.modal-dialog').style.maxWidth = o.wide ? '820px' : '560px';
+  document.getElementById('aff-modal-title').innerHTML = o.title;
+  document.getElementById('aff-modal-sub').textContent = o.sub || '';
+  const form = document.getElementById('aff-modal-form');
+  delete form.dataset.codeTouched; form._affKeepProps = null;
+  form.innerHTML = `${o.body}
+    <div class="card-sub" data-aff-err role="alert" style="color:var(--red-dark);min-height:18px;margin-top:8px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-ghost" type="button" data-aff-close>Close</button>
+      <button class="btn btn-primary" type="submit">${esc(o.submit)}</button>
+    </div>`;
+  form.querySelectorAll('[data-aff-close]').forEach(b => b.addEventListener('click', () => { if (!AFF_MODAL.busy) affModalClose(); }));
+  AFF_MODAL.onSubmit = o.onSubmit; AFF_MODAL.busy = false;
+  if (o.wire) o.wire(form);
+  bd.classList.add('open'); bd.setAttribute('aria-hidden', 'false');
+  setTimeout(() => { const f = form.querySelector('textarea, select, input:not([type=checkbox])'); if (f) f.focus(); }, 50);
+}
+function affModalClose(){
+  const bd = document.getElementById('aff-backdrop'); if (!bd) return;
+  bd.classList.remove('open'); bd.setAttribute('aria-hidden', 'true');
+  AFF_MODAL.onSubmit = null;
+}
+function affModalDone(message){
+  const form = document.getElementById('aff-modal-form');
+  AFF_MODAL.onSubmit = null;
+  form.innerHTML = `<p style="margin:4px 0 0;line-height:1.5">${esc(message)}</p>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-primary" type="button" data-aff-close>Done</button></div>`;
+  form.querySelector('[data-aff-close]').addEventListener('click', affModalClose);
 }
 /* PARTNERS-CORE-START */
 /* Partners page (admin only): agencies, their users, and partner bookings for
@@ -38019,6 +39037,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-10-cel2"></script>
+<script src="room-changes.js?v=2026-10-10-affil2"></script>
 </body>
 </html>
