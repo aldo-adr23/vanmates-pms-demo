@@ -35,22 +35,26 @@
   function actionsFor(status){
     return { accept: status === 'NEEDS_REVIEW', decline: status === 'NEEDS_REVIEW', reopen: status === 'DECLINED' };
   }
-  // The body posted to Hugo. room_gid / confirm_fixed only when set.
-  function hugoBody(id, rent, roomGid, confirmFixed){
+  // The body posted to Hugo. room_gid / confirm_fixed / utilities only when set.
+  function hugoBody(id, rent, roomGid, confirmFixed, utilities){
     const b = { request_id: id, rent };
     if (roomGid) b.room_gid = roomGid;
     if (confirmFixed) b.confirm_fixed = true;
+    if (utilities === 'Yes' || utilities === 'No') b.utilities = utilities;
     return b;
   }
+  // 'Yes' / 'No' from a contract's booking.utilities ("yes", "Yes, included", "No"), else ''.
+  function yesNo(v){ const t = String(v == null ? '' : v).trim().toLowerCase(); return /^(yes|y|true|incl)\b/.test(t) ? 'Yes' : /^(no|n|false)$|^no[\s,.]/.test(t) ? 'No' : ''; }
   // Hugo's answer → what the drawer does next: done | pick_room | confirm_fixed | warn.
   function hugoNext(res){
     const s = res && res.status;
     if (s === 'sent') return { kind: 'done', message: res.message || 'Extension contract sent.' };
     if (s === 'ask_room' && Array.isArray(res.candidates) && res.candidates.length) return { kind: 'pick_room', message: res.message || 'Which room is this tenant in?', candidates: res.candidates };
     if (s === 'needs_confirmation') return { kind: 'confirm_fixed', message: res.message || 'This tenancy is month-to-month.' };
+    if (s === 'draft' && Array.isArray(res.missing) && res.missing.some(m => /utilit/i.test(m))) return { kind: 'warn', message: 'Hugo has no record of whether utilities are included for this tenant. Choose Yes or No under "Utilities included" and press Accept again (the draft is reused).' };
     return { kind: 'warn', message: (res && res.message) || ('Hugo could not send the extension' + (s ? ' (' + s + ')' : '') + '.') };
   }
-  window.EXT_CORE = { EX_STATUSES, EX_OPEN, EX_STATUS_LABEL, CT_STATUS, inTab, needsReview, sortOpen, parseRent, actionsFor, hugoBody, hugoNext };
+  window.EXT_CORE = { EX_STATUSES, EX_OPEN, EX_STATUS_LABEL, CT_STATUS, inTab, needsReview, sortOpen, parseRent, actionsFor, hugoBody, hugoNext, yesNo };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'open', q: '', city: '', status: '', owner: '' };
@@ -155,8 +159,17 @@
       </div>`;
   }
 
+  // Utilities on the tenant's latest signed co-living contract, for the Accept default.
+  function utilitiesFromContract(email){
+    const lc = (x) => String(x == null ? '' : x).trim().toLowerCase();
+    const list = (window.contracts || []).filter(c => c && c.booking && ['customer_signed', 'completed'].includes(c.status)
+      && (c.booking.tenants || []).some(t => lc(t.email) === lc(email)));
+    list.sort((x, y) => String(y.booking.start || '').localeCompare(String(x.booking.start || '')));
+    return list.length ? yesNo(list[0].booking.utilities) : '';
+  }
+
   function acceptHtml(r){
-    const a = acc[r.id] || (acc[r.id] = { rent: r.current_rent != null ? String(Math.round(Number(r.current_rent))) : '', room_gid: '', step: null, busy: false });
+    const a = acc[r.id] || (acc[r.id] = { rent: r.current_rent != null ? String(Math.round(Number(r.current_rent))) : '', utilities: utilitiesFromContract(r.email), room_gid: '', step: null, busy: false });
     const step = a.step;
     let extra = '';
     if (step && step.kind === 'pick_room') {
@@ -172,7 +185,13 @@
     return `${H('Accept & send contract')}
       <form data-ex-accept="${e(r.id)}" style="display:grid;gap:10px">
         <p class="name-sub" style="margin:0">Hugo checks the room is free until ${e(day(r.new_end))}, emails ${e((r.data || {}).name || r.email)} the extension contract to sign and holds the room for 7 days. Takes about 20 seconds.</p>
-        <label class="name-sub" style="display:grid;gap:4px;max-width:220px">Rent / month<input class="form-input" name="rent" inputmode="decimal" value="${e(a.rent)}" required></label>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <label class="name-sub" style="display:grid;gap:4px;max-width:220px">Rent / month<input class="form-input" name="rent" inputmode="decimal" value="${e(a.rent)}" required></label>
+          <label class="name-sub" style="display:grid;gap:4px;max-width:260px">Utilities included<select class="form-input" name="utilities">
+            <option value="" ${a.utilities ? '' : 'selected'}>From the tenant record</option>
+            <option value="Yes" ${a.utilities === 'Yes' ? 'selected' : ''}>Yes</option>
+            <option value="No" ${a.utilities === 'No' ? 'selected' : ''}>No</option></select></label>
+        </div>
         ${a.busy ? `<div class="name-sub">Hugo is sending the extension…</div>` : ''}
         ${extra}
         <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit" ${a.busy ? 'disabled' : ''}>${a.busy ? 'Sending…' : 'Accept &amp; send contract'}</button></div>
@@ -303,13 +322,13 @@
     const a = acc[id];
     if (!a || a.busy) return;
     const form = document.querySelector(`#panel-body [data-ex-accept="${CSS.escape(id)}"]`);
-    if (form) a.rent = String(new FormData(form).get('rent') || '').trim();
+    if (form) { const fd = new FormData(form); a.rent = String(fd.get('rent') || '').trim(); a.utilities = String(fd.get('utilities') || ''); }
     const rent = parseRent(a.rent);
     if (rent == null) { a.step = { kind: 'warn', message: 'Rent must be a positive number of dollars.' }; repaint(id); return; }
     if (opts && opts.room_gid) a.room_gid = opts.room_gid;
     if (!opts && !confirm(`Send ${(r.data || {}).name || r.email} an extension contract until ${day(r.new_end)} at ${money(rent)}/mo?`)) return;
     a.busy = true; a.step = null; repaint(id);
-    const res = await callHugo(hugoBody(id, rent, a.room_gid, opts && opts.confirm_fixed));
+    const res = await callHugo(hugoBody(id, rent, a.room_gid, opts && opts.confirm_fixed, a.utilities));
     a.busy = false;
     const next = hugoNext(res);
     if (next.kind === 'done') {
