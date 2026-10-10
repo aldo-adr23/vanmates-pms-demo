@@ -1568,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-09-famphoto1"></script>
+<script src="pms-supabase.js?v=2026-10-09-fixresend1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -36396,6 +36396,8 @@ function ctActions(row, me) {
   if (s === 'completed') out.push('extend');
   return out;
 }
+// "Fix & resend" (Replace) is offered right on list rows and person lists, not only in the drawer.
+function ctCanFix(row, me) { return ctActions(row, me).includes('replace'); }
 
 // Tabs: counts + each tab's list, oldest-waiting first where age matters.
 function ctTabs(rows) {
@@ -36499,7 +36501,7 @@ function ctErrorText(status, body) {
     conflict: 'Someone else changed this contract at the same time. It has been reloaded; try again.',
     not_ready: 'This contract is not waiting for Vanmates any more' + (d.status ? ' (it is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '. Reload the page.',
     cannot_void: 'This contract is already ' + (ctStr(d.status) || 'closed') + ' and cannot be voided.',
-    already_signed: 'This booking already has a signed contract, so it cannot be created or replaced again. Reload the page.',
+    already_signed: 'This person already has a contract for this booking. To correct it, use Fix & resend on that contract.',
     not_sendable: 'Only drafts and sent contracts can be sent' + (d.status ? ' (this one is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '.',
     name_required: 'Type your name before signing.',
     signature_invalid: 'The signature did not come through. Draw it again and retry.',
@@ -36822,6 +36824,7 @@ function renderContracts() {
       esc(label) + '<span class="ct-n' + (k === 'waiting' && counts.waiting ? ' ct-need' : '') + '">' + counts[k] + '</span></button>').join('');
   }
   const now = new Date();
+  const me = ctMe();
   const list = lists[CT_STATE.tab].filter((r) => ctMatches(r, CT_STATE.q));
   const head = document.getElementById('ct-head');
   const lastCol = { waiting: 'Tenant signed', sent: 'Sent', draft: 'Needs', completed: 'Signed for Vanmates', void: 'Voided' }[CT_STATE.tab];
@@ -36839,7 +36842,8 @@ function renderContracts() {
         '<td style="white-space:nowrap">' + esc(s.datesText) + (s.leaseTypeText ? '<div class="ct-sub">' + esc(s.leaseTypeText) + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.rent ? ctMoney(s.rent) : '—') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.depositText || '—') + '</td>' +
-        '<td>' + (need ? '<span class="ct-need-dot">' + esc(s.statusLine) + '</span>' : esc(s.statusLine)) + '</td></tr>';
+        '<td>' + (need ? '<span class="ct-need-dot">' + esc(s.statusLine) + '</span>' : esc(s.statusLine)) +
+          (ctCanFix(r, me) ? '<div><button type="button" class="btn btn-ghost btn-mini ct-fix-btn" data-ct-fix="' + esc(s.id) + '" title="Correct a mistake: void this contract and send a fixed one">Fix &amp; resend</button></div>' : '') + '</td></tr>';
     }).join('');
   }
   const empty = document.getElementById('ct-empty');
@@ -36883,7 +36887,7 @@ function ctRenderPanel(row) {
   const acts = ctActions(row, me);
   const btn = (k, label, primary) => acts.includes(k) ? '<button class="btn ' + (primary ? 'btn-primary' : 'btn-ghost') + ' btn-mini" type="button" data-ct-act="' + k + '">' + label + '</button>' : '';
   const actionsHtml = acts.length
-    ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('replace', 'Replace…', false) + btn('extend', 'Extend…', false) + btn('void', 'Void…', false) + '</div>'
+    ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('replace', 'Fix &amp; resend…', true) + btn('extend', 'Extend…', false) + btn('void', 'Void…', false) + '</div>'
     : (ctCanAct(me) ? '' : '<div class="ct-sub">Only admins and people with the Contracts page can sign, send or void.</div>');
   const signerNote = ctStr(row.status) === 'customer_signed' && !ctIsCountersigner(me)
     ? '<div class="ct-sub">' + esc(CT_COUNTERSIGNER.name) + ' (' + esc(CT_COUNTERSIGNER.title) + ') signs for Vanmates.</div>' : '';
@@ -36897,6 +36901,7 @@ function ctRenderPanel(row) {
     '<div class="ct-panel-status' + (CT_STATE.bad ? ' ct-bad' : '') + '" id="ct-panel-status" role="status" aria-live="polite">' + esc(CT_STATE.msg) + '</div>' +
     (emailProblem ? '<div class="ct-note ct-need">' + esc(emailProblem) + '</div>' : '') +
     (s.bucket === 'draft' && s.missing.length ? ctSection('Needs <em>you</em>', '<div class="ct-need-dot">Missing: ' + esc(s.missing.map((m) => m.label).join(', ')) + '</div>') : '') +
+    (acts.length || !ctCanAct(me) || signerNote ? ctSection('Actions', actionsHtml + signerNote + '<div id="ct-form"></div>') : '') +
     ctSection('Booking',
       (s.isExtension ? ctKv('Type', esc(s.extensionText) + '<div class="ct-sub">Continues a current tenancy; no new deposit</div>') : '') +
       ctKv('Contract', esc(s.docTitle) + (s.isRta ? '<div class="ct-sub">BC form RTB-1 · Vanmates is the landlord</div>' : '')) +
@@ -36915,7 +36920,6 @@ function ctRenderPanel(row) {
       ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash : '<span class="ct-sub">not signed yet</span>')) +
       (s.voidReason ? ctKv('Void reason', esc(s.voidReason)) : '') +
       (pdfs.length ? '<div class="ct-actions">' + pdfs.join('') + '</div>' : '')) +
-    (acts.length || !ctCanAct(me) || signerNote ? ctSection('Actions', actionsHtml + signerNote + '<div id="ct-form"></div>') : '') +
     ctSection('History', timeline.length
       ? '<ol class="ct-timeline">' + timeline.map((e) => '<li' + (e.bad ? ' class="ct-need"' : '') + '><span>' + esc(e.when || '—') + '</span><span>' + esc(e.text) + '</span></li>').join('') + '</ol>'
       : '<div class="ct-sub">No events yet.</div>') +
@@ -37176,7 +37180,7 @@ async function ctSignGo() {
    the old contract only once the new one validates). A manual Extend does not
    hold the room in Asana; that stays Hugo's. */
 const CT_NEW = { mode: 'new', contract: null, busy: false, rooms: null, who: '' };
-const CT_NEW_TITLES = { new: 'New <em>contract</em>', replace: 'Replace <em>contract</em>', extend: 'Extend <em>contract</em>' };
+const CT_NEW_TITLES = { new: 'New <em>contract</em>', replace: 'Fix &amp; resend <em>contract</em>', extend: 'Extend <em>contract</em>' };
 // Inventory rooms for the picker (the Vacancies model: every Asana room with
 // its house, address and rent). Loaded on first use; typing by hand always works.
 function ctInvRooms() {
@@ -37219,6 +37223,8 @@ function ctEnsureContractModal() {
   document.body.appendChild(wrap);
   wrap.addEventListener('click', (e) => {
     if (e.target === wrap) { if (!CT_NEW.busy) ctCloseContractForm(); return; }
+    const fx = e.target.closest('[data-ct-fix-typed]');
+    if (fx) { if (!CT_NEW.busy) ctFix(fx.dataset.ctFixTyped, ctContractFormValues()); return; }
     const b = e.target.closest('[data-ct-new-act]'); if (!b || b.disabled) return;
     const k = b.dataset.ctNewAct;
     if (k === 'close') { if (!CT_NEW.busy) ctCloseContractForm(); }
@@ -37353,6 +37359,27 @@ function ctOpenContractForm(mode, src) {
   setTimeout(() => { const f = document.querySelector('#ct-new-form select, #ct-new-form input:not([type=hidden])'); if (f) f.focus(); }, 50);
 }
 window.ctOpenContractForm = ctOpenContractForm;
+// Fix & resend = Replace, from anywhere. `typed` (ctContractFormValues of a
+// New form the Worker refused) carries over what was already typed, so a
+// blocked New becomes a Replace of the person's existing contract.
+function ctFix(id, typed) {
+  const row = ctFind(id);
+  if (!row) { if (typeof showToast === 'function') showToast('That contract is not loaded. Reload the page.'); return; }
+  ctOpenContractForm('replace', { contract: row });
+  if (!typed) return;
+  const f = document.getElementById('ct-new-form');
+  Object.keys(typed).forEach((k) => {
+    if (k === 'form' || k === 'original_start') return;   // a replacement keeps its type and tenancy start
+    const els = f.querySelectorAll('[name="' + k + '"]');
+    els.forEach((el) => {
+      if (el.type === 'checkbox') el.checked = Array.isArray(typed[k]) && typed[k].includes(el.value);
+      else el.value = typed[k];
+    });
+  });
+  ctLeaseTypeShown();
+  ctPreviewContractForm();
+  setTimeout(() => { const r = document.getElementById('ct-n-reason'); if (r) r.focus(); }, 60);
+}
 function ctCloseContractForm() {
   const bk = document.getElementById('ct-new-backdrop');
   if (bk) { bk.classList.remove('open'); bk.setAttribute('aria-hidden', 'true'); }
@@ -37385,16 +37412,30 @@ async function ctSubmitContractForm(k) {
   const label = document.querySelector('#ct-new-backdrop [data-ct-new-act="' + k + '"]');
   const was = label ? label.textContent : '';
   if (label) label.textContent = k === 'draft' ? 'Saving…' : 'Sending… (making the PDF)';
-  let d = null, failure = '';
+  let d = null, failure = '', fixId = '';
   try { d = await ctCall('/coliving', body); }
   catch (e) {
     failure = (e && e.message) || String(e);
     if (k === 'replace' && e && e.body && e.body.error === 'missing') failure += ' The old contract was not voided.';
+    // Blocked by a contract the person already has: offer to fix that one with what was typed here.
+    let blocker = null;
+    if (e && e.body && e.body.error === 'already_signed' && e.body.contract_id) {
+      blocker = ctFind(e.body.contract_id);
+      if (!blocker) { await ctReloadRow(e.body.contract_id); blocker = ctFind(e.body.contract_id); }
+    }
+    if (k !== 'replace' && blocker && ctCanFix(blocker, ctMe())) fixId = ctStr(blocker.id);
   }
   CT_NEW.busy = false;
   buttons.forEach((b) => { b.disabled = false; });
   if (label) label.textContent = was;
-  if (failure) { ctContractFormError(failure); return; }
+  if (failure) {
+    ctContractFormError(failure);
+    if (fixId) {
+      const el = document.getElementById('ct-new-err');
+      if (el) el.insertAdjacentHTML('beforeend', '<div style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-ct-fix-typed="' + esc(fixId) + '">Fix &amp; resend that contract with these details</button></div>');
+    }
+    return;
+  }
   const id = ctStr(d.contract_id);
   const to = (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' and ') || 'the tenant';
   const missing = Array.isArray(d.missing) ? d.missing : [];
@@ -37437,12 +37478,15 @@ function ctPersonListHtml(list) {
   // Open jumps to the Contracts page, so only for people who have that page.
   const nav = document.querySelector('.nav-item[data-view="contracts"]');
   const canOpen = !!nav && !nav.classList.contains('role-hidden');
+  const me = ctMe();
   return list.map((r) => {
     const s = ctSummary(r, new Date());
     return '<div class="ct-person-row"><div style="min-width:0"><div class="ct-name">' + esc(s.place) + ' · ' + esc(s.datesText) +
       (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') + '</div>' +
       '<div class="ct-sub">' + esc(s.statusText) + (s.statusLine ? ' · ' + esc(s.statusLine) : '') + '</div></div>' +
-      (canOpen ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-goto="' + esc(s.id) + '">Open</button>' : '') + '</div>';
+      '<div style="display:flex;gap:6px;flex-shrink:0">' +
+      (ctCanFix(r, me) ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-fix="' + esc(s.id) + '">Fix &amp; resend</button>' : '') +
+      (canOpen ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-goto="' + esc(s.id) + '">Open</button>' : '') + '</div></div>';
   }).join('');
 }
 // Tenant drawer section (inline in openTenant's template).
@@ -37505,8 +37549,9 @@ function ctNewFor(who) {
     if (q) q.addEventListener('input', () => { CT_STATE.q = q.value; renderContracts(); });
     const body = document.getElementById('ct-body');
     if (body) {
-      body.addEventListener('click', (e) => { const tr = e.target.closest('[data-ct-open]'); if (tr) ctOpenPanel(tr.dataset.ctOpen); });
-      body.addEventListener('keydown', (e) => { if (e.key !== 'Enter' && e.key !== ' ') return; const tr = e.target.closest('[data-ct-open]'); if (tr) { e.preventDefault(); ctOpenPanel(tr.dataset.ctOpen); } });
+      // A row's Fix & resend button is handled by the document listener below, not as a row click.
+      body.addEventListener('click', (e) => { if (e.target.closest('[data-ct-fix]')) return; const tr = e.target.closest('[data-ct-open]'); if (tr) ctOpenPanel(tr.dataset.ctOpen); });
+      body.addEventListener('keydown', (e) => { if (e.key !== 'Enter' && e.key !== ' ') return; if (e.target.closest('[data-ct-fix]')) return; const tr = e.target.closest('[data-ct-open]'); if (tr) { e.preventDefault(); ctOpenPanel(tr.dataset.ctOpen); } });
     }
     const refresh = document.getElementById('ct-refresh');
     if (refresh) refresh.addEventListener('click', async () => {
@@ -37523,6 +37568,8 @@ function ctNewFor(who) {
     if (nw && !nw.disabled) { e.preventDefault(); ctNewFor(nw.dataset.ctNewFor); return; }
     const pdf = e.target.closest('[data-ct-pdf]');
     if (pdf && !pdf.disabled) { e.preventDefault(); ctOpenPdf(pdf); return; }
+    const fix = e.target.closest('[data-ct-fix]');
+    if (fix && !fix.disabled) { e.preventDefault(); ctFix(fix.dataset.ctFix); return; }
     const go = e.target.closest('[data-ct-goto]');
     if (go) { e.preventDefault(); ctOpenFromElsewhere(go.dataset.ctGoto); return; }
     const act = e.target.closest('#panel-body .ct-panel [data-ct-act]');
@@ -37535,6 +37582,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-09-famphoto1"></script>
+<script src="room-changes.js?v=2026-10-09-fixresend1"></script>
 </body>
 </html>
