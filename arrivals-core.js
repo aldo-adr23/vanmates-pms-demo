@@ -1104,6 +1104,98 @@ function bytesToBase64(bytes) {
   return btoa(bin);
 }
 
+/* SCHED-CORE-START */
+// ───────── Scheduled tab (arrival-scheduling-2026-10-10.sql, arrival_schedule_v) ─────────
+// One row per contract arrival × email type: checkin (Arrival instructions) | booking (Welcome) | room_change.
+var SCHED_TYPE_LABEL = { checkin: "Arrival instructions", booking: "Welcome", room_change: "Room-change welcome" };
+var SCHED_STATUS = {
+  scheduled: { cls: "ready", label: "Scheduled" }, sending: { cls: "ready", label: "Sending…" },
+  retrying: { cls: "failed", label: "Retrying" }, failed: { cls: "failed", label: "Failed" },
+  held: { cls: "held", label: "Held" }, no_template: { cls: "missing", label: "No template" },
+  needs_review: { cls: "missing", label: "Template not reviewed" }, needs_info: { cls: "missing", label: "Needs info" },
+  missed: { cls: "failed", label: "Missed (move-in passed)" }, manual: { cls: "held", label: "Manual (Bookings)" },
+  sent: { cls: "sent", label: "Sent" }, cancelled: { cls: "skipped", label: "Cancelled" }, handled: { cls: "skipped", label: "Handled" }
+};
+function schedTypeLabel(t) { return SCHED_TYPE_LABEL[t] || "Email"; }
+function schedChip(r) {
+  r = r || {};
+  if (r.status === "sent" && r.changed_after_send) return { cls: "changed", label: "Changed after send" };
+  if (r.status === "sent" && r.opened_at) return { cls: "opened", label: "Opened" + (r.open_count > 1 ? " ×" + r.open_count : "") };
+  if (r.status === "retrying") return { cls: "failed", label: "Retrying (" + (Number(r.attempts) || 0) + "/3)" };
+  if (r.status === "held" && r.held_by === "system:prior_sent") return { cls: "changed", label: "Update to send?" };
+  if (r.status === "held" && r.held_by === "system:go_live") return { cls: "held", label: "Held at go-live" };
+  return SCHED_STATUS[r.status] || { cls: "held", label: String(r.status || "Unknown") };
+}
+// Filter buckets: upcoming (on its way), exceptions (a person must act), sent, closed (cancelled / handled).
+function schedBucket(r) {
+  var s = r && r.status;
+  if (s === "sent") return r.changed_after_send ? "exceptions" : "sent";
+  if (s === "cancelled" || s === "handled") return "closed";
+  if (s === "scheduled" || s === "sending" || s === "retrying" || s === "manual") return "upcoming";
+  return "exceptions";
+}
+function schedCounts(rows) {
+  var c = { upcoming: 0, exceptions: 0, sent: 0, closed: 0, all: 0 };
+  (rows || []).forEach(function (r) { c[schedBucket(r)]++; c.all++; });
+  return c;
+}
+// Property time zone, as SQL _arrival_tz.
+function cityTz(city) {
+  var c = String(city || "").trim().toLowerCase();
+  if (c === "vancouver" || c === "victoria" || c === "west vancouver" || c === "north vancouver" || c === "burnaby") return "America/Vancouver";
+  if (c === "guadalajara" || c === "zapopan" || c === "puerto vallarta" || c === "mexico") return "America/Mexico_City";
+  return "America/Toronto";
+}
+// {ymd:'2026-10-25', hm:'10:00'} of an instant in a zone.
+function zonedParts(iso, tz) {
+  var d = new Date(iso);
+  if (isNaN(d)) return null;
+  var f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  var p = {}; f.formatToParts(d).forEach(function (x) { p[x.type] = x.value; });
+  return { ymd: p.year + "-" + p.month + "-" + p.day, hm: p.hour + ":" + p.minute };
+}
+// The instant (ISO, UTC) at local ymd + hm in a zone (DST-safe: corrects the guess with the zone's offset twice).
+function zonedToUtc(ymd, hm, tz) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || "")), t = /^(\d{1,2}):(\d{2})$/.exec(String(hm || ""));
+  if (!m || !t) return "";
+  var want = Date.UTC(+m[1], +m[2] - 1, +m[3], +t[1], +t[2]);
+  var guess = want;
+  for (var i = 0; i < 2; i++) {
+    var p = zonedParts(new Date(guess).toISOString(), tz);
+    var pm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(p.ymd), pt = /^(\d{2}):(\d{2})$/.exec(p.hm);
+    var got = Date.UTC(+pm[1], +pm[2] - 1, +pm[3], +pt[1], +pt[2]);
+    guess += want - got;
+  }
+  return new Date(guess).toISOString();
+}
+var TZ_SHORT = { "America/Vancouver": "Vancouver time", "America/Toronto": "Toronto time", "America/Mexico_City": "Mexico City time" };
+function schedWhen(iso, city) {
+  var tz = cityTz(city), p = zonedParts(iso, tz);
+  if (!p) return "";
+  var d = new Date(Date.UTC(+p.ymd.slice(0, 4), +p.ymd.slice(5, 7) - 1, +p.ymd.slice(8, 10)));
+  var DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return DAY[d.getUTCDay()] + " " + d.getUTCDate() + " " + MON[d.getUTCMonth()] + ", " + p.hm + " " + (TZ_SHORT[tz] || tz);
+}
+// What a person can do on a row. send = Send now; resend = Send updated (instructions already sent, details changed);
+// release = unhold a 'system:prior_sent' hold and send the updated email.
+function schedActions(r) {
+  r = r || {};
+  var s = r.status, miss = Array.isArray(r.missing) ? r.missing : [], open = s !== "sent" && s !== "cancelled" && s !== "handled";
+  var a = { preview: true, history: true };
+  a.send = open && !miss.length && s !== "sending" && s !== "held";   // a held email is unheld first
+  a.release = s === "held" && r.held_by === "system:prior_sent" && !miss.length;
+  a.resend = s === "sent" && !!r.changed_after_send && r.email_type === "checkin";
+  a.reschedule = open && s !== "sending";
+  a.hold = open && s !== "held" && s !== "sending";
+  a.unhold = s === "held";
+  a.cancel = open && s !== "sending";
+  a.restore = s === "cancelled" && r.cancelled_by !== "contract" && !(r.email_type === "checkin" && !r.cancelled_at);
+  a.edit = r.email_type !== "checkin" ? open : true;   // check-in content = the building template
+  a.date = s !== "cancelled";
+  return a;
+}
+/* SCHED-CORE-END */
+
 
 var ArrCore = {
   buildArrivalEmail: buildArrivalEmail, arrivalEmailSpec: arrivalEmailSpec, renderEmail: renderEmail,
@@ -1123,7 +1215,9 @@ var ArrCore = {
   buildBookingEmail: buildBookingEmail, bookingEmailSpec: bookingEmailSpec, bookingEmailParts: bookingEmailParts,
   bookingReadiness: bookingReadiness, bookingMissingLabel: bookingMissingLabel, BK_MISSING_ORDER: BK_MISSING_ORDER,
   bookingTemplateWithOverrides: bookingTemplateWithOverrides,
-  fill: fill, ACCESS_FIELDS: ACCESS_FIELDS
+  fill: fill, ACCESS_FIELDS: ACCESS_FIELDS,
+  schedTypeLabel: schedTypeLabel, schedChip: schedChip, schedBucket: schedBucket, schedCounts: schedCounts, cityTz: cityTz,
+  zonedParts: zonedParts, zonedToUtc: zonedToUtc, schedWhen: schedWhen, schedActions: schedActions, SCHED_STATUS: SCHED_STATUS
 };
 if (typeof window !== "undefined") window.ArrCore = ArrCore;
 if (typeof module !== "undefined" && module.exports) module.exports = ArrCore;
