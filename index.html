@@ -1568,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-10-arrsched1"></script>
+<script src="pms-supabase.js?v=2026-10-10-cel1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21219,7 +21219,7 @@ function ptnStamp(iso){
 // Staff may cancel only before the move-in happens.
 function ptnCanCancel(status){ return status === 'CONFIRMED' || status === 'READY_FOR_MOVE_IN'; }
 // Deep link: #partners -> the Agencies tab, #partners/<tab> -> that tab; null = not ours.
-const PTN_HASH_TABS = ['agencies', 'users', 'bookings', 'receivables', 'commissions'];
+const PTN_HASH_TABS = ['agencies', 'users', 'bookings', 'receivables', 'commissions', 'cel'];
 function ptnTabFromHash(hash){
   const m = /^#partners(?:\/([a-z]*))?$/.exec(String(hash || ''));
   if (!m) return null;
@@ -21542,7 +21542,8 @@ async function loadPartners(force){
 async function ptnReload(){
   if (ptnLoading) { try { await ptnLoading; } catch (e) {} }
   // Receivables and Commissions read the same agencies, so a reload refreshes them too once opened.
-  await Promise.all([loadPartners(true), rcvData ? rcvAfterWrite() : null, CMM_STATE.key ? cmmLoad(true) : null]);
+  await Promise.all([loadPartners(true), rcvData ? rcvAfterWrite() : null, CMM_STATE.key ? cmmLoad(true) : null,
+    CEL_STATE.rows !== null ? celLoad(true) : null, CEL_STATE.openId ? celOpen(CEL_STATE.openId) : null]);
 }
 /* Deep link from the rent@ proof email: portal.vanmates.com/#partners/receivables (and
    #partners). Runs after hydrate (the post-hydrate hook next to openLeadFromHash), so the
@@ -21568,15 +21569,447 @@ function ptnAgencyTone(s){ return ({ active: 'green', pending: 'gold', suspended
 function ptnOptions(list, selected){
   return list.map(([v, l]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(l)}</option>`).join('');
 }
+/* ---------------------------------------------------------------------------------------------
+   CEL bookings (Partners -> "CEL bookings" tab). Category agencies (CEL) confirm accommodation
+   without a room; staff answer requests, confirm, review, assign the room (recommendations ranked
+   by vacancy gap), change it, cancel, record the student's deposit. Everything goes through the
+   partner app's /api/staff/cat/* (rcvApi: the staff JWT); the SQL owns the money and room rules.
+   Spec: vanmates-partners docs/superpowers/specs/2026-10-10-cel-category-bookings-design.md.
+   Deep link: portal.vanmates.com/#cel=CB-1001 (the reminder emails link there).
+   --------------------------------------------------------------------------------------------- */
+/* CEL-CORE-START */
+const CEL_CATS = [['downtown', 'Downtown'], ['student_house', 'Student House'], ['budget_house', 'Budget House']];
+const CEL_BATHS = [['shared', 'Shared bathroom'], ['private', 'Private bathroom']];
+const CEL_STATUS = {
+  REQUESTED: ['New request', 'gold'], UNDER_REVIEW: ['Under review', 'gold'], OFFERED: ['Offered', 'blue'],
+  ALTERNATIVE: ['Alternative offered', 'blue'], NOT_AVAILABLE: ['Not available', 'red'], DECLINED: ['Declined by school', 'red'],
+  CONFIRMED: ['Confirmed · room pending', 'amber'], ASSIGNED: ['Room assigned', 'green'], CANCELLED: ['Cancelled', 'red'],
+};
+const CEL_STAGE = { on_track: ['On track', 'green'], review: ['Review required', 'blue'], due_soon: ['Assignment due soon', 'gold'], overdue: ['Overdue / urgent', 'red'] };
+const CEL_ERRORS = {
+  ROOM_TAKEN: 'that room was just taken for these dates — pick another one',
+  CLEANING_FEE_MISSING: 'set the CEL cleaning fee first (Settings below, admins)',
+  STUDENT_DETAILS_MISSING: 'link the student’s full profile (with an email) first',
+  WRONG_STATUS: 'this booking changed in the meantime — refresh',
+  NO_RATE: 'no CEL rate covers these dates — add one in Settings',
+  NOT_CONFIGURED: 'this agency has no CEL settings yet',
+  OFFER_REQUIRED: 'an alternative needs a category, bathroom or dates',
+  ALREADY_CLOSED: 'already cancelled or declined', SAME_ROOM: 'that is already the room',
+  STUDENT_NOT_FOUND: 'student not found for this agency', NOT_FOUND: 'not found', VOID: 'that deposit was voided',
+};
+const celLabel = (list, v) => (list.find(([k]) => k === v) || [v, v || '—'])[1];
+function celStatus(s){ const x = CEL_STATUS[s] || [s || '—', '']; return { label: x[0], tone: x[1] }; }
+function celStage(s){ const x = CEL_STAGE[s]; return x ? { label: x[0], tone: x[1] } : null; }
+function celMoney(c){ if (c == null || !isFinite(c)) return '—'; const v = Math.round(c); return (v < 0 ? '-' : '') + '$' + (Math.abs(v) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// Filters the list (status 'open' = not cancelled / declined / not available; 'unassigned' = CONFIRMED).
+function celFilter(rows, f){
+  f = f || {};
+  return (rows || []).filter(r => {
+    if (f.status === 'open' && ['CANCELLED', 'DECLINED', 'NOT_AVAILABLE'].includes(r.status)) return false;
+    if (f.status === 'unassigned' && r.status !== 'CONFIRMED') return false;
+    if (f.status === 'requests' && !['REQUESTED', 'UNDER_REVIEW'].includes(r.status)) return false;
+    if (f.status === 'attention' && !(r.attention_reason || r.stage === 'overdue')) return false;
+    if (f.status && !['open', 'unassigned', 'requests', 'attention'].includes(f.status) && r.status !== f.status) return false;
+    if (f.category && r.category !== f.category) return false;
+    if (f.owner && (r.owner || '') !== f.owner) return false;
+    if (f.from && r.check_in < f.from) return false;
+    if (f.to && r.check_in > f.to) return false;
+    return true;
+  });
+}
+// Dashboard counters at the top of the tab.
+function celCounts(rows){
+  const c = { requests: 0, unassigned: 0, due: 0, overdue: 0, attention: 0, arrivals14: 0 };
+  (rows || []).forEach(r => {
+    if (r.status === 'REQUESTED' || r.status === 'UNDER_REVIEW') c.requests++;
+    if (r.status === 'CONFIRMED') c.unassigned++;
+    if (r.stage === 'due_soon') c.due++;
+    if (r.stage === 'overdue') c.overdue++;
+    if (r.attention_reason) c.attention++;
+    if (r.status === 'ASSIGNED' && r.days_to_arrival >= 0 && r.days_to_arrival <= 14) c.arrivals14++;
+  });
+  return c;
+}
+// Dollars text -> cents (null for blank); NaN when not a number.
+function celCents(v){
+  const s = String(v == null ? '' : v).trim().replace(/^\$/, '').replace(/,/g, '');
+  if (s === '') return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return NaN;
+  return Math.round(Number(s) * 100);
+}
+/* CEL-CORE-END */
+
+const CEL_STATE = { rows: null, today: null, loading: null, error: '', filters: { status: 'open', category: '', owner: '', from: '', to: '' },
+  openId: null, detail: null, detailErr: '', allOptions: false, msg: '', settings: null, settingsAgency: '', showSettings: false };
+
+async function celCall(method, path, body){
+  const res = await rcvApi(method, path, body);
+  let data = null; try { data = await res.json(); } catch (_) {}
+  if (!res.ok || !data || data.ok === false) {
+    const code = data && data.code;
+    throw new Error(CEL_ERRORS[code] || rcvErrorMessage(res.status, data));
+  }
+  return data;
+}
+function celLoad(force){
+  if (CEL_STATE.loading && !force) return CEL_STATE.loading;
+  CEL_STATE.loading = (async () => {
+    try {
+      const d = await celCall('GET', '/api/staff/cat/bookings');
+      CEL_STATE.rows = d.bookings || []; CEL_STATE.today = d.today; CEL_STATE.error = '';
+    } catch (e) { CEL_STATE.error = e.message || String(e); CEL_STATE.rows = CEL_STATE.rows || []; }
+    CEL_STATE.loading = null;
+    if (PTN_STATE.tab === 'cel') renderPartners();
+  })();
+  return CEL_STATE.loading;
+}
+async function celOpen(id){
+  CEL_STATE.openId = id; CEL_STATE.detail = null; CEL_STATE.detailErr = ''; CEL_STATE.msg = '';
+  renderPartners();
+  try {
+    CEL_STATE.detail = await celCall('GET', `/api/staff/cat/bookings/${encodeURIComponent(id)}${CEL_STATE.allOptions ? '?all=1' : ''}`);
+  } catch (e) { CEL_STATE.detailErr = e.message || String(e); }
+  if (CEL_STATE.openId === id) renderPartners();
+}
+async function celSettingsLoad(agencyId){
+  CEL_STATE.settingsAgency = agencyId || '';
+  try {
+    CEL_STATE.settings = await celCall('GET', '/api/staff/cat/settings' + (agencyId ? '?agency_id=' + encodeURIComponent(agencyId) : ''));
+  } catch (e) { CEL_STATE.settings = { error: e.message || String(e) }; }
+  renderPartners();
+}
+
+function celHtml(){
+  if (CEL_STATE.rows === null) { celLoad(); return '<p class="name-sub">Loading CEL bookings…</p>'; }
+  if (CEL_STATE.openId) return celDetailHtml();
+  const rows = CEL_STATE.rows, f = CEL_STATE.filters, c = celCounts(rows);
+  const list = celFilter(rows, f);
+  const owners = [...new Set(rows.map(r => r.owner).filter(Boolean))].sort();
+  const card = (label, n, key, tone) => `<button type="button" class="card" data-cel-quick="${key}" style="padding:10px 14px;text-align:left;cursor:pointer;min-width:140px;border-left:4px solid var(--${tone || 'line'})">
+      <div style="font-size:22px;font-weight:700">${n}</div><div class="name-sub">${esc(label)}</div></button>`;
+  const statusOpts = [['open', 'Open (not closed)'], ['', 'All'], ['requests', 'New / under review'], ['unassigned', 'Confirmed, no room'],
+    ['attention', 'Needs attention / overdue'], ...Object.keys(CEL_STATUS).map(s => [s, celStatus(s).label])];
+  return `${CEL_STATE.error ? `<p class="name-sub" style="color:var(--red)">Could not load: ${esc(CEL_STATE.error)}</p>` : ''}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      ${card('New requests', c.requests, 'requests', 'gold')}${card('Confirmed, no room', c.unassigned, 'unassigned', 'amber')}
+      ${card('Assignment due soon', c.due, 'unassigned', 'gold')}${card('Overdue / urgent', c.overdue, 'attention', 'red')}
+      ${card('Needs attention', c.attention, 'attention', 'red')}${card('Arrivals in 14 days', c.arrivals14, 'ASSIGNED', 'green')}
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <select class="form-input" data-cel-filter="status" style="max-width:230px">${ptnOptions(statusOpts, f.status)}</select>
+      <select class="form-input" data-cel-filter="category" style="max-width:180px">${ptnOptions([['', 'All categories'], ...CEL_CATS], f.category)}</select>
+      <select class="form-input" data-cel-filter="owner" style="max-width:220px">${ptnOptions([['', 'All owners'], ...owners.map(o => [o, o])], f.owner)}</select>
+      <label class="name-sub">Arrival from <input class="form-input" type="date" data-cel-filter="from" value="${esc(f.from)}" style="max-width:150px"></label>
+      <label class="name-sub">to <input class="form-input" type="date" data-cel-filter="to" value="${esc(f.to)}" style="max-width:150px"></label>
+      <span class="name-sub">${list.length} of ${rows.length}</span>
+      ${ptnStaffAdmin() ? `<button class="btn btn-ghost btn-mini" type="button" data-cel-settings-toggle>${CEL_STATE.showSettings ? 'Hide settings' : 'Settings & rates'}</button>` : ''}
+    </div>
+    ${CEL_STATE.showSettings ? celSettingsHtml() : ''}
+    ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Booking</th><th>Student</th><th>Arrival → departure</th><th>Category</th><th>Days</th><th>Deadline</th><th>Owner</th><th>Last review</th><th>Next reminder</th><th>Status</th></tr></thead>
+      <tbody>${list.map(r => {
+        const st = celStatus(r.status), sg = celStage(r.stage);
+        return `<tr style="border-top:1px solid var(--line);cursor:pointer" data-cel-open="${esc(r.id)}">
+          <td style="padding:8px;white-space:nowrap"><strong>${esc(r.id)}</strong><br><span class="name-sub">${esc(r.agency_name || '')}</span></td>
+          <td>${esc(r.student_name || r.student_ref)}${r.n_students > 1 ? `<br><span class="name-sub">${r.n_students} students${r.live_together ? ' · together' : ''}</span>` : ''}</td>
+          <td style="white-space:nowrap">${esc(ptnDay(r.check_in))} → ${esc(ptnDay(r.check_out))}</td>
+          <td>${esc(celLabel(CEL_CATS, r.category))}<br><span class="name-sub">${esc(celLabel(CEL_BATHS, r.bath))}</span></td>
+          <td>${r.days_to_arrival}</td>
+          <td style="white-space:nowrap">${r.status === 'CONFIRMED' ? esc(ptnDay(r.deadline)) : '—'}</td>
+          <td class="name-sub">${esc(r.owner || '—')}</td>
+          <td class="name-sub" style="white-space:nowrap">${r.last_review_at ? esc(ptnStamp(r.last_review_at)) : '—'}</td>
+          <td class="name-sub" style="white-space:nowrap">${r.next_reminder ? esc(ptnDay(r.next_reminder)) : '—'}</td>
+          <td>${ptnPill(st)}${sg ? `<br>${ptnPill(sg)}` : ''}${r.attention_reason ? `<br><span class="tag-pill red">${esc(r.attention_reason === 'OVERCOMMITTED' ? 'Over-committed' : r.attention_reason)}</span>` : ''}
+            ${r.room ? `<br><span class="name-sub">${esc(r.room.property || '')} · ${esc(r.room.room || '')}</span>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>` : '<p class="name-sub">No CEL bookings match.</p>'}`;
+}
+
+function celDetailHtml(){
+  const back = `<button class="btn btn-ghost" type="button" data-cel-back>← All CEL bookings</button>`;
+  if (CEL_STATE.detailErr) return `${back}<p class="name-sub" style="color:var(--red)">${esc(CEL_STATE.detailErr)}</p>`;
+  const d = CEL_STATE.detail;
+  if (!d) return `${back}<p class="name-sub">Loading ${esc(CEL_STATE.openId)}…</p>`;
+  const b = d.booking, st = celStatus(b.status), sg = celStage(b.stage), cap = d.capacity;
+  const open = ['REQUESTED', 'UNDER_REVIEW', 'OFFERED', 'ALTERNATIVE', 'NOT_AVAILABLE'].includes(b.status);
+  const canConfirm = ['REQUESTED', 'UNDER_REVIEW', 'OFFERED', 'ALTERNATIVE'].includes(b.status);
+  const closed = ['CANCELLED', 'DECLINED'].includes(b.status);
+  const row = (k, v) => `<tr><td class="name-sub" style="padding:4px 12px 4px 0;white-space:nowrap;vertical-align:top">${esc(k)}</td><td style="padding:4px 0">${v}</td></tr>`;
+  const price = b.weekly_cents != null
+    ? `${b.weeks} week${b.weeks === 1 ? '' : 's'} × ${celMoney(b.weekly_cents)} = <strong>${celMoney(b.accommodation_cents)}</strong> · placement ${celMoney(b.placement_cents)} · cleaning ${b.cleaning_cents == null ? '<span class="tag-pill gold">not set</span>' : celMoney(b.cleaning_cents)} · student deposit ${celMoney(b.deposit_cents)}`
+    : '<span class="name-sub">locked when confirmed</span>';
+  const opts = (d.options || []);
+  const msg = CEL_STATE.msg ? `<p class="name-sub" style="color:var(--${CEL_STATE.msg.startsWith('✓') ? 'green' : 'red'})">${esc(CEL_STATE.msg)}</p>` : '';
+  const section = (title, inner) => `<div class="card" style="padding:14px 16px;margin-bottom:12px"><h3 style="margin:0 0 10px;font-size:15px">${esc(title)}</h3>${inner}</div>`;
+  const offer = b.status === 'ALTERNATIVE' ? `${esc(celLabel(CEL_CATS, b.offer_category || b.category))}, ${esc(celLabel(CEL_BATHS, b.offer_bath || b.bath))} · ${esc(ptnDay(b.offer_check_in || b.check_in))} → ${esc(ptnDay(b.offer_check_out || b.check_out))}` : '';
+  return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${back}
+      <h2 style="margin:0">${esc(b.id)} · ${esc(b.student_name || b.student_ref)}</h2>${ptnPill(st)}${sg ? ptnPill(sg) : ''}
+      ${b.attention_reason ? `<span class="tag-pill red">${esc(b.attention_reason === 'OVERCOMMITTED' ? 'Over-committed: confirmed demand exceeds free rooms' : b.attention_reason)}</span>` : ''}</div>
+    ${msg}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;align-items:start">
+      <div>
+        ${section('Booking', `<table>${row('Agency', esc(b.agency_name || ''))}
+          ${row('Student', `${esc(b.student_name || b.student_ref)}${b.student_id ? '' : ' <span class="tag-pill gold">no profile linked</span>'}`)}
+          ${row('Stay', `${esc(ptnDay(b.check_in))} → ${esc(ptnDay(b.check_out))} <span class="name-sub">(${b.days_to_arrival} days to arrival)</span>`)}
+          ${row('Category', `${esc(celLabel(CEL_CATS, b.category))} · ${esc(celLabel(CEL_BATHS, b.bath))}`)}
+          ${b.n_students > 1 ? row('Students', `${b.n_students}${b.live_together ? ' — want to live together' : ''}`) : ''}
+          ${offer ? row('Alternative offered', offer) : ''}
+          ${row('Price', price)}
+          ${row('Room', b.room ? `<strong>${esc(b.room.property || '')}</strong> · ${esc(b.room.room || '')}<br><span class="name-sub">${esc(b.room.address || '')}</span>` : '<span class="name-sub">not assigned</span>')}
+          ${b.booking_id ? row('Partner booking', `${esc(b.booking_id)}${d.invoice ? ` · invoice ${esc(d.invoice.number)} ${celMoney(d.invoice.total_cents)} <span class="tag-pill ${d.invoice.payment_status === 'paid' ? 'green' : d.invoice.payment_status === 'overdue' ? 'red' : 'gold'}">${esc(d.invoice.payment_status)}</span>` : ''}`) : ''}
+          ${d.deposit ? row('Student deposit', `${esc(d.deposit.number)} ${celMoney(d.deposit.amount_cents)} <span class="tag-pill ${d.deposit.status === 'paid' ? 'green' : d.deposit.status === 'void' ? 'red' : 'gold'}">${esc(d.deposit.status)}</span>${d.deposit.emailed_at ? ` <span class="name-sub">emailed ${esc(ptnStamp(d.deposit.emailed_at))}</span>` : ''}`) : ''}
+          ${row('Contact', esc(b.contact_name || '—'))}
+          ${b.notes ? row('School notes', esc(b.notes)) : ''}
+          ${b.response_note ? row('Our note to school', esc(b.response_note)) : ''}
+          ${b.override_reason ? row('Override reason', esc(b.override_reason)) : ''}
+          ${b.cancel_reason ? row('Cancel reason', esc(b.cancel_reason)) : ''}
+        </table>`)}
+        ${open ? section('Answer the school', `<form data-cel-respond style="display:flex;flex-direction:column;gap:8px">
+            <select class="form-input" name="decision">${ptnOptions([['OFFERED', 'Available (as requested)'], ['ALTERNATIVE', 'Offer an alternative'], ['UNDER_REVIEW', 'Under review (holding reply)'], ['NOT_AVAILABLE', 'Not available']], 'OFFERED')}</select>
+            <div data-cel-alt style="display:flex;gap:8px;flex-wrap:wrap" hidden>
+              <select class="form-input" name="category" style="max-width:170px">${ptnOptions([['', 'Same category'], ...CEL_CATS], '')}</select>
+              <select class="form-input" name="bath" style="max-width:170px">${ptnOptions([['', 'Same bathroom'], ...CEL_BATHS], '')}</select>
+              <input class="form-input" type="date" name="check_in" title="Alternative check-in" style="max-width:150px">
+              <input class="form-input" type="date" name="check_out" title="Alternative check-out" style="max-width:150px">
+            </div>
+            <textarea class="form-input" name="note" rows="2" placeholder="Note to the school (optional), e.g. Vancouver House or Blood Alley"></textarea>
+            <label class="name-sub"><input type="checkbox" name="notify" checked> Email the school</label>
+            <div><button class="btn btn-primary" type="submit">Send answer</button></div></form>`) : ''}
+        ${canConfirm ? section('Confirm for the school', `<p class="name-sub" style="margin:0 0 8px">Use when CEL confirmed by email. Locks today's rate; no room is blocked.</p>
+            <button class="btn btn-primary" type="button" data-cel-act="confirm">Confirm booking (room pending)</button>`) : ''}
+        ${!closed && b.status !== 'ASSIGNED' ? section('Student profile', `${(d.students || []).length ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select class="form-input" data-cel-student style="max-width:320px">${ptnOptions([['', 'Choose the student…'], ...d.students.map(s => [s.id, `${s.name} · ${s.email}`])], b.student_id || '')}</select>
+            <button class="btn btn-ghost" type="button" data-cel-act="student">Link</button></div>` : '<p class="name-sub">The agency has no student profiles yet: ask CEL to add the student in the partner portal.</p>'}`) : ''}
+        ${b.status === 'CONFIRMED' ? section('Review & follow-up', `<form data-cel-review style="display:flex;flex-direction:column;gap:8px">
+            <textarea class="form-input" name="note" rows="2" placeholder="What did you check? (inventory review note)">${esc(b.review_note || '')}</textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <label class="name-sub">Next follow-up <input class="form-input" type="date" name="next_review_at" value="${esc(b.next_review_at || '')}" style="max-width:160px"></label>
+              <label class="name-sub">Owner <input class="form-input" name="owner_email" value="${esc(b.owner_email || b.owner || '')}" style="max-width:240px"></label>
+            </div>
+            <div><button class="btn btn-ghost" type="submit">Record review</button>
+              <span class="name-sub">Last review: ${b.last_review_at ? esc(ptnStamp(b.last_review_at)) : 'never'} · next reminder ${b.next_reminder ? esc(ptnDay(b.next_reminder)) : '—'}</span></div></form>`) : ''}
+        ${!closed && b.status !== 'ASSIGNED' ? section('Change dates or category', `<form data-cel-stay style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input class="form-input" type="date" name="check_in" value="${esc(b.check_in)}" style="max-width:150px">
+            <input class="form-input" type="date" name="check_out" value="${esc(b.check_out)}" style="max-width:150px">
+            <select class="form-input" name="category" style="max-width:160px">${ptnOptions(CEL_CATS, b.category)}</select>
+            <select class="form-input" name="bath" style="max-width:170px">${ptnOptions(CEL_BATHS, b.bath)}</select>
+            <button class="btn btn-ghost" type="submit">Save</button>
+            <span class="name-sub" style="flex-basis:100%">A confirmed booking keeps its locked weekly rate when only the dates move; a new category or bathroom is re-rated.</span></form>`) : ''}
+        ${!closed ? section('Cancel', `<form data-cel-cancel style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="form-input" name="reason" placeholder="Reason (required)" style="flex:1;min-width:220px">
+            <button class="btn btn-ghost" type="submit">Cancel booking</button>
+            ${b.status === 'ASSIGNED' ? '<span class="name-sub" style="flex-basis:100%">Releases the room, voids the school invoice (paid part becomes agency credit) and voids an unpaid student deposit. Void the contract in Contracts.</span>' : ''}</form>`) : ''}
+        ${d.deposit && d.deposit.status === 'open' ? section('Student deposit', `<form data-cel-deposit style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select class="form-input" name="method" style="max-width:180px">${ptnOptions([['bank_transfer', 'Bank transfer'], ['card', 'Card (by hand)'], ['other', 'Other']], 'bank_transfer')}</select>
+            <input class="form-input" name="note" placeholder="Reference / note" style="flex:1;min-width:180px">
+            <button class="btn btn-ghost" type="submit">Mark paid</button>
+            <button class="btn btn-ghost" type="button" data-cel-act="resend_deposit">Resend deposit email</button></form>`) : ''}
+      </div>
+      <div>
+        ${b.status === 'CONFIRMED' || b.status === 'ASSIGNED' || open ? section(b.status === 'ASSIGNED' ? 'Move to another room' : 'Room options (smallest vacancy gap first)', `
+          ${cap && cap.ok ? `<p class="name-sub" style="margin:0 0 8px">Free eligible rooms: <strong>${cap.free_rooms}</strong> · confirmed ahead of this one: <strong>${cap.committed_ahead}</strong> · safe capacity: <strong style="color:var(--${cap.safe < (b.n_students || 1) ? 'red' : 'green'})">${cap.safe}</strong></p>` : ''}
+          ${b.status === 'ASSIGNED' && !CEL_STATE.allOptions ? '<button class="btn btn-ghost btn-mini" type="button" data-cel-more>Show rooms free for these dates</button>' : opts.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+            <thead><tr class="name-sub" style="text-align:left"><th style="padding:6px">Room</th><th>Free from</th><th>Gap before</th><th>Gap after</th><th>Travel</th><th></th></tr></thead>
+            <tbody>${opts.map((o, i) => `<tr style="border-top:1px solid var(--line)">
+              <td style="padding:6px"><strong>${esc(o.property_name || '')}</strong><br><span class="name-sub">${esc(o.room_name || '')} · ${esc(o.room_type || '')} · ${esc(o.bath || '')} bath</span></td>
+              <td class="name-sub" style="white-space:nowrap">${o.available_from ? esc(ptnDay(o.available_from)) : 'now'}${o.available_until ? `<br>until ${esc(ptnDay(o.available_until))}` : ''}</td>
+              <td>${o.gap_before} d</td><td>${o.gap_after} d</td><td class="name-sub">${o.travel_min == null ? '—' : o.travel_min + ' min'}</td>
+              <td>${b.status === 'CONFIRMED' ? `<button class="btn ${i === 0 ? 'btn-primary' : 'btn-ghost'} btn-mini" type="button" data-cel-assign="${esc(o.room_id)}" data-cel-rank="${i}">Assign</button>`
+                : b.status === 'ASSIGNED' ? `<button class="btn btn-ghost btn-mini" type="button" data-cel-move="${esc(o.room_id)}">Move here</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+            ${!CEL_STATE.allOptions ? '<button class="btn btn-ghost btn-mini" type="button" data-cel-more style="margin-top:8px">View more options</button>' : ''}`
+            : '<p class="name-sub">No eligible free room for these dates. Check the category ↔ property map in Settings, or offer an alternative.</p>'}
+          ${b.status === 'CONFIRMED' ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <input class="form-input" data-cel-override placeholder="Override reason (when not picking the top option)" style="flex:1;min-width:220px">
+            <button class="btn btn-ghost btn-mini" type="button" data-cel-keep>Keep pending</button></div>
+            <p class="name-sub">Assigning creates the partner booking, blocks the room, issues CEL's invoice, emails the school and the student's deposit request, and Hugo sends the contract.</p>` : ''}
+          `) : ''}
+        ${section('History', `<ol style="margin:0;padding-left:18px">${(d.events || []).slice().reverse().map(e => `<li style="margin-bottom:6px"><strong>${esc(e.action.replace(/_/g, ' '))}</strong>${e.to_status && e.to_status !== e.from_status ? ` → ${esc(celStatus(e.to_status).label)}` : ''}
+          <br><span class="name-sub">${esc(ptnStamp(e.at))} · ${esc(String(e.actor || '').replace(/^(staff|partner):/, ''))}${e.note ? ' · ' + esc(e.note) : ''}</span></li>`).join('')}</ol>`)}
+      </div>
+    </div>`;
+}
+
+function celSettingsHtml(){
+  const s = CEL_STATE.settings;
+  if (!s) { celSettingsLoad(''); return '<div class="card" style="padding:14px;margin-bottom:12px"><p class="name-sub">Loading settings…</p></div>'; }
+  if (s.error) return `<div class="card" style="padding:14px;margin-bottom:12px"><p class="name-sub" style="color:var(--red)">${esc(s.error)}</p></div>`;
+  const ag = (s.agencies || []);
+  const cats = ag.filter(a => a.booking_model === 'category');
+  const sel = CEL_STATE.settingsAgency;
+  const picker = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <select class="form-input" data-cel-settings-agency style="max-width:280px">${ptnOptions([['', 'Choose a category agency…'], ...cats.map(a => [a.id, a.name])], sel)}</select>
+      <select class="form-input" data-cel-enable-agency style="max-width:280px">${ptnOptions([['', 'Switch another agency to CEL-style bookings…'], ...ag.filter(a => a.booking_model !== 'category').map(a => [a.id, a.name])], '')}</select>
+      <button class="btn btn-ghost btn-mini" type="button" data-cel-enable>Enable</button></div>`;
+  if (!sel || !s.settings) return `<div class="card" style="padding:14px 16px;margin-bottom:12px"><h3 style="margin:0 0 10px;font-size:15px">CEL settings</h3>${picker}
+      <p class="name-sub">${cats.length ? 'Pick the agency to edit its fees, reminders, rates and category map.' : 'No agency uses category bookings yet: enable CEL above (it seeds the 2027 CEL rates).'}</p></div>`;
+  const st = s.settings;
+  const mapBy = new Map((s.map || []).map(m => [m.property_id, m]));
+  const active = (s.rates || []).filter(r => !r.retired_at);
+  return `<div class="card" style="padding:14px 16px;margin-bottom:12px"><h3 style="margin:0 0 10px;font-size:15px">CEL settings</h3>${picker}
+    <form data-cel-settings-form style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+      ${ptnField('cleaning_fee', 'Cleaning fee per booking ($, blank = not set)', st.cleaning_fee_cents == null ? '' : (st.cleaning_fee_cents / 100).toFixed(2))}
+      ${ptnField('placement_fee', 'Placement fee per booking ($)', (st.placement_fee_cents / 100).toFixed(2))}
+      ${ptnField('student_deposit', 'Student deposit ($)', (st.student_deposit_cents / 100).toFixed(2))}
+      ${ptnField('deadline_days', 'Assign at least N days before arrival', st.deadline_days)}
+      ${ptnField('reminder_days', 'Reminder days before arrival (comma separated)', (st.reminder_days || []).join(', '))}
+      ${ptnField('owner_email', 'Reminders go to', st.owner_email)}
+      ${ptnField('manager_email', 'Escalations go to', st.manager_email)}
+      ${ptnField('campus_address', 'Campus (travel times measured to)', st.campus_address)}
+      <div style="grid-column:1/-1"><strong>Which residences count for each category</strong> <span class="name-sub">(travel = door-to-door transit minutes to campus; Student House ≤ 30, Budget House ≤ 40)</span>
+        <div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:6px"><table style="width:100%;border-collapse:collapse">
+          <thead><tr class="name-sub" style="text-align:left"><th style="padding:6px">Property</th><th>Category</th><th>Travel (min)</th></tr></thead>
+          <tbody>${(s.properties || []).map(p => { const m = mapBy.get(p.id); return `<tr style="border-top:1px solid var(--line)" data-cel-map="${esc(p.id)}">
+            <td style="padding:6px">${esc(p.name)}<br><span class="name-sub">${esc(p.address || '')}</span></td>
+            <td><select class="form-input" name="cat" style="max-width:170px">${ptnOptions([['', '— not used —'], ...CEL_CATS], m ? m.category : '')}</select></td>
+            <td><input class="form-input" name="travel" value="${esc(m && m.travel_min != null ? m.travel_min : '')}" style="max-width:90px"></td></tr>`; }).join('')}</tbody></table></div></div>
+      <div style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Save settings</button> <span class="name-sub" data-cel-settings-msg></span></div>
+    </form>
+    <h4 style="margin:16px 0 6px">Weekly rates (current)</h4>
+    <table style="border-collapse:collapse"><thead><tr class="name-sub" style="text-align:left"><th style="padding:4px 10px 4px 0">Category</th><th>Bathroom</th><th>Weekly</th><th>Valid</th></tr></thead>
+      <tbody>${active.map(r => `<tr><td style="padding:4px 10px 4px 0">${esc(celLabel(CEL_CATS, r.category))}</td><td>${esc(celLabel(CEL_BATHS, r.bath))}</td><td>${celMoney(r.weekly_cents)}</td>
+        <td class="name-sub">${r.valid_from ? esc(r.valid_from) : 'any'} → ${r.valid_to ? esc(r.valid_to) : 'open'}</td></tr>`).join('')}</tbody></table>
+    <form data-cel-rate-form style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+      <select class="form-input" name="category" style="max-width:160px">${ptnOptions(CEL_CATS, 'downtown')}</select>
+      <select class="form-input" name="bath" style="max-width:170px">${ptnOptions(CEL_BATHS, 'shared')}</select>
+      <input class="form-input" name="weekly" placeholder="Weekly $" style="max-width:110px">
+      <input class="form-input" type="date" name="valid_from" title="From (blank = any)" style="max-width:150px">
+      <input class="form-input" type="date" name="valid_to" title="To (blank = open)" style="max-width:150px">
+      <button class="btn btn-ghost" type="submit">Add / replace rate</button>
+      <span class="name-sub" style="flex-basis:100%">New rates apply to bookings confirmed from now on; confirmed bookings keep their locked price. Same from/to as an existing rate replaces it.</span></form></div>`;
+}
+
+async function celAction(id, action, body, okMsg){
+  CEL_STATE.msg = '';
+  try {
+    await celCall('POST', `/api/staff/cat/bookings/${encodeURIComponent(id)}/${action}`, body || {});
+    CEL_STATE.msg = '✓ ' + (okMsg || 'Saved');
+    celLoad(true);
+    await celOpen(id);
+    CEL_STATE.msg = '✓ ' + (okMsg || 'Saved');
+    renderPartners();
+  } catch (e) { CEL_STATE.msg = e.message || String(e); renderPartners(); }
+}
+
+function celWire(root){
+  const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => fn(el, e)));
+  on('[data-cel-quick]', 'click', b => { CEL_STATE.filters.status = b.dataset.celQuick; renderPartners(); });
+  on('[data-cel-filter]', 'change', el => { CEL_STATE.filters[el.dataset.celFilter] = el.value; renderPartners(); });
+  on('[data-cel-open]', 'click', tr => { CEL_STATE.allOptions = false; celOpen(tr.dataset.celOpen); window.scrollTo(0, 0); });
+  on('[data-cel-back]', 'click', () => { CEL_STATE.openId = null; CEL_STATE.detail = null; CEL_STATE.msg = ''; renderPartners(); });
+  on('[data-cel-more]', 'click', () => { CEL_STATE.allOptions = true; celOpen(CEL_STATE.openId); });
+  on('[data-cel-keep]', 'click', () => { CEL_STATE.msg = '✓ Kept pending — record a review below to set the next follow-up'; renderPartners(); });
+  on('[data-cel-settings-toggle]', 'click', () => { CEL_STATE.showSettings = !CEL_STATE.showSettings; renderPartners(); });
+  on('[data-cel-settings-agency]', 'change', s => celSettingsLoad(s.value));
+  on('[data-cel-enable]', 'click', async b => {
+    const id = root.querySelector('[data-cel-enable-agency]').value;
+    if (!id) return;
+    b.disabled = true;
+    try { await celCall('POST', '/api/staff/cat/enable', { agency_id: id }); showToast('Agency switched to CEL-style bookings'); await celSettingsLoad(id); celLoad(true); }
+    catch (e) { showToast(e.message || String(e)); b.disabled = false; }
+  });
+  const id = CEL_STATE.openId;
+  on('[data-cel-respond] select[name="decision"]', 'change', s => { s.form.querySelector('[data-cel-alt]').hidden = s.value !== 'ALTERNATIVE'; });
+  on('[data-cel-respond]', 'submit', (f, e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(f));
+    const offer = v.decision === 'ALTERNATIVE' ? { category: v.category || undefined, bath: v.bath || undefined, check_in: v.check_in || undefined, check_out: v.check_out || undefined } : {};
+    celAction(id, 'respond', { decision: v.decision, offer, note: v.note || undefined, notify: f.querySelector('[name="notify"]').checked }, 'Answer saved' + (f.querySelector('[name="notify"]').checked ? ' and emailed to the school' : ''));
+  });
+  on('[data-cel-act]', 'click', b => {
+    const act = b.dataset.celAct;
+    if (act === 'student') {
+      const sid = root.querySelector('[data-cel-student]').value;
+      if (sid) celAction(id, 'student', { student_id: sid }, 'Student linked');
+      return;
+    }
+    celAction(id, act, {}, act === 'confirm' ? 'Confirmed — room pending; the school was emailed' : act === 'resend_deposit' ? 'Deposit email sent' : 'Done');
+  });
+  on('[data-cel-assign]', 'click', b => {
+    const reason = (root.querySelector('[data-cel-override]') || {}).value || '';
+    if (b.dataset.celRank !== '0' && !reason.trim() && !confirm('You are not picking the top recommendation. Assign without an override reason?')) return;
+    b.disabled = true;
+    celAction(id, 'assign', { room_id: b.dataset.celAssign, override_reason: reason.trim() || undefined }, 'Room assigned — invoice issued, school + student emailed');
+  });
+  on('[data-cel-move]', 'click', b => {
+    const reason = prompt('Why move this booking? (the school is emailed the new room; fix the contract with Fix & resend)');
+    if (reason === null) return;
+    celAction(id, 'change_room', { room_id: b.dataset.celMove, reason }, 'Room changed');
+  });
+  on('[data-cel-review]', 'submit', (f, e) => { e.preventDefault(); const v = Object.fromEntries(new FormData(f)); celAction(id, 'review', v, 'Review recorded'); });
+  on('[data-cel-stay]', 'submit', (f, e) => { e.preventDefault(); celAction(id, 'stay', Object.fromEntries(new FormData(f)), 'Stay updated'); });
+  on('[data-cel-cancel]', 'submit', (f, e) => {
+    e.preventDefault();
+    const reason = f.reason.value.trim();
+    if (!reason) { f.reason.focus(); return; }
+    if (!confirm('Cancel ' + id + '?')) return;
+    celAction(id, 'cancel', { reason }, 'Cancelled');
+  });
+  on('[data-cel-deposit]', 'submit', (f, e) => {
+    e.preventDefault();
+    const d = CEL_STATE.detail && CEL_STATE.detail.deposit;
+    if (!d) return;
+    celAction(id, 'deposit_paid', { deposit_id: d.id, method: f.method.value, note: f.note.value || undefined }, 'Deposit marked paid');
+  });
+  on('[data-cel-settings-form]', 'submit', async (f, e) => {
+    e.preventDefault();
+    const msg = f.querySelector('[data-cel-settings-msg]');
+    const v = Object.fromEntries(new FormData(f));
+    const cleaning = celCents(v.cleaning_fee), placement = celCents(v.placement_fee), deposit = celCents(v.student_deposit);
+    if ([cleaning, placement, deposit].some(x => Number.isNaN(x)) || placement == null || deposit == null) { msg.textContent = 'Fees must be dollar amounts'; return; }
+    const reminders = String(v.reminder_days || '').split(/[,\s]+/).filter(Boolean).map(Number);
+    const map = [];
+    f.querySelectorAll('[data-cel-map]').forEach(tr => {
+      const cat = tr.querySelector('[name="cat"]').value;
+      if (!cat) return;
+      const t = tr.querySelector('[name="travel"]').value.trim();
+      map.push({ category: cat, property_id: tr.dataset.celMap, travel_min: t === '' ? null : Number(t) });
+    });
+    const body = { agency_id: CEL_STATE.settingsAgency, settings: {
+      cleaning_fee_cents: cleaning, placement_fee_cents: placement, student_deposit_cents: deposit,
+      deadline_days: Number(v.deadline_days), reminder_days: reminders, owner_email: v.owner_email, manager_email: v.manager_email,
+      campus_address: v.campus_address }, map };
+    msg.textContent = 'Saving…';
+    try { await celCall('POST', '/api/staff/cat/settings-save', body); msg.textContent = '✓ Saved'; await celSettingsLoad(CEL_STATE.settingsAgency); }
+    catch (err) { msg.textContent = err.message || String(err); }
+  });
+  on('[data-cel-rate-form]', 'submit', async (f, e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(f));
+    const weekly = celCents(v.weekly);
+    if (!weekly) { showToast('Weekly rate must be a dollar amount'); return; }
+    try {
+      await celCall('POST', '/api/staff/cat/rates', { agency_id: CEL_STATE.settingsAgency, category: v.category, bath: v.bath, weekly_cents: weekly,
+        valid_from: v.valid_from || null, valid_to: v.valid_to || null });
+      showToast('Rate saved'); await celSettingsLoad(CEL_STATE.settingsAgency);
+    } catch (err) { showToast(err.message || String(err)); }
+  });
+}
+// #cel=CB-1001 (reminder emails): open the booking on the Partners -> CEL bookings tab.
+function openCelFromHash(){
+  let hash = location.hash || '';
+  if (!/^#cel=/.test(hash)) { try { hash = sessionStorage.getItem('vm_next_hash') || ''; } catch (e) {} }
+  const m = /^#cel=(CB-\d{1,10})$/.exec(hash);
+  if (!m) return false;
+  try { sessionStorage.removeItem('vm_next_hash'); } catch (e) {}
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  if (!ptnIsAdmin()) return false;
+  PTN_STATE.tab = 'cel';
+  if (typeof goToView === 'function') goToView('partners');
+  celOpen(m[1]);
+  return true;
+}
+window.openCelFromHash = openCelFromHash;
+window.addEventListener('hashchange', openCelFromHash);
 function renderPartners(){
   const root = document.getElementById('ptn-root');
   if (!root || !ptnData) return;
   const scrollY = window.scrollY;
   const fin = ptnStaffAdmin();
   if (!fin && (PTN_STATE.tab === 'receivables' || PTN_STATE.tab === 'commissions')) PTN_STATE.tab = 'agencies';
-  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`]]
+  const tabs = [['agencies', `Agencies (${ptnData.agencies.length})`], ['users', `Users (${ptnData.users.length})`], ['bookings', `Bookings (${ptnData.bookings.length})`],
+    ['cel', 'CEL bookings']]
     .concat(fin ? [['receivables', 'Receivables'], ['commissions', 'Commissions']] : []);
-  const body = PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml()
+  const body = PTN_STATE.tab === 'cel' ? celHtml() : PTN_STATE.tab === 'users' ? ptnUsersHtml() : PTN_STATE.tab === 'bookings' ? ptnBookingsHtml()
     : PTN_STATE.tab === 'receivables' ? rcvHtml() : PTN_STATE.tab === 'commissions' ? cmmHtml() : ptnAgenciesHtml();
   root.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
@@ -21586,6 +22019,7 @@ function renderPartners(){
     </div>
     ${body}`;
   ptnWire(root);
+  if (PTN_STATE.tab === 'cel') celWire(root);
   window.scrollTo(0, scrollY);
 }
 function ptnField(name, label, value, extra){
@@ -30281,6 +30715,8 @@ renderLeads();
     catch (e) { console.warn('[vmDb] openCheckoutFromHash failed:', e.message); }
     try { if (typeof window.openPartnersFromHash === 'function') window.openPartnersFromHash(); }
     catch (e) { console.warn('[vmDb] openPartnersFromHash failed:', e.message); }
+    try { if (typeof window.openCelFromHash === 'function') window.openCelFromHash(); }
+    catch (e) { console.warn('[vmDb] openCelFromHash failed:', e.message); }
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
@@ -37582,6 +38018,6 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-10-arrsched1"></script>
+<script src="room-changes.js?v=2026-10-10-cel1"></script>
 </body>
 </html>
