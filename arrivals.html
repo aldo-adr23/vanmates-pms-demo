@@ -525,7 +525,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-10-affil2"></script>
+<script src="arrivals-core.js?v=2026-10-10-arrcancel1"></script>
 <script>
 (function () {
   'use strict';
@@ -925,7 +925,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (canSend(r)) acts.push('<button type="button" class="btn btn-primary" data-act="send">' + (r.status === 'failed' ? 'Retry send' : 'Send this one') + '</button>');
     if (r.status === 'sent') acts.push('<button type="button" class="btn btn-ghost" data-act="resend">Resend</button>');
     if (r.status !== 'handled' && r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="handled">Mark handled</button>');
-    else acts.push('<button type="button" class="btn btn-ghost" data-act="reopen">Reopen</button>');
+    else if (!(r.status === 'cancelled' && r.cancelled_by === 'contract')) acts.push('<button type="button" class="btn btn-ghost" data-act="reopen">Reopen</button>');
+    if (r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="cancel">Cancel arrival</button>');
 
     var warn = '';
     if (r.status === 'cancelled') warn = '<p class="warnbox">Cancelled' + (r.cancelled_by ? ' by ' + esc(r.cancelled_by) : ' — no longer on the roster') + '.</p>';
@@ -1069,6 +1070,16 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (await rpc('arrivals_set_status', { p_id: r.id, p_status: 'open' })) { toast('Reopened'); await loadArrivals(); }
     else btn.disabled = false;
   }
+  // Cancel a whole arrival (rpc arrivals_set_status 'cancelled'): every unsent email of it stops — check-in
+  // instructions, Welcome / room-change and check-out (the check-out trigger skips it). Nothing is deleted; Reopen /
+  // Restore brings it back. A contract-voided arrival stays cancelled (the contract is gone).
+  async function cancelArrival(arrivalId, name, after) {
+    var ok = await confirmSheet('Cancel the arrival of ' + (str(name) || 'this tenant') + '?',
+      '<p class="note">No more emails go to them for this stay: arrival instructions, welcome and check-out are all stopped. Emails already sent stay sent. You can reopen it later from Check-ins.</p>',
+      'Cancel arrival');
+    if (!ok) return;
+    if (await rpc('arrivals_set_status', { p_id: arrivalId, p_status: 'cancelled' })) { toast('Arrival cancelled'); await after(); }
+  }
   async function act(name) {
     var r = byId(S.openId);
     if (name === 'close') { S.openId = null; renderArrivals(); return; }
@@ -1086,6 +1097,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       }
       return;
     }
+    if (name === 'cancel') { await cancelArrival(r.id, r.student_name, loadArrivals); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
     if (name === 'pickroom') { await pickRoom(); return; }
     if (name === 'rooms') { var q = $('accQ'); q.value = r.building; setTab('access'); }
@@ -1636,6 +1648,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (open) acts.push(r.held_by ? '<button type="button" class="btn btn-ghost" data-bk="unhold">Unhold</button>' : '<button type="button" class="btn btn-ghost" data-bk="hold">Hold</button>');
     acts.push('<button type="button" class="btn btn-ghost" data-bk="arrival">Open the arrival</button>');
+    if (r.arrival_status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-bk="cancel">Cancel arrival</button>');
 
     var warn = '';
     if (r.status === 'skipped' || r.arrival_status === 'cancelled') warn = '<p class="warnbox">Skipped — the contract was voided or the arrival cancelled. Nothing will be sent.</p>';
@@ -1766,6 +1779,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (await rpc('booking_message_set', { p_id: r.id, p_status: name === 'hold' ? 'held' : 'ready' })) { toast(name === 'hold' ? 'Held' : 'Unheld — ready to send'); await loadBookings(); }
       return;
     }
+    if (name === 'cancel') { await cancelArrival(r.arrival_id, r.student_name, function () { S.bk.openId = null; return loadBookings(); }); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = r.kind === 'room_change' ? 'room_change' : 'booking'; setTab('templates'); return; }
     if (name === 'arrival') {
       var wk = r.arrival_date ? A.weekendOf(str(r.arrival_date).slice(0, 10)) : null;
@@ -1944,6 +1958,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (can.unhold && r.held_by !== 'system:prior_sent') acts.push('<button type="button" class="btn btn-ghost" data-sc="unhold">Unhold</button>');
     if (can.cancel) acts.push('<button type="button" class="btn btn-ghost" data-sc="cancel">Cancel email</button>');
     if (can.restore) acts.push('<button type="button" class="btn btn-ghost" data-sc="restore">Restore</button>');
+    if (r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-sc="cancel_arrival">Cancel arrival</button>');
     if (isCk) acts.push('<button type="button" class="btn btn-ghost" data-sc="tpl">Edit the building template</button>');
     acts.push('<button type="button" class="btn btn-ghost" data-sc="history">History</button>');
     var fx = '';
@@ -2112,6 +2127,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (await scSchedAction(r, name)) { toast({ reset: 'Back to the automatic time', hold: 'Held', unhold: 'Unheld', cancel: 'Cancelled', restore: 'Restored' }[name]); await loadScheduled(); }
       return;
     }
+    if (name === 'cancel_arrival') { await cancelArrival(r.arrival_id, r.student_name, function () { S.sc.openId = null; return loadScheduled(); }); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
     if (name === 'history') { await scHistory(r); }
   }
