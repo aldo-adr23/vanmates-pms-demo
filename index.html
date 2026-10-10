@@ -1568,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-10-arrcancel1"></script>
+<script src="pms-supabase.js?v=2026-10-10-extstay1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1706,6 +1706,11 @@
     <button class="nav-item" data-view="room-changes">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h11l-3-3"/><path d="M17 17H6l3 3"/></svg>
       Room changes
+      <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="extensions">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M10 16h6M13 13l3 3-3 3"/></svg>
+      Extensions
       <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="contracts">
@@ -2896,6 +2901,36 @@
         </table>
         </div>
         <div id="rc-empty" class="name-sub" style="display:none;padding:28px;text-align:center">No room changes match.</div>
+      </div>
+    </section>
+    <section class="view" data-view="extensions">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div class="tabs" id="ex-tabs" role="tablist" style="flex-wrap:wrap"></div>
+      </div>
+      <div class="filter-bar" id="ex-filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="ex-search" placeholder="Search by tenant, email, house, room, contract or request ID…" autocomplete="off" />
+        </div>
+        <select id="ex-filter-status" class="form-input" style="max-width:190px" aria-label="Status"><option value="">All statuses</option></select>
+        <select id="ex-filter-owner" class="form-input" style="max-width:190px" aria-label="Owner"><option value="">All owners</option></select>
+        <select id="ex-filter-city" class="form-input" style="max-width:170px" aria-label="City">
+          <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
+        </select>
+        <button class="btn btn-ghost" id="ex-refresh" type="button">Refresh</button>
+      </div>
+      <div class="card" id="ex-list-card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px">
+          <div class="card-title"><b id="ex-count">0</b> extension requests</div>
+          <div class="name-sub">From vanmates.com/extend-stay · Accept sends the contract through Hugo</div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Request</th><th>Tenant</th><th>House · room</th><th>Current end → new end</th><th>Rent</th><th>Status · owner</th><th>Flags</th></tr></thead>
+          <tbody id="ex-body"></tbody>
+        </table>
+        </div>
+        <div id="ex-empty" class="name-sub" style="display:none;padding:28px;text-align:center">No extension requests match.</div>
       </div>
     </section>
     <section class="view ct-view" data-view="contracts">
@@ -8251,9 +8286,9 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","room-changes","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","room-changes","extensions","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
-                nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes"]},
+                nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
@@ -8546,6 +8581,7 @@ const ALL_PAGES = [
   ["deposits",         "Damage deposits"],
   ["checkouts",        "Checkouts"],
   ["room-changes",     "Room changes"],
+  ["extensions",       "Extensions"],
   ["contracts",        "Contracts"],
   ["financials",       "Financials"],
   ["team",             "Team"],
@@ -9116,7 +9152,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
-    "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","contracts":"Contracts",
+    "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
     "team":"Team","settings":"Settings"
   };
   const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
@@ -10734,6 +10770,7 @@ const titles = {
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
+  extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: accept to send the extension contract"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
   contracts: ["<em>Contracts</em>", "Co-living subleases and BC tenancy agreements: who has signed, and what waits for Vanmates"],
   "partner-inventory": ["<em>Partner inventory</em>", "Live Asana rooms by building: the terms agencies will see, and which rooms are partner-ready"],
@@ -10785,6 +10822,7 @@ function goToView(v, savedView){
   if(v === "sales" && typeof renderSales === "function") renderSales();
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
   if(v === "room-changes" && typeof loadRoomChanges === "function") loadRoomChanges();
+  if(v === "extensions" && typeof loadExtensions === "function") loadExtensions();
   if(v === "contracts" && typeof renderContracts === "function") renderContracts();
   if(v === "properties" && typeof renderPropertiesGrid === "function") renderPropertiesGrid();
   if(v === "settings" && typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();
@@ -37364,6 +37402,7 @@ window.HM = HM;
 /* ---- Assistants page: thin over AS-CHAT-CORE ---- */
 (function(){
   const ASSISTANTS_BASE = 'https://vanmates-hugo.fly.dev';
+  window.ASSISTANTS_BASE = ASSISTANTS_BASE; // extensions.js posts Accept to Hugo here too
   // Hugo's turn budget on the server is 300 s with no keepalives, and a turn
   // with a few tool calls can run 90-300 s: one absolute abort produced a
   // false "took too long" and a Retry that queued behind the still-running
@@ -39037,6 +39076,7 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-10-arrcancel1"></script>
+<script src="room-changes.js?v=2026-10-10-extstay1"></script>
+<script src="extensions.js?v=2026-10-10-extstay1"></script>
 </body>
 </html>
