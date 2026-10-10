@@ -170,6 +170,10 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
 .avseg { margin-bottom: 10px; }
 .avseg button { display: inline-flex; align-items: center; gap: 6px; }
 .arow.bk { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.3fr) minmax(0, .8fr) minmax(0, .8fr) minmax(0, 190px); }
+.arow.sc { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.3fr) minmax(0, .7fr) minmax(0, .9fr) minmax(0, 1fr) minmax(0, 170px); }
+.hist { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.hist li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.hist li span:last-child { color: var(--muted); white-space: nowrap; }
 .arow.hd { min-height: 0; padding-top: 7px; padding-bottom: 7px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .arow.hd:hover { background: transparent; }
 .arow .c-kind { color: var(--ink); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -391,6 +395,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   .arow .c-date { grid-area: date; text-align: right; } .arow .c-chip { align-items: flex-end; }
   .arow .st { max-width: 150px; }
   .arow.bk { grid-template-areas: "who chip" "room date" "kind kind"; }
+  .arow.sc { grid-template-areas: "who chip" "room date" "kind kind" "when when"; }
+  .arow .c-when { grid-area: when; color: var(--muted); font-size: 12.5px; }
   .arow .c-kind { grid-area: kind; color: var(--muted); }
   .arow.hd { display: none; }
   .kpi .v { font-size: 20px; }
@@ -420,7 +426,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 </header>
 <div class="wrap" id="wrap">
   <section id="v-arrivals">
-    <div class="seg avseg" id="avSeg" role="group" aria-label="Arrivals view" hidden><button type="button" class="on" data-av="checkins">Check-ins</button><button type="button" data-av="bookings">Bookings <span class="tbadge" id="bkBadge" hidden></span></button></div>
+    <div class="seg avseg" id="avSeg" role="group" aria-label="Arrivals view" hidden><button type="button" class="on" data-av="checkins">Check-ins</button><button type="button" data-av="bookings">Bookings <span class="tbadge" id="bkBadge" hidden></span></button><button type="button" data-av="scheduled" id="scSegBtn" hidden>Scheduled <span class="tbadge" id="scBadge" hidden></span></button></div>
     <div id="ciView">
     <div class="toolbar">
       <div class="wkpick">
@@ -453,6 +459,21 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       <div class="split">
         <div id="bkList"><div class="empty">Loading…</div></div>
         <aside class="panel card" id="bkPanel"></aside>
+      </div>
+    </div>
+    <div id="scView" hidden>
+      <div class="toolbar">
+        <select class="sel" id="scCity" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
+        <select class="sel" id="scType" aria-label="Email type"><option value="">All emails</option><option value="booking">Welcome</option><option value="room_change">Room-change welcome</option><option value="checkin">Arrival instructions</option></select>
+        <input class="inp" id="scQ" type="search" placeholder="Search tenant, building or room" aria-label="Search" autocomplete="off" style="max-width:240px" />
+        <span class="sp"></span>
+        <button type="button" class="btn btn-ghost" id="scRule">Delivery rule</button>
+      </div>
+      <p class="note" id="scNote">Signed co-living bookings: the Welcome goes out on its own once the template is reviewed; Arrival instructions go 7 days before move-in at 10:00 local time. Anything that can’t go out shows under Needs attention and is emailed to the owner.</p>
+      <div class="chips" id="scChips" style="margin-bottom:10px"></div>
+      <div class="split">
+        <div id="scList"><div class="empty">Loading…</div></div>
+        <aside class="panel card" id="scPanel"></aside>
       </div>
     </div>
   </section>
@@ -504,7 +525,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-09-fixresend1"></script>
+<script src="arrivals-core.js?v=2026-10-10-arrsched1"></script>
 <script>
 (function () {
   'use strict';
@@ -533,7 +554,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     sendsBy: null, sendsErr: '',
     // contract arrivals (contract-arrivals-2026-10-06.sql): Check-ins source filter + the Bookings sub-view
     av: 'checkins', source: '',
-    bk: { setup: false, city: '', filter: 'todo', todo: [], rows: [], openId: null, draft: null, seq: 0, busy: false } };
+    bk: { setup: false, city: '', filter: 'todo', todo: [], rows: [], openId: null, draft: null, seq: 0, busy: false },
+    // Scheduled (arrival-scheduling-2026-10-10.sql): arrival_schedule_v rows
+    sc: { setup: false, city: '', type: '', q: '', filter: 'exceptions', rows: [], openId: null, draft: null, seq: 0, busy: false, mail: null, hist: null, rule: null } };
 
   function $(id) { return document.getElementById(id); }
   function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
@@ -628,9 +651,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     wire();
     var h = (location.hash || '').replace('#', '');
     if (h === 'bookings') S.av = 'bookings';
+    if (h === 'scheduled') S.av = 'scheduled';
     setTab(h === 'access' || h === 'templates' || h === 'moveouts' ? h : 'arrivals');
     if (S.tab !== 'moveouts') loadMoBadge();
     if (!(S.tab === 'arrivals' && S.av === 'bookings')) loadBkBadge();
+    if (!(S.tab === 'arrivals' && S.av === 'scheduled')) loadScBadge();
   }
 
   function setTab(t) {
@@ -1500,13 +1525,14 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   // Check-ins | Bookings inside the Arrivals tab (#bookings in the URL, like the tabs).
   function setAv(v) {
-    S.av = v === 'bookings' ? 'bookings' : 'checkins';
+    S.av = v === 'bookings' || v === 'scheduled' ? v : 'checkins';
     Array.prototype.forEach.call(document.querySelectorAll('#avSeg [data-av]'), function (b) { b.classList.toggle('on', b.getAttribute('data-av') === S.av); });
     $('ciView').hidden = S.av !== 'checkins';
     $('bkView').hidden = S.av !== 'bookings';
+    $('scView').hidden = S.av !== 'scheduled';
     document.body.dataset.panel = '';
-    try { history.replaceState(null, '', location.pathname + location.search + (S.av === 'bookings' ? '#bookings' : '')); } catch (e) {}
-    if (S.av === 'bookings') loadBookings(); else loadArrivals();
+    try { history.replaceState(null, '', location.pathname + location.search + (S.av === 'bookings' ? '#bookings' : S.av === 'scheduled' ? '#scheduled' : '')); } catch (e) {}
+    if (S.av === 'bookings') loadBookings(); else if (S.av === 'scheduled') loadScheduled(); else loadArrivals();
   }
 
   async function loadBookings() {
@@ -1750,6 +1776,346 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
   }
   // end Bookings
+
+  // ───────── Scheduled (arrival-scheduling-2026-10-10.sql) ─────────
+  // arrival_schedule_v: one row per signed co-living arrival × email (Welcome / Room-change welcome / Arrival
+  // instructions), with its scheduled time, live status, owner and payment (signed = paid). The view carries no code
+  // and no Wi-Fi; only the instructions preview (arrivals_v, the same row Check-ins shows) does, as on Check-ins.
+  // Actions: rpc arrival_schedule_action / arrivals_save_arrival_date / booking_message_override, sends through the
+  // arrivals-send webhook exactly as Check-ins and Bookings do.
+  var SC_FILTERS = [['exceptions', 'Needs attention'], ['upcoming', 'Upcoming'], ['sent', 'Sent'], ['closed', 'Cancelled'], ['all', 'All']];
+  var SC_MISSING = { email: 'tenant email', door_code: 'door code', wifi: 'Wi-Fi name', template: 'reviewed template', address: 'address',
+    room: 'room', move_in: 'move-in date' };
+  var SC_ACTION_LABEL = { checkin_reschedule: 'Rescheduled', checkin_reset: 'Back to the automatic time', checkin_hold: 'Held', checkin_unhold: 'Unheld',
+    checkin_cancel: 'Cancelled', checkin_restore: 'Restored', owner_set: 'Owner changed', arrival_date_saved: 'Move-in date changed',
+    contract_arrival_created: 'Created from the signed contract', contract_replacement_created: 'Created (replaces an earlier contract)',
+    contract_details_changed: 'Contract details changed', contract_void_cancelled: 'Contract voided — cancelled', contract_void_after_send: 'Contract voided after sending',
+    sent: 'Arrival instructions sent', resent: 'Arrival instructions re-sent', send_failed: 'Send failed', booking_sent: 'Welcome sent',
+    booking_resent: 'Welcome re-sent', room_change_sent: 'Room-change welcome sent', booking_send_failed: 'Welcome send failed',
+    room_change_send_failed: 'Room-change welcome send failed', booking_override: 'Welcome edited', room_change_override: 'Room-change welcome edited',
+    booking_reschedule: 'Welcome rescheduled', booking_hold: 'Welcome held', booking_unhold: 'Welcome unheld', booking_cancel: 'Welcome cancelled',
+    booking_restore: 'Welcome restored', booking_held: 'Welcome held', booking_ready: 'Welcome unheld', email_saved: 'Email fixed' };
+  function scSetupMissing(e) {
+    if (!e) return false;
+    if (e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST200') return true;
+    return /arrival_schedule_v/.test(String(e.message || '')) && /(does not exist|schema cache|could not find)/i.test(String(e.message || ''));
+  }
+  function scSetup(on) {
+    S.sc.setup = !!on;
+    $('scSegBtn').hidden = !on;
+    if (!on) { $('scBadge').hidden = true; if (S.av === 'scheduled') setAv('checkins'); }
+    else $('avSeg').hidden = false;
+  }
+  function scById(id) { for (var i = 0; i < S.sc.rows.length; i++) if (S.sc.rows[i].row_key === id) return S.sc.rows[i]; return null; }
+  function scMissingText(r) { var m = Array.isArray(r.missing) ? r.missing : []; return m.length ? 'Missing ' + m.map(function (k) { return SC_MISSING[k] || k; }).join(', ') : ''; }
+  function scChipHtml(r) { var c = A.schedChip(r); return '<span class="st st-' + esc(c.cls) + '" title="' + esc(c.label) + '">' + esc(c.label) + '</span>'; }
+  function scRoomText(r) {
+    var room = str(r.room_label) || (str(r.bed) ? 'Room ' + str(r.bed) : '');
+    return [str(r.city), str(r.building) || '—', str(r.unit) ? 'Unit ' + str(r.unit) : '', room].filter(str).join(' · ');
+  }
+  function scPayText(r) { return r.payment_status === 'paid' ? 'Paid (signed)' : r.payment_status === 'not_paid' ? 'Not signed' : 'Unknown'; }
+  function scContractText(r) { var s = str(r.contract_status); return s === 'customer_signed' ? 'Signed' : s === 'completed' ? 'Countersigned' : s === 'void' ? 'Void' : s || '—'; }
+  function scWhenText(r) {
+    if (r.status === 'sent') return 'Sent ' + A.schedWhen(r.sent_at, r.city);
+    if (r.status === 'manual') return 'Waiting in Bookings';
+    if (r.status === 'cancelled' || r.status === 'handled') return '—';
+    return (r.rescheduled ? 'Rescheduled: ' : '') + (r.scheduled_at ? A.schedWhen(r.scheduled_at, r.city) : '—');
+  }
+  function scRowNote(r) {
+    if (r.status === 'failed' || r.status === 'retrying') return bkErrText(r.last_error);
+    if (r.status === 'held') return r.held_by === 'system:prior_sent' ? 'Earlier version sent — send the update?' : r.held_by === 'system:go_live' ? 'Zoho may have sent one — decide' : 'Held by ' + str(r.held_by);
+    if (r.status === 'needs_info' || r.status === 'needs_review' || r.status === 'no_template') return scMissingText(r);
+    if (r.status === 'sent' && r.changed_after_send) return 'Details changed after sending';
+    return '';
+  }
+  function scVisible() {
+    var q = str(S.sc.q).toLowerCase();
+    return S.sc.rows.filter(function (r) {
+      if (S.sc.type && r.email_type !== S.sc.type) return false;
+      if (S.sc.filter !== 'all' && A.schedBucket(r) !== S.sc.filter) return false;
+      if (q && [r.student_name, r.student_email, r.building, r.unit, r.room_label, r.booking_ref].map(str).join(' ').toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+  }
+
+  async function loadScheduled() {
+    var seq = ++S.sc.seq, city = S.sc.city;
+    if (!S.sc.rows.length) $('scList').innerHTML = '<div class="empty card">Loading…</div>';
+    var rows, rule;
+    try {
+      var res = await Promise.all([
+        selectAll('arrival_schedule_v', '*', function (q) {
+          // the last 60 days of move-ins and everything later
+          q = q.gte('arrival_date', addDaysYmd(todayYmd(), -60));
+          if (city) q = q.eq('city', city);
+          return q.order('scheduled_at', { ascending: true }).order('row_key', { ascending: true });
+        }),
+        selectAll('arrival_schedule_settings', '*', function (q) { return q.order('scope'); })
+      ]);
+      rows = res[0]; rule = res[1];
+    } catch (e) {
+      if (seq !== S.sc.seq) return;
+      if (scSetupMissing(e)) { scSetup(false); return; }
+      $('scChips').innerHTML = ''; $('scPanel').innerHTML = '';
+      $('scList').innerHTML = '<div class="gate card">Could not load scheduled emails: ' + esc(e && e.message) + '</div>';
+      return;
+    }
+    if (seq !== S.sc.seq) return;
+    scSetup(true);
+    S.sc.rows = rows; S.sc.rule = rule;
+    var d = (rule || []).filter(function (x) { return x.scope === '*'; })[0];
+    if (d) $('scNote').textContent = 'Signed co-living bookings: the Welcome goes out on its own once the template is reviewed; Arrival instructions go ' +
+      d.days_before + ' day' + (d.days_before === 1 ? '' : 's') + ' before move-in at ' + str(d.send_time).slice(0, 5) + ' local time. Anything that can’t go out shows under Needs attention and is emailed to the owner (default ' + str(d.alert_email) + ').';
+    $('scRule').hidden = !(S.me && S.me.role === 'admin');
+    if (S.sc.openId && !scById(S.sc.openId)) { S.sc.openId = null; S.sc.draft = null; }
+    renderScheduled();
+    scBadgeFrom(rows);
+  }
+  function scBadgeFrom(rows) {
+    var n = (rows || []).filter(function (r) { return A.schedBucket(r) === 'exceptions'; }).length, el = $('scBadge');
+    el.textContent = n; el.hidden = !n; el.title = n + ' arrival email' + (n === 1 ? '' : 's') + ' need attention';
+  }
+  async function loadScBadge() {
+    try {
+      var rows = await selectAll('arrival_schedule_v', 'row_key,status,changed_after_send', function (q) { return q.gte('arrival_date', todayYmd()).order('row_key'); });
+      scSetup(true);
+      scBadgeFrom(rows);
+    } catch (e) { $('scBadge').hidden = true; if (scSetupMissing(e)) scSetup(false); }
+  }
+
+  function scRowHtml(r) {
+    var note = scRowNote(r);
+    return '<button type="button" class="arow sc' + (r.row_key === S.sc.openId ? ' on' : '') + '" data-id="' + esc(r.row_key) + '">' +
+      '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + esc(r.student_email || 'No email') + '</small></span>' +
+      '<span class="c-room">' + esc(scRoomText(r)) + '</span>' +
+      '<span class="c-date">' + esc(r.arrival_date ? shortDate(r.arrival_date) : 'No move-in') + '</span>' +
+      '<span class="c-kind">' + esc(A.schedTypeLabel(r.email_type)) + '<small class="muted" style="display:block">' + esc(scContractText(r) + ' · ' + scPayText(r)) + '</small></span>' +
+      '<span class="c-when">' + esc(scWhenText(r)) + '<small class="muted" style="display:block">' + esc(str(r.owner)) + '</small></span>' +
+      '<span class="c-chip">' + scChipHtml(r) + (note ? '<span class="c-open">' + esc(note) + '</span>' : '') + '</span></button>';
+  }
+  function renderScheduled() {
+    var c = A.schedCounts(S.sc.rows.filter(function (r) { return !S.sc.type || r.email_type === S.sc.type; }));
+    $('scChips').innerHTML = SC_FILTERS.map(function (f) {
+      return '<button type="button" class="chip' + (S.sc.filter === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + esc(f[1]) + ' <span class="n">' + (c[f[0]] || 0) + '</span></button>';
+    }).join('');
+    var list = scVisible();
+    if (!list.length) {
+      $('scList').innerHTML = '<div class="empty card"><b>' + (S.sc.filter === 'exceptions' ? 'Nothing needs attention' : 'No emails here') + '</b>' +
+        'Each signed co-living contract adds its Welcome and Arrival instructions here.</div>';
+    } else {
+      $('scList').innerHTML = '<section class="grp card"><div class="arow sc hd" aria-hidden="true"><span>Tenant</span><span>City · building · room</span><span>Move-in</span><span>Email · contract</span><span>Scheduled · owner</span><span>Status</span></div>' +
+        list.map(scRowHtml).join('') + '</section>';
+    }
+    scRenderPanel();
+  }
+
+  function scRenderPanel() {
+    var r = S.sc.openId ? scById(S.sc.openId) : null;
+    if (S.tab === 'arrivals' && S.av === 'scheduled') document.body.dataset.panel = r ? 'open' : '';
+    if (!r) { $('scPanel').innerHTML = '<div class="empty"><b>Pick an email</b>Preview it, send it now, reschedule, edit, hold or cancel it, and see its history.</div>'; return; }
+    var can = A.schedActions(r), isCk = r.email_type === 'checkin';
+    var facts = [
+      ['Email', A.schedTypeLabel(r.email_type)],
+      ['Scheduled', scWhenText(r)],
+      ['Move-in', r.arrival_date ? A.longDate(r.arrival_date) : ''],
+      ['Room', scRoomText(r)],
+      ['Contract', scContractText(r) + (r.booking_ref ? ' · ' + r.booking_ref : '')],
+      ['Payment', scPayText(r)],
+      ['Owner', str(r.owner)],
+      ['Attempts', r.attempts ? r.attempts + ' of 3' : ''],
+      ['Error', r.status === 'failed' || r.status === 'retrying' ? bkErrText(r.last_error) : ''],
+      ['Earlier version sent', r.prior_sent_at ? clock(r.prior_sent_at) : ''],
+      ['Opened', r.opened_at ? clock(r.opened_at) + (r.open_count > 1 ? ' · ' + r.open_count + ' opens' : '') : (r.status === 'sent' ? 'Not yet' : '')]
+    ].filter(function (f) { return str(f[1]); });
+    var warn = '';
+    if (r.status === 'sent' && r.changed_after_send) warn = '<p class="warnbox">The move-in date or room changed after this was sent.' + (can.resend ? ' Send the updated instructions?' : '') + '</p>';
+    else if (r.held_by === 'system:prior_sent') warn = '<p class="warnbox">This booking replaced an earlier contract whose email was already sent, and the details changed. Send the updated email, or cancel it.</p>';
+    else if (r.held_by === 'system:go_live') warn = '<p class="warnbox">Held when automatic sending started: Zoho may already have sent its own check-in email. Unhold to let it go, or cancel it.</p>';
+    else if (r.status === 'needs_review' || r.status === 'no_template') warn = '<p class="warnbox">' + (r.status === 'no_template' ? 'This building has no template yet' : 'The building’s template isn’t reviewed') + ' — nothing is sent until it is.</p>';
+    else if (r.status === 'needs_info') warn = '<p class="warnbox">' + esc(scMissingText(r)) + '. It won’t be sent with blanks.</p>';
+    else if (r.status === 'manual') warn = '<p class="warnbox">Created before automatic sending started — it waits for a person in Bookings. Reschedule it to send it automatically.</p>';
+    var acts = [];
+    if (can.send) acts.push('<button type="button" class="btn btn-primary" data-sc="send">Send now</button>');
+    if (can.release) acts.push('<button type="button" class="btn btn-primary" data-sc="release">Send updated</button>');
+    if (can.resend) acts.push('<button type="button" class="btn btn-primary" data-sc="resend">Send updated instructions</button>');
+    if (can.reschedule) acts.push('<button type="button" class="btn btn-ghost" data-sc="reschedule">Reschedule</button>');
+    if (r.rescheduled && can.reschedule) acts.push('<button type="button" class="btn btn-ghost" data-sc="reset">Automatic time</button>');
+    if (can.hold) acts.push('<button type="button" class="btn btn-ghost" data-sc="hold">Hold</button>');
+    if (can.unhold && r.held_by !== 'system:prior_sent') acts.push('<button type="button" class="btn btn-ghost" data-sc="unhold">Unhold</button>');
+    if (can.cancel) acts.push('<button type="button" class="btn btn-ghost" data-sc="cancel">Cancel email</button>');
+    if (can.restore) acts.push('<button type="button" class="btn btn-ghost" data-sc="restore">Restore</button>');
+    if (isCk) acts.push('<button type="button" class="btn btn-ghost" data-sc="tpl">Edit the building template</button>');
+    acts.push('<button type="button" class="btn btn-ghost" data-sc="history">History</button>');
+    var fx = '';
+    if (can.edit && !isCk) {
+      fx += fxBlock('override', 'Edit this email', false,
+        '<div style="display:grid;gap:6px"><input class="inp" name="override_subject" value="' + esc(r.override_subject) + '" placeholder="Subject (blank = the template’s)" />' +
+        '<textarea class="inp" name="override_note" placeholder="Extra note for this tenant only">' + esc(r.override_note) + '</textarea>' +
+        '<div class="frow"><button class="btn btn-ghost" type="submit">Save email</button><span class="muted" id="scDirty" style="font-size:12px" hidden>Unsaved — the preview shows your edits</span></div></div>',
+        'Only for this tenant. The building template stays as it is.');
+    }
+    if (can.date) fx += fxBlock('date', 'Move-in date', false,
+      '<div class="frow"><input class="inp" type="date" name="date" value="' + esc(str(r.arrival_date).slice(0, 10)) + '" /><button class="btn btn-ghost" type="submit">Save</button></div>',
+      'The Arrival instructions move with it.');
+    fx += fxBlock('owner', 'Owner', false,
+      '<div class="frow"><input class="inp" type="email" name="owner" value="' + esc(r.owner) + '" autocomplete="off" /><button class="btn btn-ghost" type="submit">Save</button></div>',
+      'Gets the alert email when this can’t be sent.');
+    $('scPanel').innerHTML = '<div class="pin"><div class="ph"><div class="who"><div class="pname">' + esc(r.student_name || '(no name)') + '</div>' +
+      '<div class="psub">' + esc(r.student_email || '—') + '</div><div style="margin-top:6px">' + scChipHtml(r) + ' ' + contractTag() + '</div></div>' +
+      '<button type="button" class="pclose" data-sc="close" aria-label="Close">✕</button></div>' +
+      '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
+      warn + '<div class="pact">' + acts.join('') + '</div>' + fx +
+      '<div id="scHist"></div>' +
+      '<div class="pv-head"><b>Email preview</b><span class="muted" style="font-size:12px">' + esc(r.student_email || 'no email yet') + '</span></div>' +
+      '<div class="pv-subj" id="scSubj">Loading…</div>' +
+      '<iframe class="pv" id="scPv" sandbox="" title="Email preview" referrerpolicy="no-referrer"></iframe></div>';
+    scLoadPreview(r);
+  }
+  // The preview row: arrivals_v (instructions — the same row and builder as Check-ins) or booking_messages_v (Welcome).
+  async function scLoadPreview(r) {
+    var key = r.row_key;
+    try {
+      var rows = r.email_type === 'checkin'
+        ? await selectAll('arrivals_v', '*', function (q) { return q.eq('id', r.arrival_id).order('id'); })
+        : await selectAll('booking_messages_v', '*', function (q) { return q.eq('id', r.message_id).order('id'); });
+      if (S.sc.openId !== key) return;
+      S.sc.mail = { key: key, row: rows[0] || null };
+      scPreview(r);
+    } catch (e) { if (S.sc.openId === key) $('scSubj').textContent = 'Could not load the preview: ' + str(e && e.message); }
+  }
+  function scPreview(r) {
+    var m = S.sc.mail && S.sc.mail.key === r.row_key ? S.sc.mail.row : null;
+    if (!m) { $('scSubj').textContent = 'No preview'; return; }
+    var d = S.sc.draft && S.sc.draft.id === r.row_key ? S.sc.draft : null;
+    var mail = r.email_type === 'checkin' ? emailFor(m) : bkMail(m, d);
+    $('scSubj').textContent = 'Subject: ' + mail.subject;
+    $('scPv').srcdoc = mail.html;
+    var dirty = $('scDirty'); if (dirty) dirty.hidden = !(d && (str(d.override_subject) !== str(r.override_subject) || str(d.override_note) !== str(r.override_note)));
+  }
+  function scInput(e) {
+    var form = e.target.closest && e.target.closest('form[data-fx="override"]');
+    var r = scById(S.sc.openId);
+    if (!form || !r) return;
+    S.sc.draft = { id: r.row_key, override_subject: form.elements.override_subject.value, override_note: form.elements.override_note.value };
+    scPreview(r);
+  }
+  function scOpenRow(id) {
+    if (S.sc.openId !== id) { S.sc.draft = null; S.sc.mail = null; }
+    S.sc.openId = id;
+    Array.prototype.forEach.call(document.querySelectorAll('#scList .arow[data-id]'), function (b) { b.classList.toggle('on', b.getAttribute('data-id') === id); });
+    scRenderPanel();
+    if (!NARROW.matches) $('scPanel').scrollTop = 0;
+  }
+  async function scSaveFx(form) {
+    var r = scById(S.sc.openId); if (!r) return;
+    var kind = form.getAttribute('data-fx');
+    var v = function (n) { var el = form.elements[n]; return el ? el.value.trim() : ''; };
+    var ok = null, btn = form.querySelector('[type=submit]');
+    if (btn) btn.disabled = true;
+    try {
+      if (kind === 'override') ok = await rpc('booking_message_override', { p_id: r.message_id, p_subject: v('override_subject'), p_note: v('override_note') });
+      else if (kind === 'date') ok = await rpc('arrivals_save_arrival_date', { p_id: r.arrival_id, p_date: v('date') || null });
+      else if (kind === 'owner') ok = await rpc('arrival_schedule_action', { p_arrival: r.arrival_id, p_kind: r.email_type, p_action: 'set_owner', p_at: null, p_text: v('owner') });
+    } finally { if (btn) btn.disabled = false; }
+    if (ok) { if (kind === 'override') S.sc.draft = null; S.sc.mail = null; toast('Saved'); await loadScheduled(); }
+  }
+  async function scSchedAction(r, action, at) {
+    return rpc('arrival_schedule_action', { p_arrival: r.arrival_id, p_kind: r.email_type, p_action: action, p_at: at || null, p_text: null });
+  }
+  // POST to Portal - Arrivals Send: instructions {ids:[arrival], resend}, Welcome {kind:'booking', ids:[message]}.
+  async function scSend(r, resend) {
+    if (S.sc.busy) return;
+    S.sc.busy = true;
+    Array.prototype.forEach.call(document.querySelectorAll('#scPanel [data-sc]'), function (b) { b.disabled = true; });
+    var j = null;
+    try {
+      var tok = await token();
+      if (!tok) { toast('Your session expired — reload the page.'); return; }
+      var body = r.email_type === 'checkin' ? { ids: [r.arrival_id], resend: !!resend } : { kind: 'booking', ids: [r.message_id] };
+      var res = await fetch(ARRIVALS_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok }, body: JSON.stringify(body) });
+      try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service (HTTP ' + res.status + ').' }; }
+    } catch (e) {
+      toast('Send service unreachable — check your connection and try again.');
+    } finally { S.sc.busy = false; }
+    if (j) {
+      var res1 = Array.isArray(j.results) ? j.results[0] : null;
+      var failed = Array.isArray(j.failed) ? j.failed[0] : null;
+      if (j.ok !== true) infoSheet('Not sent', '<p>' + esc(j.error || 'The send service refused the request.') + '</p>');
+      else if ((res1 && !res1.ok) || failed) infoSheet('Not sent', '<p>' + esc(bkErrText((res1 && res1.error) || (failed && failed.error))) + '</p>');
+      else toast('Sent');
+    }
+    S.sc.mail = null;
+    await loadScheduled();
+  }
+  async function scReschedule(r) {
+    var tz = A.cityTz(r.city), cur = A.zonedParts(r.scheduled_at || new Date().toISOString(), tz) || { ymd: todayYmd(), hm: '10:00' };
+    var ok = await confirmSheet('Reschedule ' + A.schedTypeLabel(r.email_type).toLowerCase(),
+      '<p class="note">' + esc(str(r.student_name)) + ' · ' + esc(scRoomText(r)) + '. Time is ' + esc(tz.replace('America/', '').replace('_', ' ')) + ' time (the property’s).</p>' +
+      '<div class="frow"><input class="inp" type="date" id="scRsDate" value="' + esc(cur.ymd) + '" /><input class="inp" type="time" id="scRsTime" value="' + esc(cur.hm) + '" /></div>', 'Reschedule');
+    if (!ok) return;
+    var at = A.zonedToUtc($('scRsDate') ? $('scRsDate').value : '', $('scRsTime') ? $('scRsTime').value : '', tz);
+    if (!at) { toast('Pick a date and a time.'); return; }
+    if (await scSchedAction(r, 'reschedule', at)) { toast('Rescheduled for ' + A.schedWhen(at, r.city)); await loadScheduled(); }
+  }
+  async function scHistory(r) {
+    var box = $('scHist'); if (!box) return;
+    box.innerHTML = '<p class="note">Loading history…</p>';
+    try {
+      var logs = await selectAll('arrivals_log', 'id,at,actor,action', function (q) { return q.eq('arrival_id', r.arrival_id).order('at', { ascending: false }); });
+      var mine = logs.filter(function (l) {
+        var a = str(l.action);
+        if (r.email_type === 'checkin') return !/^(booking|room_change)_/.test(a);
+        return a.indexOf(r.email_type + '_') === 0 || /^(contract_|owner_set|arrival_date_saved|email_saved)/.test(a);
+      });
+      if (S.sc.openId !== r.row_key) return;
+      box.innerHTML = '<div class="sendsec"><h3>History</h3>' + (mine.length ? '<ul class="hist">' + mine.map(function (l) {
+        return '<li><span>' + esc(SC_ACTION_LABEL[l.action] || str(l.action).replace(/_/g, ' ')) + (str(l.actor) ? ' · ' + esc(l.actor) : '') + '</span><span>' + esc(clock(l.at)) + '</span></li>';
+      }).join('') + '</ul>' : '<p class="note">Nothing recorded yet.</p>') + '</div>';
+    } catch (e) { box.innerHTML = '<p class="note">Could not load the history: ' + esc(e && e.message) + '</p>'; }
+  }
+  async function scEditRule() {
+    var d = (S.sc.rule || []).filter(function (x) { return x.scope === '*'; })[0] || { days_before: 7, send_time: '10:00', alert_email: 'vreal@vanmates.com' };
+    var ok = await confirmSheet('Arrival instructions delivery rule',
+      '<p class="note">Applies to every building (a building can have its own rule later). Times are each property’s local time.</p>' +
+      '<div class="frow"><label>Days before move-in <input class="inp" type="number" min="0" max="60" id="scRuleDays" value="' + esc(d.days_before) + '" style="width:80px" /></label>' +
+      '<label>at <input class="inp" type="time" id="scRuleTime" value="' + esc(str(d.send_time).slice(0, 5)) + '" /></label></div>' +
+      '<label style="display:block;margin-top:8px">Alerts go to <input class="inp" type="email" id="scRuleAlert" value="' + esc(d.alert_email) + '" /></label>', 'Save rule');
+    if (!ok) return;
+    var days = parseInt($('scRuleDays') ? $('scRuleDays').value : '', 10);
+    if (await rpc('arrival_schedule_save_settings', { p_scope: '*', p_days: isNaN(days) ? null : days, p_time: $('scRuleTime') ? $('scRuleTime').value : '', p_alert_email: $('scRuleAlert') ? $('scRuleAlert').value : null })) {
+      toast('Rule saved — scheduled times updated'); await loadScheduled();
+    }
+  }
+  async function scAct(name) {
+    if (name === 'close') { S.sc.openId = null; S.sc.draft = null; renderScheduled(); return; }
+    var r = scById(S.sc.openId); if (!r) return;
+    var label = A.schedTypeLabel(r.email_type);
+    if (name === 'send') {
+      if (S.sc.draft && S.sc.draft.id === r.row_key) { toast('Save the email first — the preview shows unsaved edits.'); return; }
+      if (await confirmSheet('Send ' + label.toLowerCase() + ' now?', '<p class="note">To ' + esc(r.student_email) + '. The scheduled delivery is replaced: it is sent once.</p>', 'Send now')) await scSend(r, false);
+      return;
+    }
+    if (name === 'resend') {
+      if (await confirmSheet('Send updated instructions?', '<p class="note">' + esc(r.student_email) + ' gets the instructions again with the current date, room and codes.</p>', 'Send updated')) await scSend(r, true);
+      return;
+    }
+    if (name === 'release') {
+      if (!(await confirmSheet('Send the updated ' + label.toLowerCase() + '?', '<p class="note">The earlier version went out on ' + esc(clock(r.prior_sent_at) || 'an earlier contract') + '. This sends the current one.</p>', 'Send updated'))) return;
+      if (await scSchedAction(r, 'unhold')) await scSend(r, false);
+      return;
+    }
+    if (name === 'reschedule') { await scReschedule(r); return; }
+    if (name === 'cancel') {
+      if (!(await confirmSheet('Cancel this ' + label.toLowerCase() + '?', '<p class="note">It won’t be sent. You can restore it later.</p>', 'Cancel email'))) return;
+    }
+    if (name === 'reset' || name === 'hold' || name === 'unhold' || name === 'cancel' || name === 'restore') {
+      if (await scSchedAction(r, name)) { toast({ reset: 'Back to the automatic time', hold: 'Held', unhold: 'Unheld', cancel: 'Cancelled', restore: 'Restored' }[name]); await loadScheduled(); }
+      return;
+    }
+    if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
+    if (name === 'history') { await scHistory(r); }
+  }
+  // end Scheduled
 
   // ───────── Access + Templates data ─────────
   async function loadAccess() {
@@ -3265,6 +3631,16 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('bkPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-bk]'); if (b && !b.disabled) bkAct(b.getAttribute('data-bk')); });
     $('bkPanel').addEventListener('submit', function (e) { e.preventDefault(); bkSaveFx(e.target); });
     $('bkPanel').addEventListener('input', bkInput);
+    // Scheduled
+    $('scCity').addEventListener('change', function () { S.sc.city = this.value; S.sc.openId = null; loadScheduled(); });
+    $('scType').addEventListener('change', function () { S.sc.type = this.value; renderScheduled(); });
+    $('scQ').addEventListener('input', function () { S.sc.q = this.value; renderScheduled(); });
+    $('scChips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.sc.filter = b.getAttribute('data-f'); renderScheduled(); } });
+    $('scRule').addEventListener('click', scEditRule);
+    $('scList').addEventListener('click', function (e) { var b = e.target.closest('.arow[data-id]'); if (b) scOpenRow(b.getAttribute('data-id')); });
+    $('scPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-sc]'); if (b && !b.disabled) scAct(b.getAttribute('data-sc')); });
+    $('scPanel').addEventListener('submit', function (e) { e.preventDefault(); scSaveFx(e.target); });
+    $('scPanel').addEventListener('input', scInput);
     $('moPrev').addEventListener('click', function () { S.mo.wk = A.shiftWeekend(S.mo.wk, -1); S.mo.openId = null; S.mo.rows = []; loadMoveouts(); });
     $('moNext').addEventListener('click', function () { S.mo.wk = A.shiftWeekend(S.mo.wk, 1); S.mo.openId = null; S.mo.rows = []; loadMoveouts(); });
     $('moCity').addEventListener('change', function () { S.mo.city = this.value; S.mo.openId = null; loadMoveouts(); });
@@ -3304,7 +3680,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (e.key !== 'Escape') return;
       if ($('modal').classList.contains('show')) closeModal(false);
       else if (S.tab === 'arrivals' && S.av === 'bookings' && S.bk.openId && NARROW.matches) bkAct('close');
-      else if (S.tab === 'arrivals' && S.av !== 'bookings' && S.openId && NARROW.matches) act('close');
+      else if (S.tab === 'arrivals' && S.av === 'scheduled' && S.sc.openId && NARROW.matches) scAct('close');
+      else if (S.tab === 'arrivals' && S.av === 'checkins' && S.openId && NARROW.matches) act('close');
       else if (S.tab === 'moveouts' && S.mo.openId && NARROW.matches) moAct('close');
       else if (S.tab === 'access' && S.rsel && NARROW.matches) closeRoom();
     });
