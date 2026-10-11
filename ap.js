@@ -65,7 +65,8 @@
     const ok = rows.filter(r => r.type === 'cleaning' && r.status === 'approved' && r.payee_email);
     return { text: ['Name\tE-transfer email\tAmount', ...ok.map(r => `${r.payee}\t${r.payee_email}\t${(Number(r.amount_cents) / 100).toFixed(2)}`)].join('\n'), count: ok.length, cents: ok.reduce((s, r) => s + Number(r.amount_cents), 0), missing: rows.filter(r => r.type === 'cleaning' && r.status === 'approved' && !r.payee_email).length };
   }
-  const canAct = (u) => !!u && ['admin', 'accountant'].includes(String(u.role || ''));
+  // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
+  const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
   window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText };
   if (typeof document === 'undefined') return;
 
@@ -73,7 +74,7 @@
   let rows = null, loading = null, openSeq = 0;
   const e = (s) => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const toast = (m) => { if (typeof showToast === 'function') showToast(m); };
-  const me = () => { const u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || {}; return { email: String(u.email || '').toLowerCase(), role: String(u.role || '') }; };
+  const me = () => { const u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || {}; return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), allowed_pages: Array.isArray(u.allowed_pages) ? u.allowed_pages : [] }; };
   const sb = () => window.vmDb && window.vmDb.sb;
   const pill = (s) => { const [l, c] = STATUS[s] || [s, '']; return `<span class="tag-pill ${c}" style="font-size:11px">${e(l)}</span>`; };
   const flag = (f) => `<span class="tag-pill red" style="font-size:11px;margin:1px">${e(FLAGS[f] || f.replace(/_/g, ' '))}</span>`;
