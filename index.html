@@ -1540,6 +1540,7 @@
 .ml-big{font-size:22px;font-weight:700}.ml-red{color:#B94A3F}.ml-amber{color:#9a6b00}
 .ml-stage{height:9px;border-radius:5px;display:flex;overflow:hidden;margin:8px 0 4px;background:var(--cream-2)}
 .ml-stage i{display:block;height:100%}
+.ml-sec label{display:flex;align-items:center;gap:6px;cursor:pointer}
 .ml-sec{margin:16px 0 4px;display:flex;justify-content:space-between;font-weight:600;border-bottom:1px solid var(--line,#E4DBC9);padding-bottom:4px}
 .ml-row{display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px dashed var(--line,#E4DBC9);cursor:pointer}
 .ml-row .ml-main{flex:1;min-width:0}
@@ -1587,7 +1588,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-11-ap2"></script>
+<script src="pms-supabase.js?v=2026-10-11-myleads2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -29346,7 +29347,9 @@ const LEAD_SOURCES = {
   'manager-application': 'Manager application',
   'partner': 'Partner',
   'service': 'Service request',
-  'line-maya': 'LINE (Maya)'
+  'line-maya': 'LINE (Maya)',
+  'whatsapp-maya': 'WhatsApp (Maya)',
+  'hugo': 'Hugo booking'
 };
 const LEAD_STATUSES = ['new','contacted','qualified','won','lost'];
 const LEAD_FILTERS = { search:'', source:'', status:'open' };
@@ -29470,6 +29473,24 @@ function leadSaveTouches(before, patch){
     || n(b.notes) !== n(p.notes)
     || n(b.follow_up_at).slice(0, 10) !== n(p.follow_up_at).slice(0, 10)
     || n(b.assignee).toLowerCase() !== n(p.assignee).toLowerCase();
+}
+// The hourly release is scheduled from this day (step 5 in lead-cap-2026-10-10.sql).
+// Before it, a lead past its time is shown as "released when auto-release starts".
+const LEAD_RELEASE_START = '2026-10-14';
+// Messaging or calling a lead is activity, but only for its owner: an admin
+// opening someone else's lead must not extend that rep's hold on it.
+function leadContactPatch(l, viewerEmail, nowIso){
+  const me = String(viewerEmail || '').toLowerCase(), st = (l && l.status) || 'new';
+  if(!mlRegular(l) || !l.claimed_at || !me || String(l.claimed_by || '').toLowerCase() !== me) return null;
+  if(LEAD_OPEN_STATUSES.indexOf(st) < 0) return null;
+  return st === 'new' ? { status: 'contacted', last_touched_at: nowIso } : { last_touched_at: nowIso };
+}
+// What the lead asked for, from the lead and its form payload; the row formats it.
+function mlDetails(l, p){
+  p = p || {}; l = l || {};
+  const pick = (...v) => { for(const x of v) if(x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
+  return { city: pick(l.city, p.city), moveIn: pick(p.moveIn, p.moveInDate), months: pick(p.months, p.stayMonths),
+    budget: pick(p.budget, p.price), room: pick(p.roomName) };
 }
 /* MY-LEADS-CORE-END */
 
@@ -29845,7 +29866,7 @@ function jleadCsCell(cs){
 }
 /* JLEADS-CORE-END */
 
-function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s || 'Lead'); }
+function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s ? leadTermText(s) : 'Lead'); }
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
 function leadCap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : '—'; }
 function leadStatusBadge(st){
@@ -30044,26 +30065,37 @@ function renderLeadsChrome(mode){
 }
 
 const ML_SEL = new Set();
+let ML_GROUPS = {};   // section key → lead ids, for the section's select-all box
 function mlAgo(ms){ const h = Math.max(0, Math.floor(ms / 36e5)); return h < 24 ? h + ' h' : Math.floor(h / 24) + ' d' + (h % 24 ? ' ' + (h % 24) + ' h' : ''); }
 function mlMoney(n){ return '$' + Math.round(Number(n) || 0).toLocaleString('en-CA'); }
 function mlRow(l, now, today){
   const st = l.status || 'new', act = leadLastActivity(l), rel = leadReleaseAt(l);
   let sub = `${leadSourceLabel(l.source)} · ${st === 'new' ? 'claimed' : 'last activity'} ${act ? mlAgo(now - act) + ' ago' : '—'}`;
   if(rel != null && rel - now <= ML_DAY_MS){
-    sub = `<span class="ml-red">untouched ${act ? mlAgo(now - act) : '—'} · ${rel <= now ? 'release overdue' : 'released in ' + mlAgo(rel - now)}</span>`;
+    // Before the release is switched on nothing is actually taken, so say when it will be.
+    const start = Date.parse(LEAD_RELEASE_START + 'T00:00:00');
+    const when = rel <= now ? (now < start ? 'released when auto-release starts ' + fmtDate(LEAD_RELEASE_START) : 'released within the hour')
+      : (rel < start ? 'released when auto-release starts ' + fmtDate(LEAD_RELEASE_START) : 'released in ' + mlAgo(rel - now));
+    sub = `<span class="ml-red">untouched ${act ? mlAgo(now - act) : '—'} · ${when}</span>`;
   } else {
-    const d = salesDue(l, today);
-    if(d.state === 'overdue') sub += ` · follow-up was due ${fmtDate(d.due)}`;
-    else if(d.state === 'today') sub += ' · follow-up due today';
+    // A new lead with no follow-up date is waiting for its first contact, not a follow-up.
+    const d = salesDue(l, today), first = st === 'new' && !l.follow_up_at;
+    if(d.state === 'overdue') sub += first ? ` · first contact was due ${fmtDate(d.due)}` : ` · follow-up was due ${fmtDate(d.due)}`;
+    else if(d.state === 'today') sub += first ? ' · contact today' : ' · follow-up due today';
     else if(l.follow_up_at) sub += ` · follow-up ${fmtDate(l.follow_up_at)}`;
   }
+  const det = mlDetails(l, leadPayloadOf(l));
+  const detTxt = [det.city && esc(det.city), det.moveIn && 'move-in ' + esc(/^\d{4}-\d{2}-\d{2}/.test(det.moveIn) ? fmtDate(det.moveIn) : det.moveIn),
+    det.months && esc(det.months) + ' mo', det.budget && esc(leadMoney(det.budget)), det.room && esc(det.room)].filter(Boolean).join(' · ');
+  const wa = leadWhatsAppFor(l);
   const id = esc(l.id);
   return `<div class="ml-row" data-ml-lead="${id}">
     <input type="checkbox" data-ml-check="${id}" ${ML_SEL.has(String(l.id)) ? 'checked' : ''} aria-label="Select">
-    <div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${leadStatusBadge(st)}</div><div class="name-sub">${sub}</div></div>
+    <div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${leadStatusBadge(st)}</div>${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
     <div class="ml-acts">
-      ${st === 'new' ? `<button class="btn btn-mini" type="button" data-ml-act="contacted" data-id="${id}">Contacted</button>`
-                     : `<button class="btn btn-mini" type="button" data-ml-act="snooze" data-id="${id}" title="Reminder only: hides it from Due for 3 days. It does not stop the auto-release.">Snooze 3d</button>`}
+      ${wa.ok ? `<button class="btn btn-mini" type="button" data-ml-act="wa" data-id="${id}" title="Opens WhatsApp ${esc(wa.display)} and logs the contact">WhatsApp</button>` : ''}
+      <button class="btn btn-mini" type="button" data-ml-act="log" data-id="${id}" title="You called, emailed or messaged them some other way. Counts as activity${st === 'new' ? ' and marks the lead Contacted' : ''}.">Log contact</button>
+      ${st === 'new' ? '' : `<button class="btn btn-mini" type="button" data-ml-act="snooze" data-id="${id}" title="Reminder only: hides it from Due for 3 days. It does not stop the auto-release.">Snooze 3d</button>`}
       <button class="btn btn-mini" type="button" data-ml-act="lost" data-id="${id}">Lost</button>
     </div></div>`;
 }
@@ -30097,13 +30129,18 @@ function renderMyLeads(){
       <div class="card-sub">New ${cnt.new} · Contacted ${cnt.contacted} · Qualified ${cnt.qualified}</div>
     </div>`;
   const f = LEAD_VIEW.focus;
-  const groups = f === 'stale' ? [['Going stale — auto-released within 24 h', sec.stale, 'ml-red']]
-    : f === 'due' ? [['Due today / overdue', sec.due, '']]
-    : (f === 'new' || f === 'contacted' || f === 'qualified') ? [[f[0].toUpperCase() + f.slice(1), mine.filter(l => (l.status || 'new') === f), '']]
-    : [['Going stale — auto-released within 24 h', sec.stale, 'ml-red'], ['Due today / overdue', sec.due, ''], ['New', sec.fresh, ''], ['In progress', sec.progress, '']];
-  const listHtml = groups.map(([title, arr, cls], i) => {
-    if(!arr.length && !(title.indexOf('Due') === 0 && !f)) return '';
-    return `<div class="ml-sec"><span class="${cls}">${title}</span><span>${arr.length}</span></div>` +
+  const staleTitle = now < Date.parse(LEAD_RELEASE_START + 'T00:00:00')
+    ? `Going stale — auto-release starts ${fmtDate(LEAD_RELEASE_START)}` : 'Going stale — auto-released within 24 h';
+  const groups = f === 'stale' ? [['stale', staleTitle, sec.stale, 'ml-red']]
+    : f === 'due' ? [['due', 'Due today / overdue', sec.due, '']]
+    : (f === 'new' || f === 'contacted' || f === 'qualified') ? [[f, f[0].toUpperCase() + f.slice(1), mine.filter(l => (l.status || 'new') === f), '']]
+    : [['stale', staleTitle, sec.stale, 'ml-red'], ['due', 'Due today / overdue', sec.due, ''], ['fresh', 'New', sec.fresh, ''], ['progress', 'In progress', sec.progress, '']];
+  ML_GROUPS = {};
+  const listHtml = groups.map(([key, title, arr, cls]) => {
+    if(!arr.length && !(key === 'due' && !f)) return '';
+    ML_GROUPS[key] = arr.map(l => String(l.id));
+    const all = arr.length && arr.every(l => ML_SEL.has(String(l.id)));
+    return `<div class="ml-sec"><label class="${cls}">${arr.length ? `<input type="checkbox" data-ml-all="${key}" ${all ? 'checked' : ''} aria-label="Select all in ${esc(title)}"> ` : ''}${title}</label><span>${arr.length}</span></div>` +
       (arr.length ? arr.map(l => mlRow(l, now, today)).join('') : `<div class="card-sub" style="padding:8px 2px">Nothing due</div>`);
   }).join('');
   const closed = s ? s.recentClosed : [];
@@ -30131,7 +30168,15 @@ async function mlAct(kind, id){
   const l = leads.find(x => String(x.id) === String(id));
   if(!l) return;
   if(kind === 'lost'){ if(typeof openDealModal === 'function') openDealModal(l.id, 'lost'); return; }
-  if(kind === 'contacted'){ await salesWriteLead(l, { status: 'contacted', last_touched_at: new Date().toISOString() }); showToast('Marked contacted'); return; }
+  if(kind === 'wa' || kind === 'log'){
+    // Open WhatsApp first, still inside the click, so the popup is not blocked.
+    if(kind === 'wa'){ const wa = leadWhatsAppFor(l); if(!wa.ok){ showToast(leadWhatsAppProblem(wa, l.name, l.phone)); return; }
+      window.open(`https://wa.me/${wa.digits}?text=${encodeURIComponent(leadWhatsAppText(l.name, leadPayloadOf(l).roomName))}`, '_blank', 'noopener'); }
+    const patch = leadContactPatch(l, (activeRole() || {}).email, new Date().toISOString());
+    if(!patch){ if(kind === 'log') showToast('Only the rep who holds this lead can log contact'); return; }
+    if(await salesWriteLead(l, patch)) showToast(patch.status ? 'Contact logged · marked Contacted' : 'Contact logged');
+    return;
+  }
   // Snooze: reminder only. No last_touched_at, so it cannot hold off the release.
   if(kind === 'snooze'){ await salesWriteLead(l, { follow_up_at: salesAddDays(salesDay(new Date()), 3) }); showToast('Snoozed 3 days (reminder only)'); }
 }
@@ -31104,6 +31149,7 @@ function wireLeadWhatsApp(l){
     if(wa.ok){
       const text = encodeURIComponent(leadWhatsAppText(l.name, p.roomName));
       window.open(`https://wa.me/${wa.digits}?text=${text}`, '_blank', 'noopener');
+      leadDrawerLogContact(l.id);
       return;
     }
     showToast(leadWhatsAppProblem(wa, l.name, phone));
@@ -31112,6 +31158,19 @@ function wireLeadWhatsApp(l){
   btn.title = wa.ok
     ? `WhatsApp ${wa.display}` + (wa.assumed ? ` · +${wa.assumed} assumed from the lead's city` : '')
     : (wa.reason === 'none' ? 'No phone on this lead' : `Unusable number: ${phone}`);
+}
+
+// Messaging from the drawer is activity (stale-lead release). Saving re-fills
+// the drawer, so keep what the rep has typed in notes / follow-up meanwhile.
+async function leadDrawerLogContact(id){
+  const l = leads.find(x => String(x.id) === String(id));
+  const patch = l && leadContactPatch(l, (activeRole() || {}).email, new Date().toISOString());
+  if(!patch || typeof salesWriteLead !== 'function') return;
+  const notes = document.getElementById('lead-notes'), fu = document.getElementById('lead-follow-up');
+  const keep = { n: notes ? notes.value : null, f: fu ? fu.value : null };
+  const ok = await salesWriteLead(l, patch);
+  if(String(_editingLeadId) === String(id)){ if(notes) notes.value = keep.n; if(fu) fu.value = keep.f; }
+  if(ok) showToast(patch.status ? 'WhatsApp logged · marked Contacted' : 'WhatsApp logged as activity');
 }
 
 // Contact line for the drawer: the table's cell plus the number WhatsApp would
@@ -32010,6 +32069,8 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     if(!mine) return;
     const chk = e.target.closest('[data-ml-check]');
     if(chk){ chk.checked ? ML_SEL.add(chk.dataset.mlCheck) : ML_SEL.delete(chk.dataset.mlCheck); renderMyLeads(); return; }
+    const all = e.target.closest('[data-ml-all]');
+    if(all){ (ML_GROUPS[all.dataset.mlAll] || []).forEach(id => all.checked ? ML_SEL.add(id) : ML_SEL.delete(id)); renderMyLeads(); return; }
     const act = e.target.closest('[data-ml-act]');
     if(act){ mlAct(act.dataset.mlAct, act.dataset.id); return; }
     const fee = e.target.closest('[data-ml-fee]');
@@ -39504,8 +39565,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-11-ap2"></script>
-<script src="extensions.js?v=2026-10-11-ap2"></script>
-<script src="ap.js?v=2026-10-11-ap2"></script>
+<script src="room-changes.js?v=2026-10-11-myleads2"></script>
+<script src="extensions.js?v=2026-10-11-myleads2"></script>
+<script src="ap.js?v=2026-10-11-myleads2"></script>
 </body>
 </html>
