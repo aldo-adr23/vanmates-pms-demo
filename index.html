@@ -1587,7 +1587,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-11-myleads1"></script>
+<script src="pms-supabase.js?v=2026-10-11-ap1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1740,6 +1740,11 @@
     <button class="nav-item" data-view="financials">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l5-5 4 4 8-8"/><path d="M14 8h6v6"/></svg>
       Financials
+    </button>
+    <button class="nav-item" data-view="ap">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+      AP
+      <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="settings">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.7 9 1.7 1.7 0 0 0 4.4 7.2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -2722,6 +2727,37 @@
     </section>
 
     <!-- ============ FINANCIALS ============ -->
+    <section class="view" data-view="ap">
+      <div id="ap-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div class="tabs" id="ap-tabs" role="tablist" style="flex-wrap:wrap"></div>
+      </div>
+      <div class="filter-bar" id="ap-filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="ap-search" placeholder="Search payee, email, property, account, reference…" autocomplete="off" />
+        </div>
+        <select id="ap-view" class="form-input" style="max-width:200px" aria-label="Status"></select>
+        <select id="ap-filter-city" class="form-input" style="max-width:170px" aria-label="City">
+          <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
+        </select>
+        <button class="btn btn-ghost" id="ap-refresh" type="button">Refresh</button>
+      </div>
+      <div class="card" id="ap-list-card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px;flex-wrap:wrap;gap:8px">
+          <div class="card-title"><b id="ap-count">0</b> payables · <span id="ap-total">$0.00</span></div>
+          <div class="name-sub">Lu fills this from the cleaners workbook, rent@ bills and Slack receipts</div>
+        </div>
+        <div id="ap-bulk" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 18px 12px"></div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th style="width:28px"><input type="checkbox" id="ap-select-all" aria-label="Select all shown"></th><th>Type</th><th>Payee</th><th>Property</th><th>Period · due</th><th style="text-align:right">Amount</th><th>Status</th><th>Flags</th></tr></thead>
+          <tbody id="ap-body"></tbody>
+        </table>
+        </div>
+        <div id="ap-empty" class="name-sub" style="display:none;padding:28px;text-align:center">Nothing here.</div>
+      </div>
+    </section>
     <section class="view" data-view="financials">
       <div class="kpi-grid">
         <div class="kpi clickable" data-go="portfolio"><div class="kpi-deco"></div><div class="kpi-arrow"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg></div><div class="kpi-label">MTD revenue</div><div class="kpi-value">$184,250</div><div class="kpi-trend up">▲ 6.4% MoM</div></div>
@@ -8313,13 +8349,13 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","deposits","checkouts","room-changes","extensions","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","deposits","checkouts","room-changes","extensions","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
-                nav:["dashboard","portfolio","landlords","homestay-finance","financials","deposits","checkouts"]},
+                nav:["dashboard","portfolio","landlords","homestay-finance","financials","ap","deposits","checkouts"]},
   maintenance: {label:"Maintenance Lead",   color:"#8A7B6C", desc:"Maintenance tickets and vendors",
                 nav:["dashboard","maintenance"]},
 };
@@ -8611,6 +8647,7 @@ const ALL_PAGES = [
   ["extensions",       "Extensions"],
   ["contracts",        "Contracts"],
   ["financials",       "Financials"],
+  ["ap",               "Accounts payable"],
   ["team",             "Team"],
   ["settings",         "Settings"],
 ];
@@ -9179,7 +9216,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
-    "maintenance":"Maintenance","financials":"Financials","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
+    "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
     "team":"Team","settings":"Settings"
   };
   const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
@@ -10798,6 +10835,7 @@ const titles = {
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
   extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: accept to send the extension contract"],
+  ap: ["Accounts <em>payable</em>", "Cleaners, utilities, internet and employee expenses: review, approve, pay"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
   contracts: ["<em>Contracts</em>", "Co-living subleases and BC tenancy agreements: who has signed, and what waits for Vanmates"],
   "partner-inventory": ["<em>Partner inventory</em>", "Live Asana rooms by building: the terms agencies will see, and which rooms are partner-ready"],
@@ -10850,6 +10888,7 @@ function goToView(v, savedView){
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
   if(v === "room-changes" && typeof loadRoomChanges === "function") loadRoomChanges();
   if(v === "extensions" && typeof loadExtensions === "function") loadExtensions();
+  if(v === "ap" && typeof loadAp === "function") loadAp();
   if(v === "contracts" && typeof renderContracts === "function") renderContracts();
   if(v === "properties" && typeof renderPropertiesGrid === "function") renderPropertiesGrid();
   if(v === "settings" && typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();
@@ -39465,7 +39504,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-11-myleads1"></script>
-<script src="extensions.js?v=2026-10-11-myleads1"></script>
+<script src="room-changes.js?v=2026-10-11-ap1"></script>
+<script src="extensions.js?v=2026-10-11-ap1"></script>
+<script src="ap.js?v=2026-10-11-ap1"></script>
 </body>
 </html>
