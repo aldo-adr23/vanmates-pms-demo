@@ -1568,7 +1568,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-10-extstay2"></script>
+<script src="pms-supabase.js?v=2026-10-10-leadcap1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2292,6 +2292,7 @@
       <div class="card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
           <div class="card-title"><b id="leads-count">0</b> leads</div>
+          <span class="name-sub" id="leads-my-open" style="display:none"></span>
         </div>
         <table>
           <thead>
@@ -29311,6 +29312,27 @@ function leadStatusFilterMatches(lead, filter){
   if(filter === 'replied') return !!(lead && lead.reply_waiting);
   return st === filter;
 }
+// Lead cap (lead-cap-2026-10-10.sql is the real gate — claim_lead refuses past
+// it; this only lets the portal say so before the click). Counts the agent's
+// open leads outside LINE, which n8n assigns to the Japan team on its own.
+// Admins are exempt. Keep LEAD_CAP equal to vm_lead_cap() in the SQL.
+const LEAD_CAP = 30;
+function leadCountsTowardCap(lead){
+  return !!lead && !lead.deleted_at && String(lead.source || '') !== 'line-maya'
+    && LEAD_OPEN_STATUSES.indexOf((lead.status) || 'new') >= 0;
+}
+function leadOpenCount(all, email){
+  const me = String(email || '').toLowerCase();
+  if(!me) return 0;
+  return (all || []).filter(l => l && l.claimed_at && String(l.claimed_by || '').toLowerCase() === me && leadCountsTowardCap(l)).length;
+}
+// 'ok' | 'at-cap' for the viewer about to claim `lead`.
+function leadCapState(lead, viewer, all){
+  if(!viewer || viewer.role === 'admin') return { state:'ok', open:0 };
+  if(!lead || String(lead.source || '') === 'line-maya') return { state:'ok', open:0 };
+  const open = leadOpenCount(all, viewer.email);
+  return { state: open >= LEAD_CAP ? 'at-cap' : 'ok', open };
+}
 /* LEAD-CLAIM-CORE-END */
 
 /* JLEADS-CORE-START */
@@ -29548,10 +29570,10 @@ function jleadStage(l, idx){
 
 // Ownership history: who held the lead, and who moved it. Stored on the lead as
 // `ownerHistory` [{at, from, to, by, how}] — how = 'claimed' | 'took' |
-// 'reassigned'. Older leads have none, so the first entry is synthesised from
+// 'reassigned' | 'released' (the hourly job handed it back to the pool; to = ''). Older leads have none, so the first entry is synthesised from
 // the claim itself; appending always starts from that, so nothing is lost.
 function leadOwnerHistory(l){
-  const h = (Array.isArray(l && l.ownerHistory) ? l.ownerHistory : []).filter(e => e && e.to && e.at);
+  const h = (Array.isArray(l && l.ownerHistory) ? l.ownerHistory : []).filter(e => e && e.at && (e.to || e.how === 'released'));
   if(h.length) return h.slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const by = String((l && l.claimed_by) || ''), at = String((l && l.claimed_at) || '');
   return by && at ? [{ at, from: '', to: by, by: '', how: 'claimed' }] : [];
@@ -29709,11 +29731,20 @@ function renderLeadClaimBlock(l){
   if(!box || !l) return;
   const c = leadClaimState(l, activeRole(), typeof teamMembers !== 'undefined' ? teamMembers : []);
   if(c.state === 'unclaimed'){
+    const cap = leadCapState(l, activeRole(), leads);
+    if(cap.state === 'at-cap'){
+      box.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #B94A3F33;background:#B94A3F0d;border-radius:10px">
+        <div><div class="name-main">New · Unassigned</div><div class="name-sub">You have ${cap.open} open leads (limit ${LEAD_CAP}). Mark the dead ones lost or close some before claiming more.</div></div>
+        <button class="btn" type="button" disabled>Claim this lead</button>
+      </div>${leadOwnerHistoryHtml(l)}`;
+      return;
+    }
     box.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #B94A3F33;background:#B94A3F0d;border-radius:10px">
         <div><div class="name-main">New · Unassigned</div><div class="name-sub">First agent to claim this lead owns it.</div></div>
         <button class="btn btn-primary" id="lead-claim-btn" type="button">Claim this lead</button>
-      </div>`;
+      </div>${leadOwnerHistoryHtml(l)}`;
     document.getElementById('lead-claim-btn').addEventListener('click', () => claimLead(l.id));
     return;
   }
@@ -29738,7 +29769,8 @@ function leadOwnerHistoryHtml(l){
   const team = typeof teamMembers !== 'undefined' ? teamMembers : [];
   const nm = (e) => { const m = team.find(x => String(x.email || '').toLowerCase() === String(e || '').toLowerCase()); return m ? (m.name || m.email) : String(e || '').split('@')[0]; };
   const when = (iso) => { const d = new Date(iso); return isNaN(d) ? esc(iso) : esc(d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })); };
-  const line = (e) => e.how === 'took' ? `<b>${esc(nm(e.to))}</b> took it from ${esc(nm(e.from))}`
+  const line = (e) => e.how === 'released' ? `Released from <b>${esc(nm(e.from))}</b> (no activity) — back to Unassigned`
+    : e.how === 'took' ? `<b>${esc(nm(e.to))}</b> took it from ${esc(nm(e.from))}`
     : e.how === 'reassigned' ? `${esc(nm(e.by))} reassigned it from ${esc(nm(e.from) || 'nobody')} to <b>${esc(nm(e.to))}</b>`
     : `Claimed by <b>${esc(nm(e.to))}</b>`;
   return `<details style="margin-top:6px" ${h.length <= 4 ? 'open' : ''}><summary class="name-sub" style="cursor:pointer;font-size:12px">Owner history (${h.length})</summary>
@@ -29825,6 +29857,15 @@ function renderLeads(){
   const list = applyLeadFilters();
   const countEl = document.getElementById('leads-count');
   if(countEl) countEl.textContent = list.length;
+  const mineEl = document.getElementById('leads-my-open');
+  const viewer = activeRole();
+  if(mineEl){
+    const show = !!(viewer && viewer.email && viewer.role !== 'admin');
+    const open = show ? leadOpenCount(leads, viewer.email) : 0;
+    mineEl.style.display = show ? '' : 'none';
+    mineEl.textContent = `Your open leads: ${open} / ${LEAD_CAP}`;
+    mineEl.style.color = open >= LEAD_CAP ? '#B94A3F' : '';
+  }
   const emptyEl = document.getElementById('leads-empty');
   if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
   body.innerHTML = list.map(l => `
@@ -39076,7 +39117,7 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-10-extstay2"></script>
-<script src="extensions.js?v=2026-10-10-extstay2"></script>
+<script src="room-changes.js?v=2026-10-10-leadcap1"></script>
+<script src="extensions.js?v=2026-10-10-leadcap1"></script>
 </body>
 </html>
