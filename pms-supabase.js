@@ -420,7 +420,9 @@
     const { data, error } = await sb.rpc('claim_lead', { lead_id: String(id) });
     if (error) {
       console.error('[vmDb] claim_lead failed:', error.message);
-      toast('Claim failed — ' + error.message, 'error');
+      // Over the lead cap (lead-cap-2026-10-10.sql): the message is for the agent as is.
+      if (/^lead-cap:/.test(error.message || '')) toast(error.message.replace(/^lead-cap:\d+\s*/, ''), 'error');
+      else toast('Claim failed — ' + error.message, 'error');
       return { ok: false, row: null, error: error.message };
     }
     const row = Array.isArray(data) && data[0] ? data[0] : null;
