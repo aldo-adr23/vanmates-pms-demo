@@ -231,6 +231,7 @@
   }
   .settings-nav button:hover{background:var(--cream-2)}
   .settings-nav button[hidden]{display:none}
+  #nav-hr[hidden]{display:none}
   .settings-nav button.active{background:var(--red-soft);color:var(--red-dark);font-weight:700}
   .settings-nav button svg{width:16px;height:16px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:2}
   .settings-section{display:none}
@@ -1586,7 +1587,7 @@
   if (hasSession) {
     try {
       var nextPath = sessionStorage.getItem('vm_next_path');
-      if (nextPath && /^(cs\.html(#c=[\w-]+)?|arrivals\.html(#(access|templates))?)$/.test(nextPath)) { sessionStorage.removeItem('vm_next_path'); location.replace(nextPath); }
+      if (nextPath && /^(cs\.html(#c=[\w-]+)?|arrivals\.html(#(access|templates))?|hr\.html)$/.test(nextPath)) { sessionStorage.removeItem('vm_next_path'); location.replace(nextPath); }
     } catch (e) {}
   }
 })();
@@ -1594,7 +1595,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-tyans1"></script>
+<script src="pms-supabase.js?v=2026-10-12-hrhub1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1647,6 +1648,13 @@
     <a class="nav-item" data-view="arrivals" href="arrivals.html" style="text-decoration:none">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M10 21v-6h4v6"/></svg>
       Arrivals
+      <span class="nav-count">↗</span>
+    </a>
+    <!-- Employee Hub (hr-hub-2026-10-12.sql): no data-view, so role/page access never shows it. Shown only when the
+         server says this account is on the HR allowlist (hr_whoami). The page re-checks; RLS is the real gate. -->
+    <a class="nav-item" id="nav-hr" href="hr.html" style="text-decoration:none" hidden>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/></svg>
+      Employee Hub
       <span class="nav-count">↗</span>
     </a>
     <button class="nav-item" data-view="assistants">
@@ -9275,7 +9283,17 @@ hello@vanmates.com`;
 
 renderPendingInvites();
 
+// Employee Hub link: asks the server once per page load; never derived from role or allowed_pages.
+let hrNavChecked = false;
+function showHrNavIfAllowed(){
+  if (hrNavChecked) return;
+  const sb = window.vmDb && window.vmDb.sb, el = document.getElementById('nav-hr');
+  if (!sb || !el) return;
+  hrNavChecked = true;
+  sb.rpc('hr_whoami').then(({ data }) => { el.hidden = !(data && data.allowed === true); }, () => {});
+}
 function applyRolePermissions(){
+  if (typeof showHrNavIfAllowed === "function") showHrNavIfAllowed();
   const u = activeRole() || signedOutUser();
 
   if (!u.email) {
@@ -39889,8 +39907,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-tyans1"></script>
-<script src="extensions.js?v=2026-10-12-tyans1"></script>
-<script src="ap.js?v=2026-10-12-tyans1"></script>
+<script src="room-changes.js?v=2026-10-12-hrhub1"></script>
+<script src="extensions.js?v=2026-10-12-hrhub1"></script>
+<script src="ap.js?v=2026-10-12-hrhub1"></script>
 </body>
 </html>
