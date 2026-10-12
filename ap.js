@@ -452,9 +452,14 @@
     const left = mine.filter(c => c.status === 'with_landlord' && String(c.dated_for) > t0).length;
     openPanel(name, name, `${terms.length ? terms.map(t => METHOD[t.method]).join(' + ') : 'Not set up'}${left ? ` · ${left} cheque(s) left` : ''}`, '');
     // One form per lease (or one for the landlord as a whole when it has no lease on file).
-    const slots = leases.length ? leases.map(c => ({ c, t: terms.find(t => (t.contract_id || '') === String(c.id || '')) || null }))
+    const slots = leases.length ? leases.map(c => ({ c, t: terms.find(t => t.contract_id && t.contract_id === String(c.id || '')) || null }))
       : [{ c: null, t: terms.find(t => !t.contract_id) || terms[0] || null }];
-    for (const t of terms) if (!slots.some(s => s.t && s.t.id === t.id)) slots.push({ c: null, t });
+    // A set-up made for the landlord as a whole (e.g. from the cheque import) fills the first lease without one.
+    for (const t of terms) {
+      if (slots.some(s => s.t && s.t.id === t.id)) continue;
+      const free = !t.contract_id && slots.find(s => !s.t);
+      if (free) free.t = t; else slots.push({ c: null, t });
+    }
     const leaseText = (c) => c ? `${(c.props && c.props.length ? c.props.join(', ') : (x && x.l.props || []).join(', ')) || 'All properties'} · ${c.start || '?'} → ${c.end || (c.monthToMonth ? 'month to month' : 'open')}` : 'Landlord (no lease on file)';
     const form = (s, i) => {
       const t = s.t, c = s.c;
@@ -462,7 +467,7 @@
       const props = t ? t.props : c && c.props && c.props.length ? c.props : (x && x.l.props) || [];
       return `<form data-ll-form="term" data-i="${i}" style="display:grid;gap:8px;max-width:420px;padding:10px 0;border-bottom:1px solid var(--line,#e5e2dc)">
         <div><b>${e(leaseText(c))}</b>${t && !t.active ? ' <span class="tag-pill" style="font-size:11px">Off</span>' : ''}</div>
-        <input type="hidden" name="contract_id" value="${e(c ? c.id || '' : t ? t.contract_id || '' : '')}"><input type="hidden" name="props" value="${e(JSON.stringify(props))}">
+        <input type="hidden" name="contract_id" value="${e(t ? t.contract_id || '' : c ? c.id || '' : '')}"><input type="hidden" name="props" value="${e(JSON.stringify(props))}">
         <label class="name-sub">Paid by <select class="form-input" name="method" ${act ? '' : 'disabled'}>${['cheque', 'pad', 'etransfer'].map(m => `<option value="${m}" ${(t ? t.method : '') === m ? 'selected' : ''}>${e(METHOD[m])}</option>`).join('')}</select></label>
         <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">Monthly rent <input class="form-input" name="amount" inputmode="decimal" value="${rentCents != null ? e((rentCents / 100).toFixed(2)) : ''}" ${act ? '' : 'disabled'}></label>
         <label class="name-sub" style="width:110px">Day of month <input class="form-input" name="pay_day" type="number" min="1" max="28" value="${e(t ? t.pay_day : 1)}" ${act ? '' : 'disabled'}></label></div>
