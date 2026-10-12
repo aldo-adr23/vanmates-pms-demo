@@ -60,6 +60,7 @@ button { font: inherit; cursor: pointer; color: inherit; }
   display: inline-flex; align-items: center; justify-content: center; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
   border: 1px solid transparent; white-space: nowrap; }
+a.btn { text-decoration: none; color: var(--ink); }
 .btn-primary { background: var(--red); color: var(--on-red); }
 .btn-primary:hover { background: var(--red-dark); }
 .btn-ghost { background: var(--surface); border-color: var(--line); }
@@ -130,6 +131,27 @@ label.f.full { grid-column: 1 / -1; }
 .modal.open { display: flex; }
 .mcard { width: 100%; max-width: 560px; background: var(--surface); border-radius: var(--radius); padding: 18px; }
 .mcard h2 { font-family: var(--serif); margin: 0 0 10px; }
+.mcard.wide { max-width: 760px; }
+.ready { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 10px; }
+@media (max-width: 480px) { .ready { grid-template-columns: minmax(0, 1fr); } }
+.ready li::before { content: "○ "; color: var(--muted); }
+.ready li.ok::before { content: "✓ "; color: var(--green); font-weight: 800; }
+.ready li.ok { color: var(--muted); }
+.bal { font-family: var(--serif); font-size: 26px; font-weight: 700; line-height: 1.1; }
+.ledger { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; }
+.ledger li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.ledger li.rev { opacity: .6; }
+.ledger .amt { font-weight: 700; white-space: nowrap; text-align: right; }
+.ledger details { grid-column: 1 / -1; }
+.warn { background: var(--amber-soft); color: var(--b-amber); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; margin: 0 0 10px; }
+.warn ul { margin: 4px 0 0; padding-left: 18px; }
+.pv-banner { background: var(--blue-soft); color: var(--b-blue); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; margin: 0 0 12px; }
+.pv h3 { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+.pv dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 13px; }
+.pv dt { color: var(--muted); }
+.pv dd { margin: 0; overflow-wrap: anywhere; }
+.pv ul.plain { margin: 0; padding-left: 18px; font-size: 13px; }
+.pv-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -142,6 +164,7 @@ label.f.full { grid-column: 1 / -1; }
     <button type="button" class="tab on" data-tab="people">Employees</button>
     <button type="button" class="tab" data-tab="queue">Review queue <span class="tbadge" id="qCount" hidden></span></button>
     <button type="button" class="tab" data-tab="activity">Activity</button>
+    <button type="button" class="tab" data-tab="settings">Settings <span class="tbadge" id="lvCount" hidden></span></button>
   </nav>
 </div>
 
@@ -152,6 +175,7 @@ label.f.full { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
+<script src="hr-core.js?v=2026-10-12-hrhub2"></script>
 <script>
 (function () {
   'use strict';
@@ -165,7 +189,8 @@ label.f.full { grid-column: 1 / -1; }
     policy: 'Policy', termination: 'Termination', other: 'Other' };
   var LANGS = { en: 'English', es: 'Spanish', fr: 'French', other: 'Other' };
   var STATUS = { active: 'Active', on_leave: 'On leave', inactive: 'Inactive', terminated: 'Terminated' };
-  var S = { tab: 'people', filter: 'all', q: '', emps: [], docs: [], openId: null, audit: [], search: [], busy: false };
+  var S = { tab: 'people', filter: 'all', q: '', emps: [], docs: [], openId: null, audit: [], search: [], busy: false,
+    ledger: [], balances: [], settings: {}, leavers: null, pvLang: null };
 
   function $(id) { return document.getElementById(id); }
   function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -192,9 +217,18 @@ label.f.full { grid-column: 1 / -1; }
     var r = await Promise.all([
       sb.from('hr_employees').select('*').order('legal_last_name'),
       sb.from('hr_documents').select('*').order('imported_at', { ascending: false }),
+      sb.from('hr_leave_ledger').select('*').order('effective_date', { ascending: false }).order('id', { ascending: false }),
+      sb.from('hr_leave_balances').select('*'),
+      sb.from('hr_settings').select('key,value'),
     ]);
-    if (r[0].error || r[1].error) { toast('Could not load: ' + ((r[0].error || r[1].error).message)); return; }
-    S.emps = r[0].data || []; S.docs = r[1].data || [];
+    var bad = r.filter(function (x) { return x.error; })[0];
+    if (bad) { toast('Could not load: ' + bad.error.message); return; }
+    S.emps = r[0].data || []; S.docs = r[1].data || []; S.ledger = r[2].data || []; S.balances = r[3].data || [];
+    S.settings = {}; (r[4].data || []).forEach(function (x) { S.settings[x.key] = x.value; });
+  }
+  async function loadLeavers() {
+    try { S.leavers = await call('hr_leaver_access', {}); } catch (e) { S.leavers = null; }
+    $('lvCount').hidden = !(S.leavers && S.leavers.length); $('lvCount').textContent = S.leavers ? S.leavers.length : '';
   }
   async function loadEmployeeExtras(id) {
     var r = await Promise.all([
@@ -216,17 +250,24 @@ label.f.full { grid-column: 1 / -1; }
     $('qCount').hidden = !q; $('qCount').textContent = q;
     if (S.tab === 'people') renderPeople();
     else if (S.tab === 'queue') renderQueue();
+    else if (S.tab === 'settings') renderSettings();
     else renderActivity();
   }
 
   function counts() {
-    var c = { all: S.emps.length, pending_review: 0, needs_correction: 0, approved: 0, missing: 0 };
-    S.emps.forEach(function (e) { c[e.review_status]++; if (!currentContract(e.id)) c.missing++; });
+    var c = { all: S.emps.length, pending_review: 0, needs_correction: 0, approved: 0, missing: 0, no_balance: 0, not_ready: 0 };
+    S.emps.forEach(function (e) {
+      c[e.review_status]++; if (!currentContract(e.id)) c.missing++;
+      if (!HR.hasOpening(S.balances, e.id)) c.no_balance++;
+      if (!HR.readiness(e, S.docs, S.balances).ready) c.not_ready++;
+    });
     return c;
   }
   function matches(e) {
     if (S.filter === 'missing' && currentContract(e.id)) return false;
-    if (S.filter !== 'all' && S.filter !== 'missing' && e.review_status !== S.filter) return false;
+    if (S.filter === 'no_balance' && HR.hasOpening(S.balances, e.id)) return false;
+    if (S.filter === 'not_ready' && HR.readiness(e, S.docs, S.balances).ready) return false;
+    if (['all', 'missing', 'no_balance', 'not_ready'].indexOf(S.filter) < 0 && e.review_status !== S.filter) return false;
     if (!S.q) return true;
     var hay = [e.legal_first_name, e.legal_last_name, e.preferred_name, e.employee_code, e.work_email, e.province, e.city, e.job_title].join(' ').toLowerCase();
     return hay.indexOf(S.q.toLowerCase()) >= 0;
@@ -234,16 +275,17 @@ label.f.full { grid-column: 1 / -1; }
 
   function renderPeople() {
     var c = counts();
-    var chips = [['all', 'All'], ['pending_review', 'Pending review'], ['needs_correction', 'Needs correction'], ['approved', 'Approved'], ['missing', 'No current contract']]
+    var chips = [['all', 'All'], ['pending_review', 'Pending review'], ['needs_correction', 'Needs correction'], ['approved', 'Approved'], ['missing', 'No current contract'], ['no_balance', 'No vacation balance'], ['not_ready', 'Not ready for rollout']]
       .map(function (x) { return '<button type="button" class="chip' + (S.filter === x[0] ? ' on' : '') + '" data-filter="' + x[0] + '" aria-pressed="' + (S.filter === x[0]) + '">' + esc(x[1]) + ' <span class="n">' + c[x[0]] + '</span></button>'; }).join('');
     var list = S.emps.filter(matches);
     var rows = list.map(function (e) {
-      var cc = currentContract(e.id), n = docsOf(e.id).length;
+      var cc = currentContract(e.id), n = docsOf(e.id).length, rd = HR.readiness(e, S.docs, S.balances);
       return '<button type="button" class="row' + (e.id === S.openId ? ' on' : '') + '" data-emp="' + esc(e.id) + '">' +
         '<span><b>' + esc(name(e)) + '</b><small>' + esc([e.job_title, e.employee_code ? 'Payroll #' + e.employee_code : ''].filter(Boolean).join(' · ') || '—') + '</small></span>' +
         '<span class="c2"><span class="st st-' + esc(e.review_status) + '">' + esc(REVIEW[e.review_status]) + '</span></span>' +
         '<span class="c3"><small>' + esc([e.city, e.province, e.country].filter(Boolean).join(', ')) + '</small></span>' +
-        '<span class="c4">' + (cc ? '<span class="st st-cur">Current contract</span>' : '<span class="st st-none">' + (n ? n + ' doc' + (n > 1 ? 's' : '') + ', none current' : 'No documents') + '</span>') + '</span>' +
+        '<span class="c4">' + (cc ? '<span class="st st-cur">Current contract</span>' : '<span class="st st-none">' + (n ? n + ' doc' + (n > 1 ? 's' : '') + ', none current' : 'No documents') + '</span>') +
+        '<small>Ready ' + rd.done + '/' + rd.total + '</small></span>' +
         '</button>';
     }).join('');
     $('app').innerHTML =
@@ -278,9 +320,12 @@ label.f.full { grid-column: 1 / -1; }
       field('Start date', 'start_date', e.start_date, 'date') + field('End date', 'end_date', e.end_date, 'date') +
       field('Language', 'locale', '', 'select', { options: opts({ en: 'English', es: 'Spanish', fr: 'French' }, e.locale) }) + field('Time zone', 'time_zone', e.time_zone, 'text', { list: 'tzs' }) +
       field('Pay group', 'pay_group', e.pay_group) + field('Schedule note', 'schedule_note', e.schedule_note) +
+      field('Working day (hours)', 'day_hours', e.day_minutes ? String(Math.round(e.day_minutes / 6) / 10) : '', 'text') + '<span></span>' +
+      field('Emergency contact', 'emergency_name', e.emergency_name) + field('Their phone', 'emergency_phone', e.emergency_phone, 'tel') +
+      field('Relationship', 'emergency_relation', e.emergency_relation) + '<span></span>' +
       '<datalist id="tzs"><option>America/Vancouver</option><option>America/Toronto</option><option>America/Montreal</option><option>America/Mexico_City</option></datalist>' +
       '<div class="actions full" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">Save profile</button>' +
-      '<span class="muted" style="font-size:12px">Changing name, entity, location, title, manager, status or dates sends the profile back to Pending review.</span></div></form>';
+      '<span class="muted" style="font-size:12px">Changing name, entity, location, title, manager, status, dates or working-day length sends the profile back to Pending review.</span></div></form>';
   }
   function docHtml(d, inQueue) {
     var src = d.source || {};
@@ -313,13 +358,19 @@ label.f.full { grid-column: 1 / -1; }
       '<button type="button" class="btn btn-warn" data-review="needs_correction">Needs correction</button>' +
       (e.review_status !== 'pending_review' ? '<button type="button" class="btn btn-ghost" data-review="pending_review">Back to pending</button>' : '') + '</div></div>';
     var src = e.source || {};
-    return '<h2>' + esc(name(e)) + '</h2><div class="muted" style="font-size:12.5px">' +
+    var rd = HR.readiness(e, S.docs, S.balances);
+    var ready = '<div class="card" style="padding:12px;margin-top:10px;box-shadow:none"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center">' +
+      '<b>Ready for rollout</b><span class="st ' + (rd.ready ? 'st-approved' : 'st-none') + '">' + rd.done + ' of ' + rd.total + '</span></div>' +
+      '<ul class="ready">' + rd.items.map(function (i) { return '<li class="' + (i.ok ? 'ok' : '') + '">' + esc(i.label) + '</li>'; }).join('') + '</ul>' +
+      '<p class="muted" style="font-size:12px;margin:6px 0 0">Being ready switches nothing on. Only Aldo can authorize rollout.</p></div>';
+    return '<div class="pv-head"><h2>' + esc(name(e)) + '</h2><button type="button" class="btn btn-ghost" data-preview="' + esc(e.id) + '">Preview as employee</button></div><div class="muted" style="font-size:12.5px">' +
       esc([e.entity, e.province, e.pay_group].filter(Boolean).join(' · ')) + '</div>' +
       (src.kind === 'payroll_register' ? '<div class="muted" style="font-size:12px;margin-top:2px">Source: ' + esc(src.system) + ' register, pay cycle ending ' + esc(day(src.pay_cycle_ending)) + '</div>' : '') +
-      rv +
+      rv + ready +
       '<h3>Documents (' + docs.length + ')</h3>' +
       (docs.map(function (d) { return docHtml(d, false); }).join('') || '<p class="muted" style="font-size:12.5px">No documents yet. Contracts found in email will appear here.</p>') +
       '<div class="actions"><button type="button" class="btn btn-ghost" id="upBtn">Upload document</button><input type="file" id="upFile" hidden accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" /></div>' +
+      '<h3>Time off</h3>' + timeOffHtml(e) +
       '<h3>Profile</h3>' + profileForm(e) +
       '<h3>Email search coverage</h3>' +
       (S.search.length ? '<ul class="hist">' + S.search.map(function (s) { return '<li><span>' + esc(s.query) + ' — ' + esc(s.result_count === null ? '?' : s.result_count) + ' result' + (s.result_count === 1 ? '' : 's') + (s.notes ? ' · ' + esc(s.notes) : '') + '</span><span>' + esc(when(s.searched_at)) + '</span></li>'; }).join('') + '</ul>'
@@ -330,6 +381,107 @@ label.f.full { grid-column: 1 / -1; }
   function auditLi(a) {
     var what = a.action + (a.entity === 'hr_documents' ? ' document' : '') + (a.detail && a.detail.fields ? ': ' + a.detail.fields.join(', ') : '');
     return '<li><span>' + esc(what) + ' <span class="muted">· ' + esc(a.actor || '') + '</span></span><span>' + esc(when(a.at)) + '</span></li>';
+  }
+
+  function newKey() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2); }
+  function ledgerOf(id) { return S.ledger.filter(function (l) { return l.employee_id === id; }); }
+  function balanceOf(id, lt) { return S.balances.filter(function (b) { return b.employee_id === id && b.leave_type === (lt || 'vacation'); })[0] || null; }
+  function timeOffHtml(e) {
+    var rows = ledgerOf(e.id), reversed = {};
+    rows.forEach(function (l) { if (l.reverses_id) reversed[l.reverses_id] = true; });
+    var types = {}; rows.forEach(function (l) { types[l.leave_type] = true; });
+    if (!types.vacation) types.vacation = true;
+    var bals = Object.keys(types).map(function (lt) {
+      var b = balanceOf(e.id, lt), f = HR.fmtBalance(b ? b.posted_minutes : 0, e.day_minutes);
+      return '<div style="margin-bottom:6px"><div class="muted" style="font-size:12px">' + esc(HR.LEAVE[lt]) + ' — posted' +
+        (b && b.opening_as_of ? ', opening as of ' + esc(day(b.opening_as_of)) : '') + '</div><div class="bal">' + esc(f.text) + '</div></div>';
+    }).join('');
+    var dayNote = e.day_minutes ? '' : '<p class="muted" style="font-size:12px;margin:0 0 6px">Set the working-day length in Profile to show days as well as hours.</p>';
+    var pay = S.settings.vacation_pay_method;
+    var payNote = pay === 'per_cheque' ? 'Vacation pay is on every cheque, so this is time only.' : pay === 'when_taken' ? 'Vacation is paid when taken.'
+      : 'How vacation is paid isn’t confirmed yet (Settings).';
+    var list = rows.map(function (l) {
+      var f = HR.fmtBalance(l.minutes, e.day_minutes);
+      var canRev = l.entry_type !== 'reversal' && !reversed[l.id];
+      return '<li class="' + (reversed[l.id] ? 'rev' : '') + '"><span><b>' + esc(HR.ENTRY[l.entry_type]) + '</b> · ' + esc(HR.LEAVE[l.leave_type]) + ' · ' + esc(day(l.effective_date)) +
+        '<br><span class="muted">' + esc(l.reason || '') + (reversed[l.id] ? ' · reversed' : '') + ' · ' + esc(l.created_by || '') + '</span></span>' +
+        '<span class="amt">' + (l.minutes > 0 ? '+' : '') + esc(f.text) + '</span>' +
+        (canRev ? '<details><summary class="muted" style="font-size:12px">Reverse</summary><form class="revForm actions" data-entry="' + esc(l.id) + '">' +
+          '<input type="hidden" name="idem_key" value="' + esc(newKey()) + '" /><input class="inp" name="reason" placeholder="Why (required)" style="max-width:260px" />' +
+          '<button type="submit" class="btn btn-warn">Reverse entry</button></form></details>' : '') + '</li>';
+    }).join('');
+    return bals + dayNote + '<p class="muted" style="font-size:12px;margin:0 0 8px">' + esc(payNote) + '</p>' +
+      '<details' + (rows.length ? '' : ' open') + '><summary style="font-size:12.5px;font-weight:600;cursor:pointer">Add an entry</summary>' +
+      '<form id="leaveForm" class="grid2" style="margin-top:8px"><input type="hidden" name="idem_key" value="' + esc(newKey()) + '" />' +
+      field('Type', 'entry_type', '', 'select', { options: opts({ opening: 'Opening balance', usage: 'Time taken', adjustment: 'Adjustment (+ or −)', accrual: 'Accrual', expiry: 'Expired' }, HR.hasOpening(S.balances, e.id) ? 'usage' : 'opening') }) +
+      field('Leave', 'leave_type', '', 'select', { options: opts(HR.LEAVE, 'vacation') }) +
+      field('Hours', 'hours', '', 'text') + field('Applies from', 'effective_date', '', 'date') +
+      field('Reason / source', 'reason', '', 'text', { full: true }) +
+      '<div class="actions" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">Post</button>' +
+      '<span class="muted" style="font-size:12px">Entries can’t be edited — reverse and re-post. Any entry sends the profile back to Pending review.</span></div></form></details>' +
+      (list ? '<ul class="ledger">' + list + '</ul>' : '');
+  }
+
+  function renderSettings() {
+    var st = S.settings, oc = st.outside_contact || {};
+    var lv = S.leavers;
+    $('app').innerHTML = '<div style="max-width:720px">' +
+      '<div class="card" style="padding:14px;margin-bottom:12px"><form id="setForm" class="grid2">' +
+      '<label class="f full">How is vacation paid?<select class="sel" name="vacation_pay_method">' +
+        opts({ unconfirmed: 'Not confirmed yet', per_cheque: 'Added to every pay cheque', when_taken: 'Paid when the time is taken' }, st.vacation_pay_method || 'unconfirmed') + '</select></label>' +
+      '<p class="muted full" style="grid-column:1/-1;font-size:12px;margin:0">Shown to employees under their balance so they know whether it is time or money.</p>' +
+      field('Outside contact — name', 'oc_name', oc.name) + field('Outside contact — email', 'oc_email', oc.email, 'email') +
+      field('Their role (e.g. HR advisor)', 'oc_role', oc.role, 'text', { full: true }) +
+      '<p class="muted" style="grid-column:1/-1;font-size:12px;margin:0">For concerns about HR or management. Must be someone other than Aldo or Elisa. Leave the name empty to clear it.</p>' +
+      field('Payroll link (pay stubs, T4s)', 'payroll_link', st.payroll_link, 'url', { full: true }) +
+      '<label class="f full">Review cadence<select class="sel" name="review_cadence">' + opts({ twice_yearly: 'Twice a year (short check-in)', quarterly: 'Quarterly' }, st.review_cadence || 'twice_yearly') + '</select></label>' +
+      '<div class="actions" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">Save settings</button></div></form></div>' +
+      '<div class="card" style="padding:14px"><b>Leavers who still have a portal account</b>' +
+      '<p class="muted" style="font-size:12px;margin:4px 0 8px">Employees marked inactive/terminated or past their end date whose email still signs in to the portal. Remove them in Team.</p>' +
+      (lv === null ? '<p class="muted">Loading…</p>' : lv.length ? '<ul class="hist">' + lv.map(function (x) {
+        return '<li><span><b>' + esc(x.employee_name) + '</b> · ' + esc(x.email) + ' · portal role ' + esc(x.portal_role) + '</span><span>' + esc(x.end_date ? 'ended ' + day(x.end_date) : x.status) + '</span></li>';
+      }).join('') + '</ul><div class="actions"><a class="btn btn-ghost" href="index.html">Open the portal (Team)</a></div>' : '<p class="muted" style="font-size:12.5px;margin:0">None.</p>') +
+      '</div></div>';
+  }
+
+  function previewHtml(e, lang) {
+    var L = function (k, v) { return HR.t(lang, k, v); };
+    var docs = HR.employeeDocs(S.docs, e.id), mgr = empById(e.manager_employee_id);
+    var b = balanceOf(e.id), oc = S.settings.outside_contact, pay = S.settings.vacation_pay_method;
+    var warn = HR.previewWarnings(e, S.settings, S.docs, S.balances);
+    var opened = HR.accessLog(S.audit);
+    var locale = lang === 'es' ? 'es' : 'en';
+    var d = function (ymd) { if (!ymd) return ''; var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString(locale, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' }) : ymd; };
+    var at = function (iso) { var x = new Date(iso); return isNaN(x) ? '' : x.toLocaleString(locale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+    var dl = function (k, v) { return '<dt>' + esc(L(k)) + '</dt><dd>' + (v ? esc(v) : '<span class="muted">' + esc(L('notSet')) + '</span>') + '</dd>'; };
+    return '<div class="pv-head"><h2 id="mTitle">' + esc(L('hello', { name: e.preferred_name || e.legal_first_name })) + '</h2>' +
+      '<div class="chips"><button type="button" class="chip' + (lang === 'en' ? ' on' : '') + '" data-pvlang="en">English</button>' +
+      '<button type="button" class="chip' + (lang === 'es' ? ' on' : '') + '" data-pvlang="es">Español</button></div></div>' +
+      '<div class="pv-banner">' + esc(HR.t('en', 'banner', { name: name(e) })) + '</div>' +
+      (warn.length ? '<div class="warn"><b>Before this person could be switched on</b><ul>' + warn.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>' : '') +
+      '<div class="pv">' +
+      '<h3>' + esc(L('time')) + '</h3>' +
+      (b && b.opening_as_of ? '<div class="bal">' + esc(HR.fmtBalance(b.posted_minutes, e.day_minutes, lang).text) + '</div><div class="muted" style="font-size:12.5px">' +
+        esc(L('balance')) + ' · ' + esc(L('asOf', { date: d(new Date().toISOString().slice(0, 10)) })) + '</div>' : '<p class="muted">' + esc(L('noBalance')) + '</p>') +
+      (pay === 'per_cheque' ? '<p style="font-size:13px">' + esc(L('payPerCheque')) + '</p>' : pay === 'when_taken' ? '<p style="font-size:13px">' + esc(L('payWhenTaken')) + '</p>' : '') +
+      '<button type="button" class="btn btn-ghost" disabled>' + esc(L('request')) + ' ' + esc(L('requestSoon')) + '</button>' +
+      '<h3>' + esc(L('docs')) + '</h3>' +
+      (docs.length ? '<ul class="plain">' + docs.map(function (x) {
+        return '<li><b>' + esc(x.title) + '</b>' + (x.is_current_contract ? ' · ' + esc(L('current')) : '') + (x.effective_date ? ' · ' + esc(L('effective')) + ' ' + esc(d(x.effective_date)) : '') + '</li>';
+      }).join('') + '</ul>' : '<p class="muted" style="font-size:13px">' + esc(L('noDocs')) + '</p>') +
+      '<h3>' + esc(L('profile')) + '</h3><dl>' + dl('job', e.job_title) + dl('manager', mgr ? name(mgr) : '') + dl('start', d(e.start_date)) +
+        dl('entity', e.entity) + dl('location', [e.city, e.province].filter(Boolean).join(', ')) +
+        dl('emergency', [e.emergency_name, e.emergency_relation, e.emergency_phone].filter(Boolean).join(' · ')) + '</dl>' +
+      '<p class="muted" style="font-size:12.5px">' + esc(L('editNote')) + '</p>' +
+      '<h3>' + esc(L('contact')) + '</h3><p style="font-size:13px;margin:0 0 6px">' + esc(L('contactBody')) + '</p>' +
+      (oc && oc.name ? '<p style="font-size:13px;margin:0">' + esc(L('outside', { name: oc.name, role: oc.role ? ' (' + oc.role + ')' : '', email: oc.email })) + '</p>' : '') +
+      '<h3>' + esc(L('pay')) + '</h3><p style="font-size:13px;margin:0 0 6px">' + esc(L('payBody')) + '</p>' +
+      (S.settings.payroll_link ? '<a class="btn btn-ghost" href="' + esc(S.settings.payroll_link) + '" target="_blank" rel="noopener noreferrer">' + esc(L('payLink')) + '</a>' : '') +
+      '<h3>' + esc(L('privacy')) + '</h3><ul class="plain">' + L('privacyBody').map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
+      '<h3>' + esc(L('opened')) + '</h3>' +
+      (opened.length ? '<ul class="hist">' + opened.slice(0, 20).map(function (a) { return '<li><span>' + esc(L('openedRow', { who: a.who })) + '</span><span>' + esc(at(a.at)) + '</span></li>'; }).join('') + '</ul>'
+        : '<p class="muted" style="font-size:13px">' + esc(L('noneOpened')) + '</p>') +
+      '</div><div class="actions"><button type="button" class="btn btn-ghost" id="mClose">Close</button></div>';
   }
 
   function renderQueue() {
@@ -366,6 +518,11 @@ label.f.full { grid-column: 1 / -1; }
       if (!el.name) return;
       out[el.name] = el.type === 'checkbox' ? el.checked : el.value.trim();
     });
+    if ('day_hours' in out) {   // shown in hours, stored in minutes
+      var dm = HR.hoursToMinutes(out.day_hours); out.day_minutes_raw = out.day_hours; delete out.day_hours;
+      out.day_minutes = dm === null ? out.day_minutes_raw : String(dm);   // junk goes to the server, which refuses it
+      delete out.day_minutes_raw;
+    }
     return out;
   }
   async function guarded(fn) {
@@ -430,8 +587,47 @@ label.f.full { grid-column: 1 / -1; }
       await refresh(true);
     });
   }
+  async function openPreview(id) {
+    var e = empById(id); if (!e) return;
+    if (S.openId !== id) { S.openId = id; await loadEmployeeExtras(id); }
+    S.pvLang = HR.previewLang(e);
+    $('modalCard').classList.add('wide');
+    $('modalCard').innerHTML = previewHtml(e, S.pvLang);
+    $('modal').classList.add('open');
+  }
+  async function addLeave(form) {
+    var e = empById(S.openId), p = formJson(form), m = HR.hoursToMinutes(p.hours);
+    if (m === null || m === 0) { toast('Enter the hours, e.g. 7.5 (negative only for an adjustment).'); return; }
+    if (!p.effective_date) { toast('Enter the date it applies from.'); return; }
+    if (!p.reason) { toast('Say where the number comes from.'); return; }
+    await guarded(async function () {
+      await call('hr_add_leave_entry', { p: { employee_id: e.id, entry_type: p.entry_type, leave_type: p.leave_type, minutes: m,
+        effective_date: p.effective_date, reason: p.reason, idem_key: p.idem_key } });
+      toast('Posted — profile is back to Pending review.'); await refresh(true);
+    });
+  }
+  async function reverseLeave(form) {
+    var p = formJson(form);
+    if (!p.reason) { toast('Say why it is being reversed.'); return; }
+    await guarded(async function () {
+      await call('hr_add_leave_entry', { p: { employee_id: S.openId, entry_type: 'reversal', reverses_id: Number(form.dataset.entry), reason: p.reason, idem_key: p.idem_key } });
+      toast('Reversed.'); await refresh(true);
+    });
+  }
+  async function saveSettings(form) {
+    var p = formJson(form), st = S.settings;
+    var oc = p.oc_name ? { name: p.oc_name, email: p.oc_email, role: p.oc_role || undefined } : null;
+    if (oc && !oc.role) delete oc.role;
+    var want = { vacation_pay_method: p.vacation_pay_method, outside_contact: oc, payroll_link: p.payroll_link || null, review_cadence: p.review_cadence };
+    await guarded(async function () {
+      var changed = Object.keys(want).filter(function (k) { return JSON.stringify(want[k]) !== JSON.stringify(st[k] === undefined ? null : st[k]); });
+      for (var i = 0; i < changed.length; i++) await call('hr_save_setting', { k: changed[i], v: want[changed[i]] });
+      toast(changed.length ? 'Settings saved.' : 'Nothing changed.'); await refresh(false);
+    });
+  }
   function addEmployeeModal() {
     var blank = { id: '', legal_first_name: '', legal_last_name: '', entity: 'Vanmates Consulting Corporation', country: 'CA', status: 'active', locale: 'en' };
+    $('modalCard').classList.remove('wide');
     $('modalCard').innerHTML = '<h2 id="mTitle">Add employee</h2>' + profileForm(blank).replace('Save profile', 'Add') +
       '<div class="actions"><button type="button" class="btn btn-ghost" id="mClose">Cancel</button></div>';
     $('modal').classList.add('open');
@@ -451,7 +647,9 @@ label.f.full { grid-column: 1 / -1; }
   // ------------------------------------------------------------- events
   document.addEventListener('click', function (ev) {
     var t = ev.target.closest('button, [data-emp]'); if (!t) return;
-    if (t.dataset.tab) { S.tab = t.dataset.tab; render(); return; }
+    if (t.dataset.tab) { S.tab = t.dataset.tab; render(); if (S.tab === 'settings') loadLeavers().then(function () { if (S.tab === 'settings') render(); }); return; }
+    if (t.dataset.preview) { openPreview(t.dataset.preview); return; }
+    if (t.dataset.pvlang) { S.pvLang = t.dataset.pvlang; $('modalCard').innerHTML = previewHtml(empById(S.openId), S.pvLang); return; }
     if (t.dataset.filter) { S.filter = t.dataset.filter; render(); return; }
     if (t.dataset.emp) { openEmployee(t.dataset.emp); return; }
     if (t.dataset.review) { review(t.dataset.review); return; }
@@ -472,6 +670,9 @@ label.f.full { grid-column: 1 / -1; }
     if (f.id === 'empForm') saveEmployee(f);
     else if (f.id === 'newEmpForm') addEmployee(f);
     else if (f.classList.contains('docForm')) saveDoc(f);
+    else if (f.id === 'leaveForm') addLeave(f);
+    else if (f.classList.contains('revForm')) reverseLeave(f);
+    else if (f.id === 'setForm') saveSettings(f);
   });
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') $('modal').classList.remove('open'); });
 
@@ -486,6 +687,7 @@ label.f.full { grid-column: 1 / -1; }
     }
     $('tabs').hidden = false;
     await loadAll();
+    loadLeavers();
     var m = /[#&]e=([0-9a-f-]{36})/.exec(location.hash);
     if (m && empById(m[1])) openEmployee(m[1]); else render();
   })();
