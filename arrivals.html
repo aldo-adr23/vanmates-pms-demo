@@ -466,6 +466,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         <select class="sel" id="scCity" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
         <select class="sel" id="scType" aria-label="Email type"><option value="">All emails</option><option value="booking">Welcome</option><option value="room_change">Room-change welcome</option><option value="checkin">Arrival instructions</option></select>
         <input class="inp" id="scQ" type="search" placeholder="Search tenant, building or room" aria-label="Search" autocomplete="off" style="max-width:240px" />
+        <button type="button" class="btn btn-ghost" id="scDelShown" hidden title="Permanently delete every arrival in this search (admins)">Delete shown</button>
         <span class="sp"></span>
         <button type="button" class="btn btn-ghost" id="scRule">Delivery rule</button>
       </div>
@@ -525,7 +526,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-12-hrhub2"></script>
+<script src="arrivals-core.js?v=2026-10-12-arrdel1"></script>
 <script>
 (function () {
   'use strict';
@@ -1920,7 +1921,42 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       $('scList').innerHTML = '<section class="grp card"><div class="arow sc hd" aria-hidden="true"><span>Tenant</span><span>City · building · room</span><span>Move-in</span><span>Email · contract</span><span>Scheduled · owner</span><span>Status</span></div>' +
         list.map(scRowHtml).join('') + '</section>';
     }
+    scDelShownBtn(list);
     scRenderPanel();
+  }
+
+  // Delete (arrivals-delete-2026-10-12.sql, admins): one arrival from the panel, or every arrival a search shows
+  // (type "test", then Delete shown). Removes the arrival with all its emails; the deletion stays in arrivals_log.
+  function scIsAdmin() { return !!(S.me && S.me.role === 'admin'); }
+  function scArrivalsOf(list) {
+    var seen = {}, out = [];
+    list.forEach(function (r) { if (r.arrival_id && !seen[r.arrival_id]) { seen[r.arrival_id] = 1; out.push(r); } });
+    return out;
+  }
+  function scDelShownBtn(list) {
+    var b = $('scDelShown'), n = scArrivalsOf(list).length;
+    b.hidden = !(scIsAdmin() && str(S.sc.q).trim() && n);
+    b.textContent = 'Delete ' + n + ' shown';
+  }
+  async function scDelete(rows) {
+    if (!scIsAdmin() || !rows.length) return;
+    var shown = rows.slice(0, 25).map(function (r) {
+      return '<li>' + esc(r.student_name || '(no name)') + ' · ' + esc(r.student_email || 'no email') + ' · ' + esc(r.arrival_date ? shortDate(r.arrival_date) : 'no move-in') + '</li>';
+    }).join('') + (rows.length > 25 ? '<li>…and ' + (rows.length - 25) + ' more</li>' : '');
+    var one = rows.length === 1;
+    var ok = await confirmSheet('Delete ' + (one ? 'this arrival' : rows.length + ' arrivals') + ' for good?',
+      '<p class="note">' + (one ? 'It disappears' : 'They disappear') + ' from Arrivals with all ' + (one ? 'its' : 'their') + ' emails (Welcome, Arrival instructions, check-out). This can’t be undone — for a real tenant, use Cancel arrival instead. Emails already sent stay sent.</p>' +
+      '<ul class="note" style="margin:6px 0 0 18px;max-height:220px;overflow:auto">' + shown + '</ul>', one ? 'Delete arrival' : 'Delete ' + rows.length);
+    if (!ok) return;
+    var ids = rows.map(function (r) { return r.arrival_id; }), n = 0;
+    for (var i = 0; i < ids.length; i += 200) {
+      var res = await rpc('arrivals_delete', { p_ids: ids.slice(i, i + 200) });
+      if (!res) break;
+      n += res.deleted || 0;
+    }
+    if (n) toast(n === 1 ? 'Arrival deleted' : n + ' arrivals deleted');
+    S.sc.openId = null; S.sc.draft = null; S.sc.mail = null;
+    await loadScheduled();
   }
 
   function scRenderPanel() {
@@ -1959,6 +1995,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (can.cancel) acts.push('<button type="button" class="btn btn-ghost" data-sc="cancel">Cancel email</button>');
     if (can.restore) acts.push('<button type="button" class="btn btn-ghost" data-sc="restore">Restore</button>');
     if (r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-sc="cancel_arrival">Cancel arrival</button>');
+    if (scIsAdmin()) acts.push('<button type="button" class="btn btn-ghost" data-sc="delete" style="color:var(--red)">Delete arrival</button>');
     if (isCk) acts.push('<button type="button" class="btn btn-ghost" data-sc="tpl">Edit the building template</button>');
     acts.push('<button type="button" class="btn btn-ghost" data-sc="history">History</button>');
     var fx = '';
@@ -2127,6 +2164,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       if (await scSchedAction(r, name)) { toast({ reset: 'Back to the automatic time', hold: 'Held', unhold: 'Unheld', cancel: 'Cancelled', restore: 'Restored' }[name]); await loadScheduled(); }
       return;
     }
+    if (name === 'delete') { await scDelete([r]); return; }
     if (name === 'cancel_arrival') { await cancelArrival(r.arrival_id, r.student_name, function () { S.sc.openId = null; return loadScheduled(); }); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
     if (name === 'history') { await scHistory(r); }
@@ -3653,6 +3691,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('scQ').addEventListener('input', function () { S.sc.q = this.value; renderScheduled(); });
     $('scChips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.sc.filter = b.getAttribute('data-f'); renderScheduled(); } });
     $('scRule').addEventListener('click', scEditRule);
+    $('scDelShown').addEventListener('click', function () { scDelete(scArrivalsOf(scVisible())); });
     $('scList').addEventListener('click', function (e) { var b = e.target.closest('.arow[data-id]'); if (b) scOpenRow(b.getAttribute('data-id')); });
     $('scPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-sc]'); if (b && !b.disabled) scAct(b.getAttribute('data-sc')); });
     $('scPanel').addEventListener('submit', function (e) { e.preventDefault(); scSaveFx(e.target); });
