@@ -89,11 +89,13 @@
   const chequesLeft = (cheques, term, today) => futureCheques(cheques, term, today).length;
   // One row per set-up; cheque set-ups get a warning: none (0 left), low (1-2), ok. Worst first.
   function landlordSummary(terms, cheques, today){
-    const rank = { none: 0, low: 1, ok: 2 };
+    const rank = { none: 0, low: 1, unknown: 2, ok: 3 };
     return terms.map(term => {
       const fut = term.method === 'cheque' ? futureCheques(cheques, term, today) : [];
       const left = fut.length;
-      return { term, left, lastDated: fut.map(c => String(c.dated_for)).sort().pop() || null, warn: term.method !== 'cheque' ? null : left === 0 ? 'none' : left <= 2 ? 'low' : 'ok' };
+      // A cheque set-up whose current batch was never entered (made from bank records): count unknown, not an alarm.
+      const warn = term.method !== 'cheque' ? null : (left === 0 && term.cheques_tracked === false) ? 'unknown' : left === 0 ? 'none' : left <= 2 ? 'low' : 'ok';
+      return { term, left, lastDated: fut.map(c => String(c.dated_for)).sort().pop() || null, warn };
     }).sort((a, b) => (a.warn == null) - (b.warn == null) || (rank[a.warn] ?? 9) - (rank[b.warn] ?? 9) || a.left - b.left || String(a.term.landlord_name || '').localeCompare(String(b.term.landlord_name || '')));
   }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
@@ -294,7 +296,7 @@
   // ───────────── AP → Landlords: monthly rent · cheques · payment set-up ─────────────
   const LL = { view: 'month', month: ym(), terms: null, cheques: null, loading: null, generated: false, q: '', status: 'with_landlord', landlord: '' };
   const CHQ = { with_landlord: ['With landlord', 'blue'], cashed: ['Cashed', ''], void: ['Void', ''], bounced: ['Bounced', 'red'] };
-  const WARN = { none: ['No cheques left', 'red'], low: ['Needs cheques', 'red'], ok: ['OK', ''] };
+  const WARN = { none: ['No cheques left', 'red'], low: ['Needs cheques', 'red'], unknown: ['Batch not entered', ''], ok: ['OK', ''] };
   const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
   const chip = ([l, c]) => `<span class="tag-pill ${c}" style="font-size:11px">${e(l)}</span>`;
   const shiftMonth = (m, d) => { const [y, mo] = m.split('-').map(Number); const t = new Date(Date.UTC(y, mo - 1 + d, 1)); return t.toISOString().slice(0, 7); };
@@ -393,7 +395,7 @@
       head.innerHTML = '<tr><th>Landlord</th><th>Property</th><th>Method</th><th style="text-align:right">Rent</th><th>Cheques left</th><th>Last cheque</th><th></th></tr>';
       html = setUp.map(r => `<tr class="clickable" data-ll-landlord="${e(r.term.landlord_id)}" tabindex="0" style="cursor:pointer">
           <td><b>${e(r.term.landlord_name)}</b></td><td>${e((r.term.props || []).join(', ') || '—')}</td><td>${e(METHOD[r.term.method] || r.term.method)}<div class="name-sub">Day ${e(r.term.pay_day)}</div></td>
-          <td style="text-align:right">${e(money(r.term.amount_cents))}</td><td>${r.term.method === 'cheque' ? `<b>${e(r.left)}</b>` : '—'}</td><td>${e(r.lastDated || '—')}</td>
+          <td style="text-align:right">${e(money(r.term.amount_cents))}</td><td>${r.term.method === 'cheque' ? (r.warn === 'unknown' ? '<span class="name-sub">?</span>' : `<b>${e(r.left)}</b>`) : '—'}</td><td>${e(r.lastDated || '—')}</td>
           <td>${r.warn && r.warn !== 'ok' ? chip(WARN[r.warn]) : ''}</td></tr>`).join('')
         + notSet.map(x => `<tr class="clickable" data-ll-landlord="${e(x.l.id)}" tabindex="0" style="cursor:pointer;opacity:.75">
           <td><b>${e(x.l.name)}</b>${x.l.company ? `<div class="name-sub">${e(x.l.company)}</div>` : ''}</td><td>${e((x.l.props || []).join(', ') || '—')}</td>
@@ -484,6 +486,7 @@
     const nextMonth = (() => { const fut = mine.filter(c => c.status !== 'void').map(c => String(c.dated_for).slice(0, 7)).sort().pop(); return fut && fut >= t0.slice(0, 7) ? shiftMonth(fut, 1) : shiftMonth(t0.slice(0, 7), 1); })();
     document.getElementById('panel-body').innerHTML = `<div data-ll-host="${e(landlordId)}" data-ll-name="${e(name)}" data-ll-city="${e(x ? x.l.city || '' : (terms[0] || {}).city || '')}">
       ${H('How this landlord is paid')}${slots.map(form).join('')}
+      ${chequeTerms.some(t => t.cheques_tracked === false) ? `<p class="name-sub" style="margin-top:12px">Set up from the bank records: we know this landlord is paid by cheque, not how many post-dated cheques they still hold. Add the current batch below and the count starts.</p>` : ''}
       ${chequeTerms.length && act ? H('Add a batch of post-dated cheques') + `<form data-ll-form="batch" style="display:grid;gap:8px;max-width:420px">
         ${chequeTerms.length > 1 ? `<label class="name-sub">Lease <select class="form-input" name="term_id">${chequeTerms.map(t => `<option value="${e(t.id)}">${e((t.props || []).join(', ') || t.landlord_name)}</option>`).join('')}</select></label>` : `<input type="hidden" name="term_id" value="${e(chequeTerms[0].id)}">`}
         <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">First cheque # <input class="form-input" name="first_no" inputmode="numeric" placeholder="${e(lastNo ? String(Number(lastNo) + 1) : '0901')}" required></label>
