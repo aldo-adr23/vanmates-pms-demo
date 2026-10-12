@@ -13,7 +13,7 @@
     no_etransfer_email: 'No e-transfer email', days_dont_add_up: "Days don't add up", sheet_total_mismatch: "Sheet total doesn't match",
     unmapped_account: 'Account has no property', amount_jump: 'Bigger than usual', unreadable: "Couldn't read amount", no_account_number: 'No account number',
     over_reimbursement_cap: 'Over reimbursement cap',
-    no_cheque: 'No cheque this month', cheque_bounced: 'Cheque bounced', pad_missing: 'PAD not seen in the bank', amount_mismatch: "Amount doesn't match",
+    no_cheque: 'No cheque this month', cheque_bounced: 'Cheque bounced', pad_missing: 'PAD not seen in the bank', amount_mismatch: "Amount doesn't match", landlord_says_unpaid: 'Landlord says unpaid',
   };
   const METHOD = { etransfer: 'E-transfer', pad: 'PAD', payroll: 'Payroll', cheque: 'Cheque', card: 'Card', other: 'Other' };
   const COLS = 8;
