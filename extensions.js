@@ -6,13 +6,23 @@
    once the contract is out, records it on the request (extension_record_sent → SENT). Finalising or
    voiding the contract moves the request to COMPLETED / EXPIRED by trigger. Loaded by index.html after
    the main script (uses esc, showToast, goToView, CURRENT_USER, teamMembers, window.contracts,
-   window.vmDb.sb, window.ASSISTANTS_BASE and the shared detail panel). */
+   window.vmDb.sb, window.ASSISTANTS_BASE and the shared detail panel).
+
+   Homestay tab (extension-homestay-2026-10-11.sql): requests with lease_type 'homestay' come from homestay
+   students (their n8n booking in data.homestay). Accept creates the extension booking through the homestay
+   console's own webhook (window.hbApi → n8n booking-create, the full staff token, exactly as Homestay →
+   Bookings → Extend: no placement fee, no deposit), which emails the student the payment link, then records
+   it (extension_homestay_staff 'sent' → SENT, "Awaiting payment"). n8n "VM - Homestay Extension" moves it to
+   COMPLETED once paid, or EXPIRED (booking cancelled) when unpaid after 7 days. Withdraw cancels the booking
+   and expires the request. */
 (function(){
   const EX_STATUSES = ['NEEDS_REVIEW', 'SENT', 'COMPLETED', 'DECLINED', 'CANCELLED', 'EXPIRED'];
   const EX_OPEN = ['NEEDS_REVIEW', 'SENT'];
   const EX_STATUS_LABEL = { NEEDS_REVIEW: 'Needs review', SENT: 'Contract sent', COMPLETED: 'Completed', DECLINED: 'Declined', CANCELLED: 'Cancelled', EXPIRED: 'Expired' };
   const EX_FLAGS = { email_failed: ['Email failed', 'red'], notify_failed: ['Alert failed', 'red'], room_conflict: ['Room booked after', 'red'] };
   const CT_STATUS = { draft: 'Draft', sent: 'Sent, waiting for the tenant', customer_signed: 'Signed by the tenant', completed: 'Completed', void: 'Void' };
+  const HS_STATUS_LABEL = { SENT: 'Awaiting payment', COMPLETED: 'Paid' };
+  const HS_PAY_DAYS = 7; // n8n VM - Homestay Extension cancels an unpaid extension booking after this
   const EX_COLS = 7;
   const HUGO_TIMEOUT_MS = 120000; // Hugo's extension run is ~20 s; Asana can make it slower.
 
@@ -54,10 +64,60 @@
     if (s === 'draft' && Array.isArray(res.missing) && res.missing.some(m => /utilit/i.test(m))) return { kind: 'warn', message: 'Hugo has no record of whether utilities are included for this tenant. Choose Yes or No under "Utilities included" and press Accept again (the draft is reused).' };
     return { kind: 'warn', message: (res && res.message) || ('Hugo could not send the extension' + (s ? ' (' + s + ')' : '') + '.') };
   }
-  window.EXT_CORE = { EX_STATUSES, EX_OPEN, EX_STATUS_LABEL, CT_STATUS, inTab, needsReview, sortOpen, parseRent, actionsFor, hugoBody, hugoNext, yesNo };
+  // ── homestay ──
+  const kindOf = (r) => (r && r.lease_type === 'homestay' ? 'homestay' : 'coliving');
+  const statusLabel = (r) => (kindOf(r) === 'homestay' && HS_STATUS_LABEL[r.status]) || EX_STATUS_LABEL[r.status] || r.status;
+  function hsActionsFor(status){
+    return { accept: status === 'NEEDS_REVIEW', decline: status === 'NEEDS_REVIEW', reopen: status === 'DECLINED', withdraw: status === 'SENT' };
+  }
+  // Days between two YYYY-MM-DD dates (UTC, so no timezone can shift a day of rent).
+  function hsDays(a, b){
+    const x = Date.parse(String(a || '') + 'T00:00:00Z'), y = Date.parse(String(b || '') + 'T00:00:00Z');
+    return isFinite(x) && isFinite(y) ? Math.round((y - x) / 86400000) : NaN;
+  }
+  // Dollars typed by staff → cents, or null.
+  function hsCents(s){ const n = parseRent(s); return n == null ? null : Math.round(n * 100); }
+  // booking-create body for an accepted request: the student's current booking carried on from its end
+  // date, as Homestay → Bookings → Extend sends it (placement fee waived, no new deposit).
+  function hsCreateBody(r, weeklyCents, hostCents){
+    const h = (r && r.data && r.data.homestay) || {};
+    const b = {
+      host_id: h.host_id, student_email: r.email,
+      weekly_rate_cents: weeklyCents, host_weekly_cents: hostCents,
+      move_in_date: String(r.current_end || '').slice(0, 10), lease_days: hsDays(r.current_end, r.new_end),
+      meal_plan: h.meal_plan || 'two_meals',
+      student_name: h.student_name || (r.data && r.data.name) || '', student_dob: h.student_dob || '', student_country: h.student_country || '',
+      placement_fee_status: 'waived', placement_fee_cents: 0, placement_fee_ref: 'extension of ' + (h.booking_ref || r.id),
+      deposit: 'none',
+    };
+    if (h.room_id) b.room_id = h.room_id;
+    return b;
+  }
+  // "Extensions: homestay only" (page extensions-homestay without extensions; never an admin): the Homestay
+  // tab only. The database agrees (vm_extension_can_see): co-living requests never reach this browser.
+  function homestayOnly(user){
+    if (!user || user.role === 'admin') return false;
+    const p = Array.isArray(user.allowed_pages) ? user.allowed_pages : [];
+    return p.includes('extensions-homestay') && !p.includes('extensions');
+  }
+  // Homestay-only staff, and homestay staff without co-living Tenants, land on the Homestay tab.
+  function defaultKind(user){
+    if (homestayOnly(user)) return 'homestay';
+    const p = (user && Array.isArray(user.allowed_pages)) ? user.allowed_pages : [];
+    return p.some(x => /^homestay-/.test(x)) && !p.includes('tenants') ? 'homestay' : 'coliving';
+  }
+  window.EXT_CORE = { EX_STATUSES, EX_OPEN, EX_STATUS_LABEL, CT_STATUS, inTab, needsReview, sortOpen, parseRent, actionsFor, hugoBody, hugoNext, yesNo,
+    kindOf, statusLabel, hsActionsFor, hsDays, hsCents, hsCreateBody, defaultKind, homestayOnly, HS_PAY_DAYS };
   if (typeof document === 'undefined') return;
 
-  const S = { tab: 'open', q: '', city: '', status: '', owner: '' };
+  const KIND_KEY = 'vm-ex-kind';
+  const S = { kind: '', tab: 'open', q: '', city: '', status: '', owner: '' };
+  const curUser = () => (typeof CURRENT_USER !== 'undefined' ? CURRENT_USER : null);
+  const kindNow = () => {
+    if (homestayOnly(curUser())) return (S.kind = 'homestay');
+    if (!S.kind) { let k = ''; try { k = localStorage.getItem(KIND_KEY) || ''; } catch (_) {} S.kind = k === 'homestay' || k === 'coliving' ? k : defaultKind(typeof CURRENT_USER !== 'undefined' ? CURRENT_USER : null); }
+    return S.kind;
+  };
   let rows = null, loading = null, openSeq = 0;
   const acc = {}; // per-request Accept state: { rent, room_gid, step: null|{kind,message,candidates}, busy }
 
@@ -70,7 +130,7 @@
   const day = (ymd) => { if (!ymd) return '—'; const d = new Date(String(ymd).slice(0, 10) + 'T12:00:00Z'); return isNaN(d) ? String(ymd) : d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }); };
   const when = (ts) => { if (!ts) return '—'; const d = new Date(ts); return isNaN(d) ? String(ts) : d.toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }); };
   const chip = (f) => { const [l, c] = EX_FLAGS[f] || [f, 'blue']; return `<span class="tag-pill ${c}" style="font-size:11px;margin:1px">${e(l)}</span>`; };
-  const statusPill = (s) => `<span class="tag-pill ${s === 'NEEDS_REVIEW' ? 'red' : EX_OPEN.includes(s) ? 'blue' : ''}" style="font-size:11px">${e(EX_STATUS_LABEL[s] || s)}</span>`;
+  const statusPill = (s, r) => `<span class="tag-pill ${s === 'NEEDS_REVIEW' ? 'red' : EX_OPEN.includes(s) ? 'blue' : ''}" style="font-size:11px">${e(r ? statusLabel(r) : (EX_STATUS_LABEL[s] || s))}</span>`;
   const sb = () => window.vmDb && window.vmDb.sb;
   const contractById = (id) => (window.contracts || []).find(c => c && String(c.id) === String(id)) || null;
   const hugoBase = () => window.ASSISTANTS_BASE || 'https://vanmates-hugo.fly.dev';
@@ -114,7 +174,7 @@
 
   function filtered(){
     const q = S.q.trim().toLowerCase(), m = me().email;
-    return (rows || []).filter(r => inTab(r, S.tab)
+    return (rows || []).filter(r => kindOf(r) === kindNow() && inTab(r, S.tab)
       && (!S.city || String(r.city || '').toLowerCase().startsWith(S.city.toLowerCase().slice(0, 3)))
       && (!S.status || r.status === S.status)
       && (!S.owner || (S.owner === 'none' ? !r.owner : S.owner === 'me' ? r.owner === m : r.owner === S.owner))
@@ -125,9 +185,21 @@
     if (!rows) return;
     const badge = document.querySelector('.nav-item[data-view="extensions"] .nav-count');
     if (badge) badge.textContent = String(needsReview(rows));
+    const kind = kindNow();
+    const kinds = document.getElementById('ex-kinds');
+    if (kinds) kinds.innerHTML = [['coliving', 'Co-living'], ['homestay', 'Homestay']].filter(([k]) => !homestayOnly(curUser()) || k === 'homestay').map(([k, l]) => {
+      const n = needsReview(rows.filter(r => kindOf(r) === k));
+      return `<button type="button" class="tab${kind === k ? ' active' : ''}" role="tab" aria-selected="${kind === k}" data-ex-kind="${k}">${l}${n ? ` <span class="tag-pill red" style="font-size:11px">${n}</span>` : ''}</button>`;
+    }).join('');
     const tabs = document.getElementById('ex-tabs');
     if (tabs) tabs.innerHTML = [['open', 'Open'], ['closed', 'Closed']].map(([k, l]) =>
-      `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ex-tab="${k}">${l} <span class="name-sub">${rows.filter(r => inTab(r, k)).length}</span></button>`).join('');
+      `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ex-tab="${k}">${l} <span class="name-sub">${rows.filter(r => kindOf(r) === kind && inTab(r, k)).length}</span></button>`).join('');
+    const head = document.getElementById('ex-head');
+    if (head) head.innerHTML = kind === 'homestay'
+      ? '<th>Request</th><th>Student</th><th>Host family · room</th><th>Current end → new end</th><th>Weekly rate</th><th>Status · owner</th><th>Flags</th>'
+      : '<th>Request</th><th>Tenant</th><th>House · room</th><th>Current end → new end</th><th>Rent</th><th>Status · owner</th><th>Flags</th>';
+    const sub = document.getElementById('ex-list-sub');
+    if (sub) sub.textContent = kind === 'homestay' ? 'From vanmates.com/extend-stay · Accept emails the student a payment link; the host is secured once they pay' : 'From vanmates.com/extend-stay · Accept sends the contract through Hugo';
     const list = S.tab === 'open' ? sortOpen(filtered()) : filtered();
     const cnt = document.getElementById('ex-count'); if (cnt) cnt.textContent = list.length;
     const empty = document.getElementById('ex-empty'); if (empty) empty.style.display = list.length ? 'none' : '';
@@ -135,15 +207,16 @@
     if (!body) return;
     body.innerHTML = list.map(r => {
       const d = r.data || {};
+      const per = kindOf(r) === 'homestay' ? '<span class="name-sub">/wk</span>' : '';
       const rent = r.new_rent != null && Number(r.new_rent) !== Number(r.current_rent)
-        ? `${e(money(r.new_rent))}<div class="name-sub">was ${e(money(r.current_rent))}</div>` : e(money(r.new_rent != null ? r.new_rent : r.current_rent));
+        ? `${e(money(r.new_rent))}${per}<div class="name-sub">was ${e(money(r.current_rent))}</div>` : e(money(r.new_rent != null ? r.new_rent : r.current_rent)) + per;
       return `<tr class="clickable" data-ex-open="${e(r.id)}" tabindex="0" style="cursor:pointer">
         <td><b>${e(r.id)}</b><div class="name-sub">${e(day(r.created_at))}</div></td>
         <td>${e(d.name || d.first_name || r.email)}<div class="name-sub">${e(r.email)}</div></td>
         <td>${e([r.house, r.room].filter(Boolean).join(' · ') || '—')}<div class="name-sub">${e(r.city || '')}</div></td>
         <td>${e(day(r.current_end))} → <b>${e(day(r.new_end))}</b>${r.lease_type ? `<div class="name-sub">${e(r.lease_type)}</div>` : ''}</td>
         <td>${rent}</td>
-        <td>${statusPill(r.status)}<div class="name-sub">${e(nameOf(r.owner) || 'Unassigned')}</div></td>
+        <td>${statusPill(r.status, r)}<div class="name-sub">${e(nameOf(r.owner) || 'Unassigned')}</div></td>
         <td>${(r.flags || []).map(chip).join(' ')}</td>
       </tr>`;
     }).join('');
@@ -198,10 +271,10 @@
       </form>`;
   }
 
-  function declineHtml(r){
+  function declineHtml(r, hs){
     return `${H('Decline')}
       <form data-ex-decline="${e(r.id)}" style="display:grid;gap:10px">
-        <label class="name-sub" style="display:grid;gap:4px">Message to the tenant (in the email they get)<textarea class="form-input" name="staff_message" rows="3" maxlength="1000" required placeholder="e.g. Your room is booked from January. We can offer you another room: reply to this email."></textarea></label>
+        <label class="name-sub" style="display:grid;gap:4px">Message to the ${hs ? 'student' : 'tenant'} (in the email they get)<textarea class="form-input" name="staff_message" rows="3" maxlength="1000" required placeholder="${hs ? 'e.g. Your host family is travelling in December. We can look for another host family: reply to this email.' : 'e.g. Your room is booked from January. We can offer you another room: reply to this email.'}"></textarea></label>
         <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-ghost" type="submit">Decline</button></div>
       </form>`;
   }
@@ -211,11 +284,12 @@
     if (!rows) await load();
     const r = (rows || []).find(x => x.id === id);
     if (!r) { toast('Extension request not found'); return false; }
+    if (kindOf(r) !== kindNow()) { S.kind = kindOf(r); render(); }
     const d = r.data || {};
     document.getElementById('panel-hero').textContent = String(d.name || d.first_name || r.email || '?').slice(0, 1).toUpperCase();
     document.getElementById('panel-title').innerHTML = e(d.name || d.first_name || r.email);
     document.getElementById('panel-sub').textContent = `${r.id} · ${[r.house, r.room].filter(Boolean).join(' · ')} · to ${day(r.new_end)}`;
-    document.getElementById('panel-meta').innerHTML = statusPill(r.status) + ' ' + (r.flags || []).map(chip).join(' ');
+    document.getElementById('panel-meta').innerHTML = statusPill(r.status, r) + ' ' + (r.flags || []).map(chip).join(' ');
     document.getElementById('panel-body').innerHTML = `<div data-ex-tok="${tok}" class="name-sub" style="padding:18px 0">Loading…</div>`;
     document.getElementById('detail-panel').classList.add('open');
     document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
@@ -227,7 +301,93 @@
     return true;
   }
 
+  function historyHtml(events){
+    return events.map(x => `<div style="padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub">${e(when(x.at))} · ${e(String(x.actor || '').replace(/^(staff|hugo):/, '').replace(/^tenant:.*/, 'student/tenant'))}</div><div>${e(String(x.type || '').replace(/_/g, ' '))}${x.after && x.after.status && (!x.before || x.before.status !== x.after.status) ? ' → ' + e(EX_STATUS_LABEL[x.after.status] || x.after.status) : ''}${x.after && x.after.booking_ref ? ' · ' + e(x.after.booking_ref) : ''}${x.after && x.after.note ? ': ' + e(x.after.note) : ''}</div></div>`).join('') || '<span class="name-sub">No events.</span>';
+  }
+
+  function hsAcceptHtml(r){
+    const h = (r.data || {}).homestay || {};
+    const a = acc[r.id] || (acc[r.id] = { weekly: h.weekly_rate_cents ? String(h.weekly_rate_cents / 100) : '', host: h.host_weekly_cents ? String(h.host_weekly_cents / 100) : '', step: null, busy: false, created: null });
+    const days = hsDays(r.current_end, r.new_end);
+    const canWrite = !!(window.hbApi && window.hbApi.canWrite());
+    let preview = '';
+    try {
+      const wk = hsCents(a.weekly), hw = hsCents(a.host);
+      if (typeof computeHomestaySchedule === 'function' && wk && hw != null) {
+        const sc = computeHomestaySchedule({ weeklyRateCents: wk, hostWeeklyCents: hw, moveInDate: String(r.current_end).slice(0, 10), leaseDays: days });
+        const first = sc.studentCharges[0], later = sc.studentCharges.length - 1;
+        preview = `Student pays $${(first.totalCents / 100).toFixed(2)} to confirm${later ? `, then ${later} more charge${later === 1 ? '' : 's'}` : ''} · host is paid $${(sc.totals.hostTotalCents / 100).toFixed(2)} over the extension · ends ${e(sc.leaseEndDate)}${sc.totals.marginCents < 0 ? ' · <b style="color:#b4443a">THE HOST WOULD BE PAID MORE THAN THE STUDENT</b>' : ''}`;
+      }
+    } catch (err) { preview = e(err.message || err); }
+    const step = a.step;
+    const created = a.created;
+    return `${H('Accept & send payment link')}
+      <form data-ex-hs-accept="${e(r.id)}" style="display:grid;gap:10px">
+        <p class="name-sub" style="margin:0">Check with the host family first. Accept creates the extension booking (${e(day(r.current_end))} → ${e(day(r.new_end))}, ${e(days)} days; no placement fee, no new deposit) and emails ${e((r.data || {}).name || r.email)} the payment link. The host is secured once the student pays; unpaid after ${HS_PAY_DAYS} days, the booking is cancelled automatically.</p>
+        ${canWrite ? '' : warnBox('Accept needs the full homestay staff token in this browser: open Homestay → Bookings and enter it there, then come back.')}
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <label class="name-sub" style="display:grid;gap:4px;max-width:200px">Student pays / week<input class="form-input" name="weekly" inputmode="decimal" value="${e(a.weekly)}" required></label>
+          <label class="name-sub" style="display:grid;gap:4px;max-width:200px">Host is paid / week<input class="form-input" name="host" inputmode="decimal" value="${e(a.host)}" required></label>
+        </div>
+        ${preview ? `<div class="name-sub">${preview}</div>` : ''}
+        ${a.busy ? `<div class="name-sub">Creating the extension booking…</div>` : ''}
+        ${step ? warnBox(e(step.message)) : ''}
+        ${created ? `<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="button" data-ex-hs-record="${e(r.id)}" ${a.busy ? 'disabled' : ''}>Record ${e(created.booking_ref)} on the request</button></div>`
+          : `<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit" ${a.busy || !canWrite ? 'disabled' : ''}>${a.busy ? 'Creating…' : 'Accept &amp; send payment link'}</button></div>`}
+      </form>`;
+  }
+
+  function hsPaymentHtml(r){
+    if (!r.contract_id) return '';
+    const d = r.data || {};
+    const sentAt = d.sent_at ? Date.parse(d.sent_at) : NaN;
+    const lapse = isFinite(sentAt) ? new Date(sentAt + HS_PAY_DAYS * 86400000) : null;
+    const state = r.status === 'SENT' ? `<b>Awaiting payment</b>${lapse ? ` · lapses ${e(when(lapse.toISOString()))} if unpaid` : ''}`
+      : r.status === 'COMPLETED' ? '<b>Paid</b>: the host is secured' : `<b>${e(statusLabel(r))}</b>${d.expired_reason ? ' (' + e(d.expired_reason) + ')' : ''}`;
+    return `${H('Extension booking')}
+      <div style="display:grid;gap:6px">
+        <div>${e(r.contract_id)}: ${state}</div>
+        <div class="name-sub">${e(money(r.new_rent))}/wk until ${e(day(r.new_end))} · in Homestay → Bookings</div>
+        ${r.status === 'SENT' && d.pay_link ? `<div style="display:flex;gap:8px;align-items:center"><input class="form-input" type="text" readonly value="${e(d.pay_link)}" style="flex:1;min-width:0;font-size:12.5px"><button type="button" class="btn btn-ghost" data-ex-copy="${e(d.pay_link)}">Copy link</button></div>` : ''}
+        ${r.status === 'SENT' ? `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:6px"><span class="name-sub">Host can't after all, or the student changed their mind?</span><button class="btn btn-ghost" type="button" data-ex-hs-withdraw="${e(r.id)}">Withdraw &amp; cancel booking</button></div>` : ''}
+      </div>`;
+  }
+
+  function paintHomestay(r, events, tok){
+    const d = r.data || {}, h = d.homestay || {};
+    const act = hsActionsFor(r.status);
+    const kv = (label, value) => `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${e(label)}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
+    const teamOpts = ['<option value="">Unassigned</option>'].concat(team().filter(t => t.email).map(t => `<option value="${e(String(t.email).toLowerCase())}" ${String(t.email).toLowerCase() === r.owner ? 'selected' : ''}>${e(t.name || t.email)}</option>`));
+    if (r.owner && !team().some(t => String(t.email || '').toLowerCase() === r.owner)) teamOpts.push(`<option value="${e(r.owner)}" selected>${e(r.owner)}</option>`);
+    document.getElementById('panel-body').innerHTML = `<div data-ex-tok="${tok}" data-ex-id="${e(r.id)}">
+      ${act.accept ? hsAcceptHtml(r) : ''}
+      ${hsPaymentHtml(r)}
+      ${act.decline ? declineHtml(r, true) : ''}
+      ${act.reopen ? `${H('Declined')}<div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><span class="name-sub">Changed your mind? Reopen it to accept it instead.</span><button class="btn btn-ghost" type="button" data-ex-reopen="${e(r.id)}">Reopen</button></div>` : ''}
+      ${H('Request')}
+      ${kv('Student', `${e(d.name || '')} <span class="name-sub">${e(r.email)}</span>`)}
+      ${kv('Host family', `${e([r.house, r.room].filter(Boolean).join(' · ') || '—')} · ${e(r.city || '')}`)}
+      ${kv('Current booking', `${e(h.booking_ref || '—')}${h.move_in ? ` <span class="name-sub">from ${e(day(h.move_in))}</span>` : ''}`)}
+      ${kv('Current end', e(day(r.current_end)))}
+      ${kv('New end', `<b>${e(day(r.new_end))}</b> <span class="name-sub">(${e(hsDays(r.current_end, r.new_end))} days)</span>`)}
+      ${kv('Weekly rate', `${e(money(r.current_rent))}/wk${h.host_weekly_cents ? ` <span class="name-sub">host ${e(money(h.host_weekly_cents / 100))}/wk</span>` : ''}`)}
+      ${kv('Meal plan', e(String(h.meal_plan || '—').replace(/_/g, ' ')))}
+      ${kv('Student note', r.note ? `<div style="white-space:pre-wrap">${e(r.note)}</div>` : '<span class="name-sub">—</span>')}
+      ${d.staff_message ? kv('Message to student', `<div style="white-space:pre-wrap">${e(d.staff_message)}</div>`) : ''}
+      ${kv('Language', e(d.lang || 'en'))}
+      ${H('Owner and note')}
+      <form data-ex-form="${e(r.id)}" style="display:grid;gap:10px">
+        <label class="name-sub" style="display:grid;gap:4px">Owner<select class="form-input" name="owner">${teamOpts.join('')}</select></label>
+        <label class="name-sub" style="display:grid;gap:4px">Internal note (history only)<input class="form-input" name="note" maxlength="1000" /></label>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit">Save</button></div>
+      </form>
+      ${H('History')}
+      ${historyHtml(events)}
+    </div>`;
+  }
+
   function paint(r, events, tok){
+    if (kindOf(r) === 'homestay') return paintHomestay(r, events, tok);
     const d = r.data || {};
     const act = actionsFor(r.status);
     const kv = (label, value) => `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${e(label)}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
@@ -341,6 +501,81 @@
     repaint(id);
   }
 
+  // Records the created booking on the request. Never creates a booking: a failed record keeps
+  // acc[id].created, and the drawer offers "Record" (this, again) instead of Accept.
+  async function hsRecord(id){
+    const a = acc[id];
+    if (!a || !a.created) return false;
+    let last = null;
+    for (let i = 0; i < 3; i++) {
+      const { data, error } = await sb().rpc('extension_homestay_staff', { p: { id, action: 'sent', booking_ref: a.created.booking_ref, weekly_rate: a.created.weekly, pay_link: a.created.link } });
+      if (!error && data && data.ok) { delete acc[id]; return true; }
+      last = error ? (error.message || error) : (data && (data.error + (data.status ? ' (' + data.status + ')' : '')));
+      if (data && data.error && data.error !== 'version_conflict') break;
+    }
+    a.step = { kind: 'warn', message: `Booking ${a.created.booking_ref} was created and the student was emailed the payment link, but it could not be recorded on the request (${last}). Press "Record" again; do not accept again.` };
+    return false;
+  }
+
+  async function hsAccept(id){
+    const r = (rows || []).find(x => x.id === id);
+    if (!r || r.status !== 'NEEDS_REVIEW' || kindOf(r) !== 'homestay') return;
+    const a = acc[id];
+    if (!a || a.busy || a.created) return;
+    const form = document.querySelector(`#panel-body [data-ex-hs-accept="${CSS.escape(id)}"]`);
+    if (form) { const fd = new FormData(form); a.weekly = String(fd.get('weekly') || '').trim(); a.host = String(fd.get('host') || '').trim(); }
+    const wk = hsCents(a.weekly), hw = hsCents(a.host);
+    const say = (m) => { a.step = { kind: 'warn', message: m }; repaint(id); };
+    if (wk == null) return say('Student weekly rate must be a positive number of dollars.');
+    if (hw == null) return say('Host weekly rate must be a positive number of dollars.');
+    if (hw > wk) return say('The host would be paid more than the student pays. Fix the rates first.');
+    const h = (r.data || {}).homestay || {};
+    if (!h.host_id) return say('This request has no host on it (data.homestay.host_id). Create the extension from Homestay → Bookings → Extend instead.');
+    if (!window.hbApi || !window.hbApi.canWrite()) return say('Accept needs the full homestay staff token: open Homestay → Bookings and enter it there.');
+    const days = hsDays(r.current_end, r.new_end);
+    if (!(days >= 7)) return say('The extension must be at least 7 days.');
+    // Never create a booking the request cannot record: the RPC must exist (it answers bad_input to a probe).
+    const probe = await sb().rpc('extension_homestay_staff', { p: { id, action: 'probe' } });
+    if (probe.error || !probe.data || probe.data.error !== 'bad_input') return say('The database is not ready for homestay extensions (run extension-homestay-2026-10-11.sql). Nothing was created.');
+    if (!confirm(`Create ${(r.data || {}).name || r.email}'s extension booking ${day(r.current_end)} → ${day(r.new_end)} at ${money(wk / 100)}/wk and email them the payment link?`)) return;
+    a.busy = true; a.step = null; repaint(id);
+    let d;
+    try {
+      d = await window.hbApi.post('booking-create', hsCreateBody(r, wk, hw));
+    } catch (err) {
+      a.busy = false;
+      return say('Could not create the booking (' + ((err && err.message) || err) + '). Nothing was sent to the student.');
+    }
+    if (!d || !d.link || !d.booking_ref) { a.busy = false; return say('n8n answered without a booking (bad room, dates or rates?). Nothing was created.'); }
+    a.created = { booking_ref: d.booking_ref, link: d.link, weekly: wk / 100 };
+    const ok = await hsRecord(id);
+    a.busy = false;
+    if (ok) { toast('Payment link sent to ' + r.email + ' (' + d.booking_ref + ')'); await reloadOpen(id); return; }
+    repaint(id);
+  }
+
+  async function hsWithdraw(id){
+    const r = (rows || []).find(x => x.id === id);
+    if (!r || r.status !== 'SENT' || kindOf(r) !== 'homestay') return;
+    if (!window.hbApi || !window.hbApi.canWrite()) { toast('Withdraw needs the full homestay staff token (Homestay → Bookings).'); return; }
+    if (!confirm(`Cancel booking ${r.contract_id} and withdraw the extension offer? The payment link stops working and the student is emailed.`)) return;
+    try {
+      await window.hbApi.post('booking-cancel', { booking_ref: r.contract_id });
+    } catch (err) {
+      toast('Could not cancel ' + r.contract_id + ': ' + ((err && err.message) || err));
+      return;
+    }
+    const { data, error } = await sb().rpc('extension_homestay_staff', { p: { id, action: 'expire', version: r.version } });
+    if (error || !data || !data.ok) {
+      if (data && data.error === 'version_conflict') { await conflict(id); return; }
+      toast('Booking cancelled, but the request was not updated (' + (error ? error.message : data && data.error) + '). The sweep will close it within 15 minutes.');
+      await reloadOpen(id);
+      return;
+    }
+    toast('Withdrawn: ' + r.contract_id + ' cancelled');
+    await reloadOpen(id);
+  }
+
   // Re-render the drawer for a request without refetching (keeps the Accept state).
   async function repaint(id){
     const host = document.querySelector('#panel-body [data-ex-id]');
@@ -398,13 +633,22 @@
     on('ex-filter-city', 'change', ev => { S.city = ev.target.value; render(); });
     on('ex-refresh', 'click', () => load(true));
     on('ex-tabs', 'click', ev => { const b = ev.target.closest('[data-ex-tab]'); if (b) { S.tab = b.dataset.exTab; render(); } });
+    on('ex-kinds', 'click', ev => { const b = ev.target.closest('[data-ex-kind]'); if (b) { S.kind = b.dataset.exKind; try { localStorage.setItem(KIND_KEY, S.kind); } catch (_) {} render(); } });
     on('ex-body', 'click', ev => { const tr = ev.target.closest('[data-ex-open]'); if (tr) open(tr.dataset.exOpen); });
     on('ex-body', 'keydown', ev => { if (ev.key === 'Enter') { const tr = ev.target.closest('[data-ex-open]'); if (tr) open(tr.dataset.exOpen); } });
     const pb = document.getElementById('panel-body');
     if (pb) pb.addEventListener('submit', ev => {
-      if (ev.target.matches('[data-ex-accept]')) { ev.preventDefault(); const a = acc[ev.target.dataset.exAccept]; if (a) { a.room_gid = ''; } accept(ev.target.dataset.exAccept); }
+      if (ev.target.matches('[data-ex-hs-accept]')) { ev.preventDefault(); hsAccept(ev.target.dataset.exHsAccept); }
+      else if (ev.target.matches('[data-ex-accept]')) { ev.preventDefault(); const a = acc[ev.target.dataset.exAccept]; if (a) { a.room_gid = ''; } accept(ev.target.dataset.exAccept); }
       else if (ev.target.matches('[data-ex-decline]')) { ev.preventDefault(); decline(ev.target); }
       else if (ev.target.matches('[data-ex-form]')) { ev.preventDefault(); save(ev.target); }
+    });
+    if (pb) pb.addEventListener('change', ev => {
+      const f = ev.target.closest('[data-ex-hs-accept]');
+      if (!f || !/^(weekly|host)$/.test(ev.target.name)) return;
+      const a = acc[f.dataset.exHsAccept]; if (!a) return;
+      a[ev.target.name] = String(ev.target.value || '').trim();
+      repaint(f.dataset.exHsAccept);
     });
     if (pb) pb.addEventListener('click', ev => {
       const use = ev.target.closest('[data-ex-use-room]');
@@ -415,6 +659,12 @@
         accept(id, { room_gid: pick.value });
         return;
       }
+      const rec = ev.target.closest('[data-ex-hs-record]');
+      if (rec) { const id = rec.dataset.exHsRecord, a = acc[id]; if (a && !a.busy) { a.busy = true; repaint(id); hsRecord(id).then(async (ok) => { if (acc[id]) acc[id].busy = false; if (ok) { toast('Recorded'); await reloadOpen(id); } else repaint(id); }); } return; }
+      const wd = ev.target.closest('[data-ex-hs-withdraw]');
+      if (wd) { hsWithdraw(wd.dataset.exHsWithdraw); return; }
+      const cp = ev.target.closest('[data-ex-copy]');
+      if (cp) { try { navigator.clipboard.writeText(cp.dataset.exCopy); toast('Payment link copied'); } catch (_) {} return; }
       const fixed = ev.target.closest('[data-ex-confirm-fixed]');
       if (fixed) { accept(fixed.dataset.exConfirmFixed, { confirm_fixed: true }); return; }
       const re = ev.target.closest('[data-ex-reopen]');
