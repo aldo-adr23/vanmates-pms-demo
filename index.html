@@ -1594,7 +1594,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-taylor2"></script>
+<script src="pms-supabase.js?v=2026-10-12-exths1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2985,6 +2985,7 @@
     </section>
     <section class="view" data-view="extensions">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div class="tabs" id="ex-kinds" role="tablist" aria-label="Co-living or homestay" style="flex-wrap:wrap"></div>
         <div class="tabs" id="ex-tabs" role="tablist" style="flex-wrap:wrap"></div>
       </div>
       <div class="filter-bar" id="ex-filter-bar">
@@ -3002,11 +3003,11 @@
       <div class="card" id="ex-list-card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
           <div class="card-title"><b id="ex-count">0</b> extension requests</div>
-          <div class="name-sub">From vanmates.com/extend-stay · Accept sends the contract through Hugo</div>
+          <div class="name-sub" id="ex-list-sub">From vanmates.com/extend-stay · Accept sends the contract through Hugo</div>
         </div>
         <div style="overflow-x:auto">
         <table>
-          <thead><tr><th>Request</th><th>Tenant</th><th>House · room</th><th>Current end → new end</th><th>Rent</th><th>Status · owner</th><th>Flags</th></tr></thead>
+          <thead><tr id="ex-head"><th>Request</th><th>Tenant</th><th>House · room</th><th>Current end → new end</th><th>Rent</th><th>Status · owner</th><th>Flags</th></tr></thead>
           <tbody id="ex-body"></tbody>
         </table>
         </div>
@@ -8663,6 +8664,7 @@ const ALL_PAGES = [
   ["checkouts",        "Checkouts"],
   ["room-changes",     "Room changes"],
   ["extensions",       "Extensions"],
+  ["extensions-homestay","Extensions: homestay only"],
   ["contracts",        "Contracts"],
   ["financials",       "Financials"],
   ["ap",               "Accounts payable"],
@@ -9297,14 +9299,15 @@ function applyRolePermissions(){
     document.querySelectorAll(".nav-item[data-view]").forEach(el => {
       const v = el.dataset.view;
       // Arrivals is part of the CS team's work: a CS member sees it without an explicit 'arrivals' page.
-      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs")) || (aliases[v] && allowed.includes(aliases[v]));
+      // Extensions: homestay only (2026-10-12) opens Extensions with just the Homestay tab; RLS hides co-living requests.
+      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs")) || (v === "extensions" && allowed.includes("extensions-homestay")) || (aliases[v] && allowed.includes(aliases[v]));
       el.classList.toggle("role-hidden", !ok);
     });
     // If currently active view is not allowed, switch to dashboard (or first
     // allowed page if dashboard isn't on the list).
     const activeView = document.querySelector(".view.active");
     const av = activeView && activeView.dataset.view;
-    if(activeView && !allowed.includes(av) && !(aliases[av] && allowed.includes(aliases[av]))){
+    if(activeView && !allowed.includes(av) && !(av === "extensions" && allowed.includes("extensions-homestay")) && !(aliases[av] && allowed.includes(aliases[av]))){
       goToView(allowed.includes("dashboard") ? "dashboard" : (allowed[0] || "dashboard"));
     }
   }
@@ -10852,7 +10855,7 @@ const titles = {
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
-  extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: accept to send the extension contract"],
+  extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: co-living accept sends the extension contract; homestay accept emails a payment link"],
   ap: ["Accounts <em>payable</em>", "Cleaners, utilities, internet, landlords and employee expenses: review, approve, pay"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
   contracts: ["<em>Contracts</em>", "Co-living subleases and BC tenancy agreements: who has signed, and what waits for Vanmates"],
@@ -32921,6 +32924,10 @@ function ahsArrivalText(row, city){
     return data;
   }
 
+  // extensions.js (Extensions → Homestay) accepts a student's extension request by
+  // creating the booking through the same webhook and token as Extend here.
+  window.hbApi = { post: hbPost, canWrite: hbCanWrite };
+
   // A fresh render of the letter, saved through the browser. Read-only token is
   // enough: it emails no one and writes nothing. Not routed through hbPost
   // because the success body is a PDF, not JSON.
@@ -39719,8 +39726,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-taylor2"></script>
-<script src="extensions.js?v=2026-10-12-taylor2"></script>
-<script src="ap.js?v=2026-10-12-taylor2"></script>
+<script src="room-changes.js?v=2026-10-12-exths1"></script>
+<script src="extensions.js?v=2026-10-12-exths1"></script>
+<script src="ap.js?v=2026-10-12-exths1"></script>
 </body>
 </html>
