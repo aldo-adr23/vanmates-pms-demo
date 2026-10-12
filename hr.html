@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Employee Hub · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Same sign-in gate as arrivals.html. Access to the hub itself is decided server-side (hr_whoami / RLS).
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now()));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'hr.html'); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root{
+  --cream:#FAF5ED; --cream-2:#F4ECDD; --red:#B94A3F; --red-dark:#A13A30; --red-soft:#F3DDD8; --ink:#2B211A; --muted:#8A7B6C;
+  --line:#E4DBC9; --green:#5C8A6B; --green-soft:#E2EDDF; --amber:#C8923A; --amber-soft:#F4E5C7; --blue:#3F6E94; --blue-soft:#DCE7F1;
+  --surface:#FFFFFF; --serif:"Playfair Display", Georgia, serif; --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05); --radius: 14px;
+  --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e; --scrim:rgba(43,33,26,.38); --toast:#2B211A; --toast-ink:#FAF5ED;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
+  --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --scrim:rgba(0,0,0,.55); --toast:#F4ECDD; --toast-ink:#1F1A16;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+[hidden] { display: none !important; }
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px; padding-top: max(12px, env(safe-area-inset-top)); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none;
+  font-family: var(--serif); font-style: italic; font-weight: 700; font-size: 15px; text-decoration: none; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; white-space: nowrap; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); white-space: nowrap; }
+.sp { flex: 1; min-width: 0; }
+.tabs { display: flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.tab { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; min-height: 30px;
+  display: inline-flex; align-items: center; gap: 6px; }
+.tab:hover { color: var(--ink); }
+.tab.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.tbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); font-size: 11px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
+  border: 1px solid transparent; white-space: nowrap; }
+.btn-primary { background: var(--red); color: var(--on-red); }
+.btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); }
+.btn-ghost:hover { background: var(--cream-2); }
+.btn-ok { background: var(--green-soft); color: var(--b-green); border-color: transparent; }
+.btn-warn { background: var(--amber-soft); color: var(--b-amber); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn:focus-visible, .tab:focus-visible, .row:focus-visible, .chip:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.wrap { padding: 0 12px 32px; padding-bottom: max(32px, env(safe-area-inset-bottom)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.muted { color: var(--muted); }
+.note { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.chips { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.chip { flex: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 0 10px; font-size: 12px; font-weight: 600; min-height: 30px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chip.on { background: var(--red); border-color: var(--red); color: var(--on-red); }
+.chip .n { opacity: .75; font-weight: 700; }
+input.inp, select.sel, textarea.inp { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 34px; padding: 6px 10px;
+  font: inherit; font-size: 13px; outline: 0; min-width: 0; width: 100%; }
+input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+textarea.inp { resize: vertical; min-height: 64px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: 12px; align-items: start; }
+@media (max-width: 999px) { .split { grid-template-columns: minmax(0, 1fr); } }
+.list { overflow: hidden; }
+.row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, .7fr) minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; align-items: center; width: 100%; text-align: left;
+  border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 10px 14px; min-height: 50px; }
+.row:last-child { border-bottom: 0; }
+.row:hover { background: var(--cream); }
+.row.on { background: var(--cream-2); box-shadow: inset 3px 0 0 var(--red); }
+.row.hd { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); min-height: 0; cursor: default; }
+.row.hd:hover { background: transparent; }
+.row b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row small { color: var(--muted); font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) { .row { grid-template-columns: minmax(0, 1fr) auto; } .row .c3, .row .c4 { display: none; } .row.hd { display: none; } }
+.st { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.st-pending_review { background: var(--amber-soft); color: var(--b-amber); }
+.st-needs_correction { background: var(--red-soft); color: var(--red); }
+.st-approved, .st-signed { background: var(--green-soft); color: var(--b-green); }
+.st-unsigned, .st-uncertain { background: var(--amber-soft); color: var(--b-amber); }
+.st-cur { background: var(--blue-soft); color: var(--b-blue); }
+.st-none { background: var(--cream-2); color: var(--muted); }
+.panel { padding: 14px; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+@media (max-width: 999px) { .panel { position: static; max-height: none; } }
+.panel h2 { font-family: var(--serif); font-size: 21px; margin: 0 0 2px; }
+.panel h3 { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+@media (max-width: 480px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
+label.f.full { grid-column: 1 / -1; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.doc { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+.doc .dt { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+.doc .dt b { overflow-wrap: anywhere; }
+.doc .meta { font-size: 12px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+.doc details { margin-top: 8px; }
+.doc summary { font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.hist { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.hist li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.hist li span:last-child { color: var(--muted); white-space: nowrap; }
+.empty { padding: 28px 14px; text-align: center; color: var(--muted); }
+.lock { max-width: 460px; margin: 12vh auto; padding: 28px; text-align: center; }
+.lock h1 { font-family: var(--serif); margin: 0 0 6px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px;
+  border-radius: 999px; font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; transition: .2s ease; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.modal { position: fixed; inset: 0; background: var(--scrim); display: none; align-items: flex-start; justify-content: center; padding: 6vh 16px; z-index: 50; overflow: auto; }
+.modal.open { display: flex; }
+.mcard { width: 100%; max-width: 560px; background: var(--surface); border-radius: var(--radius); padding: 18px; }
+.mcard h2 { font-family: var(--serif); margin: 0 0 10px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
+  <span class="page-title">Employee <em>Hub</em></span>
+  <span class="pill" title="Only Aldo and Elisa can open this page. No employee has access and nothing is sent to anyone.">Private review</span>
+  <span class="sp"></span>
+  <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab on" data-tab="people">Employees</button>
+    <button type="button" class="tab" data-tab="queue">Review queue <span class="tbadge" id="qCount" hidden></span></button>
+    <button type="button" class="tab" data-tab="activity">Activity</button>
+  </nav>
+</div>
+
+<main class="wrap" id="app"><div class="empty">Loading…</div></main>
+
+<div class="modal" id="modal"><div class="mcard" id="modalCard" role="dialog" aria-modal="true" aria-labelledby="mTitle"></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
+    { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var BUCKET = 'hr-docs';
+  var MAX_BYTES = 25 * 1024 * 1024;
+  var REVIEW = { pending_review: 'Pending review', needs_correction: 'Needs correction', approved: 'Approved' };
+  var SIGNED = { signed: 'Signed', unsigned: 'Unsigned', uncertain: 'Uncertain' };
+  var CATS = { contract: 'Contract', amendment: 'Amendment', renewal: 'Renewal', offer_letter: 'Offer letter', job_description: 'Job description',
+    policy: 'Policy', termination: 'Termination', other: 'Other' };
+  var LANGS = { en: 'English', es: 'Spanish', fr: 'French', other: 'Other' };
+  var STATUS = { active: 'Active', on_leave: 'On leave', inactive: 'Inactive', terminated: 'Terminated' };
+  var S = { tab: 'people', filter: 'all', q: '', emps: [], docs: [], openId: null, audit: [], search: [], busy: false };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 4000); }
+  function opts(map, sel, blank) {
+    return (blank !== undefined ? '<option value="">' + esc(blank) + '</option>' : '') +
+      Object.keys(map).map(function (k) { return '<option value="' + esc(k) + '"' + (k === sel ? ' selected' : '') + '>' + esc(map[k]) + '</option>'; }).join('');
+  }
+  function when(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function day(ymd) { if (!ymd) return ''; var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd); if (!m) return ymd; return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString([], { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' }); }
+  function name(e) { return e ? (e.preferred_name ? e.preferred_name + ' ' + e.legal_last_name : e.legal_first_name + ' ' + e.legal_last_name) : ''; }
+  function empById(id) { return S.emps.filter(function (e) { return e.id === id; })[0] || null; }
+  function docsOf(id) { return S.docs.filter(function (d) { return d.employee_id === id; }); }
+  function currentContract(id) { return docsOf(id).filter(function (d) { return d.is_current_contract; })[0] || null; }
+  function errText(e) {
+    var m = (e && e.message) || 'Not saved.';
+    if (/stale/i.test(m)) return 'Someone else changed this record. Reloaded — check and try again.';
+    if (/not found/i.test(m)) return 'Not allowed.';
+    return m;
+  }
+
+  // ------------------------------------------------------------- data
+  async function loadAll() {
+    var r = await Promise.all([
+      sb.from('hr_employees').select('*').order('legal_last_name'),
+      sb.from('hr_documents').select('*').order('imported_at', { ascending: false }),
+    ]);
+    if (r[0].error || r[1].error) { toast('Could not load: ' + ((r[0].error || r[1].error).message)); return; }
+    S.emps = r[0].data || []; S.docs = r[1].data || [];
+  }
+  async function loadEmployeeExtras(id) {
+    var r = await Promise.all([
+      sb.from('hr_audit').select('*').or('entity_id.eq.' + id + (docsOf(id).length ? ',entity_id.in.(' + docsOf(id).map(function (d) { return d.id; }).join(',') + ')' : '')).order('at', { ascending: false }).limit(40),
+      sb.from('hr_search_log').select('*').eq('employee_id', id).order('searched_at', { ascending: false }),
+    ]);
+    S.audit = r[0].data || []; S.search = r[1].data || [];
+  }
+  async function call(fn, args) {
+    var r = await sb.rpc(fn, args);
+    if (r.error) throw r.error;
+    return r.data;
+  }
+
+  // ------------------------------------------------------------- render
+  function render() {
+    document.querySelectorAll('#tabs .tab').forEach(function (t) { t.classList.toggle('on', t.dataset.tab === S.tab); });
+    var q = S.docs.filter(function (d) { return !d.employee_id; }).length;
+    $('qCount').hidden = !q; $('qCount').textContent = q;
+    if (S.tab === 'people') renderPeople();
+    else if (S.tab === 'queue') renderQueue();
+    else renderActivity();
+  }
+
+  function counts() {
+    var c = { all: S.emps.length, pending_review: 0, needs_correction: 0, approved: 0, missing: 0 };
+    S.emps.forEach(function (e) { c[e.review_status]++; if (!currentContract(e.id)) c.missing++; });
+    return c;
+  }
+  function matches(e) {
+    if (S.filter === 'missing' && currentContract(e.id)) return false;
+    if (S.filter !== 'all' && S.filter !== 'missing' && e.review_status !== S.filter) return false;
+    if (!S.q) return true;
+    var hay = [e.legal_first_name, e.legal_last_name, e.preferred_name, e.employee_code, e.work_email, e.province, e.city, e.job_title].join(' ').toLowerCase();
+    return hay.indexOf(S.q.toLowerCase()) >= 0;
+  }
+
+  function renderPeople() {
+    var c = counts();
+    var chips = [['all', 'All'], ['pending_review', 'Pending review'], ['needs_correction', 'Needs correction'], ['approved', 'Approved'], ['missing', 'No current contract']]
+      .map(function (x) { return '<button type="button" class="chip' + (S.filter === x[0] ? ' on' : '') + '" data-filter="' + x[0] + '" aria-pressed="' + (S.filter === x[0]) + '">' + esc(x[1]) + ' <span class="n">' + c[x[0]] + '</span></button>'; }).join('');
+    var list = S.emps.filter(matches);
+    var rows = list.map(function (e) {
+      var cc = currentContract(e.id), n = docsOf(e.id).length;
+      return '<button type="button" class="row' + (e.id === S.openId ? ' on' : '') + '" data-emp="' + esc(e.id) + '">' +
+        '<span><b>' + esc(name(e)) + '</b><small>' + esc([e.job_title, e.employee_code ? 'Payroll #' + e.employee_code : ''].filter(Boolean).join(' · ') || '—') + '</small></span>' +
+        '<span class="c2"><span class="st st-' + esc(e.review_status) + '">' + esc(REVIEW[e.review_status]) + '</span></span>' +
+        '<span class="c3"><small>' + esc([e.city, e.province, e.country].filter(Boolean).join(', ')) + '</small></span>' +
+        '<span class="c4">' + (cc ? '<span class="st st-cur">Current contract</span>' : '<span class="st st-none">' + (n ? n + ' doc' + (n > 1 ? 's' : '') + ', none current' : 'No documents') + '</span>') + '</span>' +
+        '</button>';
+    }).join('');
+    $('app').innerHTML =
+      '<div class="toolbar"><div class="chips">' + chips + '</div><span class="sp"></span>' +
+      '<input class="inp" id="q" type="search" placeholder="Search name, payroll #, city" aria-label="Search employees" value="' + esc(S.q) + '" style="max-width:240px" />' +
+      '<button type="button" class="btn btn-primary" id="addEmp">Add employee</button></div>' +
+      '<p class="note">Imported from the Wagepoint register (pay cycle ending 30 Sep 2026). Approving a profile only marks it as checked — it never gives the employee access.</p>' +
+      '<div class="split"><div class="card list"><div class="row hd"><span>Employee</span><span class="c2">Review</span><span class="c3">Location</span><span class="c4">Contract</span></div>' +
+      (rows || '<div class="empty">No employees match.</div>') + '</div>' +
+      '<aside class="card panel" id="panel">' + (S.openId && empById(S.openId) ? panelHtml(empById(S.openId)) : '<div class="empty">Pick an employee to review their profile and documents.</div>') + '</aside></div>';
+  }
+
+  function field(label, key, val, type, extra) {
+    return '<label class="f' + (extra && extra.full ? ' full' : '') + '">' + esc(label) +
+      (type === 'select' ? '<select class="sel" name="' + key + '">' + extra.options + '</select>'
+        : '<input class="inp" name="' + key + '" type="' + (type || 'text') + '" value="' + esc(val) + '"' + (extra && extra.list ? ' list="' + extra.list + '"' : '') + ' />') + '</label>';
+  }
+  function managerOpts(e) {
+    return '<option value="">—</option>' + S.emps.filter(function (x) { return x.id !== e.id; })
+      .map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === e.manager_employee_id ? ' selected' : '') + '>' + esc(name(x)) + '</option>'; }).join('');
+  }
+  function profileForm(e) {
+    return '<form id="empForm" class="grid2">' +
+      field('Legal first name', 'legal_first_name', e.legal_first_name) + field('Legal last name', 'legal_last_name', e.legal_last_name) +
+      field('Preferred name', 'preferred_name', e.preferred_name) + field('Payroll ID', 'employee_code', e.employee_code) +
+      field('Work email', 'work_email', e.work_email, 'email') + field('Personal email', 'personal_email', e.personal_email, 'email') +
+      field('Phone', 'phone', e.phone, 'tel') + field('Job title', 'job_title', e.job_title) +
+      field('Department', 'department', e.department) + field('Manager', 'manager_employee_id', '', 'select', { options: managerOpts(e) }) +
+      field('Employing entity', 'entity', e.entity, 'text', { full: true }) +
+      field('Country', 'country', '', 'select', { options: opts({ CA: 'Canada', MX: 'Mexico' }, e.country) }) + field('Province / state', 'province', e.province) +
+      field('City', 'city', e.city) + field('Status', 'status', '', 'select', { options: opts(STATUS, e.status) }) +
+      field('Start date', 'start_date', e.start_date, 'date') + field('End date', 'end_date', e.end_date, 'date') +
+      field('Language', 'locale', '', 'select', { options: opts({ en: 'English', es: 'Spanish', fr: 'French' }, e.locale) }) + field('Time zone', 'time_zone', e.time_zone, 'text', { list: 'tzs' }) +
+      field('Pay group', 'pay_group', e.pay_group) + field('Schedule note', 'schedule_note', e.schedule_note) +
+      '<datalist id="tzs"><option>America/Vancouver</option><option>America/Toronto</option><option>America/Montreal</option><option>America/Mexico_City</option></datalist>' +
+      '<div class="actions full" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">Save profile</button>' +
+      '<span class="muted" style="font-size:12px">Changing name, entity, location, title, manager, status or dates sends the profile back to Pending review.</span></div></form>';
+  }
+  function docHtml(d, inQueue) {
+    var src = d.source || {};
+    var srcLine = src.gmail_message_id ? 'Email from ' + (src.from || '?') + (src.date ? ' · ' + day(String(src.date).slice(0, 10)) : '') + (src.subject ? ' · “' + src.subject + '”' : '')
+      : (src.kind === 'upload' ? 'Uploaded by ' + (d.imported_by || '?') : (src.kind || ''));
+    var empSel = '<option value="">— Review queue —</option>' + S.emps.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === d.employee_id ? ' selected' : '') + '>' + esc(name(x)) + '</option>'; }).join('');
+    return '<div class="doc" data-doc="' + esc(d.id) + '"><div class="dt"><div><b>' + esc(d.title) + '</b>' +
+      '<div class="meta">' + esc(CATS[d.category] || d.category) + (d.language ? ' · ' + esc(LANGS[d.language]) : '') + (d.effective_date ? ' · effective ' + esc(day(d.effective_date)) : '') +
+      ' · ' + esc(d.file_name) + '</div>' + (srcLine ? '<div class="meta">' + esc(srcLine) + '</div>' : '') + (d.match_note ? '<div class="meta">Note: ' + esc(d.match_note) + '</div>' : '') +
+      '</div><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + (d.is_current_contract ? '<span class="st st-cur">Current contract</span>' : '') +
+      '<span class="st st-' + esc(d.signed_status) + '">' + esc(SIGNED[d.signed_status]) + '</span></div></div>' +
+      '<div class="actions"><button type="button" class="btn btn-ghost" data-open-doc="' + esc(d.id) + '">Open</button></div>' +
+      '<details' + (inQueue ? ' open' : '') + '><summary>' + (inQueue ? 'Assign' : 'Edit details') + '</summary><form class="grid2 docForm" data-doc="' + esc(d.id) + '" style="margin-top:8px">' +
+      '<label class="f full">Employee<select class="sel" name="employee_id">' + empSel + '</select></label>' +
+      field('Title', 'title', d.title, 'text', { full: true }) +
+      field('Category', 'category', '', 'select', { options: opts(CATS, d.category) }) + field('Signed?', 'signed_status', '', 'select', { options: opts(SIGNED, d.signed_status) }) +
+      field('Language', 'language', '', 'select', { options: opts(LANGS, d.language, '—') }) + field('Effective date', 'effective_date', d.effective_date, 'date') +
+      field('Note', 'match_note', d.match_note, 'text', { full: true }) +
+      '<label class="f full" style="flex-direction:row;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" name="is_current_contract"' + (d.is_current_contract ? ' checked' : '') + ' /> This is the current governing contract</label>' +
+      '<div class="actions" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">Save</button></div></form></details></div>';
+  }
+  function panelHtml(e) {
+    var docs = docsOf(e.id);
+    var rv = '<div class="card" style="padding:12px;margin-top:10px;box-shadow:none">' +
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>Elisa’s review</b><span class="st st-' + esc(e.review_status) + '">' + esc(REVIEW[e.review_status]) + '</span></div>' +
+      (e.reviewed_by ? '<div class="muted" style="font-size:12px;margin-top:4px">' + esc(REVIEW[e.review_status]) + ' by ' + esc(e.reviewed_by) + ' · ' + esc(when(e.reviewed_at)) + '</div>' : '') +
+      '<p class="muted" style="font-size:12px;margin:6px 0">Check identity, entity and location, dates, manager, contract versions and vacation balance.</p>' +
+      '<textarea class="inp" id="rvNotes" placeholder="Notes (required for Needs correction)" aria-label="Review notes">' + esc(e.review_notes) + '</textarea>' +
+      '<div class="actions"><button type="button" class="btn btn-ok" data-review="approved">Approve</button>' +
+      '<button type="button" class="btn btn-warn" data-review="needs_correction">Needs correction</button>' +
+      (e.review_status !== 'pending_review' ? '<button type="button" class="btn btn-ghost" data-review="pending_review">Back to pending</button>' : '') + '</div></div>';
+    var src = e.source || {};
+    return '<h2>' + esc(name(e)) + '</h2><div class="muted" style="font-size:12.5px">' +
+      esc([e.entity, e.province, e.pay_group].filter(Boolean).join(' · ')) + '</div>' +
+      (src.kind === 'payroll_register' ? '<div class="muted" style="font-size:12px;margin-top:2px">Source: ' + esc(src.system) + ' register, pay cycle ending ' + esc(day(src.pay_cycle_ending)) + '</div>' : '') +
+      rv +
+      '<h3>Documents (' + docs.length + ')</h3>' +
+      (docs.map(function (d) { return docHtml(d, false); }).join('') || '<p class="muted" style="font-size:12.5px">No documents yet. Contracts found in email will appear here.</p>') +
+      '<div class="actions"><button type="button" class="btn btn-ghost" id="upBtn">Upload document</button><input type="file" id="upFile" hidden accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" /></div>' +
+      '<h3>Profile</h3>' + profileForm(e) +
+      '<h3>Email search coverage</h3>' +
+      (S.search.length ? '<ul class="hist">' + S.search.map(function (s) { return '<li><span>' + esc(s.query) + ' — ' + esc(s.result_count === null ? '?' : s.result_count) + ' result' + (s.result_count === 1 ? '' : 's') + (s.notes ? ' · ' + esc(s.notes) : '') + '</span><span>' + esc(when(s.searched_at)) + '</span></li>'; }).join('') + '</ul>'
+        : '<p class="muted" style="font-size:12.5px">Not searched yet. No match never proves no contract exists.</p>') +
+      '<h3>History</h3>' +
+      (S.audit.length ? '<ul class="hist">' + S.audit.map(auditLi).join('') + '</ul>' : '<p class="muted" style="font-size:12.5px">—</p>');
+  }
+  function auditLi(a) {
+    var what = a.action + (a.entity === 'hr_documents' ? ' document' : '') + (a.detail && a.detail.fields ? ': ' + a.detail.fields.join(', ') : '');
+    return '<li><span>' + esc(what) + ' <span class="muted">· ' + esc(a.actor || '') + '</span></span><span>' + esc(when(a.at)) + '</span></li>';
+  }
+
+  function renderQueue() {
+    var q = S.docs.filter(function (d) { return !d.employee_id; });
+    $('app').innerHTML = '<p class="note">Documents found that aren’t matched to an employee yet: uncertain names, conflicting versions or unrelated files. They stay here, visible only to Aldo and Elisa, until one of you assigns them.</p>' +
+      '<div style="max-width:720px">' + (q.map(function (d) { return docHtml(d, true); }).join('') || '<div class="card empty">Nothing waiting.</div>') + '</div>';
+  }
+  async function renderActivity() {
+    $('app').innerHTML = '<div class="card empty">Loading…</div>';
+    var r = await sb.from('hr_audit').select('*').order('at', { ascending: false }).limit(200);
+    if (S.tab !== 'activity') return;
+    var byId = {}; S.emps.forEach(function (e) { byId[e.id] = name(e); }); S.docs.forEach(function (d) { byId[d.id] = d.title; });
+    $('app').innerHTML = '<p class="note">Every change, document open and download in the hub (latest 200). Field names only — no document text.</p>' +
+      '<div class="card" style="padding:6px 14px;max-width:860px"><ul class="hist">' + ((r.data || []).map(function (a) {
+        return '<li><span>' + esc(a.action) + (a.detail && a.detail.fields ? ': ' + esc(a.detail.fields.join(', ')) : '') + ' — <b>' + esc(byId[a.entity_id] || a.entity_id || '') + '</b> <span class="muted">· ' + esc(a.actor || '') + '</span></span><span>' + esc(when(a.at)) + '</span></li>';
+      }).join('') || '<li><span class="muted">Nothing yet.</span></li>') + '</ul></div>';
+  }
+
+  // ------------------------------------------------------------- actions
+  async function openEmployee(id) {
+    S.openId = id; S.audit = []; S.search = [];
+    render();
+    await loadEmployeeExtras(id);
+    if (S.openId === id && S.tab === 'people') $('panel').innerHTML = panelHtml(empById(id));
+  }
+  async function refresh(keepOpen) {
+    await loadAll();
+    if (keepOpen && S.openId && empById(S.openId)) await loadEmployeeExtras(S.openId);
+    render();
+  }
+  function formJson(form) {
+    var out = {};
+    Array.prototype.forEach.call(form.elements, function (el) {
+      if (!el.name) return;
+      out[el.name] = el.type === 'checkbox' ? el.checked : el.value.trim();
+    });
+    return out;
+  }
+  async function guarded(fn) {
+    if (S.busy) return; S.busy = true;
+    try { await fn(); } catch (e) { toast(errText(e)); if (/stale/i.test((e && e.message) || '')) await refresh(true); }
+    finally { S.busy = false; }
+  }
+
+  async function saveEmployee(form) {
+    var e = empById(S.openId), p = formJson(form);
+    p.id = e.id;
+    await guarded(async function () {
+      await call('hr_save_employee', { p: p, expected_version: e.version });
+      toast('Saved.'); await refresh(true);
+    });
+  }
+  async function review(status) {
+    var e = empById(S.openId), notes = $('rvNotes').value;
+    if (status === 'needs_correction' && !notes.trim()) { toast('Add a note saying what needs correcting.'); $('rvNotes').focus(); return; }
+    await guarded(async function () {
+      await call('hr_set_review', { emp_id: e.id, new_status: status, notes: notes, expected_version: e.version });
+      toast(REVIEW[status] + '.'); await refresh(true);
+    });
+  }
+  async function saveDoc(form) {
+    var d = S.docs.filter(function (x) { return x.id === form.dataset.doc; })[0], p = formJson(form);
+    await guarded(async function () {
+      await call('hr_update_document', { doc_id: d.id, p: p, expected_version: d.version });
+      toast(p.employee_id ? 'Saved.' : 'Saved — in the review queue.'); await refresh(true);
+    });
+  }
+  async function openDoc(id) {
+    var d = S.docs.filter(function (x) { return x.id === id; })[0];
+    var w = window.open('', '_blank');   // opened in the click so it is not blocked as a popup
+    try {
+      await call('hr_log', { action: 'view_document', entity: 'hr_documents', entity_id: d.id, detail: {} });
+      var r = await sb.storage.from(BUCKET).createSignedUrl(d.storage_path, 60);
+      if (r.error) throw r.error;
+      if (w) { w.opener = null; w.location = r.data.signedUrl; } else location.href = r.data.signedUrl;
+    } catch (e) { if (w) w.close(); toast('Could not open: ' + errText(e)); }
+  }
+  function safeName(n) { return String(n || 'file').normalize('NFKD').replace(/[^\w.-]+/g, '_').replace(/^[._]+/, '').slice(-120) || 'file'; }
+  async function sha256Hex(buf) {
+    var h = await crypto.subtle.digest('SHA-256', buf);
+    return Array.prototype.map.call(new Uint8Array(h), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  async function upload(file) {
+    if (!file) return;
+    if (file.size > MAX_BYTES) { toast('That file is over 25 MB.'); return; }
+    var empId = S.openId;
+    await guarded(async function () {
+      toast('Uploading…');
+      var sha = await sha256Hex(await file.arrayBuffer());
+      var path = 'employees/' + empId + '/' + sha + '/' + safeName(file.name);
+      if (!S.docs.some(function (d) { return d.sha256 === sha; })) {
+        var up = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
+        if (up.error && !/exists/i.test(up.error.message || '')) throw up.error;
+      }
+      var r = await call('hr_add_document', { p: { employee_id: empId, storage_path: path, file_name: file.name, mime_type: file.type, size_bytes: file.size,
+        sha256: sha, title: file.name.replace(/\.[^.]+$/, ''), category: 'other', source: { kind: 'upload' } } });
+      toast(r.duplicate ? 'Already in the hub — not added twice.' : 'Uploaded. Set its category and signed status below.');
+      await refresh(true);
+    });
+  }
+  function addEmployeeModal() {
+    var blank = { id: '', legal_first_name: '', legal_last_name: '', entity: 'Vanmates Consulting Corporation', country: 'CA', status: 'active', locale: 'en' };
+    $('modalCard').innerHTML = '<h2 id="mTitle">Add employee</h2>' + profileForm(blank).replace('Save profile', 'Add') +
+      '<div class="actions"><button type="button" class="btn btn-ghost" id="mClose">Cancel</button></div>';
+    $('modal').classList.add('open');
+    var f = $('modalCard').querySelector('form'); f.id = 'newEmpForm';
+    f.querySelector('[name=legal_first_name]').focus();
+  }
+  async function addEmployee(form) {
+    var p = formJson(form);
+    if (!p.legal_first_name || !p.legal_last_name || !p.entity) { toast('First name, last name and entity are needed.'); return; }
+    await guarded(async function () {
+      var r = await call('hr_save_employee', { p: p });
+      $('modal').classList.remove('open');
+      toast('Added — Pending review.'); await refresh(false); openEmployee(r.id);
+    });
+  }
+
+  // ------------------------------------------------------------- events
+  document.addEventListener('click', function (ev) {
+    var t = ev.target.closest('button, [data-emp]'); if (!t) return;
+    if (t.dataset.tab) { S.tab = t.dataset.tab; render(); return; }
+    if (t.dataset.filter) { S.filter = t.dataset.filter; render(); return; }
+    if (t.dataset.emp) { openEmployee(t.dataset.emp); return; }
+    if (t.dataset.review) { review(t.dataset.review); return; }
+    if (t.dataset.openDoc) { openDoc(t.dataset.openDoc); return; }
+    if (t.id === 'upBtn') { $('upFile').click(); return; }
+    if (t.id === 'addEmp') { addEmployeeModal(); return; }
+    if (t.id === 'mClose') { $('modal').classList.remove('open'); return; }
+  });
+  document.addEventListener('change', function (ev) { if (ev.target.id === 'upFile') upload(ev.target.files[0]); });
+  document.addEventListener('input', function (ev) {
+    if (ev.target.id !== 'q') return;
+    S.q = ev.target.value; var pos = ev.target.selectionStart; render();
+    var q = $('q'); q.focus(); try { q.setSelectionRange(pos, pos); } catch (e) {}
+  });
+  document.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    if (f.id === 'empForm') saveEmployee(f);
+    else if (f.id === 'newEmpForm') addEmployee(f);
+    else if (f.classList.contains('docForm')) saveDoc(f);
+  });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') $('modal').classList.remove('open'); });
+
+  // ------------------------------------------------------------- boot
+  (async function boot() {
+    var who = null;
+    try { who = await call('hr_whoami', {}); } catch (e) { who = null; }
+    if (!who || !who.allowed) {
+      $('app').innerHTML = '<div class="card lock"><h1>Private page</h1><p class="muted">The Employee Hub is in private review. Your account doesn’t have access.</p>' +
+        '<a class="btn btn-ghost" href="index.html">Back to the portal</a></div>';
+      return;
+    }
+    $('tabs').hidden = false;
+    await loadAll();
+    var m = /[#&]e=([0-9a-f-]{36})/.exec(location.hash);
+    if (m && empById(m[1])) openEmployee(m[1]); else render();
+  })();
+})();
+</script>
+</body>
+</html>
