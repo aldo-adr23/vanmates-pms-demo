@@ -1594,7 +1594,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-exths1"></script>
+<script src="pms-supabase.js?v=2026-10-12-hsco1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -8662,6 +8662,7 @@ const ALL_PAGES = [
   ["maintenance",      "Maintenance"],
   ["deposits",         "Damage deposits"],
   ["checkouts",        "Checkouts"],
+  ["checkouts-homestay","Checkouts: homestay only"],
   ["room-changes",     "Room changes"],
   ["extensions",       "Extensions"],
   ["extensions-homestay","Extensions: homestay only"],
@@ -9299,15 +9300,16 @@ function applyRolePermissions(){
     document.querySelectorAll(".nav-item[data-view]").forEach(el => {
       const v = el.dataset.view;
       // Arrivals is part of the CS team's work: a CS member sees it without an explicit 'arrivals' page.
-      // Extensions: homestay only (2026-10-12) opens Extensions with just the Homestay tab; RLS hides co-living requests.
-      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs")) || (v === "extensions" && allowed.includes("extensions-homestay")) || (aliases[v] && allowed.includes(aliases[v]));
+      // Homestay-only pages (2026-10-12): 'checkouts-homestay' opens Checkouts with just the Homestay tab and
+      // 'extensions-homestay' opens Extensions with just the Homestay tab; RLS hides the co-living rows.
+      const ok = allowed.includes(v) || (v === "arrivals" && allowed.includes("cs")) || (v === "checkouts" && allowed.includes("checkouts-homestay")) || (v === "extensions" && allowed.includes("extensions-homestay")) || (aliases[v] && allowed.includes(aliases[v]));
       el.classList.toggle("role-hidden", !ok);
     });
     // If currently active view is not allowed, switch to dashboard (or first
     // allowed page if dashboard isn't on the list).
     const activeView = document.querySelector(".view.active");
     const av = activeView && activeView.dataset.view;
-    if(activeView && !allowed.includes(av) && !(av === "extensions" && allowed.includes("extensions-homestay")) && !(aliases[av] && allowed.includes(aliases[av]))){
+    if(activeView && !allowed.includes(av) && !(av === "checkouts" && allowed.includes("checkouts-homestay")) && !(av === "extensions" && allowed.includes("extensions-homestay")) && !(aliases[av] && allowed.includes(aliases[av]))){
       goToView(allowed.includes("dashboard") ? "dashboard" : (allowed[0] || "dashboard"));
     }
   }
@@ -25634,7 +25636,17 @@ function ckoFromRow(r){
     asanaGid: r.asana_gid || '', createdAt: r.created_at || '', data: d, statusToken: r.status_token || '',
     owner: String(r.owner_email || '').toLowerCase(), ownedAt: r.owned_at || '',
     statusChangedAt: r.status_changed_at || r.created_at || '', outcome: r.outcome || '', closedAt: r.closed_at || '',
+    // Homestay move-outs (checkout-homestay-2026-10-12.sql): the site writes data.service_type, the DB copies it to a column.
+    serviceType: (r.service_type || d.service_type) === 'homestay' ? 'homestay' : 'coliving',
   };
+}
+function ckoIsHomestay(c){ return !!c && c.serviceType === 'homestay'; }
+// As vm_checkout_can_see() in the DB: pages include 'checkouts-homestay' but not 'checkouts' (the role's nav when no list).
+function ckoHomestayOnly(u){
+  if (!u || u.role === 'admin') return false;
+  const r = (typeof roles !== 'undefined' && roles[u.role]) || { nav: [] };
+  const pages = Array.isArray(u.allowed_pages) && u.allowed_pages.length ? u.allowed_pages : (r.nav || []);
+  return pages.indexOf('checkouts-homestay') !== -1 && pages.indexOf('checkouts') === -1;
 }
 // me = { email, role, can_approve_refunds }. Anything else (a missing me, a map()
 // index) is nobody. can_approve_refunds counts only when it is literally true.
@@ -25852,6 +25864,9 @@ function ckoTab(cases, tab, me, now){
     if (tab === 'mine') return !!m.email && c.owner === m.email;
     if (tab === 'unassigned') return !c.owner;
     if (tab === 'finance') return ckoInFinance(c);
+    // Homestay move-outs have their own tab; Everyone is co-living.
+    if (tab === 'homestay') return ckoIsHomestay(c);
+    if (tab === 'open') return !ckoIsHomestay(c);
     return true;
   });
 }
@@ -27030,6 +27045,8 @@ const CKO_RPT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 
 // Reports is the admins' tab (checkout_report refuses anyone else anyway).
 // Finance is listed for those who approve refunds (before Closed); Reports for admins.
 function ckoTabsFor(tabs, me){
+  // A homestay-only teammate (Emilio) gets For me, Homestay and Closed; the DB only gives them homestay cases.
+  if (me && me.homestay_only === true && !ckoIsAdmin(me)) return (tabs || []).filter(x => ['forme', 'homestay', 'closed'].indexOf(x[0]) !== -1);
   const t = (tabs || []).slice();
   if (ckoIsFinance(me) && !t.some(x => x[0] === 'finance')) { const i = t.findIndex(x => x[0] === 'closed'); t.splice(i === -1 ? t.length : i, 0, CKO_FIN_TAB); }
   if (ckoIsAdmin(me)) t.push(CKO_RPT_TAB);
@@ -27183,7 +27200,7 @@ function ckoRptDrillIds(view, ref){
 const CKO_STATE = { q: '', flag: '', city: '', status: '', stage: '', owner: '', tab: 'open', ids: null };
 // 2026-10-05: three tabs (For me, Everyone, Closed) instead of six that overlapped;
 // Finance and Reports are added per role by ckoTabsFor. The stage bar does the rest.
-const CKO_TABS = [['forme', 'For me'], ['open', 'Everyone'], ['closed', 'Closed']];
+const CKO_TABS = [['forme', 'For me'], ['open', 'Everyone'], ['homestay', 'Homestay'], ['closed', 'Closed']];
 const CKO_COLS = 8;
 let ckoCases = null, ckoLoading = null;
 // Drawer token: every open (and every close) bumps it, so a response that
@@ -27193,7 +27210,7 @@ let ckoOpenSeq = 0;
 // the buttons must match what the server will allow.
 function ckoMe(){
   const u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || {};
-  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true };
+  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true, homestay_only: typeof ckoHomestayOnly === 'function' && ckoHomestayOnly(u) };
 }
 function ckoTeam(){ return typeof teamMembers !== 'undefined' ? teamMembers : []; }
 function ckoName(email){
@@ -27277,6 +27294,9 @@ function renderCheckouts(){
   const refocus = fd.ckoTab ? `[data-cko-tab="${fd.ckoTab}"]` : fd.ckoStage ? `[data-cko-stage="${fd.ckoStage}"]` : '';
   // Reports is admins' only (Phase 4b), Finance finance's; anyone else left on one goes back to Everyone.
   if ((CKO_STATE.tab === 'reports' && !ckoIsAdmin(me)) || (CKO_STATE.tab === 'finance' && !ckoIsFinance(me))) CKO_STATE.tab = 'open';
+  if (me.homestay_only && ['forme', 'homestay', 'closed'].indexOf(CKO_STATE.tab) === -1) CKO_STATE.tab = 'homestay';
+  // New checkout is the co-living staff form; a homestay-only teammate does not get it.
+  const newBtn = document.getElementById('cko-new'); if (newBtn) newBtn.style.display = me.homestay_only ? 'none' : '';
   const tabs = document.getElementById('cko-tabs');
   if (tabs) tabs.innerHTML = ckoTabsFor(CKO_TABS, me).map(([k, label]) => {
     const on = CKO_STATE.tab === k;
@@ -27751,6 +27771,8 @@ async function openCheckout(id, banner, refocus, ok){
   const sch = d.schedule || {}, mo = d.moved_out || {}, ins = d.inspection || {}, sno = d.staff_notice, dec = x && x.decision;
   const slaParts = ckoSlaParts(ckoSla(c, Date.now()), c.city);
   const cln = ckoCleaning(c);
+  // Homestay move-out: the host family checks the room; no Vanmates clean, cleaning report or room release.
+  const hs = ckoIsHomestay(c), bk = d.booking || {};
   const kv = (label, value) => `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${esc(label)}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
   const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${esc(t)}</h4>`;
   const money = (v) => (v == null ? '—' : '$' + esc(v));
@@ -27771,16 +27793,18 @@ async function openCheckout(id, banner, refocus, ok){
   const moveoutRows = `
     ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
     ${sch.inspection_at ? kv('Inspection booked', `${when(sch.inspection_at)} · ${esc(ckoName(sch.inspector_email))}`) : ''}
-    ${kv('Move-out clean', `<span data-cko-cleaning="${esc(cln.status)}">${esc(ckoCleaningLine(cln))}</span>${cln.status === 'booked' && cln.bookedAt ? ` <span class="name-sub">since ${esc(day(cln.bookedAt))}</span>` : ''}`)}
+    ${hs ? '' : kv('Move-out clean', `<span data-cko-cleaning="${esc(cln.status)}">${esc(ckoCleaningLine(cln))}</span>${cln.status === 'booked' && cln.bookedAt ? ` <span class="name-sub">since ${esc(day(cln.bookedAt))}</span>` : ''}`)}
     ${mo.keys ? kv('Moved out', `${esc(day(mo.at))} · keys ${esc(ckoOptionLabel(CKO_KEYS_OPTIONS, mo.keys).toLowerCase())} (${esc(mo.count)})${mo.source === 'limpio' ? ' <span class="name-sub">· from the cleaning report</span>' : ''}`) : ''}
     ${ins.result ? kv('Inspection result', `${esc(ckoOptionLabel(CKO_RESULT_OPTIONS, ins.result))}${ins.source === 'limpio' ? ` <span class="name-sub">· by ${esc(ins.by || 'the cleaner')}, from the Limpio cleaning report</span>` : ''}${ins.notes && ins.source !== 'limpio' ? `<div class="name-sub">${esc(ins.notes)}</div>` : ''}`) : ''}
-    ${cln.report ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}`;
+    ${cln.report && !hs ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}`;
   const reviewOpen = (c.flags || []).indexOf('short_notice_review_required') !== -1;
   // A room change's move-out (room-change-handoff-2026-10-09.sql): the tenant stays, no refund.
   const tr = d.transfer || null;
   const transferBanner = tr ? `<div class="tag-pill blue" style="display:block;text-transform:none;letter-spacing:0;font-size:13px;padding:10px 12px;margin:6px 0 10px">Room change <a href="#room-change=${esc(tr.room_change_id || '')}">${esc(tr.room_change_id || '')}</a>: moving to ${esc([tr.to_house, tr.to_room].filter(Boolean).join(' · ') || 'a new room')}${tr.move_date ? ' on ' + esc(new Date(String(tr.move_date).slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })) : ''}. The deposit${tr.deposit_held != null ? ' (' + esc('$' + Number(tr.deposit_held).toLocaleString('en-CA')) + ')' : ''} moves to the new contract: record any cleaning or damage charges, then close the case. No refund is paid out.</div>` : '';
+  const homestayBanner = hs ? `<div class="tag-pill blue" data-cko-homestay="1" style="display:block;text-transform:none;letter-spacing:0;font-size:13px;padding:10px 12px;margin:6px 0 10px">Homestay move-out · host ${esc(bk.host_name || c.house || '—')}${bk.booking_ref ? ' · ' + esc(bk.booking_ref) : ''}${bk.lease_end ? ' · booked until ' + esc(fmtDate(bk.lease_end)) : ''}${d.refund_expected ? ' · deposit due ' + esc(fmtDate(d.refund_expected)) : ''}</div>` : '';
   document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}">
     ${transferBanner}
+    ${homestayBanner}
     ${ckoStageTrackerHtml(c, stg, waited, slaParts)}
     ${ckoActionBarHtml(c)}
     ${ckoChargesHtml(c, lines, kv, h)}
@@ -27793,20 +27817,20 @@ async function openCheckout(id, banner, refocus, ok){
     ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + ' · will return')}
     ${kv('Reason', esc(d.reason || '—') + (d.reason_details ? `<div class="name-sub">${esc(d.reason_details)}</div>` : ''))}
     ${kv('Refund method', d.refund_method === 'deposit_transfer' ? 'Deposit carried over (room change)' : esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
-    ${kv('Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
+    ${kv(hs ? 'Matched to homestay booking' : 'Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
     ${kv('Submitted', when(c.createdAt))}`, false)}
     ${fold('Notice & acknowledgements', `
     ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
     ${kv('Notice', esc(ckoNoticeText(c)) + (n.required ? ` <span class="name-sub">of ${esc(n.required)} required</span>` : ''))}
     ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
-    ${kv('Deposit & cleaning', dep.at ? `${esc(day(dep.at))} · deposit shown ${money(dep.deposit_shown)} · cleaning ${money(dep.cleaning_fee)}${dep.wire_fee ? ' · wire ' + money(dep.wire_fee) : ''}<div class="name-sub">"${esc(dep.text || '')}"</div>` : '—')}
+    ${kv(hs ? 'Deposit' : 'Deposit & cleaning', dep.at ? `${esc(day(dep.at))} · deposit shown ${money(dep.deposit_shown)} · cleaning ${money(dep.cleaning_fee)}${dep.wire_fee ? ' · wire ' + money(dep.wire_fee) : ''}<div class="name-sub">"${esc(dep.text || '')}"</div>` : '—')}
     ${kv('Short notice', sn ? `${esc(day(sn.at))}<div class="name-sub">"${esc(sn.text || '')}"</div>` : 'Not needed')}
     ${x ? kv('Requested', `${esc(x.reason || '')} · ${esc(day(x.requested_at))}<div>${esc(x.explanation || '')}</div>`) : kv('Requested', 'No')}
     ${dec ? kv('Decision', `<b>${esc(ckoOptionLabel(CKO_OUTCOME_OPTIONS, dec.outcome))}</b> · ${esc(ckoName(dec.by))} · ${esc(day(dec.at))}<div class="name-sub">Internal: ${esc(dec.reason || '')}</div>${dec.resident_note ? `<div class="name-sub">To resident: ${esc(dec.resident_note)}</div>` : ''}`) : ''}`, reviewOpen)}
     ${fold('Resident link, reminders, room', `
     ${ckoResidentLinkRow(c, kv)}
     ${ckoRemindersRow(c, kv)}
-    ${ckoRoomRow(events, kv)}
+    ${hs ? '' : ckoRoomRow(events, kv)}
     ${kv('Asana', c.asanaGid ? `<a href="${esc(ckoAsanaUrl(c.asanaGid))}" target="_blank" rel="noopener">Open task</a>` : '<span class="name-sub">Not mirrored yet</span>')}`, false)}
     ${fold('Timeline (' + tl.length + ' · ' + zone + ')', tl.map(e => { const t = ckoLocal(e.at, c.city); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>', false)}
   </div>`;
@@ -39726,8 +39750,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-exths1"></script>
-<script src="extensions.js?v=2026-10-12-exths1"></script>
-<script src="ap.js?v=2026-10-12-exths1"></script>
+<script src="room-changes.js?v=2026-10-12-hsco1"></script>
+<script src="extensions.js?v=2026-10-12-hsco1"></script>
+<script src="ap.js?v=2026-10-12-hsco1"></script>
 </body>
 </html>
