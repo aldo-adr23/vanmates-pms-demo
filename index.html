@@ -1594,7 +1594,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-hsco1"></script>
+<script src="pms-supabase.js?v=2026-10-12-leadtr1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4099,6 +4099,9 @@ hello@vanmates.com · vanmates.com</textarea>
 .lm-strip-warn{background:var(--amber-soft)}
 .lm-strip-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .lm-strip-actions{display:flex;gap:12px}
+.lm-en{color:var(--ink);font-weight:500;cursor:pointer}.lm-en input{margin:0 4px 0 0;accent-color:var(--red)}
+.lm-orig{margin-top:6px;font-size:12px;color:var(--muted)}.lm-orig summary{cursor:pointer;font-weight:600}
+.lm-orig .lm-text,.lm-orig-shown{margin-top:4px;padding-top:4px;border-top:1px dashed #00000022;font-size:12px;color:var(--muted)}
 .lm-preview{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lm-thread{max-height:420px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:var(--surface-2)}
 .lm-empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 0}
@@ -31687,6 +31690,7 @@ function leadMailReset(l){
   // Follow-ups only make sense for your own lead (they stop when someone else holds it).
   LEAD_MAIL.autoFollow = String(l.claimed_by || '').toLowerCase() === String(leadMailViewer().email || '').toLowerCase();
   LEAD_MAIL.lang = leadMailLang(l);
+  Object.assign(LEAD_MAIL, { trBusy: false, trUndo: null, trJa: null, trBack: '' });
   Object.assign(LEAD_MAIL, { taylorOpen: false, taylorBusy: false, taylorAsk: '', prevDraft: null, prevSubject: null, taylorRooms: false,
     schedMode: 'after', schedDate: '', schedGap: '', editSchedule: false });
   if(pre !== 'compose'){ LEAD_MAIL.loading = false; leadMailRender(l); return; }
@@ -31734,8 +31738,8 @@ function leadMailBubble(m, me){
   const tag = m.auto ? `<span class="lm-tag">Auto follow-up${m.step ? ' ' + esc(m.step) : ''}</span>` : other ? `<span class="lm-tag">Automatic reply or not the lead</span>` : '';
   return `<div class="lm-msg ${mine ? 'lm-out' : other ? 'lm-other' : 'lm-in'}">
     <div class="lm-bubble">
-      ${m.subject && m.showSubject ? `<div class="lm-subj">${esc(m.subject)}</div>` : ''}
-      <div class="lm-text">${esc(m.body).replace(/\n/g, '<br>')}</div>
+      ${m.subject && m.showSubject ? leadMailTextHtml(m.subject, 'lm-subj') : ''}
+      ${leadMailTextHtml(m.body, 'lm-text')}
       ${files ? `<div class="lm-files">${files}</div>` : ''}
     </div>
     <div class="lm-meta">${who}${inbound ? ' replied' : ''} · ${esc(leadMailWhen(m.at))}${tag ? ' · ' + tag : ''}${open ? ` · <span class="${open.tone === 'good' ? 'lm-opened' : ''}">${esc(open.text)}</span>` : ''}</div>
@@ -31788,7 +31792,7 @@ function leadMailFollowupHtml(l, me){
   return `<div class="lm-strip lm-strip-on">
     ${LM_ICON.clock}<div style="flex:1;min-width:0"><b>Follow-up ${esc(st.step)} of 3</b> <span class="lm-dim">· ${esc(leadMailWhen(st.at, true))} if no reply${leadMailScheduleText(LEAD_MAIL.followup) ? ' · ' + esc(leadMailScheduleText(LEAD_MAIL.followup)) : ''} ·</span>
       ${owner ? `<select class="lm-lang" id="lm-fu-lang" aria-label="Follow-up language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === fuLang ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<span class="lm-dim">${esc(LEAD_MAIL_LANGS[fuLang] || fuLang)}</span>`}
-      <div class="lm-preview">${esc(leadMailGreeting(l.name, fuLang))} ${esc(text)}</div></div>
+      <div class="lm-preview" id="lm-fu-preview">${leadMailFollowPreviewHtml(l)}</div></div>
     ${owner ? `<span class="lm-strip-actions"><button type="button" class="lm-link" id="lm-fu-sched">Schedule</button><button type="button" class="lm-link" id="lm-fu-edit">Edit</button><button type="button" class="lm-link" data-lm-fu="skip">Skip</button><button type="button" class="lm-link" data-lm-fu="stop">Stop</button></span>` : ''}
   </div>${tplLink ? `<div style="text-align:right;margin-top:-4px">${tplLink}</div>` : ''}`;
 }
@@ -31847,11 +31851,13 @@ function leadMailComposerHtml(l, me){
     </div>` : ''}
     ${LEAD_MAIL.prevDraft != null ? `<div class="lm-dim" style="font-size:12px">Taylor wrote this draft${LEAD_MAIL.taylorRooms ? ' (with a room search)' : ''}: read it and edit before sending. <button class="lm-link" type="button" id="lm-taylor-undo">Undo</button></div>` : ''}
     <textarea class="form-input lm-input" id="lead-mail-body" rows="3" maxlength="10000" placeholder="${reply ? 'Write a reply…' : 'Write your message…'}">${esc(LEAD_MAIL.draftBody || '')}</textarea>
+    ${LEAD_MAIL.trUndo != null && LEAD_MAIL.trJa === LEAD_MAIL.draftBody ? `<div class="lm-dim" style="font-size:12px">Means: ${esc(LEAD_MAIL.trBack || '')} <button class="lm-link" type="button" id="lm-tr-undo">Back to my English</button></div>` : ''}
     ${files ? `<div class="lm-files">${files}</div>` : ''}
     <div id="lead-mail-err" class="name-sub lead-sub-warn" style="display:none"></div>
     ${!(fu && reply) && LEAD_MAIL.autoFollow ? `<div class="lm-sched-row">${LM_ICON.clock}<span class="lm-dim">Follow-ups:</span>${leadMailScheduleControls('lm-s', LEAD_MAIL.schedMode, LEAD_MAIL.schedDate, LEAD_MAIL.schedGap)}</div>` : ''}
     <div class="lm-toolbar">
       <select class="lm-lang" id="lm-lang" title="Language of the greeting and of the automatic follow-ups" aria-label="Email language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === LEAD_MAIL.lang ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      ${leadMailEnglishOn() && leadMailHasJapanese(l) ? `<button type="button" class="lm-tool" id="lm-tr-ja" title="Turns your English draft into polite Japanese in the box. Check the meaning shown under it before sending." ${LEAD_MAIL.trBusy ? 'disabled' : ''}><span>${LEAD_MAIL.trBusy ? 'Translating…' : 'Translate to 日本語'}</span></button>` : ''}
       <button type="button" class="lm-tool lm-tool-taylor" id="lm-taylor" title="Taylor writes a draft from the lead's details and the conversation, with matching rooms. Nothing is sent until you press Send.">${LM_ICON.spark}<span>Draft with Taylor</span></button>
       <label class="lm-tool" title="Attach photos or documents (10 MB total)">${LM_ICON.clip}<span>Attach</span><input type="file" id="lm-file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
       ${fu && reply ? `<span class="lm-dim" style="font-size:12px">Follow-ups re-time after your reply</span>`
@@ -31861,6 +31867,92 @@ function leadMailComposerHtml(l, me){
       <button class="btn btn-primary" type="button" id="lead-mail-send">${LEAD_MAIL.sendAnyway ? 'Send anyway' : reply ? 'Send reply' : 'Send email'}</button>
     </div>
   </div>`;
+}
+
+/* ---- English view of the email conversation (VM - JLeads Translate) -------
+   Same translator and per-text cache as the LINE chat. With "English" on,
+   Japanese emails (and subjects, and the next follow-up) show in English with
+   the original one click away; "Translate to Japanese" turns the rep's English
+   draft into Japanese in the box, with what it means shown under it. */
+function leadMailEnglishOn(){ try { return localStorage.getItem('leads.mail.english') !== '0'; } catch(_){ return true; } }
+function leadMailFollowText(l){
+  const st = leadMailFollowupState(LEAD_MAIL.followup);
+  if(st.kind !== 'active') return '';
+  const fuLang = LEAD_MAIL.followup.lang || 'en';
+  const tpl = (LEAD_MAIL.templates || []).find(t => t.step === st.step && (t.lang || 'en') === fuLang);
+  const ov = LEAD_MAIL.followup.overrides && LEAD_MAIL.followup.overrides[String(st.step)];
+  return (ov && String(ov).trim()) || (tpl && tpl.body) || '';
+}
+// Every text in the card a rep may need in English, as {text} for jleadUntranslated.
+function leadMailTrTexts(l){
+  const out = [];
+  (LEAD_MAIL.history || []).forEach(m => { out.push({ text: m.subject || '' }); out.push({ text: m.body || '' }); });
+  out.push({ text: leadMailFollowText(l) });
+  return out;
+}
+function leadMailHasJapanese(l){ return leadMailTrTexts(l).some(m => jleadHasJapanese(m.text)) || LEAD_MAIL.lang === 'ja'; }
+// English for a text, or null while it is still on its way.
+function leadMailEn(txt){
+  const c = jleadTrCache();
+  return Object.prototype.hasOwnProperty.call(c, txt) ? c[txt] : null;
+}
+let _leadMailTrBusy = false;
+async function leadMailTranslate(l){
+  if(_leadMailTrBusy || !l || !leadMailEnglishOn()) return;
+  const now = Date.now(), skip = {};
+  Object.keys(_jleadTrFailed).forEach(t => { if(now - _jleadTrFailed[t] < JLEAD_TR_RETRY_MS) skip[t] = 1; });
+  const todo = jleadUntranslated(leadMailTrTexts(l), jleadTrCache(), skip);
+  if(!todo.length) return;
+  _leadMailTrBusy = true;
+  const res = await jleadTrCall({ mode: 'in', texts: todo });
+  _leadMailTrBusy = false;
+  if(!res.ok || !Array.isArray(res.t)) todo.forEach(t => { _jleadTrFailed[t] = Date.now(); });
+  else {
+    const c = jleadTrCache();
+    todo.forEach((t, i) => { if(typeof res.t[i] === 'string'){ c[t] = res.t[i]; delete _jleadTrFailed[t]; } else _jleadTrFailed[t] = Date.now(); });
+    jleadTrSave();
+  }
+  if(LEAD_MAIL.historyFor !== l.id) return;
+  // Only the conversation and the follow-up line change, so a reply being typed keeps its cursor.
+  const me = String(leadMailViewer().email || '').toLowerCase();
+  const t = document.getElementById('lm-thread');
+  if(t){ const top = t.scrollTop; t.innerHTML = leadMailThreadHtml(me); t.scrollTop = top; }
+  const pv = document.getElementById('lm-fu-preview');
+  if(pv) pv.innerHTML = leadMailFollowPreviewHtml(l);
+}
+function leadMailFollowPreviewHtml(l){
+  const fuLang = (LEAD_MAIL.followup && LEAD_MAIL.followup.lang) || 'en', text = leadMailFollowText(l);
+  const full = leadMailGreeting(l.name, fuLang) + ' ' + text;
+  if(!leadMailEnglishOn() || !jleadHasJapanese(text)) return esc(full);
+  const en = leadMailEn(text);
+  return en != null ? `<span title="${esc(full)}">EN: ${esc(en)}</span>` : `<i>Translating…</i> ${esc(full)}`;
+}
+// Message text, in English first when English is on and it is Japanese.
+function leadMailTextHtml(txt, cls){
+  const br = x => esc(x).replace(/\n/g, '<br>');
+  if(!leadMailEnglishOn() || !jleadHasJapanese(txt)) return `<div class="${cls}">${br(txt)}</div>`;
+  const en = leadMailEn(txt);
+  if(cls === 'lm-subj') return `<div class="lm-subj">${en != null ? esc(en) : esc(txt)}</div>`;
+  return `<div class="${cls}">${en != null ? br(en) : `<span class="lm-dim"><i>${_jleadTrFailed[txt] ? 'Not translated yet, retrying shortly' : 'Translating…'}</i></span>`}</div>`
+    + (en != null ? `<details class="lm-orig"><summary>Original</summary><div class="lm-text">${br(txt)}</div></details>` : `<div class="lm-text lm-orig-shown">${br(txt)}</div>`);
+}
+// "Translate to Japanese": the English draft becomes Japanese in the box; Undo brings the English back.
+async function leadMailTranslateDraft(l){
+  const bod = document.getElementById('lead-mail-body');
+  const text = String((bod && bod.value) || '').trim();
+  if(!text){ showToast('Write your message in English first'); return; }
+  if(LEAD_MAIL.trBusy) return;
+  LEAD_MAIL.trBusy = true; leadMailKeepDraft(); leadMailRender(l);
+  const ctx = (LEAD_MAIL.history || []).filter(m => m.dir !== 'other' && String(m.body || '').trim()).slice(-8)
+    .map(m => ({ from: m.dir === 'in' ? 'customer' : 'vanmates', text: String(m.body) }));
+  const res = await jleadTrCall({ mode: 'out', text, context: ctx });
+  LEAD_MAIL.trBusy = false;
+  if(LEAD_MAIL.historyFor !== l.id) return;
+  if(!res.ok || !res.ja){ showToast(res.error || 'Translation failed. Try again.'); leadMailRender(l); return; }
+  if(String(LEAD_MAIL.draftBody || '').trim() !== text){ leadMailRender(l); return; }   // edited meanwhile
+  LEAD_MAIL.trUndo = LEAD_MAIL.draftBody; LEAD_MAIL.trBack = res.back || '';
+  LEAD_MAIL.draftBody = res.ja; LEAD_MAIL.trJa = res.ja;
+  leadMailRender(l);
 }
 
 function leadMailRender(l, opts){
@@ -31895,7 +31987,7 @@ function leadMailRender(l, opts){
     ? `<div class="lm-strip lm-strip-warn"><span>Admin: this lead is ${l.claimed_by ? 'claimed by ' + esc(l.claimed_by) : 'unclaimed'}. Emails go out from your Gmail.</span></div>` : '';
   const prevScroll = (document.getElementById('lm-thread') || {}).scrollTop;
   box.innerHTML = `<div class="lm-card">
-    ${head(`${from}${gmailLink}<details class="lm-more"><summary aria-label="More">⋯</summary><div><button type="button" class="lm-link" id="lead-mail-disconnect">Disconnect Gmail</button></div></details>`)}
+    ${head(`${leadMailHasJapanese(l) ? `<label class="lm-link lm-en" title="Show Japanese emails in English (the original stays one click away)"><input type="checkbox" id="lm-en" ${leadMailEnglishOn() ? 'checked' : ''}>English</label>` : ''}${from}${gmailLink}<details class="lm-more"><summary aria-label="More">⋯</summary><div><button type="button" class="lm-link" id="lead-mail-disconnect">Disconnect Gmail</button></div></details>`)}
     ${banner}${claimNote}${leadMailFollowupHtml(l, me)}
     <div class="lm-thread" id="lm-thread">${leadMailThreadHtml(me)}</div>
     ${leadMailComposerHtml(l, me)}
@@ -31903,6 +31995,7 @@ function leadMailRender(l, opts){
   const t = document.getElementById('lm-thread');
   if(t) t.scrollTop = (opts && opts.scroll) || prevScroll == null ? t.scrollHeight : prevScroll;
   leadMailWire(l);
+  leadMailTranslate(l);
 }
 
 function leadMailWire(l){
@@ -31938,6 +32031,10 @@ function leadMailWire(l){
   on('lm-taylor', () => { LEAD_MAIL.taylorOpen = true; leadMailKeepDraft(); leadMailRender(l); const a = document.getElementById('lm-taylor-ask'); if(a) a.focus(); });
   on('lm-taylor-close', () => { LEAD_MAIL.taylorOpen = false; leadMailKeepDraft(); leadMailRender(l); });
   on('lm-taylor-go', () => leadMailTaylor(l));
+  on('lm-tr-ja', () => leadMailTranslateDraft(l));
+  on('lm-tr-undo', () => { LEAD_MAIL.draftBody = LEAD_MAIL.trUndo || ''; LEAD_MAIL.trUndo = null; LEAD_MAIL.trJa = null; leadMailRender(l); });
+  const en = document.getElementById('lm-en');
+  if(en) en.addEventListener('change', () => { try { localStorage.setItem('leads.mail.english', en.checked ? '1' : '0'); } catch(_){} leadMailKeepDraft(); leadMailRender(l); });
   // Schedule controls (composer 'lm-s', strip editor 'lm-fs'): a change re-renders to show/hide the date.
   ['lm-s', 'lm-fs'].forEach(pre => {
     const m = document.getElementById(pre + '-mode'), dt = document.getElementById(pre + '-date'), gp = document.getElementById(pre + '-gap');
@@ -39750,8 +39847,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-hsco1"></script>
-<script src="extensions.js?v=2026-10-12-hsco1"></script>
-<script src="ap.js?v=2026-10-12-hsco1"></script>
+<script src="room-changes.js?v=2026-10-12-leadtr1"></script>
+<script src="extensions.js?v=2026-10-12-leadtr1"></script>
+<script src="ap.js?v=2026-10-12-leadtr1"></script>
 </body>
 </html>
