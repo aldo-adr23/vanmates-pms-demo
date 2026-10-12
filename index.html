@@ -1544,6 +1544,10 @@
 .ml-sec{margin:16px 0 4px;display:flex;justify-content:space-between;font-weight:600;border-bottom:1px solid var(--line,#E4DBC9);padding-bottom:4px}
 .ml-row{display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px dashed var(--line,#E4DBC9);cursor:pointer}
 .ml-row .ml-main{flex:1;min-width:0}
+.taylor-chip{padding:2px 8px;font-size:11px;font-weight:600;vertical-align:middle}
+.taylor-box{padding:10px 14px;border:1px solid var(--line, #E4DBC9);background:var(--cream-2);border-radius:10px}
+.taylor-box.taylor-ready{border-color:#B94A3F55;background:#B94A3F0d}
+.taylor-sum{font-size:13px;margin:3px 0}
 .ml-acts{display:flex;gap:6px;flex-shrink:0}
 .ml-acts .btn{border:1px solid var(--line,#E4DBC9);background:var(--card,#fff)}
 @media (max-width:600px){.ml-row{flex-wrap:wrap}.ml-acts{width:100%;justify-content:flex-end}}
@@ -1588,7 +1592,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-11-apll2"></script>
+<script src="pms-supabase.js?v=2026-10-11-taylor1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4038,6 +4042,7 @@ hello@vanmates.com · vanmates.com</textarea>
     </div>
     <div class="modal-body">
       <div id="lead-claim-block" style="margin-bottom:14px"></div>
+      <div id="lead-taylor" style="display:none;margin-bottom:14px"></div>
       <div id="jlead-customer" style="display:none;margin-bottom:14px"></div>
       <div id="jlead-chat" style="display:none;margin-bottom:14px"></div>
       <div class="form-row" style="grid-template-columns:1fr 1fr 1fr">
@@ -29503,6 +29508,44 @@ function mlDetails(l, p){
     budget: pick(p.budget, p.price), room: pick(p.roomName) };
 }
 /* MY-LEADS-CORE-END */
+/* TAYLOR-CORE-START */
+// Taylor (AI sales assistant) emails unclaimed web leads from taylor@vanmates.com.
+// data.taylor = { state: emailing|ready|stopped|shadow, status, summary, nudges, last_at, started_at }
+// is written ONLY by the vanmates-lead-mail Worker; the leads_keep_mail_flags trigger
+// keeps a browser save from changing it (taylor-email-2026-10-11.sql). Shadow = invisible. Pure (uses esc).
+const TAYLOR_VIEW = {
+  emailing: { chip: '✉ Taylor',        cls: 'badge-grey', label: 'Emailing this lead' },
+  ready:    { chip: '🔥 Taylor: ready', cls: 'badge-red',  label: '🔥 Ready for a rep' },
+  stopped:  { chip: 'Taylor stopped',  cls: 'badge-grey', label: 'Stopped' }
+};
+function leadTaylor(l){
+  const t = l && l.taylor;
+  return t && typeof t === 'object' && Object.prototype.hasOwnProperty.call(TAYLOR_VIEW, t.state) ? t : null;
+}
+function taylorAgo(iso, nowMs){
+  const t = Date.parse(iso || '');
+  if(isNaN(t)) return '';
+  const m = Math.max(0, Math.floor((nowMs - t) / 6e4));
+  return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + ' h ago' : Math.floor(m / 1440) + ' d ago';
+}
+function leadTaylorChip(l){
+  const t = leadTaylor(l);
+  if(!t) return '';
+  const v = TAYLOR_VIEW[t.state];
+  return ` <span class="badge ${v.cls} taylor-chip" title="${esc(t.summary || 'Taylor is handling this lead by email')}">${v.chip}</span>`;
+}
+function leadTaylorBlockHtml(l, unclaimed, nowMs){
+  const t = leadTaylor(l);
+  if(!t) return '';
+  const v = TAYLOR_VIEW[t.state], ago = taylorAgo(t.last_at, nowMs);
+  return `<div class="taylor-box${t.state === 'ready' ? ' taylor-ready' : ''}">
+    <div class="name-main">Taylor · ${esc(v.label)}</div>
+    ${t.summary ? `<div class="taylor-sum">${esc(t.summary)}</div>` : ''}
+    <div class="name-sub">${ago ? 'last email ' + esc(ago) : 'no email yet'}${t.nudges ? ' · ' + esc(t.nudges) + ' nudge' + (Number(t.nudges) === 1 ? '' : 's') : ''}</div>
+    ${unclaimed ? `<div class="name-sub" style="margin-top:4px">Claim this lead to take over — Taylor stops when it's claimed.</div>` : ''}
+  </div>`;
+}
+/* TAYLOR-CORE-END */
 
 /* JLEADS-CORE-START */
 // JLeads is the LINE Maya pipeline. Deliberately the SAME `leads` table as the
@@ -29895,6 +29938,15 @@ function leadAssigneeCell(l){
   if(c.state === 'unclaimed') return `<span class="badge" style="background:#B94A3F1a;color:#B94A3F;border-color:#B94A3F33">Unassigned</span>`;
   return `<div class="name-main">${esc(c.byName)}</div><div class="name-sub">${fmtDate(c.at)}</div>`;
 }
+// Taylor's block in the drawer (data.taylor is server-owned: shown, never written here).
+function renderLeadTaylor(l){
+  const box = document.getElementById('lead-taylor');
+  if(!box || !l) return;
+  const unclaimed = leadClaimState(l, activeRole(), typeof teamMembers !== 'undefined' ? teamMembers : []).state === 'unclaimed';
+  const html = leadTaylorBlockHtml(l, unclaimed, Date.now());
+  box.innerHTML = html;
+  box.style.display = html ? '' : 'none';
+}
 function renderLeadClaimBlock(l){
   const box = document.getElementById('lead-claim-block');
   if(!box || !l) return;
@@ -30101,7 +30153,7 @@ function mlRow(l, now, today){
   const id = esc(l.id);
   return `<div class="ml-row" data-ml-lead="${id}">
     <input type="checkbox" data-ml-check="${id}" ${ML_SEL.has(String(l.id)) ? 'checked' : ''} aria-label="Select">
-    <div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${leadStatusBadge(st)}</div>${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
+    <div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l)} ${leadStatusBadge(st)}</div>${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
     <div class="ml-acts">
       ${wa.ok ? `<button class="btn btn-mini" type="button" data-ml-act="wa" data-id="${id}" title="Opens WhatsApp ${esc(wa.display)} and logs the contact">WhatsApp</button>` : ''}
       <button class="btn btn-mini" type="button" data-ml-act="log" data-id="${id}" title="You called, emailed or messaged them some other way. Counts as activity${st === 'new' ? ' and marks the lead Contacted' : ''}.">Log contact</button>
@@ -30270,7 +30322,7 @@ function renderLeads(){
   if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
   body.innerHTML = list.map(l => `
     <tr data-lead="${esc(l.id)}" style="cursor:pointer">
-      <td><div class="name-main">${esc(l.name || '—')}</div>${l.reply_waiting ? `<span class="badge" title="The lead replied to the last email and is waiting for an answer" style="margin-top:3px;background:var(--cream-2);border:1px solid var(--line, #E4DBC9);color:var(--ink, #2B211A)">Replied</span>` : ''}</td>
+      <td><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l)}</div>${l.reply_waiting ? `<span class="badge" title="The lead replied to the last email and is waiting for an answer" style="margin-top:3px;background:var(--cream-2);border:1px solid var(--line, #E4DBC9);color:var(--ink, #2B211A)">Replied</span>` : ''}</td>
       <td>${leadSourceLabel(l.source)}</td>
       <td>${leadContactCell(l)}</td>
       <td>${esc(l.city || '—')}</td>
@@ -30288,6 +30340,7 @@ function renderLeads(){
     const cur = leads.find(x => String(x.id) === String(_editingLeadId));
     if(cur){
       renderLeadClaimBlock(cur);
+      renderLeadTaylor(cur);
       const asSel = document.getElementById('lead-assignee');
       if(asSel && cur.assignee && asSel.dataset.synced !== cur.assignee){
         asSel.value = cur.assignee; asSel.dataset.synced = cur.assignee;
@@ -31253,6 +31306,7 @@ function fillLeadFields(l){
   renderLeadSubmission(l);
   wireLeadWhatsApp(l);
   renderLeadClaimBlock(l);
+  renderLeadTaylor(l);
 }
 
 /* === Email a lead from the drawer, as the rep, through their own Gmail ===
@@ -39575,8 +39629,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-11-apll2"></script>
-<script src="extensions.js?v=2026-10-11-apll2"></script>
-<script src="ap.js?v=2026-10-11-apll2"></script>
+<script src="room-changes.js?v=2026-10-11-taylor1"></script>
+<script src="extensions.js?v=2026-10-11-taylor1"></script>
+<script src="ap.js?v=2026-10-11-taylor1"></script>
 </body>
 </html>
