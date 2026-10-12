@@ -6,13 +6,14 @@
    and the shared detail panel). */
 (function(){
   const TYPES = { cleaning: 'Cleaning', utility: 'Utilities', internet: 'Internet', employee_expense: 'Employee expense', landlord_rent: 'Landlord rent', other: 'Other' };
-  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses']];
+  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['landlord_rent', 'Landlords']];
   const VIEWS = [['open', 'Open'], ['review', 'To review'], ['approved', 'Approved · to pay'], ['paid', 'Paid'], ['skipped', 'Skipped'], ['everything', 'Everything']];
   const STATUS = { needs_review: ['Needs review', 'red'], flagged: ['Flagged', 'red'], approved: ['Approved', 'blue'], paid: ['Paid', ''], recorded: ['In QuickBooks', ''], skipped: ['Skipped', ''] };
   const FLAGS = {
     no_etransfer_email: 'No e-transfer email', days_dont_add_up: "Days don't add up", sheet_total_mismatch: "Sheet total doesn't match",
     unmapped_account: 'Account has no property', amount_jump: 'Bigger than usual', unreadable: "Couldn't read amount", no_account_number: 'No account number',
     over_reimbursement_cap: 'Over reimbursement cap',
+    no_cheque: 'No cheque this month', cheque_bounced: 'Cheque bounced', pad_missing: 'PAD not seen in the bank', amount_mismatch: "Amount doesn't match",
   };
   const METHOD = { etransfer: 'E-transfer', pad: 'PAD', payroll: 'Payroll', cheque: 'Cheque', card: 'Card', other: 'Other' };
   const COLS = 8;
@@ -39,7 +40,7 @@
   function summarize(rows, ym){
     const sum = (l) => l.reduce((s, r) => s + Number(r.amount_cents || 0), 0);
     const review = rows.filter(r => ['needs_review', 'flagged'].includes(r.status));
-    const toPay = rows.filter(r => r.status === 'approved' && !['pad', 'payroll'].includes(r.payment_method));
+    const toPay = rows.filter(r => r.status === 'approved' && !['pad', 'payroll'].includes(r.payment_method) && !(r.type === 'landlord_rent' && r.payment_method === 'cheque'));
     const paid = rows.filter(r => ['paid', 'recorded'].includes(r.status) && String(r.paid_at || '').slice(0, 7) === ym);
     return { review: review.length, reviewCents: sum(review), toPay: toPay.length, toPayCents: sum(toPay), paid: paid.length, paidCents: sum(paid), flagged: rows.filter(r => r.status === 'flagged').length };
   }
@@ -65,9 +66,39 @@
     const ok = rows.filter(r => r.type === 'cleaning' && r.status === 'approved' && r.payee_email);
     return { text: ['Name\tE-transfer email\tAmount', ...ok.map(r => `${r.payee}\t${r.payee_email}\t${(Number(r.amount_cents) / 100).toFixed(2)}`)].join('\n'), count: ok.length, cents: ok.reduce((s, r) => s + Number(r.amount_cents), 0), missing: rows.filter(r => r.type === 'cleaning' && r.status === 'approved' && !r.payee_email).length };
   }
+  // ── landlords: post-dated cheques ──
+  // A batch typed by staff -> one cheque per month, consecutive numbers (zero padding kept), on the pay day (max 28).
+  function batchPreview(b){
+    const first = String(b.firstNo == null ? '' : b.firstNo).trim(), count = Number(b.count);
+    if (!/^\d{1,12}$/.test(first)) return { error: 'The first cheque number must be digits.' };
+    if (!Number.isInteger(count) || count < 1 || count > 24) return { error: 'Between 1 and 24 cheques.' };
+    const m = /^(\d{4})-(\d{2})$/.exec(String(b.firstMonth || ''));
+    if (!m) return { error: 'Pick the first month.' };
+    if (!(Number(b.amountCents) > 0)) return { error: 'Type the amount of each cheque.' };
+    const day = Math.min(28, Math.max(1, Number(b.payDay) || 1));
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const mi = Number(m[2]) - 1 + i, y = Number(m[1]) + Math.floor(mi / 12), mo = (mi % 12) + 1;
+      out.push({ cheque_no: String(BigInt(first) + BigInt(i)).padStart(first.length, '0'), dated_for: `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`, amount_cents: Number(b.amountCents) });
+    }
+    return out;
+  }
+  // Cheques still with the landlord, dated after today, for one payment set-up (or the landlord, for cheques with no set-up).
+  const mineCheque = (c, term) => c.term_id ? c.term_id === term.id : c.landlord_id === term.landlord_id;
+  const futureCheques = (cheques, term, today) => cheques.filter(c => mineCheque(c, term) && c.status === 'with_landlord' && String(c.dated_for) > today);
+  const chequesLeft = (cheques, term, today) => futureCheques(cheques, term, today).length;
+  // One row per set-up; cheque set-ups get a warning: none (0 left), low (1-2), ok. Worst first.
+  function landlordSummary(terms, cheques, today){
+    const rank = { none: 0, low: 1, ok: 2 };
+    return terms.map(term => {
+      const fut = term.method === 'cheque' ? futureCheques(cheques, term, today) : [];
+      const left = fut.length;
+      return { term, left, lastDated: fut.map(c => String(c.dated_for)).sort().pop() || null, warn: term.method !== 'cheque' ? null : left === 0 ? 'none' : left <= 2 ? 'low' : 'ok' };
+    }).sort((a, b) => (a.warn == null) - (b.warn == null) || (rank[a.warn] ?? 9) - (rank[b.warn] ?? 9) || a.left - b.left || String(a.term.landlord_name || '').localeCompare(String(b.term.landlord_name || '')));
+  }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
   const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
-  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText };
+  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'all', view: 'open', q: '', city: '', sel: new Set() };
@@ -144,6 +175,7 @@
         <td>${(r.flags || []).map(flag).join(' ')}</td>
       </tr>`).join('');
     bulkBar(list);
+    showLL(S.tab === 'landlord_rent');
   }
 
   function bulkBar(list){
@@ -259,6 +291,281 @@
     </div>`;
   }
 
+  // ───────────── AP → Landlords: monthly rent · cheques · payment set-up ─────────────
+  const LL = { view: 'month', month: ym(), terms: null, cheques: null, loading: null, generated: false, q: '', status: 'with_landlord', landlord: '' };
+  const CHQ = { with_landlord: ['With landlord', 'blue'], cashed: ['Cashed', ''], void: ['Void', ''], bounced: ['Bounced', 'red'] };
+  const WARN = { none: ['No cheques left', 'red'], low: ['Needs cheques', 'red'], ok: ['OK', ''] };
+  const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' });
+  const chip = ([l, c]) => `<span class="tag-pill ${c}" style="font-size:11px">${e(l)}</span>`;
+  const shiftMonth = (m, d) => { const [y, mo] = m.split('-').map(Number); const t = new Date(Date.UTC(y, mo - 1 + d, 1)); return t.toISOString().slice(0, 7); };
+  const monthName = (m) => new Date(m + '-15T12:00:00Z').toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+  // Active landlords with their leases (LL-CORE, index.html). Archived ones only when they still have a set-up.
+  function llLandlords(){
+    const list = Array.isArray(window.landlords) ? window.landlords : (typeof landlords !== 'undefined' && Array.isArray(landlords) ? landlords : []);
+    const leases = (l) => (typeof llContracts === 'function' ? llContracts(l) : (l.contracts || []));
+    return list.filter(l => l && l.id).map(l => ({ l, leases: leases(l) }));
+  }
+
+  async function llLoad(force){
+    if (LL.loading) return LL.loading;
+    if (LL.terms && LL.cheques && !force) { renderLL(); return; }
+    LL.loading = (async () => {
+      try {
+        if (!LL.generated && canAct(me())) {
+          LL.generated = true;  // make sure this month and next have their lines (idempotent)
+          await sb().rpc('ap_landlord_rent_generate', { p_month: today() });
+          await sb().rpc('ap_landlord_rent_generate', { p_month: shiftMonth(today().slice(0, 7), 1) + '-01' });
+          await load(true);
+        }
+        const [t, c] = await Promise.all([
+          sb().from('ap_landlord_terms').select('*').order('landlord_name'),
+          sb().from('ap_cheques').select('*').order('dated_for', { ascending: true }).limit(5000),
+        ]);
+        if (t.error) throw t.error; if (c.error) throw c.error;
+        LL.terms = t.data || []; LL.cheques = c.data || [];
+        renderLL();
+      } catch (err) {
+        console.error('[ap] landlords load failed', err);
+        const msg = String(err && err.message || err);
+        const note = document.getElementById('ap-ll-note');
+        if (note) note.textContent = /ap_cheques|ap_landlord_terms/.test(msg) && /exist|schema cache/i.test(msg) ? 'Landlords is not set up in the database yet (run ap-landlords-2026-10-11.sql).' : 'Could not load landlords: ' + msg;
+      } finally { LL.loading = null; }
+    })();
+    return LL.loading;
+  }
+
+  function showLL(on){
+    const ll = document.getElementById('ap-ll'), list = document.getElementById('ap-list-card'), bar = document.getElementById('ap-filter-bar');
+    if (ll) ll.style.display = on ? '' : 'none';
+    if (list) list.style.display = on ? 'none' : '';
+    if (bar) bar.style.display = on ? 'none' : '';
+    if (on) { if (!LL.terms) llLoad(); else renderLL(); }
+  }
+
+  function renderLL(){
+    if (S.tab !== 'landlord_rent') return;
+    const views = document.getElementById('ap-ll-views'), tools = document.getElementById('ap-ll-tools'), head = document.getElementById('ap-ll-head'),
+      body = document.getElementById('ap-ll-body'), note = document.getElementById('ap-ll-note'), empty = document.getElementById('ap-ll-empty');
+    if (!views || !body) return;
+    const terms = LL.terms || [], cheques = LL.cheques || [], t0 = today();
+    const summary = landlordSummary(terms.filter(t => t.active), cheques, t0);
+    const warnN = summary.filter(r => r.warn === 'none' || r.warn === 'low').length;
+    views.innerHTML = [['month', 'This month'], ['cheques', 'Cheques'], ['landlords', 'Landlords']].map(([k, l]) =>
+      `<button type="button" class="tab${LL.view === k ? ' active' : ''}" role="tab" aria-selected="${LL.view === k}" data-ll-view="${k}">${l}${k === 'landlords' && warnN ? ` <span class="tag-pill red" style="font-size:10px">${warnN}</span>` : ''}</button>`).join('');
+    let html = '', n = 0;
+    if (LL.view === 'month') {
+      const lines = (rows || []).filter(r => r.type === 'landlord_rent' && String(r.period_start || '').slice(0, 7) === LL.month)
+        .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)) || String(a.payee).localeCompare(String(b.payee)));
+      const sum = (l) => l.reduce((s, r) => s + Number(r.amount_cents || 0), 0);
+      const paid = lines.filter(r => ['paid', 'recorded'].includes(r.status));
+      const probs = lines.filter(r => r.status === 'flagged' || (r.flags || []).length);
+      tools.innerHTML = `<button class="btn btn-ghost" type="button" data-ll-month="-1" aria-label="Previous month">‹</button><b style="min-width:130px;text-align:center">${e(monthName(LL.month))}</b><button class="btn btn-ghost" type="button" data-ll-month="1" aria-label="Next month">›</button>`
+        + (canAct(me()) ? `<button class="btn btn-ghost" type="button" data-ll-do="generate">Refresh lines</button>` : '');
+      note.textContent = lines.length ? `${lines.length} lease(s) · ${money(sum(lines))} · paid ${paid.length} (${money(sum(paid))})${probs.length ? ` · ${probs.length} need attention` : ''}` : 'No rent lines for this month. Set up how each landlord is paid in the Landlords view.';
+      head.innerHTML = '<tr><th>Landlord</th><th>Property</th><th>Method</th><th>Due</th><th style="text-align:right">Amount</th><th>Cheque</th><th>Status</th><th>Flags</th></tr>';
+      html = lines.map(r => `<tr class="clickable" data-ap-open="${e(r.id)}" tabindex="0" style="cursor:pointer">
+        <td><b>${e(r.payee)}</b></td><td>${e(r.property || '—')}<div class="name-sub">${e(r.city || '')}</div></td><td>${e(METHOD[r.payment_method] || '')}</td>
+        <td>${e(r.due_date || '')}</td><td style="text-align:right;white-space:nowrap"><b>${e(money(r.amount_cents))}</b></td>
+        <td>${(r.data || {}).cheque_no ? '#' + e(r.data.cheque_no) : '—'}</td><td>${pill(r.status)}</td><td>${(r.flags || []).map(flag).join(' ')}</td></tr>`).join('');
+      n = lines.length;
+    } else if (LL.view === 'cheques') {
+      const names = [...new Set(cheques.map(c => c.landlord_name))].sort((a, b) => a.localeCompare(b));
+      tools.innerHTML = `<input class="form-input" id="ap-ll-q" placeholder="Cheque # or landlord" value="${e(LL.q)}" style="max-width:180px">
+        <select class="form-input" id="ap-ll-status" style="max-width:160px"><option value="">All statuses</option>${Object.entries(CHQ).map(([k, [l]]) => `<option value="${k}" ${LL.status === k ? 'selected' : ''}>${e(l)}</option>`).join('')}</select>
+        <select class="form-input" id="ap-ll-landlord" style="max-width:200px"><option value="">All landlords</option>${names.map(x => `<option ${LL.landlord === x ? 'selected' : ''}>${e(x)}</option>`).join('')}</select>`;
+      const q = LL.q.trim().toLowerCase().replace(/^#/, '');
+      const list = cheques.filter(c => (!LL.status || c.status === LL.status) && (!LL.landlord || c.landlord_name === LL.landlord)
+        && (!q || String(c.cheque_no).replace(/^0+/, '').includes(q.replace(/^0+/, '')) || String(c.landlord_name).toLowerCase().includes(q)));
+      note.textContent = `${list.length} cheque(s) · ${money(list.reduce((s, c) => s + Number(c.amount_cents || 0), 0))}${LL.status === 'with_landlord' ? ' still with landlords' : ''}`;
+      head.innerHTML = '<tr><th>Cheque</th><th>Landlord</th><th>Dated for</th><th style="text-align:right">Amount</th><th>Status</th><th>Photo</th></tr>';
+      html = list.map(c => `<tr class="clickable" data-ll-cheque="${e(c.id)}" tabindex="0" style="cursor:pointer">
+        <td><b>#${e(c.cheque_no)}</b><div class="name-sub">Book ${e(c.book)}</div></td><td>${e(c.landlord_name)}<div class="name-sub">${e((c.props || []).join(', '))}</div></td>
+        <td>${e(c.dated_for)}</td><td style="text-align:right"><b>${e(money(c.amount_cents))}</b></td><td>${chip(CHQ[c.status] || [c.status, ''])}${c.cashed_on ? `<div class="name-sub">${e(c.cashed_on)}</div>` : ''}</td>
+        <td onclick="event.stopPropagation()">${c.photo_url ? `<a href="${e(c.photo_url)}" target="_blank" rel="noopener">Photo</a>` : ''}</td></tr>`).join('');
+      n = list.length;
+    } else {
+      tools.innerHTML = `<input class="form-input" id="ap-ll-q" placeholder="Landlord or property" value="${e(LL.q)}" style="max-width:200px">`;
+      const q = LL.q.trim().toLowerCase();
+      const byLandlord = new Map(summary.map(r => [r.term.landlord_id, (summary.filter(x => x.term.landlord_id === r.term.landlord_id))]));
+      const setUp = summary.filter(r => !q || [r.term.landlord_name, ...(r.term.props || [])].some(v => String(v || '').toLowerCase().includes(q)));
+      const notSet = llLandlords().filter(x => !x.l.archived && !byLandlord.has(String(x.l.id)) && (!q || [x.l.name, x.l.company, ...(x.l.props || [])].some(v => String(v || '').toLowerCase().includes(q))));
+      note.textContent = `${summary.length} payment set-up(s)${warnN ? ` · ${warnN} running low on cheques` : ''} · ${notSet.length} active landlord(s) not set up yet`;
+      head.innerHTML = '<tr><th>Landlord</th><th>Property</th><th>Method</th><th style="text-align:right">Rent</th><th>Cheques left</th><th>Last cheque</th><th></th></tr>';
+      html = setUp.map(r => `<tr class="clickable" data-ll-landlord="${e(r.term.landlord_id)}" tabindex="0" style="cursor:pointer">
+          <td><b>${e(r.term.landlord_name)}</b></td><td>${e((r.term.props || []).join(', ') || '—')}</td><td>${e(METHOD[r.term.method] || r.term.method)}<div class="name-sub">Day ${e(r.term.pay_day)}</div></td>
+          <td style="text-align:right">${e(money(r.term.amount_cents))}</td><td>${r.term.method === 'cheque' ? `<b>${e(r.left)}</b>` : '—'}</td><td>${e(r.lastDated || '—')}</td>
+          <td>${r.warn && r.warn !== 'ok' ? chip(WARN[r.warn]) : ''}</td></tr>`).join('')
+        + notSet.map(x => `<tr class="clickable" data-ll-landlord="${e(x.l.id)}" tabindex="0" style="cursor:pointer;opacity:.75">
+          <td><b>${e(x.l.name)}</b>${x.l.company ? `<div class="name-sub">${e(x.l.company)}</div>` : ''}</td><td>${e((x.l.props || []).join(', ') || '—')}</td>
+          <td colspan="4" class="name-sub">Not set up — click to choose cheque, PAD or e-transfer</td><td></td></tr>`).join('');
+      n = setUp.length + notSet.length;
+    }
+    body.innerHTML = html;
+    empty.style.display = n ? 'none' : '';
+  }
+
+  function openPanel(hero, title, sub, meta){
+    document.getElementById('panel-hero').textContent = String(hero || '?').slice(0, 1).toUpperCase();
+    document.getElementById('panel-title').innerHTML = e(title);
+    document.getElementById('panel-sub').textContent = sub;
+    document.getElementById('panel-meta').innerHTML = meta || '';
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
+  }
+
+  function openCheque(id){
+    const c = (LL.cheques || []).find(x => x.id === id);
+    if (!c) return;
+    const act = canAct(me());
+    const field = (l, v) => v ? `<div style="display:flex;gap:10px"><span class="name-sub" style="min-width:120px">${e(l)}</span><span>${v}</span></div>` : '';
+    openPanel('#', `Cheque #${c.cheque_no}`, `${c.landlord_name} · ${money(c.amount_cents)} · ${c.dated_for}`, chip(CHQ[c.status] || [c.status, '']));
+    const next = { with_landlord: ['cashed', 'bounced', 'void'], cashed: ['bounced', 'with_landlord'], bounced: ['with_landlord', 'void'], void: ['with_landlord'] }[c.status] || [];
+    const label = { cashed: 'Mark cashed', bounced: 'Bounced', void: 'Void', with_landlord: 'Back with landlord' };
+    document.getElementById('panel-body').innerHTML = `<div data-ll-cq="${e(c.id)}">
+      <div style="display:grid;gap:6px">
+        ${field('Landlord', e(c.landlord_name))}${field('Property', e((c.props || []).join(', ')))}${field('Book', e(c.book))}
+        ${field('Dated for', e(c.dated_for))}${field('Amount', `<b>${e(money(c.amount_cents))}</b>`)}${field('Cashed', e(c.cashed_on || ''))}
+        ${field('QuickBooks', e(c.qb_ref || ''))}${field('Photo', c.photo_url ? `<a href="${e(c.photo_url)}" target="_blank" rel="noopener">Open</a>` : '')}
+        ${field('Source', e(c.source))}${field('Note', e(c.note || ''))}
+      </div>
+      ${act ? H('Status') + `<form data-ll-form="status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${next.includes('cashed') ? `<input class="form-input" type="date" name="cashed_on" value="${e(today())}" style="max-width:170px" aria-label="Cashed on">` : ''}
+        ${next.map(s => `<button class="btn ${s === 'cashed' ? 'btn-primary' : 'btn-ghost'}" type="submit" name="to" value="${s}">${label[s]}</button>`).join('')}</form>
+        <div class="name-sub">Lu marks cheques cashed from QuickBooks on its own; use this for corrections.</div>` : ''}
+      ${act ? H('Edit') + `<form data-ll-form="edit" style="display:grid;gap:8px;max-width:360px">
+        <label class="name-sub">Amount <input class="form-input" name="amount" inputmode="decimal" value="${e((Number(c.amount_cents) / 100).toFixed(2))}"></label>
+        <label class="name-sub">Dated for <input class="form-input" type="date" name="dated_for" value="${e(c.dated_for)}"></label>
+        <label class="name-sub">Photo link <input class="form-input" name="photo_url" value="${e(c.photo_url || '')}" placeholder="https://drive.google.com/…"></label>
+        <label class="name-sub">Note <input class="form-input" name="note" value="${e(c.note || '')}"></label>
+        <div><button class="btn" type="submit">Save</button></div></form>` : ''}
+      ${H('History')}<div style="display:grid;gap:4px">${(Array.isArray(c.history) ? c.history : []).map(h => `<div class="name-sub">${e(when(h.at))} · ${e(h.by || '')} · ${e(h.status ? (CHQ[h.status] || [h.status])[0] : 'edited')}</div>`).join('') || '<div class="name-sub">—</div>'}</div>
+    </div>`;
+  }
+
+  function openLandlord(landlordId){
+    const x = llLandlords().find(v => String(v.l.id) === String(landlordId));
+    const terms = (LL.terms || []).filter(t => t.landlord_id === String(landlordId));
+    const name = x ? x.l.name : (terms[0] || {}).landlord_name || landlordId;
+    const leases = x ? x.leases : [];
+    const act = canAct(me()), t0 = today();
+    const mine = (LL.cheques || []).filter(c => c.landlord_id === String(landlordId)).sort((a, b) => String(b.dated_for).localeCompare(String(a.dated_for)));
+    const left = mine.filter(c => c.status === 'with_landlord' && String(c.dated_for) > t0).length;
+    openPanel(name, name, `${terms.length ? terms.map(t => METHOD[t.method]).join(' + ') : 'Not set up'}${left ? ` · ${left} cheque(s) left` : ''}`, '');
+    // One form per lease (or one for the landlord as a whole when it has no lease on file).
+    const slots = leases.length ? leases.map(c => ({ c, t: terms.find(t => (t.contract_id || '') === String(c.id || '')) || null }))
+      : [{ c: null, t: terms.find(t => !t.contract_id) || terms[0] || null }];
+    for (const t of terms) if (!slots.some(s => s.t && s.t.id === t.id)) slots.push({ c: null, t });
+    const leaseText = (c) => c ? `${(c.props && c.props.length ? c.props.join(', ') : (x && x.l.props || []).join(', ')) || 'All properties'} · ${c.start || '?'} → ${c.end || (c.monthToMonth ? 'month to month' : 'open')}` : 'Landlord (no lease on file)';
+    const form = (s, i) => {
+      const t = s.t, c = s.c;
+      const rentCents = t && t.amount_cents != null ? Number(t.amount_cents) : c && c.rent != null ? parseAmount(c.rent) : null;
+      const props = t ? t.props : c && c.props && c.props.length ? c.props : (x && x.l.props) || [];
+      return `<form data-ll-form="term" data-i="${i}" style="display:grid;gap:8px;max-width:420px;padding:10px 0;border-bottom:1px solid var(--line,#e5e2dc)">
+        <div><b>${e(leaseText(c))}</b>${t && !t.active ? ' <span class="tag-pill" style="font-size:11px">Off</span>' : ''}</div>
+        <input type="hidden" name="contract_id" value="${e(c ? c.id || '' : t ? t.contract_id || '' : '')}"><input type="hidden" name="props" value="${e(JSON.stringify(props))}">
+        <label class="name-sub">Paid by <select class="form-input" name="method" ${act ? '' : 'disabled'}>${['cheque', 'pad', 'etransfer'].map(m => `<option value="${m}" ${(t ? t.method : '') === m ? 'selected' : ''}>${e(METHOD[m])}</option>`).join('')}</select></label>
+        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">Monthly rent <input class="form-input" name="amount" inputmode="decimal" value="${rentCents != null ? e((rentCents / 100).toFixed(2)) : ''}" ${act ? '' : 'disabled'}></label>
+        <label class="name-sub" style="width:110px">Day of month <input class="form-input" name="pay_day" type="number" min="1" max="28" value="${e(t ? t.pay_day : 1)}" ${act ? '' : 'disabled'}></label></div>
+        <label class="name-sub">Shows in the bank as (for PAD / e-transfer matching) <input class="form-input" name="payee_alias" value="${e(t ? t.payee_alias || '' : '')}" placeholder="e.g. Q-14 HOLDINGS" ${act ? '' : 'disabled'}></label>
+        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">From <input class="form-input" type="date" name="starts_on" value="${e(t ? t.starts_on || '' : c ? c.start || '' : '')}" ${act ? '' : 'disabled'}></label>
+        <label class="name-sub" style="flex:1">Until <input class="form-input" type="date" name="ends_on" value="${e(t ? t.ends_on || '' : c && !c.monthToMonth ? c.end || '' : '')}" ${act ? '' : 'disabled'}></label></div>
+        <label class="name-sub"><input type="checkbox" name="active" ${!t || t.active ? 'checked' : ''} ${act ? '' : 'disabled'}> Active (create a rent line every month)</label>
+        ${act ? `<div><button class="btn btn-primary" type="submit">${t ? 'Save' : 'Set up'}</button></div>` : ''}
+      </form>`;
+    };
+    const chequeTerms = terms.filter(t => t.method === 'cheque');
+    const lastNo = mine.map(c => c.cheque_no).sort((a, b) => Number(b) - Number(a))[0];
+    const nextMonth = (() => { const fut = mine.filter(c => c.status !== 'void').map(c => String(c.dated_for).slice(0, 7)).sort().pop(); return fut && fut >= t0.slice(0, 7) ? shiftMonth(fut, 1) : shiftMonth(t0.slice(0, 7), 1); })();
+    document.getElementById('panel-body').innerHTML = `<div data-ll-host="${e(landlordId)}" data-ll-name="${e(name)}" data-ll-city="${e(x ? x.l.city || '' : (terms[0] || {}).city || '')}">
+      ${H('How this landlord is paid')}${slots.map(form).join('')}
+      ${chequeTerms.length && act ? H('Add a batch of post-dated cheques') + `<form data-ll-form="batch" style="display:grid;gap:8px;max-width:420px">
+        ${chequeTerms.length > 1 ? `<label class="name-sub">Lease <select class="form-input" name="term_id">${chequeTerms.map(t => `<option value="${e(t.id)}">${e((t.props || []).join(', ') || t.landlord_name)}</option>`).join('')}</select></label>` : `<input type="hidden" name="term_id" value="${e(chequeTerms[0].id)}">`}
+        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">First cheque # <input class="form-input" name="first_no" inputmode="numeric" placeholder="${e(lastNo ? String(Number(lastNo) + 1) : '0901')}" required></label>
+        <label class="name-sub" style="width:90px">How many <input class="form-input" name="count" type="number" min="1" max="24" value="6"></label></div>
+        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">First month <input class="form-input" type="month" name="first_month" value="${e(nextMonth)}"></label>
+        <label class="name-sub" style="flex:1">Amount each <input class="form-input" name="amount" inputmode="decimal" value="${chequeTerms[0].amount_cents != null ? e((Number(chequeTerms[0].amount_cents) / 100).toFixed(2)) : ''}"></label></div>
+        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">Chequebook <input class="form-input" name="book" value="main"></label>
+        <label class="name-sub" style="flex:2">Photo link (optional) <input class="form-input" name="photo_url" placeholder="https://drive.google.com/…"></label></div>
+        <div class="name-sub" data-ll-preview></div>
+        <div><button class="btn btn-primary" type="submit">Add cheques</button></div></form>` : ''}
+      ${H(`Cheques (${mine.length})`)}<div style="display:grid;gap:4px">${mine.slice(0, 40).map(c => `<div style="display:flex;gap:10px;align-items:center;cursor:pointer" data-ll-cheque="${e(c.id)}">
+        <span style="min-width:70px"><b>#${e(c.cheque_no)}</b></span><span class="name-sub" style="min-width:90px">${e(c.dated_for)}</span><span style="min-width:90px;text-align:right">${e(money(c.amount_cents))}</span>${chip(CHQ[c.status] || [c.status, ''])}</div>`).join('') || '<div class="name-sub">No cheques on file.</div>'}</div>
+    </div>`;
+    previewBatch();
+  }
+
+  function previewBatch(){
+    const f = document.querySelector('#panel-body [data-ll-form="batch"]');
+    if (!f) return;
+    const fd = new FormData(f), t = (LL.terms || []).find(x => x.id === fd.get('term_id')) || {};
+    const p = batchPreview({ firstNo: fd.get('first_no'), count: Number(fd.get('count')), firstMonth: fd.get('first_month'), payDay: t.pay_day, amountCents: parseAmount(fd.get('amount')) });
+    const out = f.querySelector('[data-ll-preview]');
+    if (out) out.textContent = p.error ? (String(fd.get('first_no') || '') ? p.error : '') : `#${p[0].cheque_no} (${p[0].dated_for}) → #${p[p.length - 1].cheque_no} (${p[p.length - 1].dated_for}) · ${p.length} × ${money(p[0].amount_cents)} = ${money(p.length * p[0].amount_cents)}`;
+  }
+
+  async function llRpc(fn, args, done){
+    try { const r = await sb().rpc(fn, args); if (r.error) throw r.error; if (done) toast(done(r.data)); await load(true); await llLoad(true); return r.data; }
+    catch (err) { toast('Could not save: ' + (err && err.message || err)); return null; }
+  }
+
+  async function llSubmit(f){
+    const kind = f.dataset.llForm, fd = new FormData(f);
+    const host = f.closest('[data-ll-host]'), cq = f.closest('[data-ll-cq]');
+    if (kind === 'term' && host) {
+      const amount = String(fd.get('amount') || '').trim() ? parseAmount(fd.get('amount')) : null;
+      if (String(fd.get('amount') || '').trim() && amount == null) return toast('Type the rent like 3950.00');
+      let props = []; try { props = JSON.parse(String(fd.get('props') || '[]')); } catch (_) {}
+      const ok = await llRpc('ap_landlord_term_save', { p: { landlord_id: host.dataset.llHost, landlord_name: host.dataset.llName, city: host.dataset.llCity, contract_id: String(fd.get('contract_id') || ''),
+        props, method: fd.get('method'), pay_day: Number(fd.get('pay_day')) || 1, amount_cents: amount, payee_alias: String(fd.get('payee_alias') || ''),
+        starts_on: String(fd.get('starts_on') || ''), ends_on: String(fd.get('ends_on') || ''), active: !!fd.get('active') } }, () => 'Saved. Rent lines for this month and next are up to date.');
+      if (ok) openLandlord(host.dataset.llHost);
+    } else if (kind === 'batch' && host) {
+      const t = (LL.terms || []).find(x => x.id === fd.get('term_id')) || {};
+      const p = batchPreview({ firstNo: fd.get('first_no'), count: Number(fd.get('count')), firstMonth: fd.get('first_month'), payDay: t.pay_day, amountCents: parseAmount(fd.get('amount')) });
+      if (p.error) return toast(p.error);
+      const n = await llRpc('ap_cheques_add_batch', { p: { term_id: t.id, first_no: String(fd.get('first_no')).trim(), count: p.length, first_month: fd.get('first_month'), amount_cents: p[0].amount_cents,
+        book: String(fd.get('book') || 'main'), photo_url: String(fd.get('photo_url') || '') } }, (k) => `${k} cheque(s) added.`);
+      if (n) openLandlord(host.dataset.llHost);
+    } else if (kind === 'status' && cq) {
+      const to = (f._submitter && f._submitter.value) || '';
+      if (!to) return;
+      const r = await llRpc('ap_cheque_update', { p_id: cq.dataset.llCq, p_action: to, p_patch: to === 'cashed' ? { cashed_on: String(fd.get('cashed_on') || today()) } : {} }, () => 'Cheque updated.');
+      if (r) openCheque(cq.dataset.llCq);
+    } else if (kind === 'edit' && cq) {
+      const amount = parseAmount(fd.get('amount'));
+      if (amount == null) return toast('Type the amount like 3950.00');
+      const r = await llRpc('ap_cheque_update', { p_id: cq.dataset.llCq, p_action: 'edit', p_patch: { amount_cents: amount, dated_for: String(fd.get('dated_for') || ''), photo_url: String(fd.get('photo_url') || ''), note: String(fd.get('note') || '') } }, () => 'Cheque saved.');
+      if (r) openCheque(cq.dataset.llCq);
+    }
+  }
+
+  function wireLL(){
+    const ll = document.getElementById('ap-ll');
+    if (!ll) return;
+    ll.addEventListener('click', ev => {
+      const v = ev.target.closest('[data-ll-view]'); if (v) { LL.view = v.dataset.llView; LL.q = ''; renderLL(); return; }
+      const m = ev.target.closest('[data-ll-month]'); if (m) { LL.month = shiftMonth(LL.month, Number(m.dataset.llMonth)); renderLL(); return; }
+      const g = ev.target.closest('[data-ll-do="generate"]');
+      if (g) { llRpc('ap_landlord_rent_generate', { p_month: LL.month + '-01' }, (k) => `${k} rent line(s) up to date for ${monthName(LL.month)}.`); return; }
+      const it = ev.target.closest('[data-ap-open]'); if (it) { open(it.dataset.apOpen); return; }
+      const c = ev.target.closest('[data-ll-cheque]'); if (c) { openCheque(c.dataset.llCheque); return; }
+      const l = ev.target.closest('[data-ll-landlord]'); if (l) openLandlord(l.dataset.llLandlord);
+    });
+    ll.addEventListener('keydown', ev => { if (ev.key !== 'Enter') return; const r = ev.target.closest('[data-ap-open],[data-ll-cheque],[data-ll-landlord]'); if (r) r.click(); });
+    let t = null;
+    ll.addEventListener('input', ev => { if (ev.target.id === 'ap-ll-q') { LL.q = ev.target.value; clearTimeout(t); t = setTimeout(() => { renderLL(); const q = document.getElementById('ap-ll-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250); } });
+    ll.addEventListener('change', ev => { if (ev.target.id === 'ap-ll-status') { LL.status = ev.target.value; renderLL(); } if (ev.target.id === 'ap-ll-landlord') { LL.landlord = ev.target.value; renderLL(); } });
+    const pb = document.getElementById('panel-body');
+    if (pb) {
+      pb.addEventListener('click', ev => { const b = ev.target.closest('[data-ll-form] button[type="submit"]'); if (b) b.form._submitter = b; const c = ev.target.closest('[data-ll-cheque]'); if (c) openCheque(c.dataset.llCheque); });
+      pb.addEventListener('input', ev => { if (ev.target.closest('[data-ll-form="batch"]')) previewBatch(); });
+      pb.addEventListener('submit', ev => { const f = ev.target.closest('[data-ll-form]'); if (!f) return; ev.preventDefault(); llSubmit(f); });
+    }
+    try {
+      if (sb() && sb().channel) sb().channel('ap_cheques_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ap_cheques' }, () => { if (LL.cheques) { clearTimeout(wireLL._t); wireLL._t = setTimeout(() => llLoad(true), 800); } }).subscribe();
+    } catch (_) {}
+  }
+
   function fromHash(){
     const m = (location.hash || '').match(/^#ap(?:=(ap-[0-9a-f]+))?$/);
     if (!m) return false;
@@ -311,6 +618,7 @@
     try {
       if (sb() && sb().channel) sb().channel('ap_items_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ap_items' }, () => { if (rows) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 800); } }).subscribe();
     } catch (_) {}
+    wireLL();
     fromHash();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
