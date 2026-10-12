@@ -480,6 +480,7 @@
     };
     const chequeTerms = terms.filter(t => t.method === 'cheque');
     const lastNo = mine.map(c => c.cheque_no).sort((a, b) => Number(b) - Number(a))[0];
+    const lastBook = (mine.slice().sort((a, b) => String(b.dated_for).localeCompare(String(a.dated_for)))[0] || {}).book || 'main';
     const nextMonth = (() => { const fut = mine.filter(c => c.status !== 'void').map(c => String(c.dated_for).slice(0, 7)).sort().pop(); return fut && fut >= t0.slice(0, 7) ? shiftMonth(fut, 1) : shiftMonth(t0.slice(0, 7), 1); })();
     document.getElementById('panel-body').innerHTML = `<div data-ll-host="${e(landlordId)}" data-ll-name="${e(name)}" data-ll-city="${e(x ? x.l.city || '' : (terms[0] || {}).city || '')}">
       ${H('How this landlord is paid')}${slots.map(form).join('')}
@@ -489,7 +490,7 @@
         <label class="name-sub" style="width:90px">How many <input class="form-input" name="count" type="number" min="1" max="24" value="6"></label></div>
         <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">First month <input class="form-input" type="month" name="first_month" value="${e(nextMonth)}"></label>
         <label class="name-sub" style="flex:1">Amount each <input class="form-input" name="amount" inputmode="decimal" value="${chequeTerms[0].amount_cents != null ? e((Number(chequeTerms[0].amount_cents) / 100).toFixed(2)) : ''}"></label></div>
-        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">Chequebook <input class="form-input" name="book" value="main"></label>
+        <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">Chequebook <input class="form-input" name="book" value="${e(lastBook)}"></label>
         <label class="name-sub" style="flex:2">Photo link (optional) <input class="form-input" name="photo_url" placeholder="https://drive.google.com/…"></label></div>
         <div class="name-sub" data-ll-preview></div>
         <div><button class="btn btn-primary" type="submit">Add cheques</button></div></form>` : ''}
