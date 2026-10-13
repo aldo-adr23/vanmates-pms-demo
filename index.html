@@ -1525,6 +1525,15 @@
   .as-working{color:var(--muted);font-style:italic}
   .as-composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
   .as-composer textarea{flex:1;resize:none}
+  .as-attach{align-self:stretch;padding:0 12px;display:flex;align-items:center}
+  .as-attach svg{width:18px;height:18px}
+  .as-files{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 0}
+  .as-file{display:inline-flex;align-items:center;gap:6px;max-width:260px;font-size:12px;padding:3px 6px 3px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line)}
+  .as-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .as-file button{border:0;background:transparent;color:var(--muted);cursor:pointer;font:inherit;font-size:14px;line-height:1;padding:0 4px}
+  .as-msg-files{font-size:12px;opacity:.9;margin-top:4px}
+  .as-main.as-drop{outline:2px dashed var(--red);outline-offset:-6px}
+  .as-attach[hidden],.as-files[hidden]{display:none}
   .as-hint{padding:0 14px 10px;min-height:18px}
   .as-empty{color:var(--muted);text-align:center;padding:40px 16px}
   @media (max-width: 860px){
@@ -1596,7 +1605,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-hrecruit1"></script>
+<script src="pms-supabase.js?v=2026-10-13-luattach3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2270,7 +2279,10 @@
         </aside>
         <div class="as-main">
           <div class="as-transcript" id="as-transcript"></div>
+          <div class="as-files" id="as-files" hidden></div>
           <form class="as-composer" id="as-form">
+            <button type="button" class="btn btn-ghost as-attach" id="as-attach" title="Attach a receipt (photo or PDF) or the cleaners sheet" aria-label="Attach files" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+            <input type="file" id="as-file" multiple accept="image/*,.pdf,.xlsx,.csv" hidden>
             <textarea id="as-input" class="form-input" rows="2" maxlength="4000" placeholder="Message Hugo…"></textarea>
             <button type="submit" class="btn btn-primary" id="as-send">Send</button>
           </form>
@@ -18395,6 +18407,30 @@ function asRender(text){
   }
   return html;
 }
+// Attachments (Lu only): what may be attached, and when a photo is re-encoded
+// before upload (formats the model can't read, very large pictures).
+var AS_MAX_FILES = 5;
+var AS_MAX_FILE_BYTES = 10 * 1024 * 1024;
+var AS_IMAGE_MAX_SIDE = 2000;
+function asFileProblem(file, count){
+  var name = String((file && file.name) || "file");
+  var n = name.toLowerCase(), t = String((file && file.type) || "").toLowerCase();
+  if (count >= AS_MAX_FILES) return "Up to " + AS_MAX_FILES + " files per message.";
+  var ok = /^image\//.test(t) || t === "application/pdf" || /spreadsheetml|text\/csv/.test(t) ||
+    /\.(pdf|xlsx|csv|jpe?g|png|webp|gif|heic|heif)$/.test(n);
+  if (!ok) return name + ": Lu reads photos, PDFs and .xlsx / .csv sheets.";
+  return "";
+}
+function asIsImage(file){ return /^image\//.test(String((file && file.type) || "").toLowerCase()) || /\.(heic|heif)$/i.test(String((file && file.name) || "")); }
+function asNeedsShrink(type, size, w, h){
+  if (!/^image\/(jpeg|png|webp|gif)$/.test(String(type || "").toLowerCase())) return true;
+  return Math.max(w || 0, h || 0) > AS_IMAGE_MAX_SIDE || size > 4 * 1024 * 1024;
+}
+function asFit(w, h, max){
+  var k = Math.min(1, max / Math.max(w, h, 1));
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
+function asJpegName(name){ return String(name || "photo").replace(/\.[^.\/]*$/, "") + ".jpg"; }
 /* AS-CHAT-CORE-END */
 
 /* TENANT-CORE-START */
@@ -38377,6 +38413,9 @@ window.HM = HM;
   let store = { hugo: [], chilpa: [], ruf: [], lu: [] };
   let currentId = null;
   let inFlight = null;   // AbortController while a reply streams
+  let pendingFiles = [];  // Lu attachments waiting to be sent: {name, mime_type, base64, size}
+  let preparing = 0;      // files still being read / re-encoded
+  const sentFiles = new WeakMap();   // user message → the files it carried (memory only: Retry resends them)
 
   function userEmail(){ const u = (typeof activeRole === 'function' && activeRole()) || {}; return String(u.email || ''); }
   function granted(){
@@ -38413,7 +38452,8 @@ window.HM = HM;
       '<button type="button" class="as-conv' + (c.id === currentId ? ' active' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.title) + '">' + esc(c.title) + '</button>').join('');
   }
   function bubble(m, i, n){
-    if (m.role === 'user') return '<div class="as-msg user">' + esc(m.text).replace(/\n/g, '<br>') + '</div>';
+    if (m.role === 'user') return '<div class="as-msg user">' + esc(m.text).replace(/\n/g, '<br>') +
+      (Array.isArray(m.files) && m.files.length ? '<div class="as-msg-files">📎 ' + m.files.map(esc).join(', ') + '</div>' : '') + '</div>';
     if (m.error) {
       // Keep whatever arrived before the error visible; Retry only makes
       // sense on the last bubble (it resends the user message before it).
@@ -38439,7 +38479,7 @@ window.HM = HM;
       t.innerHTML = '<div class="as-empty">' + (agent === 'hugo'
         ? 'Ask Hugo anything you would ask in Slack — it remembers this conversation.'
         : agent === 'lu'
-        ? 'Ask Lu about receipts, expenses, AP or QuickBooks. To send a receipt or a sheet, DM Lu in Slack.'
+        ? 'Ask Lu about receipts, expenses, AP or QuickBooks — or attach a receipt (photo or PDF) or the cleaners pay sheet with the paperclip, or drop it here.'
         : agent === 'chilpa'
         ? 'Pregúntale a Chilpa por las habitaciones de Guadalajara: qué está libre, cuándo se desocupa, o registra una renta. También entiende inglés.'
         : 'Give Ruf the whole request in one line: budget, city, dates, room type.') + '</div>';
@@ -38457,7 +38497,58 @@ window.HM = HM;
     $('as-input').placeholder = agent === 'ruf' ? 'e.g. 2 rooms in Vancouver under $1400 moving in October'
       : agent === 'chilpa' ? 'Escríbele a Chilpa…' : 'Message ' + AS_NAMES[agent] + '…';
     $('as-hint').textContent = agent === 'ruf' ? 'Ruf reads each message on its own — put the whole request in one line.' : '';
-    renderList(); renderTranscript(true);
+    $('as-attach').hidden = agent !== 'lu';
+    if (agent !== 'lu') pendingFiles = [];
+    renderFiles(); renderList(); renderTranscript(true);
+  }
+
+  /* ---- attachments (Lu) ---- */
+  function renderFiles(note){
+    const box = $('as-files');
+    box.hidden = !pendingFiles.length && !preparing && !note;
+    box.innerHTML = pendingFiles.map((f, i) =>
+      '<span class="as-file" title="' + esc(f.name) + '"><span>' + esc(f.name) + '</span><button type="button" data-rm="' + i + '" aria-label="Remove">×</button></span>').join('') +
+      (preparing ? '<span class="card-sub">Reading…</span>' : '') +
+      (note ? '<span class="card-sub" style="color:#8a3a30">' + esc(note) + '</span>' : '');
+  }
+  function readBase64(blob){
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ''));
+      r.onerror = () => reject(r.error || new Error('read failed'));
+      r.readAsDataURL(blob);
+    });
+  }
+  // Re-encode a photo the model can't read (HEIC…) or a very large one to a
+  // JPEG of at most AS_IMAGE_MAX_SIDE px. If the browser can't decode it, the
+  // original goes as is and Lu says what it can read.
+  async function shrink(file){
+    if (!asIsImage(file) || typeof createImageBitmap !== 'function') return file;
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (_) { return file; }
+    if (!asNeedsShrink(file.type, file.size, bmp.width, bmp.height)) { bmp.close && bmp.close(); return file; }
+    const sz = asFit(bmp.width, bmp.height, AS_IMAGE_MAX_SIDE);
+    const cv = document.createElement('canvas'); cv.width = sz.w; cv.height = sz.h;
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, sz.w, sz.h); cx.drawImage(bmp, 0, 0, sz.w, sz.h);
+    bmp.close && bmp.close();
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/jpeg', 0.85));
+    return blob ? new File([blob], asJpegName(file.name), { type: 'image/jpeg' }) : file;
+  }
+  async function addFiles(list){
+    if (agent !== 'lu' || inFlight) return;
+    let note = '';
+    for (const file of Array.from(list || [])) {
+      const problem = asFileProblem(file, pendingFiles.length + preparing);
+      if (problem) { note = problem; continue; }
+      preparing += 1; renderFiles();
+      try {
+        const f = await shrink(file);
+        if (f.size > AS_MAX_FILE_BYTES) { note = file.name + ' is over 10 MB.'; continue; }
+        pendingFiles.push({ name: f.name, mime_type: f.type || 'application/octet-stream', base64: await readBase64(f), size: f.size });
+      } catch (_) { note = "Couldn't read " + file.name + '.'; }
+      finally { preparing -= 1; }
+    }
+    renderFiles(note);
   }
 
   /* ---- session token ---- */
@@ -38470,14 +38561,21 @@ window.HM = HM;
   }
 
   /* ---- send ---- */
-  async function send(text){
+  async function send(text, files){
     const c = current(); if (!c || inFlight) return;
+    files = files || [];
     const now = Date.now();
     asAppend(store, agent, c.id, 'user', text, now);
+    if (files.length) {
+      const um = c.messages[c.messages.length - 1];
+      um.files = files.map((f) => f.name);
+      sentFiles.set(um, files);
+      if (!text && c.title === 'New conversation') c.title = asTitle('📎 ' + files[0].name);
+    }
     const pending = { role: 'agent', text: '', working: false, error: '', at: now, streaming: true };
     c.messages.push(pending);
     save(); renderAll();
-    $('as-send').disabled = true; $('as-input').disabled = true;
+    $('as-send').disabled = true; $('as-input').disabled = true; $('as-attach').disabled = true;
 
     let state = { streaming: true, working: true, text: '', error: '' };
     const paint = () => { pending.text = state.text; pending.working = state.working; pending.error = state.error; renderTranscript(); };
@@ -38490,11 +38588,12 @@ window.HM = HM;
     const hard = setTimeout(() => ctl.abort(), AS_MAX_MS);
     arm(AS_CONNECT_MS);
     try {
-      let resp = await post(c.id, text, await token(false));
-      if (resp.status === 401) resp = await post(c.id, text, await token(true));
+      let resp = await post(c.id, text, files, await token(false));
+      if (resp.status === 401) resp = await post(c.id, text, files, await token(true));
       if (resp.status === 401) throw new Error('Sign in again to use Assistants.');
       if (resp.status === 403) throw new Error('Assistants is not enabled for your account — ask an admin.');
-      if (resp.status === 422) throw new Error('Message is too long (4,000 characters max) — shorten it and send again.');
+      if (resp.status === 422) throw new Error(files.length ? "Lu couldn't take those files (5 files, 10 MB each at most)." : 'Message is too long (4,000 characters max) — shorten it and send again.');
+      if (resp.status === 413) throw new Error('Those files are too big together — send fewer at a time.');
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
@@ -38522,14 +38621,16 @@ window.HM = HM;
       clearTimeout(timer); clearTimeout(hard); inFlight = null;
       delete pending.streaming;
       c.updated = Date.now(); save(); renderList();
-      $('as-send').disabled = false; $('as-input').disabled = false; $('as-input').focus();
+      $('as-send').disabled = false; $('as-input').disabled = false; $('as-attach').disabled = false; $('as-input').focus();
     }
   }
-  function post(conversationId, message, tok){
+  function post(conversationId, message, files, tok){
+    const body = { agent: agent, conversation_id: conversationId, message: message };
+    if (files && files.length) body.files = files.map((f) => ({ name: f.name, mime_type: f.mime_type, base64: f.base64 }));
     return fetch(ASSISTANTS_BASE + '/api/portal/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
-      body: JSON.stringify({ agent: agent, conversation_id: conversationId, message: message }),
+      body: JSON.stringify(body),
       signal: inFlight.signal,
     });
   }
@@ -38596,12 +38697,42 @@ window.HM = HM;
       const last = c.messages[c.messages.length - 1];
       if (last && last.role === 'agent' && last.error) c.messages.pop();
       const prev = c.messages[c.messages.length - 1];
-      if (prev && prev.role === 'user') { c.messages.pop(); send(prev.text); }
+      if (prev && prev.role === 'user') {
+        const files = sentFiles.get(prev) || [];
+        // After a reload the files are gone: a message that was only files can't be resent
+        if (!prev.text && !files.length) { renderFiles('Attach the file again to resend it.'); return; }
+        c.messages.pop(); send(prev.text, files);
+      }
     });
     $('as-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const text = $('as-input').value.trim(); if (!text) return;
-      $('as-input').value = ''; send(text);
+      if (preparing) return;
+      const text = $('as-input').value.trim();
+      const files = agent === 'lu' ? pendingFiles : [];
+      if (!text && !files.length) return;
+      $('as-input').value = ''; pendingFiles = []; renderFiles(); send(text, files);
+    });
+    $('as-attach').addEventListener('click', () => { if (!inFlight) $('as-file').click(); });
+    $('as-file').addEventListener('change', (e) => { const fl = e.target.files; addFiles(fl).then(() => { e.target.value = ''; }); });
+    $('as-files').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-rm]'); if (!b) return;
+      pendingFiles.splice(Number(b.dataset.rm), 1); renderFiles();
+    });
+    // A screenshot pasted into the box, or files dropped on the chat, attach too (Lu only)
+    $('as-input').addEventListener('paste', (e) => {
+      const fl = e.clipboardData && e.clipboardData.files;
+      if (agent === 'lu' && fl && fl.length) { e.preventDefault(); addFiles(fl); }
+    });
+    const main = document.querySelector('.as-main');
+    main.addEventListener('dragover', (e) => {
+      if (agent !== 'lu' || !e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+      e.preventDefault(); main.classList.add('as-drop');
+    });
+    main.addEventListener('dragleave', (e) => { if (!main.contains(e.relatedTarget)) main.classList.remove('as-drop'); });
+    main.addEventListener('drop', (e) => {
+      main.classList.remove('as-drop');
+      if (agent !== 'lu' || !e.dataTransfer || !e.dataTransfer.files.length) return;
+      e.preventDefault(); addFiles(e.dataTransfer.files);
     });
     $('as-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('as-form').requestSubmit(); }
@@ -41427,8 +41558,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-13-hrecruit1"></script>
-<script src="extensions.js?v=2026-10-13-hrecruit1"></script>
-<script src="ap.js?v=2026-10-13-hrecruit1"></script>
+<script src="room-changes.js?v=2026-10-13-luattach3"></script>
+<script src="extensions.js?v=2026-10-13-luattach3"></script>
+<script src="ap.js?v=2026-10-13-luattach3"></script>
 </body>
 </html>
