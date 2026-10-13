@@ -1596,7 +1596,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-sidegrp1"></script>
+<script src="pms-supabase.js?v=2026-10-12-hrview1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -9308,13 +9308,16 @@ hello@vanmates.com`;
 renderPendingInvites();
 
 // Employee Hub link: asks the server once per page load; never derived from role or allowed_pages.
-let hrNavChecked = false;
+// Hidden during "View as": that preview keeps the real session, so the server would still say yes.
+let hrNavChecked = false, hrNavAllowed = false;
 function showHrNavIfAllowed(){
+  const el = document.getElementById('nav-hr');
+  if (el) el.hidden = !(hrNavAllowed && !VIEWING_AS);
   if (hrNavChecked) return;
-  const sb = window.vmDb && window.vmDb.sb, el = document.getElementById('nav-hr');
+  const sb = window.vmDb && window.vmDb.sb;
   if (!sb || !el) return;
   hrNavChecked = true;
-  sb.rpc('hr_whoami').then(({ data }) => { el.hidden = !(data && data.allowed === true); }, () => {});
+  sb.rpc('hr_whoami').then(({ data }) => { hrNavAllowed = !!(data && data.allowed === true); el.hidden = !(hrNavAllowed && !VIEWING_AS); }, () => {});
 }
 function applyRolePermissions(){
   if (typeof showHrNavIfAllowed === "function") showHrNavIfAllowed();
@@ -39931,8 +39934,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-sidegrp1"></script>
-<script src="extensions.js?v=2026-10-12-sidegrp1"></script>
-<script src="ap.js?v=2026-10-12-sidegrp1"></script>
+<script src="room-changes.js?v=2026-10-12-hrview1"></script>
+<script src="extensions.js?v=2026-10-12-hrview1"></script>
+<script src="ap.js?v=2026-10-12-hrview1"></script>
 </body>
 </html>
