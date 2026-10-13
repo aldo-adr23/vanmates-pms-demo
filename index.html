@@ -1568,6 +1568,8 @@
   background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
   background-position:calc(100% - 10px) 55%,calc(100% - 6px) 55%;background-size:4px 4px,4px 4px;background-repeat:no-repeat;vertical-align:middle}
 .ml-st:focus-visible{outline:2px solid currentColor;outline-offset:1px}
+.ml-tag{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:10px;border:1px solid;vertical-align:middle}
+.ml-contact a{color:inherit;text-decoration:none}.ml-contact a:hover{text-decoration:underline}
 .ml-big{font-size:22px;font-weight:700}.ml-red{color:#B94A3F}.ml-amber{color:#9a6b00}
 .ml-stage{height:9px;border-radius:5px;display:flex;overflow:hidden;margin:8px 0 4px;background:var(--cream-2)}
 .ml-stage i{display:block;height:100%}
@@ -1643,7 +1645,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-leadcap200"></script>
+<script src="pms-supabase.js?v=2026-10-13-leadsvc1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4411,6 +4413,16 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
       <button class="modal-close" id="aff-modal-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <form class="modal-body" id="aff-modal-form" autocomplete="off" novalidate></form>
+  </div>
+</div>
+<div class="modal-backdrop" id="scl-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="scl-title" style="max-width:640px">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg></div>
+      <div><div class="modal-title" id="scl-title">Sales closed</div><div class="modal-sub" id="scl-sub"></div></div>
+      <button class="modal-close" id="scl-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body" id="scl-body" style="overflow-x:auto"></div>
   </div>
 </div>
 <div class="modal-backdrop" id="deal-backdrop" aria-hidden="true">
@@ -20542,7 +20554,7 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
   const recentClosedScope = 'month';
   const recentClosed = wonMonth.slice().sort(byClosed)
     .map(x => ({ id: x.id, name: x.name, room: x.room, rent: x.rent, months: x.months,
-                 fee: x.fee, feePending: x.feePending, segment: x.segment,
+                 fee: x.fee, revenue: x.revenue, feePending: x.feePending, segment: x.segment,
                  closedAt: x.closedAt, feeReceivedAt: x.feeReceivedAt, owner: x.owner, leadSource: x.leadSource }));
 
   const since90 = salesAddDays(t, -90);
@@ -29875,6 +29887,25 @@ function mlDetails(l, p){
   return { city: pick(l.city, p.city), moveIn: pick(p.moveIn, p.moveInDate), months: pick(p.months, p.stayMonths),
     budget: pick(p.budget, p.price), room: pick(p.roomName) };
 }
+// City + Service pills on My leads rows. The rep's saved choice wins; otherwise the
+// service is guessed from the source / form so most rows are right without a click.
+const ML_CITIES = ['Vancouver', 'Toronto', 'Montréal', 'Guadalajara'];
+const ML_SERVICES = [['coliving', 'Co-living'], ['relocation', 'Relocation'], ['homestay', 'Homestay']];
+const mlFold = v => String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+// "vancouver" / "Montreal" → the list's spelling; anything else comes back as typed.
+function mlCityName(v){
+  const f = mlFold(v);
+  if(!f) return '';
+  return ML_CITIES.find(c => mlFold(c) === f) || String(v).trim();
+}
+function mlService(l, p){
+  l = l || {}; p = p || {};
+  if(ML_SERVICES.some(([k]) => k === l.service)) return l.service;
+  const src = String(l.source || ''), hint = [p.accommodationType, p.leadType, p.topic].filter(Boolean).join(' ').toLowerCase();
+  if(src === 'homestay' || /homestay/.test(hint)) return 'homestay';
+  if(src === 'relocation' || /relocat/.test(hint)) return 'relocation';
+  return 'coliving';
+}
 /* MY-LEADS-CORE-END */
 /* PAY-PENDING-CORE-START */
 // Payment pending (spec docs/superpowers/specs/2026-10-13-payment-pending-design.md). Pure.
@@ -30724,6 +30755,32 @@ async function mlStatusChange(sel){
   const ok = await salesWriteLead(l, { status: next, last_touched_at: new Date().toISOString() });
   if(ok) showToast('Status: ' + leadCap(next)); else back();
 }
+// City / Service pills: dropdowns like the status pill for whoever may change the lead, plain tags otherwise.
+const ML_SVC_COLORS = { coliving: '#c2410c', relocation: '#0369a1', homestay: '#be185d' }, ML_CITY_COLOR = '#0f766e';
+function mlPillStyle(c){ return `background-color:${c}1a;color:${c};border-color:${c}33`; }
+function mlCityControl(l, raw){
+  const city = mlCityName(raw);
+  if(!lppCanAct(l)) return city ? `<span class="ml-tag" style="${mlPillStyle(ML_CITY_COLOR)}">${esc(city)}</span>` : '';
+  const opts = ML_CITIES.indexOf(city) < 0 && city ? ML_CITIES.concat([city]) : ML_CITIES;
+  return `<select class="ml-st" data-ml-city="${esc(l.id)}" aria-label="City" title="City" style="${mlPillStyle(ML_CITY_COLOR)}">` +
+    (city ? '' : `<option value="" selected>City?</option>`) +
+    opts.map(c => `<option value="${esc(c)}" ${c === city ? 'selected' : ''}>${esc(c)}</option>`).join('') + `</select>`;
+}
+function mlServiceControl(l, p){
+  const svc = mlService(l, p), c = ML_SVC_COLORS[svc];
+  const label = (ML_SERVICES.find(([k]) => k === svc) || [])[1];
+  if(!lppCanAct(l)) return `<span class="ml-tag" style="${mlPillStyle(c)}">${esc(label)}</span>`;
+  return `<select class="ml-st" data-ml-svc="${esc(l.id)}" aria-label="Service" title="Service" style="${mlPillStyle(c)}">` +
+    ML_SERVICES.map(([k, lab]) => `<option value="${k}" ${k === svc ? 'selected' : ''}>${esc(lab)}</option>`).join('') + `</select>`;
+}
+async function mlFieldChange(sel){
+  const isCity = sel.dataset.mlCity != null;
+  const l = leads.find(x => String(x.id) === String(isCity ? sel.dataset.mlCity : sel.dataset.mlSvc));
+  if(!l || !sel.value) return;
+  if(!lppCanAct(l)){ showToast('Claim this lead first'); renderMyLeads(); return; }
+  const ok = await salesWriteLead(l, isCity ? { city: sel.value } : { service: sel.value });
+  if(ok) showToast(isCity ? 'City: ' + sel.value : 'Service: ' + sel.options[sel.selectedIndex].text);
+}
 function mlRow(l, now, today){
   const st = l.status || 'new', act = leadLastActivity(l), rel = leadReleaseAt(l);
   let sub = `${leadSourceLabel(l.source)} · ${st === 'new' ? 'claimed' : 'last activity'} ${act ? mlAgo(now - act) + ' ago' : '—'}`;
@@ -30741,13 +30798,15 @@ function mlRow(l, now, today){
     else if(l.follow_up_at) sub += ` · follow-up ${fmtDate(l.follow_up_at)}`;
   }
   const det = mlDetails(l, leadPayloadOf(l));
-  const detTxt = [det.city && esc(det.city), det.moveIn && 'move-in ' + esc(/^\d{4}-\d{2}-\d{2}/.test(det.moveIn) ? fmtDate(det.moveIn) : det.moveIn),
+  const detTxt = [det.moveIn && 'move-in ' + esc(/^\d{4}-\d{2}-\d{2}/.test(det.moveIn) ? fmtDate(det.moveIn) : det.moveIn),
     det.months && esc(det.months) + ' mo', det.budget && esc(leadMoney(det.budget)), det.room && esc(det.room)].filter(Boolean).join(' · ');
   const wa = leadWhatsAppFor(l);
   const id = esc(l.id);
+  const p = leadPayloadOf(l), email = String(l.email || p.email || '').trim(), phone = String(l.phone || p.phone || '').trim();
+  const contact = [email && `<a href="mailto:${esc(email)}">${esc(email)}</a>`, phone && `<a href="tel:${esc(phone.replace(/[^\d+]/g, ''))}">${esc(phone)}</a>`].filter(Boolean).join(' · ');
   return `<div class="ml-row" data-ml-lead="${id}">
     <input type="checkbox" data-ml-check="${id}" ${ML_SEL.has(String(l.id)) ? 'checked' : ''} aria-label="Select">
-    <div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${mlStatusControl(l)}</div>${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
+    <div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${mlStatusControl(l)} ${mlCityControl(l, det.city)} ${mlServiceControl(l, p)}</div>${contact ? `<div class="name-sub ml-contact">${contact}</div>` : ''}${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
     <div class="ml-acts">
       ${wa.ok ? `<button class="btn btn-mini" type="button" data-ml-act="wa" data-id="${id}" title="Opens WhatsApp ${esc(wa.display)} and logs the contact">WhatsApp</button>` : ''}
       <button class="btn btn-mini" type="button" data-ml-act="log" data-id="${id}" title="You called, emailed or messaged them some other way. Counts as activity${st === 'new' ? ' and marks the lead Contacted' : ''}.">Log contact</button>
@@ -33110,7 +33169,7 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     }
     const mine = e.target.closest('#leads-mine');
     if(!mine) return;
-    if(e.target.closest('[data-ml-st]')) return;
+    if(e.target.closest('[data-ml-st],[data-ml-city],[data-ml-svc],.ml-contact a')) return;
     const chk = e.target.closest('[data-ml-check]');
     if(chk){ chk.checked ? ML_SEL.add(chk.dataset.mlCheck) : ML_SEL.delete(chk.dataset.mlCheck); renderMyLeads(); return; }
     const all = e.target.closest('[data-ml-all]');
@@ -33127,7 +33186,10 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     const row = e.target.closest('[data-ml-lead]');
     if(row) openLead(row.dataset.mlLead);
   });
-  sec.addEventListener('change', e => { const st = e.target.closest('[data-ml-st]'); if(st) mlStatusChange(st); });
+  sec.addEventListener('change', e => {
+    const st = e.target.closest('[data-ml-st]'); if(st){ mlStatusChange(st); return; }
+    const f = e.target.closest('[data-ml-city],[data-ml-svc]'); if(f) mlFieldChange(f);
+  });
   const as = document.getElementById('leads-view-as');
   if(as) as.addEventListener('change', () => { if(as.value) leadsSetMode('mine', as.value, ''); else leadsSetMode('team', '', ''); });
 })();
@@ -38626,9 +38688,9 @@ window.HM = HM;
     ).join('');
   }
   function renderKpis(v){
-    const kpi = (label, value, sub, go) => `<div class="kpi ${go ? 'clickable' : ''}" ${go ? `data-sales-go="leads" data-sales-status="${go}"` : ''}><div class="kpi-deco"></div><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="sl-kpi-sub">${sub}</div></div>`;
+    const kpi = (label, value, sub, go) => `<div class="kpi ${go ? 'clickable' : ''}" ${go === 'closed-list' ? 'data-sales-closed-list="1" title="See the deals behind this number"' : go ? `data-sales-go="leads" data-sales-status="${go}"` : ''}><div class="kpi-deco"></div><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="sl-kpi-sub">${sub}</div></div>`;
     $('sales-kpis').innerHTML =
-      kpi('Sales closed', fmt(v.month.closed), `<b>${v.month.deals}</b> deal${v.month.deals === 1 ? '' : 's'} · avg <b>${fmt(v.month.avg)}</b> · revenue <b>${fmt(v.month.revenue)}</b>${v.month.noFee ? ` · <b>${v.month.noFee}</b> without a fee` : ''}`, 'won') +
+      kpi('Sales closed', fmt(v.month.closed), `<b>${v.month.deals}</b> deal${v.month.deals === 1 ? '' : 's'} · avg <b>${fmt(v.month.avg)}</b> · revenue <b>${fmt(v.month.revenue)}</b>${v.month.noFee ? ` · <b>${v.month.noFee}</b> without a fee` : ''}`, 'closed-list') +
       kpi('Open deals', String(v.pipeline.count), `pipeline <b>${fmt(v.pipeline.value)}</b>`, 'qualified') +
       kpi('Leads', String(v.leads.assigned), `<b>${v.leads.uncontacted}</b> never contacted · conversion <b>${v.funnel.conversionPct}%</b>`, 'new') +
       kpi('Follow-ups', String(v.followUps.overdue + v.followUps.today), `<b>${v.followUps.overdue}</b> overdue · <b>${v.followUps.today}</b> due today`, '');
@@ -38965,6 +39027,7 @@ window.HM = HM;
     // One ledger for the whole page. Passing it here is what stops the target
     // card and the closed-deal table below it reporting different months.
     const v = computeSalesView(window.leads || [], window.salesReps || [], salesCurrentRep(), salesCurrentYm(), salesToday(), cdLedger());
+    SALES_STATE.view = v;
     const pt = $('page-title'), ps = $('page-sub');
     if(pt) pt.innerHTML = `Sales <em>· ${esc(v.repName)}</em>`;
     if(ps) ps.textContent = `${v.period.month.label} · CAD`;
@@ -39014,7 +39077,33 @@ window.HM = HM;
     if(edit && typeof openDealModal === 'function') openDealModal(edit.dataset.cdEdit, 'won');
   });
   $('sales-period').addEventListener('change', e => { SALES_STATE.ym = e.target.value; renderSales(); });
+  /* ---- "Sales closed" breakdown: the exact deals the KPI card adds up ---- */
+  function openSalesClosedList(){
+    const v = SALES_STATE.view;
+    if(!v) return;
+    const rows = v.recentClosed, m = v.month;
+    $('scl-title').textContent = `Sales closed · ${v.period.month.label}`;
+    $('scl-sub').textContent = `${v.repName} · ${m.deals} deal${m.deals === 1 ? '' : 's'} · ${fmt(m.closed)} in placement fees`;
+    $('scl-body').innerHTML = rows.length ? `<table style="width:100%"><thead><tr><th>Closed</th><th>Customer</th><th class="right">Fee</th><th class="right">Revenue</th></tr></thead><tbody>` +
+      rows.map(d => `<tr style="cursor:pointer" data-scl="${esc(d.id)}" title="Open this deal"><td>${fmtDate(d.closedAt)}</td><td><b>${esc(d.name || '—')}</b>${d.leadSource === 'hugo' ? ' <span class="badge">via Hugo</span>' : ''}<div class="name-sub">${esc(d.room || '—')}${v.team && d.owner ? ' · ' + esc(String(d.owner).split('@')[0]) : ''}</div></td>` +
+        `<td class="right">${d.fee ? `<span class="num">${fmt(d.fee)}</span>` : '<span class="badge badge-red"><span class="dot"></span>No fee</span>'}</td><td class="right num">${d.revenue ? fmt(d.revenue) : '—'}</td></tr>`).join('') +
+      `</tbody><tfoot><tr><td></td><td><b>Total</b></td><td class="right num"><b>${fmt(m.closed)}</b></td><td class="right num"><b>${fmt(m.revenue)}</b></td></tr></tfoot></table>`
+      : `<div class="sl-empty">Nothing won in ${esc(v.period.month.label)} yet.</div>`;
+    $('scl-backdrop').classList.add('open'); $('scl-backdrop').setAttribute('aria-hidden', 'false');
+  }
+  function closeSalesClosedList(){ $('scl-backdrop').classList.remove('open'); $('scl-backdrop').setAttribute('aria-hidden', 'true'); }
+  $('scl-close').addEventListener('click', closeSalesClosedList);
+  $('scl-backdrop').addEventListener('click', e => {
+    if(e.target === $('scl-backdrop')){ closeSalesClosedList(); return; }
+    const r = e.target.closest('[data-scl]');
+    if(!r) return;
+    closeSalesClosedList();
+    const id = r.dataset.scl;
+    if(cdLedger().some(x => String(x.id) === String(id))) openClosedDeal(id); else if(typeof openLead === 'function') openLead(id);
+  });
+  document.addEventListener('keydown', e => { if(e.key === 'Escape' && $('scl-backdrop').classList.contains('open')) closeSalesClosedList(); });
   $('sales-page').addEventListener('click', e => {
+    if(e.target.closest('[data-sales-closed-list]')){ openSalesClosedList(); return; }
     const deal = e.target.closest('[data-cd]');
     if(deal && typeof openClosedDeal === 'function'){ openClosedDeal(deal.dataset.cd); return; }
     const row = e.target.closest('[data-lead]');
@@ -42363,8 +42452,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-13-leadcap200"></script>
-<script src="extensions.js?v=2026-10-13-leadcap200"></script>
-<script src="ap.js?v=2026-10-13-leadcap200"></script>
+<script src="room-changes.js?v=2026-10-13-leadsvc1"></script>
+<script src="extensions.js?v=2026-10-13-leadsvc1"></script>
+<script src="ap.js?v=2026-10-13-leadsvc1"></script>
 </body>
 </html>
