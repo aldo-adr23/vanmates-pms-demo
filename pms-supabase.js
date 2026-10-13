@@ -105,6 +105,24 @@
     closedDeals:       [['rep','rep'],['closed_at','closed_at'],['city','city'],['status','status'],['fee','fee'],['deal_value','deal_value'],['source_system','source_system'],['source_id','source_id']]
   };
 
+  // Countries (countries-2026-10-13.sql): these tables carry a `country` column ('CA' | 'MX').
+  // The record keeps it as `opCountry` — NOT `country`, which tenants and leads already use for
+  // the person's nationality. Sent only once the column exists (VM_COUNTRY_READY, set by hydrate).
+  const COUNTRY_TABLES = new Set(['properties', 'tenants', 'leads']);
+  // Same order as the database trigger (_vm_set_country): own city → explicit opCountry →
+  // the tenant's property → the country the portal is showing.
+  function countryFor(arrayName, record) {
+    const vc = window.vmCountry;
+    const byCity = typeof window.vmcCityCountry === 'function' ? window.vmcCityCountry(record.city) : null;
+    if (byCity) return byCity;
+    if (record.opCountry === 'CA' || record.opCountry === 'MX') return record.opCountry;
+    if (arrayName === 'tenants' && record.property && vc) {
+      const p = vc.all('properties').find(x => x && x.name === record.property);
+      if (p) return vc.of('properties', p);
+    }
+    return vc ? vc.current() : 'CA';
+  }
+
   /* ------------------- helpers ------------------- */
   function recordId(arrayName, record, fallbackIdx) {
     const cfg = TABLES[arrayName];
@@ -123,6 +141,10 @@
     for (const [jsKey, pgCol] of (SCALARS[arrayName] || [])) {
       const val = record[jsKey];
       if (val !== undefined) row[pgCol] = val;
+    }
+    if (COUNTRY_TABLES.has(arrayName) && window.VM_COUNTRY_READY && record && typeof record === 'object') {
+      record.opCountry = countryFor(arrayName, record);
+      row.country = record.opCountry;
     }
     return row;
   }
@@ -157,6 +179,18 @@
   /* ------------------- hydrate ------------------- */
   async function hydrate() {
     const summary = { ok: true, counts: {}, errors: [] };
+    // Countries first: which ones am I allowed (vm_my_countries), and does the column exist yet?
+    // Before countries-2026-10-13.sql the RPC is missing: everything is Canada, as before.
+    let countryReady = false;
+    try {
+      const { data: mc, error: mcErr } = await sb.rpc('vm_my_countries');
+      if (!mcErr) { countryReady = true; window.VM_MY_COUNTRIES = Array.isArray(mc) && mc.length ? mc : null; }
+    } catch (_) {}
+    window.VM_COUNTRY_READY = countryReady;
+    // A teammate without Canada must never see the Canadian seed data baked into index.html:
+    // never keep the local copy for them, whatever Postgres returns.
+    const canadaAllowed = !countryReady || !Array.isArray(window.VM_MY_COUNTRIES) || window.VM_MY_COUNTRIES.includes('CA');
+    summary.countries = window.VM_MY_COUNTRIES || null;
     const targets = {
       properties:         window.properties,
       tenants:            window.tenants,
@@ -181,7 +215,7 @@
         // stick across refreshes (e.g. damage_deposits where the seed is
         // 133 rows but Supabase only has 10).
         const [{ data, error }, { data: deletedRows, error: delErr }] = await Promise.all([
-          selectAll(cfg.table, 'data, id', q => q.is('deleted_at', null)),
+          selectAll(cfg.table, countryReady && COUNTRY_TABLES.has(name) ? 'data, id, country' : 'data, id', q => q.is('deleted_at', null)),
           selectAll(cfg.table, 'id',       q => q.not('deleted_at', 'is', null))
         ]);
         if (error) { summary.errors.push({ name, error: error.message }); continue; }
@@ -247,8 +281,8 @@
         // ~10% of the local array's rows (or local is also empty).
         const incoming = (data || []).length;
         const local = arr.length;
-        const keepLocal = (incoming === 0 && local > 0)
-                       || (local > 0 && incoming < Math.max(1, Math.floor(local * 0.1)));
+        const keepLocal = canadaAllowed && ((incoming === 0 && local > 0)
+                       || (local > 0 && incoming < Math.max(1, Math.floor(local * 0.1))));
 
         if (keepLocal) {
           // Still apply the tombstone list to the local seed so user deletes
@@ -272,6 +306,7 @@
         for (const row of data) {
           if (isDeletedRow(row)) continue;
           const rec = row.data || row;
+          if (row.country && rec && typeof rec === 'object') rec.opCountry = row.country;
           // Preserve the synthetic id Postgres is keyed on. Post-migration the
           // id already lives inside `data`, but if a row predates that (or was
           // written by an older client) we adopt the row's primary key so the
@@ -434,12 +469,13 @@
   function adoptRowId(row) {
     const rec = row.data || row;
     if (rec && !rec.id && row.id != null) rec.id = row.id;
+    if (rec && row.country) rec.opCountry = row.country;
     return rec;
   }
 
   // The record as the portal wants it (the data jsonb), or null.
   async function fetchLead(id) {
-    const { data, error } = await sb.from('leads').select('data,id').eq('id', String(id)).is('deleted_at', null).maybeSingle();
+    const { data, error } = await sb.from('leads').select(window.VM_COUNTRY_READY ? 'data,id,country' : 'data,id').eq('id', String(id)).is('deleted_at', null).maybeSingle();
     if (error) { console.error('[vmDb] fetchLead ' + id + ' failed:', error.message); return null; }
     if (!data) return null;
     return adoptRowId(data);
@@ -608,16 +644,20 @@
     const id = newRow.id || oldRow.id;
     if (!id) return;
     const findIdx = () => arr.findIndex(x => recordId(arrayName, x) === id);
+    // Countries: the row may be parked with the other country; drop that copy, apply the event
+    // to the visible array, then let vmCountry put the row where its country says.
+    if (window.vmCountry) window.vmCountry.forget(arrayName, id);
+    const withCountry = (r) => { const rec = r.data || r; if (r.country && rec && typeof rec === 'object') rec.opCountry = r.country; return rec; };
 
     if (event === 'INSERT') {
-      if (findIdx() < 0) arr.push(newRow.data || newRow);
+      if (findIdx() < 0) arr.push(withCountry(newRow));
     } else if (event === 'UPDATE') {
       const idx = findIdx();
       if (newRow.deleted_at) {
         // soft-delete: remove from local view
         if (idx >= 0) arr.splice(idx, 1);
       } else {
-        const fresh = newRow.data || newRow;
+        const fresh = withCountry(newRow);
         if (idx >= 0) arr[idx] = fresh;
         else arr.push(fresh);
       }
@@ -625,6 +665,7 @@
       const idx = findIdx();
       if (idx >= 0) arr.splice(idx, 1);
     }
+    if (window.vmCountry) { try { window.vmCountry.partition(); } catch (e) { console.warn('[vmDb] country partition', e.message); } }
     scheduleRerender();
   }
 
