@@ -1596,7 +1596,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-luasst1"></script>
+<script src="pms-supabase.js?v=2026-10-13-chilpa1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2247,6 +2247,10 @@
             <button type="button" class="as-agent active" data-agent="hugo">
               <div class="as-agent-name">Hugo</div>
               <div class="card-sub">Ops agent — tenants, checkouts, deposits, Asana. Can take actions.</div>
+            </button>
+            <button type="button" class="as-agent" data-agent="chilpa" hidden>
+              <div class="as-agent-name">Chilpa</div>
+              <div class="card-sub">Inventario de Guadalajara — habitaciones, vacantes, rentas. Habla español e inglés. Can take actions.</div>
             </button>
             <button type="button" class="as-agent" data-agent="ruf">
               <div class="as-agent-name">Ruf</div>
@@ -38272,10 +38276,15 @@ window.HM = HM;
   const AS_CONNECT_MS = 90e3, AS_IDLE_MS = 150e3, AS_MAX_MS = 320e3;
   const $ = (id) => document.getElementById(id);
 
-  const AS_AGENTS = ['hugo', 'ruf', 'lu'];
-  const AS_NAMES = { hugo: 'Hugo', ruf: 'Ruf', lu: 'Lu' };
+  const AS_AGENTS = ['hugo', 'chilpa', 'ruf', 'lu'];
+  const AS_NAMES = { hugo: 'Hugo', chilpa: 'Chilpa', ruf: 'Ruf', lu: 'Lu' };
+  // Agents whose tab waits for the server to say it has them
+  // (GET /api/portal/agents). Chilpa ships in the portal before its server
+  // may be deployed; until the server lists it, the tab stays hidden.
+  const AS_OPTIONAL = ['chilpa'];
+  let served = null;     // agents the server lists, once known
   let agent = 'hugo';
-  let store = { hugo: [], ruf: [], lu: [] };
+  let store = { hugo: [], chilpa: [], ruf: [], lu: [] };
   let currentId = null;
   let inFlight = null;   // AbortController while a reply streams
 
@@ -38324,7 +38333,9 @@ window.HM = HM;
     // Before the first event the label says "connecting" (a cold Fly machine
     // can take ~10 s); once text has arrived, a tool call reads "working".
     let label = '';
-    if (m.working) label = agent === 'ruf' ? 'Ruf is looking…' : agent === 'lu' ? 'Lu is checking…' : (m.text ? 'Hugo is working…' : 'Connecting to Hugo…');
+    if (m.working) label = agent === 'ruf' ? 'Ruf is looking…' : agent === 'lu' ? 'Lu is checking…'
+      : agent === 'chilpa' ? (m.text ? 'Chilpa está trabajando…' : 'Conectando con Chilpa…')
+      : (m.text ? 'Hugo is working…' : 'Connecting to Hugo…');
     // asRender('') is an empty <p> — a blank line above the label — so skip it.
     return '<div class="as-msg agent">' + (m.text ? asRender(m.text) : '') + (label ? '<div class="as-working">' + label + '</div>' : '') + '</div>';
   }
@@ -38339,6 +38350,8 @@ window.HM = HM;
         ? 'Ask Hugo anything you would ask in Slack — it remembers this conversation.'
         : agent === 'lu'
         ? 'Ask Lu about receipts, expenses, AP or QuickBooks. To send a receipt or a sheet, DM Lu in Slack.'
+        : agent === 'chilpa'
+        ? 'Pregúntale a Chilpa por las habitaciones de Guadalajara: qué está libre, cuándo se desocupa, o registra una renta. También entiende inglés.'
         : 'Give Ruf the whole request in one line: budget, city, dates, room type.') + '</div>';
       return;
     }
@@ -38347,8 +38360,12 @@ window.HM = HM;
     if (stick) t.scrollTop = t.scrollHeight;
   }
   function renderAll(){
-    document.querySelectorAll('.as-agent').forEach((b) => b.classList.toggle('active', b.dataset.agent === agent));
-    $('as-input').placeholder = agent !== 'ruf' ? 'Message ' + AS_NAMES[agent] + '…' : 'e.g. 2 rooms in Vancouver under $1400 moving in October';
+    document.querySelectorAll('.as-agent').forEach((b) => {
+      b.classList.toggle('active', b.dataset.agent === agent);
+      if (AS_OPTIONAL.includes(b.dataset.agent)) b.hidden = !asServed(b.dataset.agent);
+    });
+    $('as-input').placeholder = agent === 'ruf' ? 'e.g. 2 rooms in Vancouver under $1400 moving in October'
+      : agent === 'chilpa' ? 'Escríbele a Chilpa…' : 'Message ' + AS_NAMES[agent] + '…';
     $('as-hint').textContent = agent === 'ruf' ? 'Ruf reads each message on its own — put the whole request in one line.' : '';
     renderList(); renderTranscript(true);
   }
@@ -38407,8 +38424,8 @@ window.HM = HM;
       // A TypeError from fetch is the network layer (offline, CORS, Hugo down);
       // the browser's own wording ("Failed to fetch") is not worth showing.
       const msg = (e && e.name === 'AbortError')
-        ? (agent === 'hugo' ? 'Hugo took too long to answer. It may still be finishing in the background — try again in a minute.' : AS_NAMES[agent] + ' took too long to answer.')
-        : (e instanceof TypeError) ? "Can't reach Hugo right now — check your connection and try again."
+        ? (agent === 'hugo' || agent === 'chilpa' ? AS_NAMES[agent] + ' took too long to answer. It may still be finishing in the background — try again in a minute.' : AS_NAMES[agent] + ' took too long to answer.')
+        : (e instanceof TypeError) ? "Can't reach " + AS_NAMES[agent] + " right now — check your connection and try again."
         : (e.message || 'Request failed');
       state = asReduce(state, { type: 'error', message: msg }); paint();
     } finally {
@@ -38427,11 +38444,34 @@ window.HM = HM;
     });
   }
 
+  /* ---- which optional agents the server has ---- */
+  function asServed(a){ return !AS_OPTIONAL.includes(a) || (Array.isArray(served) && served.includes(a)); }
+  let servedAsked = false;
+  function loadServed(){
+    if (servedAsked) return;
+    servedAsked = true;
+    // A server without this route (404) or unreachable just keeps the
+    // optional tabs hidden; the core agents never depend on it.
+    fetch(ASSISTANTS_BASE + '/api/portal/agents', { method: 'GET' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => { served = (j && Array.isArray(j.agents)) ? j.agents : []; })
+      .catch(() => { served = []; })
+      .then(() => {
+        if (!asServed(agent) && !inFlight) {
+          agent = 'hugo';
+          if (!store[agent].length) asNewConversation(store, agent, Date.now());
+          currentId = store[agent][0].id;
+        }
+        if (!$('as-app').hidden) renderAll();
+      });
+  }
+
   /* ---- open / wire ---- */
   window.asOpen = function(){
     const ok = granted();
     $('as-denied').hidden = ok; $('as-app').hidden = !ok;
     if (!ok) return;
+    loadServed();
     // Re-opening the view while a reply streams must not reload the store
     // from disk: send() holds the live conversation object, and a fresh copy
     // would show the half-saved message as interrupted while it still runs.
@@ -39942,8 +39982,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-luasst1"></script>
-<script src="extensions.js?v=2026-10-12-luasst1"></script>
-<script src="ap.js?v=2026-10-12-luasst1"></script>
+<script src="room-changes.js?v=2026-10-13-chilpa1"></script>
+<script src="extensions.js?v=2026-10-13-chilpa1"></script>
+<script src="ap.js?v=2026-10-13-chilpa1"></script>
 </body>
 </html>
