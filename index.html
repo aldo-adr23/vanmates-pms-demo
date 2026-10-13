@@ -1564,6 +1564,10 @@
 .ml-chip{display:inline-flex;gap:6px;align-items:center;font-size:12px;padding:3px 10px;border-radius:12px;background:var(--cream-2);cursor:pointer}
 .ml-head{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 @media (max-width:760px){.ml-head{grid-template-columns:1fr}}
+.ml-st{field-sizing:content;font:inherit;font-size:11.5px;font-weight:600;padding:1px 20px 1px 8px;border-radius:10px;border:1px solid;cursor:pointer;-webkit-appearance:none;appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 10px) 55%,calc(100% - 6px) 55%;background-size:4px 4px,4px 4px;background-repeat:no-repeat;vertical-align:middle}
+.ml-st:focus-visible{outline:2px solid currentColor;outline-offset:1px}
 .ml-big{font-size:22px;font-weight:700}.ml-red{color:#B94A3F}.ml-amber{color:#9a6b00}
 .ml-stage{height:9px;border-radius:5px;display:flex;overflow:hidden;margin:8px 0 4px;background:var(--cream-2)}
 .ml-stage i{display:block;height:100%}
@@ -1580,6 +1584,24 @@
 .ml-acts{display:flex;gap:6px;flex-shrink:0}
 .ml-acts .btn{border:1px solid var(--line,#E4DBC9);background:var(--card,#fff)}
 @media (max-width:600px){.ml-row{flex-wrap:wrap}.ml-acts{width:100%;justify-content:flex-end}}
+/* Payment pending (Leads) */
+tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120,12,.13)}tr.lpp-a7 td{background:rgba(185,74,63,.15)}
+.lpp-days.lpp-a3{color:#9a6b00;font-weight:600}.lpp-days.lpp-a5{color:#b45309;font-weight:700}.lpp-days.lpp-a7{color:#B94A3F;font-weight:700}
+.lpp-pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid transparent;white-space:nowrap}
+.lpp-pill.scheduled{background:rgba(37,99,235,.1);color:#2563eb}.lpp-pill.paused,.lpp-pill.replied{background:rgba(217,164,0,.14);color:#9a6b00}
+.lpp-pill.sending{background:rgba(124,92,255,.12);color:#7c5cff}.lpp-pill.sent{background:rgba(14,116,144,.12);color:#0e7490}
+.lpp-pill.cancelled,.lpp-pill.none{background:rgba(154,160,166,.15);color:#6b7177}.lpp-pill.failed{background:rgba(185,74,63,.14);color:#B94A3F}
+.lpp-pill.paid{background:rgba(31,157,87,.14);color:#1f9d57}
+.lpp-box{border:1px solid var(--line,#E4DBC9);border-radius:10px;padding:10px 12px;margin:0 0 14px}
+.lpp-box h4{margin:0 0 6px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.lpp-facts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;margin-bottom:6px}
+.lpp-facts a{word-break:break-all}
+.lpp-rem{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px dashed var(--line,#E4DBC9);font-size:13px;flex-wrap:wrap}
+.lpp-rem .lpp-rem-main{flex:1;min-width:160px}
+.lpp-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.lpp-banner{font-size:13px;padding:6px 10px;border-radius:8px;background:rgba(217,164,0,.14);margin-bottom:8px}
+.lpp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.lpp-filters .form-input{max-width:200px}
+.lpp-table td{vertical-align:top}.lpp-table a.lpp-link{word-break:break-all}
 .ml-bulk{position:sticky;bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--ink,#2b2620);color:#fff;border-radius:10px;padding:8px 12px;margin-top:14px}
 .ml-bulk select,.ml-bulk input{max-width:180px}
 .ml-grid td.num a{cursor:pointer;text-decoration:underline dotted}
@@ -1621,7 +1643,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-countries2"></script>
+<script src="pms-supabase.js?v=2026-10-13-paypend1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2373,6 +2395,7 @@
       </div>
       <div id="leads-mine" style="display:none"></div>
       <div id="leads-team" style="display:none"></div>
+      <div id="leads-pp" style="display:none"></div>
       <div class="filter-bar" id="leads-all-filters">
         <div class="filter-search">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -2400,6 +2423,7 @@
           <option value="new">New</option>
           <option value="contacted">Contacted</option>
           <option value="qualified">Qualified</option>
+          <option value="payment_pending">Payment pending</option>
           <option value="won">Won</option>
           <option value="lost">Lost</option>
         </select>
@@ -2461,6 +2485,7 @@
           <option value="new">New</option>
           <option value="contacted">Contacted</option>
           <option value="qualified">Qualified</option>
+          <option value="payment_pending">Payment pending</option>
           <option value="won">Won</option>
           <option value="lost">Lost</option>
         </select>
@@ -4218,6 +4243,7 @@ hello@vanmates.com · vanmates.com</textarea>
           </div>
           <div id="lead-deal-row" style="display:none;margin:-6px 0 12px"><button class="btn btn-ghost btn-mini" id="lead-deal-btn" type="button">Edit deal</button> <span class="card-sub" id="lead-deal-sum"></span>
           </div>
+      <div id="lead-pp" style="display:none"></div>
       <div class="form-field"><label>Contact</label><div id="lead-contact" style="font-size:13px"></div></div>
       <div id="lead-mail" style="display:none;margin:4px 0 14px"></div>
       <div id="lead-contracts" style="display:none;margin:4px 0 14px"></div>
@@ -4422,6 +4448,51 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
         <button class="btn btn-ghost" id="deal-cancel" type="button">Cancel</button>
         <button class="btn btn-primary" id="deal-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAYMENT PENDING: stage + reminder ============ -->
+<div class="modal-backdrop" id="lpp-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="lpp-title" style="max-width:520px">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/></svg></div>
+      <div><div class="modal-title" id="lpp-title">Payment pending</div><div class="modal-sub" id="lpp-sub">The customer agreed to book and has the payment link. This frees a slot in your 30-lead limit; the lead stays yours.</div></div>
+      <button class="modal-close" id="lpp-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field"><label for="lpp-link">Ruf payment link</label><input class="form-input" id="lpp-link" type="url" placeholder="https://colive.vanmates.com/go?c=…" autocomplete="off" /></div>
+      <div class="form-field"><label for="lpp-amount">Amount pending (CAD, optional)</label><input class="form-input" id="lpp-amount" inputmode="decimal" placeholder="895" autocomplete="off" /></div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:4px 0"><input type="checkbox" id="lpp-remind" checked> Schedule a payment reminder next</label>
+      <div class="card-sub">Not a confirmed booking: press <b>Won</b> once the payment is in. Ruf (Stripe) payments from the lead's email are spotted automatically.</div>
+      <div class="card-sub" id="lpp-error" style="color:var(--red-dark);min-height:18px;margin-top:4px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-ghost" id="lpp-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="lpp-save" type="button">Move to Payment pending</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="modal-backdrop" id="lppr-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="lppr-title" style="max-width:600px">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M5 3L2 6M22 6l-3-3"/></svg></div>
+      <div><div class="modal-title" id="lppr-title">Payment reminder</div><div class="modal-sub" id="lppr-sub"></div></div>
+      <button class="modal-close" id="lppr-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-field"><label for="lppr-template">Template</label><select class="form-input" id="lppr-template"></select></div>
+        <div class="form-field"><label for="lppr-when">Send at (your time)</label><input class="form-input" id="lppr-when" type="datetime-local" /></div>
+      </div>
+      <div class="form-field"><label for="lppr-subject">Subject</label><input class="form-input" id="lppr-subject" maxlength="200" /></div>
+      <div class="form-field"><label for="lppr-body">Message</label><textarea class="form-input" id="lppr-body" rows="9"></textarea></div>
+      <div class="card-sub" id="lppr-note"></div>
+      <div class="card-sub" id="lppr-error" style="color:var(--red-dark);min-height:18px;margin-top:4px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-ghost" id="lppr-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="lppr-save" type="button">Schedule</button>
       </div>
     </div>
   </div>
@@ -20241,7 +20312,8 @@ function salesDealMoney(lead){
     return { fee: num(d.fee), expected: 0, revenue: rent * months,
              closedAt: salesDay(d.closed_at) || salesDay(lead.last_touched_at) || salesDay(lead.created_at) };
   }
-  if(st === 'qualified') return { fee: 0, expected: num(d.expected_fee), revenue: 0, closedAt: '' };
+  // Payment pending is a qualified deal waiting for the money: it stays in the pipeline.
+  if(st === 'qualified' || st === 'payment_pending') return { fee: 0, expected: num(d.expected_fee), revenue: 0, closedAt: '' };
   return { fee: 0, expected: 0, revenue: 0, closedAt: '' };
 }
 
@@ -20285,10 +20357,10 @@ function salesFunnel(leads, today, days){
     const st = l.status || 'new';
     out.leads++;
     if(st !== 'new') out.contacted++;
-    if(st === 'qualified' || st === 'won') out.qualified++;
+    if(st === 'qualified' || st === 'payment_pending' || st === 'won') out.qualified++;
     if(st === 'won') out.won++;
     if(st === 'lost') out.lost++;
-    if(st === 'qualified'){ out.open++; out.openValue += salesDealMoney(l).expected; }
+    if(st === 'qualified' || st === 'payment_pending'){ out.open++; out.openValue += salesDealMoney(l).expected; }
   }
   out.conversion = out.leads ? out.won / out.leads : 0;
   return out;
@@ -20445,7 +20517,7 @@ function computeSalesView(leads, reps, rep, ym, today, deals){
     daysLeft: period.quarter.daysLeft, label: period.quarter.label
   };
 
-  const openDeals = mine.filter(l => l.status === 'qualified').map(l => ({
+  const openDeals = mine.filter(l => l.status === 'qualified' || l.status === 'payment_pending').map(l => ({
     id: l.id, name: l.name || '', room: (l.deal && l.deal.room) || l.roomName || '',
     moveIn: salesDay(l.moveIn || l.moveInDate), expected: salesDealMoney(l).expected, owner: salesOwner(l)
   })).sort((a, b) => b.expected - a.expected);
@@ -29657,7 +29729,7 @@ const LEAD_SOURCES = {
   'whatsapp-maya': 'WhatsApp (Maya)',
   'hugo': 'Hugo booking'
 };
-const LEAD_STATUSES = ['new','contacted','qualified','won','lost'];
+const LEAD_STATUSES = ['new','contacted','qualified','payment_pending','won','lost'];
 const LEAD_FILTERS = { search:'', source:'', status:'open' };
 let _editingLeadId = null;
 /* LEAD-CLAIM-CORE-START */
@@ -29756,11 +29828,13 @@ function myLeadsSections(list, nowMs, today, dueFn){
 // extraReps: emails to consider even with no open leads (they show if they sold).
 function teamGrid(all, nowMs, today, dueFn, soldFn, extraReps){
   const by = {};
-  const row = e => by[e] || (by[e] = { email: e, new: 0, contacted: 0, qualified: 0, due: 0, stale: 0, open: 0, sold: 0, deals: 0 });
+  const row = e => by[e] || (by[e] = { email: e, new: 0, contacted: 0, qualified: 0, due: 0, stale: 0, open: 0, pp: 0, sold: 0, deals: 0 });
   const unassigned = { new: 0, contacted: 0, qualified: 0 };
   (all || []).forEach(l => {
     if(!mlRegular(l)) return;
     const st = l.status || 'new';
+    // Payment pending: still the rep's, but outside the cap (counted on its own).
+    if(st === 'payment_pending'){ if(l.claimed_at) row(String(l.claimed_by || '').toLowerCase()).pp++; return; }
     if(LEAD_OPEN_STATUSES.indexOf(st) < 0) return;
     if(!l.claimed_at){ unassigned[st]++; return; }
     const r = row(String(l.claimed_by || '').toLowerCase());
@@ -29771,7 +29845,7 @@ function teamGrid(all, nowMs, today, dueFn, soldFn, extraReps){
   });
   (extraReps || []).forEach(e => { if(e) row(String(e).toLowerCase()); });
   const rows = Object.values(by).map(r => { const s = soldFn(r.email) || {}; r.sold = Number(s.closed) || 0; r.deals = Number(s.deals) || 0; return r; })
-    .filter(r => r.open > 0 || r.deals > 0)
+    .filter(r => r.open > 0 || r.deals > 0 || r.pp > 0)
     .sort((a, b) => (b.sold - a.sold) || (b.open - a.open) || a.email.localeCompare(b.email));
   return { rows, unassigned };
 }
@@ -29802,6 +29876,84 @@ function mlDetails(l, p){
     budget: pick(p.budget, p.price), room: pick(p.roomName) };
 }
 /* MY-LEADS-CORE-END */
+/* PAY-PENDING-CORE-START */
+// Payment pending (spec docs/superpowers/specs/2026-10-13-payment-pending-design.md). Pure.
+// The lead object is its `data`: l.pp = {link, amount, by} is the rep's; l.pp_state = {since, paid, replied_at}
+// is written only by payment-pending-2026-10-13.sql (the database keeps a browser save from changing it).
+const LPP_STATUS = 'payment_pending';
+const LPP_DAY_MS = 864e5;
+function lppTs(v){ const t = Date.parse(v || ''); return isNaN(t) ? null : t; }
+function lppDaysPending(l, nowMs){
+  const s = lppTs(l && l.pp_state && l.pp_state.since);
+  return s == null ? 0 : Math.max(0, Math.floor((nowMs - s) / LPP_DAY_MS));
+}
+function lppAgeClass(days){ return days >= 7 ? 'lpp-a7' : days >= 5 ? 'lpp-a5' : days >= 3 ? 'lpp-a3' : ''; }
+// Same rule as vm_pp_fill in the SQL: first word of the name, else "there".
+function lppFirstName(name){ const w = String(name || '').trim().split(/\s+/)[0]; return w || 'there'; }
+function lppFill(text, v){
+  return String(text || '').split('{First Name}').join(v.first || 'there').split('{Payment Link}').join(v.link || '').split('{Sales Rep Name}').join(v.rep || '');
+}
+// b = pp_board()[lead id] = {next, last, sent}. → {key, at} for the Reminder status cell.
+function lppReminderStatus(l, b){
+  const st = (l && l.pp_state) || {};
+  if(st.paid) return { key: 'paid', at: st.paid.at || null };
+  const nx = b && b.next, last = b && b.last;
+  if(nx && nx.status === 'paused' && st.replied_at) return { key: 'replied', at: st.replied_at };
+  if(nx) return { key: nx.status, at: nx.send_at || null };
+  if(last) return { key: last.status, at: last.at || null, reason: last.cancel_reason || last.error || '' };
+  return { key: 'none', at: null };
+}
+function lppLastContact(l){
+  const t = Math.max(lppTs(l && l.last_touched_at) || 0, lppTs(l && l.last_emailed_at) || 0, lppTs(l && l.last_inbound_at) || 0);
+  return t || null;
+}
+function lppValidLink(s){
+  const v = String(s || '').trim();
+  if(!/^https?:\/\/[^\s]+$/i.test(v)) return false;
+  try { const u = new URL(v); return u.protocol === 'https:' || u.protocol === 'http:'; } catch(_){ return false; }
+}
+// "$1,295.50" → 1295.5; blank or nonsense → null.
+function lppAmount(v){
+  const s = String(v == null ? '' : v).replace(/[$,\s]/g, '');
+  if(!s || !/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s); return n > 0 ? n : null;
+}
+// email null → everyone's (admins); else that rep's.
+function lppPendingLeads(all, email){
+  const me = email == null ? null : String(email).toLowerCase();
+  return (all || []).filter(l => l && !l.deleted_at && (l.status || 'new') === LPP_STATUS
+    && (me == null || String(l.claimed_by || '').toLowerCase() === me));
+}
+// rows = [{lead, board}]; f = {rep, when: today|week|none, pay: paid|unpaid, days: 3|5|7}. Oldest first.
+function lppFilter(rows, f, nowMs){
+  f = f || {};
+  const day = d => { const x = new Date(d); return x.getFullYear() + '-' + x.getMonth() + '-' + x.getDate(); };
+  const out = (rows || []).filter(r => {
+    const l = r.lead, nx = r.board && r.board.next, paidNow = !!(l.pp_state && l.pp_state.paid);
+    if(f.rep && String(l.claimed_by || '').toLowerCase() !== String(f.rep).toLowerCase()) return false;
+    if(f.pay === 'paid' && !paidNow) return false;
+    if(f.pay === 'unpaid' && paidNow) return false;
+    if(f.days && lppDaysPending(l, nowMs) < Number(f.days)) return false;
+    const at = nx ? lppTs(nx.send_at) : null;
+    if(f.when === 'none' && at != null) return false;
+    if(f.when === 'today' && (at == null || day(at) !== day(nowMs))) return false;
+    if(f.when === 'week' && (at == null || at > nowMs + 7 * LPP_DAY_MS)) return false;
+    return true;
+  });
+  return out.sort((a, b) => (lppTs(a.lead.pp_state && a.lead.pp_state.since) || 0) - (lppTs(b.lead.pp_state && b.lead.pp_state.since) || 0));
+}
+const lppPad = n => String(n).padStart(2, '0');
+function lppLocalInput(v){
+  const d = new Date(v); if(isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${lppPad(d.getMonth() + 1)}-${lppPad(d.getDate())}T${lppPad(d.getHours())}:${lppPad(d.getMinutes())}`;
+}
+// Next weekday after today, 10:00 in the rep's own clock (a datetime-local value).
+function lppDefaultSendAt(now){
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 10, 0);
+  while(d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  return lppLocalInput(d);
+}
+/* PAY-PENDING-CORE-END */
 /* TAYLOR-CORE-START */
 // Taylor (AI sales assistant) emails web leads from TAYLOR_EMAIL and claims the ones she works
 // (taylor-assign-2026-10-12.sql); a rep takes one over with "Take over from Taylor".
@@ -30257,9 +30409,9 @@ function jleadCsCell(cs){
 
 function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s ? leadTermText(s) : 'Lead'); }
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
-function leadCap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : '—'; }
+function leadCap(s){ return s ? (s.charAt(0).toUpperCase() + s.slice(1)).replace(/_/g, ' ') : '—'; }
 function leadStatusBadge(st){
-  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', won:'#1f9d57', lost:'#9aa0a6' };
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
   const c = colors[st] || '#9aa0a6';
   return `<span class="badge" style="background:${c}1a;color:${c};border-color:${c}33">${esc(leadCap(st))}</span>`;
 }
@@ -30504,7 +30656,7 @@ function leadsViewMode(){
     LEAD_VIEW.mode = saved;
   }
   const admin = leadsIsAdmin();
-  const allowed = admin ? ['team', 'mine', 'all'] : ['mine', 'all'];
+  const allowed = admin ? ['team', 'mine', 'pp', 'all'] : ['mine', 'pp', 'all'];
   let m = allowed.indexOf(LEAD_VIEW.mode) >= 0 ? LEAD_VIEW.mode : allowed[0];
   if(m === 'mine' && admin && !LEAD_VIEW.asRep) m = 'team';
   return m;
@@ -30525,7 +30677,9 @@ function renderLeadsChrome(mode){
   if(!bar) return;
   const admin = leadsIsAdmin(), v = activeRole() || {};
   bar.style.display = v.email ? '' : 'none';
-  const tabs = admin ? [['team', 'Team'], ['all', 'All leads']] : [['mine', 'My leads'], ['all', 'All leads']];
+  const lppN = lppPendingLeads(leads, admin ? null : String(v.email || '').toLowerCase()).length;
+  const lppTab = ['pp', 'Payment pending' + (lppN ? ` (${lppN})` : '')];
+  const tabs = admin ? [['team', 'Team'], lppTab, ['all', 'All leads']] : [['mine', 'My leads'], lppTab, ['all', 'All leads']];
   document.getElementById('leads-view-seg').innerHTML = tabs.map(([k, lab]) =>
     `<button type="button" data-lv="${k}" class="${(mode === k || (k === 'team' && mode === 'mine' && admin)) ? 'on' : ''}">${lab}</button>`).join('');
   const as = document.getElementById('leads-view-as');
@@ -30540,6 +30694,7 @@ function renderLeadsChrome(mode){
     ? `<span class="ml-chip" data-lv-clear="1">Showing: ${FOCUS[LEAD_VIEW.focus] || esc(LEAD_VIEW.focus)} ✕</span>` : '';
   document.getElementById('leads-mine').style.display = mode === 'mine' ? '' : 'none';
   document.getElementById('leads-team').style.display = mode === 'team' ? '' : 'none';
+  document.getElementById('leads-pp').style.display = mode === 'pp' ? '' : 'none';
   document.getElementById('leads-all-filters').style.display = mode === 'all' ? '' : 'none';
   document.getElementById('leads-all-card').style.display = mode === 'all' ? '' : 'none';
 }
@@ -30548,6 +30703,27 @@ const ML_SEL = new Set();
 let ML_GROUPS = {};   // section key → lead ids, for the section's select-all box
 function mlAgo(ms){ const h = Math.max(0, Math.floor(ms / 36e5)); return h < 24 ? h + ' h' : Math.floor(h / 24) + ' d' + (h % 24 ? ' ' + (h % 24) + ' h' : ''); }
 function mlMoney(n){ return (window.__vmcSym || '$') + Math.round(Number(n) || 0).toLocaleString('en-CA'); }
+// The status pill is a dropdown for whoever may change the lead (its owner or an admin).
+// Money stages open the same dialogs as the drawer: deal (qualified / won / lost), Ruf link (payment pending).
+function mlStatusControl(l){
+  const st = l.status || 'new';
+  if(!lppCanAct(l)) return leadStatusBadge(st);
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
+  const c = colors[st] || '#9aa0a6';
+  return `<select class="ml-st" data-ml-st="${esc(l.id)}" aria-label="Change status" title="Change status" style="background-color:${c}1a;color:${c};border-color:${c}33">` +
+    LEAD_STATUSES.map(s => `<option value="${s}" ${s === st ? 'selected' : ''}>${esc(leadCap(s))}</option>`).join('') + `</select>`;
+}
+async function mlStatusChange(sel){
+  const l = leads.find(x => String(x.id) === String(sel.dataset.mlSt));
+  if(!l) return;
+  const prev = l.status || 'new', next = sel.value, back = () => { sel.value = prev; renderMyLeads(); };
+  if(next === prev) return;
+  if(!lppCanAct(l)){ showToast('Claim this lead first'); back(); return; }
+  if(next === LPP_STATUS){ lppOpenStage(l, back); return; }
+  if(['qualified', 'won', 'lost'].includes(next) && typeof openDealModal === 'function'){ openDealModal(l.id, next, back); return; }
+  const ok = await salesWriteLead(l, { status: next, last_touched_at: new Date().toISOString() });
+  if(ok) showToast('Status: ' + leadCap(next)); else back();
+}
 function mlRow(l, now, today){
   const st = l.status || 'new', act = leadLastActivity(l), rel = leadReleaseAt(l);
   let sub = `${leadSourceLabel(l.source)} · ${st === 'new' ? 'claimed' : 'last activity'} ${act ? mlAgo(now - act) + ' ago' : '—'}`;
@@ -30571,7 +30747,7 @@ function mlRow(l, now, today){
   const id = esc(l.id);
   return `<div class="ml-row" data-ml-lead="${id}">
     <input type="checkbox" data-ml-check="${id}" ${ML_SEL.has(String(l.id)) ? 'checked' : ''} aria-label="Select">
-    <div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${leadStatusBadge(st)}</div>${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
+    <div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${mlStatusControl(l)}</div>${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
     <div class="ml-acts">
       ${wa.ok ? `<button class="btn btn-mini" type="button" data-ml-act="wa" data-id="${id}" title="Opens WhatsApp ${esc(wa.display)} and logs the contact">WhatsApp</button>` : ''}
       <button class="btn btn-mini" type="button" data-ml-act="log" data-id="${id}" title="You called, emailed or messaged them some other way. Counts as activity${st === 'new' ? ' and marks the lead Contacted' : ''}.">Log contact</button>
@@ -30584,6 +30760,7 @@ function renderMyLeads(){
   if(!box) return;
   const email = leadsViewEmail(), now = Date.now(), today = salesDay(new Date());
   const mine = myLeadsFor(leads, email);
+  const myPp = lppPendingLeads(leads, email || '');
   [...ML_SEL].forEach(id => { if(!mine.some(l => String(l.id) === id)) ML_SEL.delete(id); });
   const sec = myLeadsSections(mine, now, today, salesDue);
   const s = typeof window.salesMonthFor === 'function' ? window.salesMonthFor(email) : null;
@@ -30607,6 +30784,7 @@ function renderMyLeads(){
       <div class="ml-big ${open >= LEAD_CAP ? 'ml-red' : ''}">${open} open <span class="card-sub">/ ${LEAD_CAP} limit</span></div>
       <div class="ml-stage"><i style="width:${pct('new')}%;background:#B94A3F"></i><i style="width:${pct('contacted')}%;background:#d9a400"></i><i style="width:${pct('qualified')}%;background:#3b7d4f"></i></div>
       <div class="card-sub">New ${cnt.new} · Contacted ${cnt.contacted} · Qualified ${cnt.qualified}</div>
+      ${myPp.length ? `<div class="card-sub">+ ${myPp.length} payment pending (not counted)</div>` : ''}
     </div>`;
   const f = LEAD_VIEW.focus;
   const staleTitle = now < Date.parse(LEAD_RELEASE_START + 'T00:00:00')
@@ -30623,6 +30801,11 @@ function renderMyLeads(){
     return `<div class="ml-sec"><label class="${cls}">${arr.length ? `<input type="checkbox" data-ml-all="${key}" ${all ? 'checked' : ''} aria-label="Select all in ${esc(title)}"> ` : ''}${title}</label><span>${arr.length}</span></div>` +
       (arr.length ? arr.map(l => mlRow(l, now, today)).join('') : `<div class="card-sub" style="padding:8px 2px">Nothing due</div>`);
   }).join('');
+  const lppHtml = !f && myPp.length ? `<div class="ml-sec"><span>Payment pending</span><span>${myPp.length}</span></div>` + myPp.map(l => {
+    const d = lppDaysPending(l, now), paid = l.pp_state && l.pp_state.paid;
+    return `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${paid ? lppPill('paid') : ''}</div>
+      <div class="name-sub"><span class="lpp-days ${lppAgeClass(d)}">waiting ${d} day${d === 1 ? '' : 's'}</span>${l.pp && l.pp.amount != null ? ' · ' + esc(mlMoney(l.pp.amount)) : ''}${paid ? ' · press Won to confirm' : ''}</div></div></div>`;
+  }).join('') : '';
   const closed = s ? s.recentClosed : [];
   const closedHtml = !f && closed.length ? `<div class="ml-sec"><span>Closed in ${esc(s.label)}</span><span>${closed.length}</span></div>` + closed.map(d => `
     <div class="ml-row" data-ml-deal="${esc(d.id)}">
@@ -30641,13 +30824,14 @@ function renderMyLeads(){
       <button class="btn btn-mini" type="button" data-ml-bulk="clear" aria-label="Clear selection">✕</button>
     </div>` : '';
   box.innerHTML = viewing + `<div class="ml-head">${soldCard}${pipeCard}</div>` +
-    `<div class="card card-pad">${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${closedHtml}</div>` + bulk;
+    `<div class="card card-pad">${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${lppHtml}${closedHtml}</div>` + bulk;
 }
 
 async function mlAct(kind, id){
   const l = leads.find(x => String(x.id) === String(id));
   if(!l) return;
   if(kind === 'lost'){ if(typeof openDealModal === 'function') openDealModal(l.id, 'lost'); return; }
+  if(kind === 'pp'){ lppOpenStage(l, null); return; }
   if(kind === 'wa' || kind === 'log'){
     // Open WhatsApp first, still inside the click, so the popup is not blocked.
     if(kind === 'wa'){ const wa = leadWhatsAppFor(l); if(!wa.ok){ showToast(leadWhatsAppProblem(wa, l.name, l.phone)); return; }
@@ -30706,15 +30890,277 @@ function renderTeamGrid(){
   box.innerHTML = `<div class="card card-pad ml-grid"><div class="card-head"><div><div class="card-title">Team <em>pipeline</em></div>
     <div class="card-sub">Regular leads (LINE is on JLeads) · click a number to see those leads</div></div></div>
     <div style="overflow-x:auto"><table><thead><tr><th>Rep</th><th class="right">New</th><th class="right">Contacted</th><th class="right">Qualified</th>
-      <th class="right">Due</th><th class="right">Going stale</th><th class="right">Sold this month</th><th class="right">Open / ${LEAD_CAP}</th></tr></thead><tbody>
+      <th class="right">Due</th><th class="right">Going stale</th><th class="right" title="Payment pending: not counted in the limit">Pay pending</th><th class="right">Sold this month</th><th class="right">Open / ${LEAD_CAP}</th></tr></thead><tbody>
     ${g.rows.map(r => `<tr><td><a data-ml-go="${esc(r.email)}" data-ml-focus="">${esc(leadsRepName(r.email))}</a></td>
       ${cell(r.email, 'new', r.new)}${cell(r.email, 'contacted', r.contacted)}${cell(r.email, 'qualified', r.qualified)}
       ${cell(r.email, 'due', r.due)}${cell(r.email, 'stale', r.stale, r.stale ? 'ml-red' : '')}
+      <td class="num right">${r.pp ? `<a data-lpp-go="${esc(r.email)}">${r.pp}</a>` : '0'}</td>
       <td class="right"><b>${mlMoney(r.sold)}</b><div class="name-sub">${r.deals} deal${r.deals === 1 ? '' : 's'}</div></td>
       <td class="right ${r.open >= LEAD_CAP ? 'ml-red' : ''}"><b>${r.open}</b></td></tr>`).join('')}
-    <tr><td>Unassigned</td>${unCell('new')}${unCell('contacted')}${unCell('qualified')}<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>
-    ${team ? `<tr><td><b>Team</b></td><td colspan="5"></td><td class="right"><b>${mlMoney(team.month.closed)}</b><div class="name-sub">${team.month.target != null ? team.month.pct + '% of ' + mlMoney(team.month.target) : 'no team target'}</div></td><td></td></tr>` : ''}
+    <tr><td>Unassigned</td>${unCell('new')}${unCell('contacted')}${unCell('qualified')}<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>
+    ${team ? `<tr><td><b>Team</b></td><td colspan="6"></td><td class="right"><b>${mlMoney(team.month.closed)}</b><div class="name-sub">${team.month.target != null ? team.month.pct + '% of ' + mlMoney(team.month.target) : 'no team target'}</div></td><td></td></tr>` : ''}
     </tbody></table></div></div>`;
+}
+
+/* ---- Payment pending: stage dialog, drawer block, reminders, tab ----
+   Rules live in payment-pending-2026-10-13.sql (pp_* RPCs); the lead-mail Worker sends due reminders
+   from the owner's Gmail every minute. Pure helpers: PAY-PENDING-CORE. */
+const LPP_REM = {};          // lead id → pp_list_reminders rows (newest first)
+let LPP_BOARD = {}, LPP_BOARD_AT = 0, LPP_BOARD_BUSY = false;
+const LPP_FILTERS = { rep: '', when: '', pay: '', days: '' };
+let LPP_TEMPLATES = null;
+const LPP_STAGE = { id: null, onCancel: null };
+const LPPR = { leadId: null, editId: null };
+const LPP_LABEL = { scheduled: 'Scheduled', paused: 'Paused', sending: 'Sending', sent: 'Sent', cancelled: 'Cancelled', failed: 'Failed', paid: 'Paid', replied: 'Customer replied', none: 'No reminder' };
+const LPP_CANCEL_WHY = { rep: 'by rep', paid: 'paid', stage: 'left the stage', won: 'won', replaced: 'replaced', reassigned: 'lead reassigned' };
+function lppPill(key, extra){ return `<span class="lpp-pill ${esc(key)}"${extra ? ` title="${esc(extra)}"` : ''}>${esc(LPP_LABEL[key] || key)}</span>`; }
+function lppWhen(v){ const d = new Date(v); return isNaN(d.getTime()) ? '—' : d.toLocaleString('en-CA', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+function lppErrText(e){ return String((e && e.message) || e || 'Something went wrong').replace(/^pp:\s*/, ''); }
+async function lppRpc(fn, args){
+  const sb = window.vmDb && vmDb.sb;
+  if(!sb) throw new Error('No database connection');
+  const { data, error } = await sb.rpc(fn, args || {});
+  if(error) throw new Error(error.message || 'failed');
+  return data;
+}
+function lppCanAct(l){
+  const v = activeRole() || {};
+  return v.role === 'admin' || (!!v.email && !!l && String(l.claimed_by || '').toLowerCase() === String(v.email).toLowerCase());
+}
+function lppLead(id){ return leads.find(x => String(x.id) === String(id)); }
+// The database stamps pp_state (since / paid / replied): read the row back after a change.
+async function lppRefreshLead(id){
+  if(!(window.vmDb && typeof vmDb.fetchLead === 'function')) return;
+  const fresh = await vmDb.fetchLead(id).catch(() => null);
+  const j = leads.findIndex(x => String(x.id) === String(id));
+  if(fresh && j >= 0) leads[j] = fresh;
+}
+function lppRerender(id){
+  if(_editingLeadId != null && String(_editingLeadId) === String(id)){ const l = lppLead(id); if(l){ fillLeadFields(l); } }
+  renderLeads();
+}
+async function lppLoadReminders(id){
+  try { LPP_REM[id] = await lppRpc('pp_list_reminders', { p_lead_id: id }) || []; }
+  catch(e){ LPP_REM[id] = { error: lppErrText(e) }; }
+  if(_editingLeadId != null && String(_editingLeadId) === String(id)){ const l = lppLead(id); if(l) lppRenderLeadBlock(l); }
+}
+async function lppLoadBoard(force){
+  if(LPP_BOARD_BUSY || (!force && Date.now() - LPP_BOARD_AT < 60000)) return;
+  LPP_BOARD_BUSY = true;
+  try { LPP_BOARD = await lppRpc('pp_board') || {}; LPP_BOARD_AT = Date.now(); }
+  catch(e){ console.warn('pp_board', e); LPP_BOARD_AT = Date.now(); }
+  finally { LPP_BOARD_BUSY = false; }
+  if(leadsViewMode() === 'pp') renderPayPending();
+}
+async function lppTemplates(){
+  if(LPP_TEMPLATES) return LPP_TEMPLATES;
+  try { LPP_TEMPLATES = await lppRpc('pp_templates') || []; } catch(_){ LPP_TEMPLATES = []; }
+  return LPP_TEMPLATES;
+}
+
+// ---- stage dialog
+function lppOpenStage(l, onCancel){
+  LPP_STAGE.id = l.id; LPP_STAGE.onCancel = onCancel || null;
+  const pp = l.pp || {};
+  document.getElementById('lpp-title').textContent = `Payment pending · ${l.name || 'Lead'}`;
+  document.getElementById('lpp-link').value = pp.link || '';
+  document.getElementById('lpp-amount').value = pp.amount != null ? pp.amount : '';
+  document.getElementById('lpp-remind').checked = true;
+  document.getElementById('lpp-error').textContent = '';
+  document.getElementById('lpp-backdrop').classList.add('open');
+  setTimeout(() => document.getElementById('lpp-link').focus(), 30);
+}
+function lppCloseStage(cancelled){
+  document.getElementById('lpp-backdrop').classList.remove('open');
+  if(cancelled && typeof LPP_STAGE.onCancel === 'function') LPP_STAGE.onCancel();
+  LPP_STAGE.id = null; LPP_STAGE.onCancel = null;
+}
+async function lppSaveStage(){
+  const l = lppLead(LPP_STAGE.id); if(!l) return lppCloseStage(true);
+  const err = document.getElementById('lpp-error'), btn = document.getElementById('lpp-save');
+  const link = document.getElementById('lpp-link').value.trim();
+  const rawAmt = document.getElementById('lpp-amount').value.trim(), amount = lppAmount(rawAmt);
+  if(!lppValidLink(link)){ err.textContent = 'Paste the full Ruf payment link (starts with https://).'; return; }
+  if(rawAmt && amount == null){ err.textContent = 'The amount should be a number, like 895.'; return; }
+  const remind = document.getElementById('lpp-remind').checked;
+  btn.disabled = true;
+  try {
+    const patch = { status: LPP_STATUS, pp: { link, amount, by: String((activeRole() || {}).email || '') }, last_touched_at: new Date().toISOString() };
+    const ok = await salesWriteLead(l, patch);
+    if(!ok){ err.textContent = 'Not saved. Check the lead is yours and try again.'; return; }
+    LPP_STAGE.onCancel = null;
+    lppCloseStage(false);
+    await lppRefreshLead(l.id);
+    LPP_REM[l.id] = [];
+    lppRerender(l.id);
+    lppLoadReminders(l.id);
+    LPP_BOARD_AT = 0;
+    showToast('Moved to Payment pending · your lead slot is free');
+    if(remind) lppOpenReminder(lppLead(l.id) || l, null);
+  } finally { btn.disabled = false; }
+}
+
+// ---- reminder form (new or edit)
+async function lppOpenReminder(l, rem){
+  LPPR.leadId = l.id; LPPR.editId = rem ? rem.id : null;
+  const tpls = await lppTemplates();
+  const sel = document.getElementById('lppr-template');
+  sel.innerHTML = tpls.map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('') + '<option value="">Write my own</option>';
+  sel.disabled = !!rem;
+  const vars = { first: lppFirstName(l.name), link: (l.pp && l.pp.link) || '', rep: leadsRepName(l.claimed_by) };
+  const fillFrom = key => {
+    const t = tpls.find(x => x.key === key);
+    document.getElementById('lppr-subject').value = t ? lppFill(t.subject, vars) : '';
+    document.getElementById('lppr-body').value = t ? lppFill(t.body, vars) : (vars.link ? `Here's your payment link: ${vars.link}\n\nBest,` : '');
+  };
+  sel.onchange = () => fillFrom(sel.value);
+  if(rem){
+    sel.value = rem.template_key || '';
+    document.getElementById('lppr-subject').value = rem.subject || '';
+    document.getElementById('lppr-body').value = rem.body || '';
+    document.getElementById('lppr-when').value = lppLocalInput(rem.send_at);
+  } else {
+    sel.value = tpls.length ? tpls[0].key : '';
+    fillFrom(sel.value);
+    document.getElementById('lppr-when').value = lppDefaultSendAt(new Date());
+  }
+  document.getElementById('lppr-title').textContent = rem ? 'Edit payment reminder' : 'Schedule a payment reminder';
+  document.getElementById('lppr-sub').textContent = `${l.name || 'Lead'} · ${l.email || 'no email'} · from ${leadsRepName(l.claimed_by)}'s Gmail`;
+  document.getElementById('lppr-note').textContent = `The email opens with "Hi ${vars.first}," and ends with ${vars.rep}'s name and email, so leave those out. It is not sent if the lead pays, replies, or leaves Payment pending first.`;
+  document.getElementById('lppr-save').textContent = rem ? 'Save changes' : 'Schedule';
+  document.getElementById('lppr-error').textContent = '';
+  document.getElementById('lppr-backdrop').classList.add('open');
+}
+function lppCloseReminder(){ document.getElementById('lppr-backdrop').classList.remove('open'); LPPR.leadId = LPPR.editId = null; }
+async function lppSaveReminder(){
+  const id = LPPR.leadId, err = document.getElementById('lppr-error'), btn = document.getElementById('lppr-save');
+  const subject = document.getElementById('lppr-subject').value.trim(), body = document.getElementById('lppr-body').value;
+  const whenRaw = document.getElementById('lppr-when').value, when = new Date(whenRaw);
+  if(!subject || !body.trim()){ err.textContent = 'Subject and message are required.'; return; }
+  if(!whenRaw || isNaN(when.getTime())){ err.textContent = 'Pick a date and time.'; return; }
+  btn.disabled = true;
+  try {
+    if(LPPR.editId) await lppRpc('pp_update_reminder', { p_id: LPPR.editId, p_subject: subject, p_body: body, p_send_at: when.toISOString() });
+    else await lppRpc('pp_schedule_reminder', { p_lead_id: id, p_template_key: document.getElementById('lppr-template').value || null, p_subject: subject, p_body: body, p_send_at: when.toISOString() });
+    showToast(LPPR.editId ? 'Reminder updated' : `Reminder scheduled for ${lppWhen(when)}`);
+    lppCloseReminder();
+    LPP_BOARD_AT = 0;
+    await lppLoadReminders(id);
+    lppLoadBoard(true);
+  } catch(e){ err.textContent = lppErrText(e); }
+  finally { btn.disabled = false; }
+}
+
+// ---- drawer block
+function lppRenderLeadBlock(l){
+  const el = document.getElementById('lead-pp'); if(!el) return;
+  if(!l || (l.status || 'new') !== LPP_STATUS){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  const pp = l.pp || {}, st = l.pp_state || {}, can = lppCanAct(l), now = Date.now();
+  const days = lppDaysPending(l, now), rems = LPP_REM[l.id];
+  const list = Array.isArray(rems) ? rems : [];
+  const open = list.filter(r => ['scheduled', 'paused', 'sending'].indexOf(r.status) >= 0).sort((a, b) => Date.parse(a.send_at) - Date.parse(b.send_at));
+  const done = list.filter(r => open.indexOf(r) < 0);
+  const paused = open.some(r => r.status === 'paused'), scheduled = open.some(r => r.status === 'scheduled');
+  const paid = st.paid;
+  const remRow = (r) => {
+    const finished = open.indexOf(r) < 0;
+    const when = r.status === 'sent' ? 'sent ' + lppWhen(r.sent_at) : finished ? lppWhen(r.updated_at) : lppWhen(r.send_at);
+    const why = r.status === 'cancelled' ? (LPP_CANCEL_WHY[r.cancel_reason] || r.cancel_reason || '') : r.status === 'failed' ? (r.error || '') : '';
+    const acts = can && (r.status === 'scheduled' || r.status === 'paused')
+      ? `<button class="btn btn-mini" type="button" data-lpp-edit="${esc(r.id)}">Edit</button><button class="btn btn-mini" type="button" data-lpp-cancel="${esc(r.id)}">Cancel</button>` : '';
+    return `<div class="lpp-rem">${lppPill(r.status)}<div class="lpp-rem-main"><b>${esc(r.subject || '')}</b><div class="name-sub">${esc(when)}${why ? ' · ' + esc(why) : ''}${r.attempts && r.status !== 'failed' ? ' · retry ' + r.attempts : ''}</div></div>${acts}</div>`;
+  };
+  el.style.display = '';
+  el.innerHTML = `<div class="lpp-box">
+    <h4><span>Payment pending · <span class="lpp-days ${lppAgeClass(days)}">${days} day${days === 1 ? '' : 's'}</span></span>${paid ? lppPill('paid') : ''}</h4>
+    ${paid ? `<div class="lpp-banner" style="background:rgba(31,157,87,.12)">Paid${paid.amount != null ? ' ' + esc(mlMoney(paid.amount)) : ''} · ${esc(fmtDate(paid.at))} · ${paid.source === 'stripe' ? 'Ruf / Stripe payment from ' + esc(paid.email || 'the lead\'s email') : 'marked by ' + esc(leadsRepName(paid.by)) + (paid.note ? ' (' + esc(paid.note) + ')' : '')}. Press <b>Won</b> (Status) to confirm the booking.</div>` : ''}
+    ${!paid && st.replied_at && paused ? `<div class="lpp-banner">The customer replied ${esc(lppWhen(st.replied_at))} — reminders paused. Read the reply, then Resume or cancel them.</div>` : ''}
+    <div class="lpp-facts">
+      <span>Link: ${pp.link && lppValidLink(pp.link) ? `<a href="${esc(pp.link)}" target="_blank" rel="noopener">${esc(pp.link)}</a> <button class="btn btn-mini" type="button" data-lpp-copy="1">Copy</button>` : '<i>none</i>'}</span>
+      <span>Amount: <b>${pp.amount != null ? esc(mlMoney(pp.amount)) : '—'}</b></span>
+      ${can ? `<span><a href="#" data-lpp-editstage="1">Edit link / amount</a></span>` : ''}
+    </div>
+    ${rems && rems.error ? `<div class="card-sub" style="color:var(--red-dark)">Reminders unavailable: ${esc(rems.error)}</div>` : !rems ? '<div class="card-sub">Loading reminders…</div>'
+      : (open.length || done.length) ? open.map(remRow).join('') + done.map(remRow).join('') : '<div class="card-sub">No reminders yet.</div>'}
+    ${can ? `<div class="lpp-acts">
+      ${paid ? '' : '<button class="btn btn-mini btn-primary" type="button" data-lpp-new="1">Schedule reminder</button>'}
+      ${scheduled ? '<button class="btn btn-mini" type="button" data-lpp-pause="1">Pause all</button>' : ''}
+      ${paused && !paid ? '<button class="btn btn-mini" type="button" data-lpp-resume="1">Resume</button>' : ''}
+      ${paid ? '' : '<button class="btn btn-mini" type="button" data-lpp-paid="1">Mark paid…</button>'}
+    </div>
+    <div id="lpp-paid-form" style="display:none;margin-top:8px" class="lpp-acts">
+      <input class="form-input" id="lpp-paid-amount" inputmode="decimal" placeholder="Amount" style="max-width:120px" value="${pp.amount != null ? esc(pp.amount) : ''}">
+      <input class="form-input" id="lpp-paid-note" placeholder="How (e-Transfer, wire, other card…)" style="max-width:260px">
+      <button class="btn btn-mini btn-primary" type="button" data-lpp-paidsave="1">Confirm paid</button>
+    </div>` : ''}
+  </div>`;
+}
+async function lppBlockClick(e){
+  const l = lppLead(_editingLeadId); if(!l) return;
+  const t = e.target.closest('[data-lpp-new],[data-lpp-edit],[data-lpp-cancel],[data-lpp-pause],[data-lpp-resume],[data-lpp-paid],[data-lpp-paidsave],[data-lpp-copy],[data-lpp-editstage]');
+  if(!t) return;
+  e.preventDefault();
+  try {
+    if(t.dataset.lppCopy){ try { await navigator.clipboard.writeText((l.pp || {}).link || ''); showToast('Link copied'); } catch(_){ showToast('Copy failed — select the link instead'); } return; }
+    if(t.dataset.lppEditstage){ lppOpenStage(l, null); return; }
+    if(t.dataset.lppNew){ lppOpenReminder(l, null); return; }
+    if(t.dataset.lppEdit){ const r = (LPP_REM[l.id] || []).find(x => String(x.id) === t.dataset.lppEdit); if(r) lppOpenReminder(l, r); return; }
+    if(t.dataset.lppPaid){ const f = document.getElementById('lpp-paid-form'); if(f) f.style.display = f.style.display === 'none' ? '' : 'none'; return; }
+    if(t.dataset.lppCancel){
+      // Two-step, no browser dialog: the first click arms the button.
+      if(t.dataset.armed !== '1'){ t.dataset.armed = '1'; t.textContent = 'Confirm cancel'; t.classList.add('btn-primary'); return; }
+      await lppRpc('pp_cancel_reminder', { p_id: t.dataset.lppCancel }); showToast('Reminder cancelled');
+    } else if(t.dataset.lppPause){ const n = await lppRpc('pp_pause_reminders', { p_lead_id: l.id }); showToast(`${n} reminder${n === 1 ? '' : 's'} paused`); }
+    else if(t.dataset.lppResume){ const n = await lppRpc('pp_resume_reminders', { p_lead_id: l.id }); showToast(`${n} reminder${n === 1 ? '' : 's'} resumed`); await lppRefreshLead(l.id); }
+    else if(t.dataset.lppPaidsave){
+      const raw = (document.getElementById('lpp-paid-amount') || {}).value || '', amt = lppAmount(raw);
+      if(raw.trim() && amt == null){ showToast('The amount should be a number'); return; }
+      await lppRpc('pp_mark_paid', { p_lead_id: l.id, p_amount: amt, p_note: ((document.getElementById('lpp-paid-note') || {}).value || '').trim() });
+      showToast('Marked paid · reminders stopped. Press Won to confirm the booking.');
+      await lppRefreshLead(l.id);
+    }
+    LPP_BOARD_AT = 0;
+    await lppLoadReminders(l.id);
+    lppRerender(l.id);
+  } catch(err){ showToast(lppErrText(err)); }
+}
+
+// ---- Payment pending tab
+function renderPayPending(){
+  const box = document.getElementById('leads-pp'); if(!box) return;
+  const admin = leadsIsAdmin(), me = String((activeRole() || {}).email || '').toLowerCase(), now = Date.now();
+  const mine = lppPendingLeads(leads, admin ? null : me);
+  if(Date.now() - LPP_BOARD_AT > 60000) lppLoadBoard(false);
+  const rows = lppFilter(mine.map(l => ({ lead: l, board: LPP_BOARD[l.id] || null })), LPP_FILTERS, now);
+  const unpaid = mine.filter(l => !(l.pp_state && l.pp_state.paid));
+  const total = unpaid.reduce((s, l) => s + (Number(l.pp && l.pp.amount) || 0), 0);
+  const reps = [...new Set(mine.map(l => String(l.claimed_by || '').toLowerCase()).filter(Boolean))].sort();
+  const opt = (v, lab, cur) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`;
+  const filters = `<div class="lpp-filters">
+    ${admin ? `<select class="form-input" data-lpp-f="rep">${opt('', 'All reps', LPP_FILTERS.rep)}${reps.map(e => opt(e, leadsRepName(e), LPP_FILTERS.rep)).join('')}</select>` : ''}
+    <select class="form-input" data-lpp-f="when">${opt('', 'Any reminder date', LPP_FILTERS.when)}${opt('today', 'Reminder today', LPP_FILTERS.when)}${opt('week', 'Reminder in 7 days', LPP_FILTERS.when)}${opt('none', 'No reminder scheduled', LPP_FILTERS.when)}</select>
+    <select class="form-input" data-lpp-f="pay">${opt('', 'Paid or unpaid', LPP_FILTERS.pay)}${opt('unpaid', 'Not paid yet', LPP_FILTERS.pay)}${opt('paid', 'Paid — press Won', LPP_FILTERS.pay)}</select>
+    <select class="form-input" data-lpp-f="days">${opt('', 'Any wait', LPP_FILTERS.days)}${opt('3', 'Waiting 3+ days', LPP_FILTERS.days)}${opt('5', 'Waiting 5+ days', LPP_FILTERS.days)}${opt('7', 'Waiting 7+ days', LPP_FILTERS.days)}</select>
+  </div>`;
+  const body = rows.map(({ lead: l, board: b }) => {
+    const days = lppDaysPending(l, now), rs = lppReminderStatus(l, b), nx = b && b.next, lc = lppLastContact(l), pp = l.pp || {};
+    return `<tr class="${lppAgeClass(days)}" data-lpp-row="${esc(l.id)}" style="cursor:pointer">
+      <td><div class="name-main">${esc(l.name || '—')}</div><div class="name-sub">${esc(l.email || '')}</div></td>
+      <td>${esc(leadsRepName(l.claimed_by))}</td>
+      <td class="right">${pp.amount != null ? esc(mlMoney(pp.amount)) : '—'}</td>
+      <td>${pp.link && lppValidLink(pp.link) ? `<a class="lpp-link" href="${esc(pp.link)}" target="_blank" rel="noopener">${esc(pp.link.replace(/^https?:\/\//, ''))}</a>` : '—'}</td>
+      <td class="right"><span class="lpp-days ${lppAgeClass(days)}">${days}</span></td>
+      <td>${nx ? esc(lppWhen(nx.send_at)) + (nx.status === 'paused' ? ' <span class="name-sub">(paused)</span>' : '') : '—'}</td>
+      <td>${lc ? esc(mlAgo(now - lc)) + ' ago' : '—'}</td>
+      <td>${lppPill(rs.key, rs.reason || '')}${b && b.sent ? `<div class="name-sub">${b.sent} sent</div>` : ''}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<div class="card card-pad"><div class="card-head"><div><div class="card-title">Payment <em>pending</em></div>
+    <div class="card-sub">${mine.length} lead${mine.length === 1 ? '' : 's'} · ${unpaid.length} not paid${total ? ' · ' + esc(mlMoney(total)) + ' pending' : ''} · not counted in the ${LEAD_CAP}-lead limit · tinted at 3, 5 and 7 days</div></div></div>
+    ${filters}
+    ${rows.length ? `<div style="overflow-x:auto"><table class="lpp-table"><thead><tr><th>Customer</th><th>Sales rep</th><th class="right">Amount pending</th><th>Payment link</th><th class="right">Days pending</th><th>Next reminder</th><th>Last contact</th><th>Reminder status</th></tr></thead><tbody>${body}</tbody></table></div>`
+      : `<div class="card-sub" style="padding:8px 2px">${mine.length ? 'No leads match these filters.' : 'No leads in Payment pending. Move a lead here from its Status when the customer has the payment link.'}</div>`}
+  </div>`;
 }
 
 function renderLeads(){
@@ -30724,6 +31170,7 @@ function renderLeads(){
   renderLeadsChrome(mode);
   if(mode === 'mine') renderMyLeads();
   else if(mode === 'team') renderTeamGrid();
+  else if(mode === 'pp') renderPayPending();
   const list = applyLeadFilters();
   const countEl = document.getElementById('leads-count');
   if(countEl) countEl.textContent = list.length;
@@ -30759,6 +31206,7 @@ function renderLeads(){
     if(cur){
       renderLeadClaimBlock(cur);
       renderLeadTaylor(cur);
+      lppRenderLeadBlock(cur);
       const asSel = document.getElementById('lead-assignee');
       if(asSel && cur.assignee && asSel.dataset.synced !== cur.assignee){
         asSel.value = cur.assignee; asSel.dataset.synced = cur.assignee;
@@ -31725,6 +32173,7 @@ function fillLeadFields(l){
   wireLeadWhatsApp(l);
   renderLeadClaimBlock(l);
   renderLeadTaylor(l);
+  lppRenderLeadBlock(l);
 }
 
 /* === Email a lead from the drawer, as the rep, through their own Gmail ===
@@ -32567,6 +33016,7 @@ function openLead(id){
   if(typeof renderJLeadChat === 'function') renderJLeadChat(l);
   if(typeof leadMailReset === 'function') leadMailReset(l);
   if(typeof ctRenderLeadContracts === 'function') ctRenderLeadContracts(l);
+  if((l.status || 'new') === LPP_STATUS){ delete LPP_REM[l.id]; lppRenderLeadBlock(l); lppLoadReminders(l.id); }
   document.getElementById('lead-modal-backdrop').classList.add('open');
 }
 
@@ -32637,6 +33087,8 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     const t = e.target.closest('[data-lv]');
     if(t){ leadsSetMode(t.dataset.lv, '', ''); return; }
     if(e.target.closest('[data-lv-clear]')){ LEAD_VIEW.focus = ''; renderLeads(); return; }
+    const lppGo = e.target.closest('[data-lpp-go]');
+    if(lppGo){ LPP_FILTERS.rep = lppGo.dataset.lppGo; leadsSetMode('pp', '', ''); return; }
     const go = e.target.closest('[data-ml-go]');
     if(go){ leadsSetMode('mine', go.dataset.mlGo, go.dataset.mlFocus || ''); return; }
     if(e.target.closest('[data-ml-un]')){
@@ -32646,6 +33098,7 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     }
     const mine = e.target.closest('#leads-mine');
     if(!mine) return;
+    if(e.target.closest('[data-ml-st]')) return;
     const chk = e.target.closest('[data-ml-check]');
     if(chk){ chk.checked ? ML_SEL.add(chk.dataset.mlCheck) : ML_SEL.delete(chk.dataset.mlCheck); renderMyLeads(); return; }
     const all = e.target.closest('[data-ml-all]');
@@ -32662,6 +33115,7 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     const row = e.target.closest('[data-ml-lead]');
     if(row) openLead(row.dataset.mlLead);
   });
+  sec.addEventListener('change', e => { const st = e.target.closest('[data-ml-st]'); if(st) mlStatusChange(st); });
   const as = document.getElementById('leads-view-as');
   if(as) as.addEventListener('change', () => { if(as.value) leadsSetMode('mine', as.value, ''); else leadsSetMode('team', '', ''); });
 })();
@@ -32687,6 +33141,14 @@ document.getElementById('lead-deal-btn') && document.getElementById('lead-deal-b
 // qualified lead always has an expected fee and a won one its rent/months/fee.
 document.getElementById('lead-status') && document.getElementById('lead-status').addEventListener('change', e => {
   const sel = e.target, next = sel.value, prev = sel.dataset.prev || 'new';
+  // Payment pending asks for the Ruf link and saves at once (the drawer Save is not needed).
+  if(next === LPP_STATUS && next !== prev){
+    const pl = leads.find(x => String(x.id) === String(_editingLeadId));
+    if(!pl) return;
+    if(!lppCanAct(pl)){ showToast('Claim this lead first'); sel.value = prev; return; }
+    lppOpenStage(pl, () => { sel.value = prev; });
+    return;
+  }
   if(!['qualified', 'won', 'lost'].includes(next) || next === prev || typeof openDealModal !== 'function'){ sel.dataset.prev = next; return; }
   const l = leads.find(x => String(x.id) === String(_editingLeadId));
   if(!l) return;
@@ -32695,6 +33157,25 @@ document.getElementById('lead-status') && document.getElementById('lead-status')
   if(st.state !== 'mine' && !admin){ showToast('Claim this lead first'); sel.value = prev; return; }
   openDealModal(l.id, next, () => { sel.value = prev; });
 });
+(function lppWire(){
+  const on = (id, ev, fn) => { const el = document.getElementById(id); if(el) el.addEventListener(ev, fn); };
+  on('lpp-close', 'click', () => lppCloseStage(true));
+  on('lpp-cancel', 'click', () => lppCloseStage(true));
+  on('lpp-save', 'click', lppSaveStage);
+  on('lpp-backdrop', 'click', e => { if(e.target.id === 'lpp-backdrop') lppCloseStage(true); });
+  on('lppr-close', 'click', lppCloseReminder);
+  on('lppr-cancel', 'click', lppCloseReminder);
+  on('lppr-save', 'click', lppSaveReminder);
+  on('lppr-backdrop', 'click', e => { if(e.target.id === 'lppr-backdrop') lppCloseReminder(); });
+  on('lead-pp', 'click', lppBlockClick);
+  on('leads-pp', 'change', e => { const f = e.target.closest('[data-lpp-f]'); if(f){ LPP_FILTERS[f.dataset.lppF] = f.value; renderPayPending(); } });
+  on('leads-pp', 'click', e => { if(e.target.closest('a')) return; const r = e.target.closest('[data-lpp-row]'); if(r) openLead(r.dataset.lppRow); });
+  document.addEventListener('keydown', e => {
+    if(e.key !== 'Escape') return;
+    if(document.getElementById('lppr-backdrop').classList.contains('open')) lppCloseReminder();
+    else if(document.getElementById('lpp-backdrop').classList.contains('open')) lppCloseStage(true);
+  });
+})();
 document.getElementById('lead-email-btn')     && document.getElementById('lead-email-btn').addEventListener('click', () => {
   const l = leads.find(x => String(x.id) === String(_editingLeadId));
   if(l) leadMailToggle(l);
@@ -41870,8 +42351,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-13-countries2"></script>
-<script src="extensions.js?v=2026-10-13-countries2"></script>
-<script src="ap.js?v=2026-10-13-countries2"></script>
+<script src="room-changes.js?v=2026-10-13-paypend1"></script>
+<script src="extensions.js?v=2026-10-13-paypend1"></script>
+<script src="ap.js?v=2026-10-13-paypend1"></script>
 </body>
 </html>
