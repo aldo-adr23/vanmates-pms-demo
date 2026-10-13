@@ -103,7 +103,7 @@
     font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;
     color:var(--muted);margin:18px 10px 6px;font-weight:700
   }
-  .nav-group:not(:has(.nav-item:not(.role-hidden):not([hidden]))){display:none}
+  .nav-group:not(:has(.nav-item:not(.role-hidden):not(.country-hidden):not([hidden]))){display:none}
   .nav-item{
     display:flex;align-items:center;gap:11px;
     padding:10px 12px;border-radius:10px;color:var(--ink);
@@ -1273,6 +1273,22 @@
 
   /* Hidden nav items for restricted roles */
   .nav-item.role-hidden{display:none !important}
+  /* Countries (2026-10-13): Canada / Mexico are two operating environments in one portal. */
+  .nav-item.country-hidden{display:none !important}
+  .vmc-switch{position:relative;display:inline-flex}
+  .vmc-btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface,var(--card,#fff));color:var(--ink);font:600 12.5px/1 inherit;cursor:pointer;white-space:nowrap}
+  .vmc-btn[disabled]{cursor:default;opacity:1}
+  .vmc-btn .vmc-caret{font-size:10px;color:var(--muted)}
+  .vmc-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:200px;background:var(--surface,var(--card,#fff));border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.14);padding:6px;z-index:60;display:none}
+  .vmc-menu.open{display:block}
+  .vmc-menu button{display:flex;width:100%;align-items:center;gap:8px;padding:9px 10px;border:0;background:none;border-radius:8px;color:var(--ink);font:500 13px/1.2 inherit;text-align:left;cursor:pointer}
+  .vmc-menu button:hover,.vmc-menu button.on{background:var(--cream-2,rgba(0,0,0,.05))}
+  .vmc-menu button .vmc-sub{display:block;font-size:11px;color:var(--muted);font-weight:400}
+  .vmc-banner{margin:4px 12px 10px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px}
+  .vmc-banner .vmc-sub{font-weight:400;color:var(--muted);font-size:11px}
+  html[data-country="MX"] .vmc-banner{border-color:#2e7d4f;background:rgba(46,125,79,.08)}
+  .vmc-pick{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+  @media (max-width:640px){ .vmc-btn .vmc-name{display:none} .vmc-pick{grid-template-columns:1fr} }
   .view.role-hidden{display:none !important}
 
   /* Team cards */
@@ -1605,7 +1621,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-luattach3"></script>
+<script src="pms-supabase.js?v=2026-10-13-countries2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1628,6 +1644,7 @@
     </div>
 
     <div class="sidebar-scroll">
+    <div class="vmc-banner" id="vmc-banner"><span id="vmc-banner-flag">🇨🇦</span><div><div id="vmc-banner-name">Vanmates Canada</div><div class="vmc-sub" id="vmc-banner-sub">CAD · Vancouver, Toronto, Montréal</div></div></div>
     <!-- Sidebar groups (sidebar-groups 2026-10-12): a group whose items are all role-hidden hides its heading too (CSS :has). -->
     <div class="nav-group">
     <div class="nav-section-label">Overview</div>
@@ -1840,6 +1857,12 @@
       <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open menu">
         <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
+      <div class="vmc-switch" id="vmc-switch">
+        <button class="vmc-btn" id="vmc-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Switch country">
+          <span id="vmc-flag">🇨🇦</span><span class="vmc-name" id="vmc-name">Canada</span><span class="vmc-caret" id="vmc-caret">▾</span>
+        </button>
+        <div class="vmc-menu" id="vmc-menu" role="menu"></div>
+      </div>
       <button class="currency-pill" id="currency-toggle" title="Switch currency">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         <span class="ccy" id="currency-label">CAD</span>
@@ -4524,6 +4547,16 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
           Choose a preset above and we'll pre-check the right pages — or customize freely.
         </div>
       </div>
+      <div class="form-field" style="margin-top:14px">
+        <label style="margin-bottom:8px">Countries this person works in <span class="req">*</span></label>
+        <div id="edit-member-countries" class="vmc-pick">
+          <label class="role-option"><input type="checkbox" name="countries" value="CA" /><div class="meta"><div class="nm" style="font-size:12.5px">🇨🇦 Vanmates Canada</div></div></label>
+          <label class="role-option"><input type="checkbox" name="countries" value="MX" /><div class="meta"><div class="nm" style="font-size:12.5px">🇲🇽 Vanmates Mexico</div></div></label>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">
+          Someone with only Mexico sees no Canadian data at all (enforced by the database) and only the Mexico pages: Dashboard, Leads, Tenants, Properties &amp; Rooms, Vacancies. Admins always see both.
+        </div>
+      </div>
     </form>
     <div class="modal-foot">
       <button type="button" class="btn btn-ghost" id="edit-member-cancel">Cancel</button>
@@ -4822,6 +4855,16 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
         <div id="invite-pages" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px"></div>
         <div style="font-size:11.5px;color:var(--muted);margin-top:8px">
           Choose a preset above and we'll pre-check the right pages — or customize freely.
+        </div>
+      </div>
+      <div class="form-field" style="margin-top:14px">
+        <label style="margin-bottom:8px">Countries this person works in <span class="req">*</span></label>
+        <div id="invite-countries" class="vmc-pick">
+          <label class="role-option"><input type="checkbox" name="countries" value="CA" /><div class="meta"><div class="nm" style="font-size:12.5px">🇨🇦 Vanmates Canada</div></div></label>
+          <label class="role-option"><input type="checkbox" name="countries" value="MX" /><div class="meta"><div class="nm" style="font-size:12.5px">🇲🇽 Vanmates Mexico</div></div></label>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">
+          Someone with only Mexico sees no Canadian data at all (enforced by the database) and only the Mexico pages: Dashboard, Leads, Tenants, Properties &amp; Rooms, Vacancies. Admins always see both.
         </div>
       </div>
 
@@ -6638,7 +6681,7 @@ function shade(hex, p){
   r = Math.max(0,Math.min(255,r)); g = Math.max(0,Math.min(255,g)); b = Math.max(0,Math.min(255,b));
   return "#" + ((r<<16)|(g<<8)|b).toString(16).padStart(6,"0");
 }
-function fmt(n){ const neg = (+n < 0); return (neg ? "-$" : "$") + Math.abs(Number(n)||0).toLocaleString(); }
+function fmt(n){ const neg = (+n < 0), sym = window.__vmcSym || "$"; return (neg ? "-" : "") + sym + Math.abs(Number(n)||0).toLocaleString(); }
 // ---- shared safety helpers (added in bug-fix pass) ----
 // HTML-escape any value before interpolating it into innerHTML (safe for both
 // element-body and double/single-quoted attribute contexts).
@@ -8889,6 +8932,7 @@ function buildRolePicker(){
 function openInviteMember(){
   const modal = document.getElementById("invite-backdrop");
   document.getElementById("invite-form").reset();
+  vmcSetPicker("invite-countries", [window.vmCountry ? vmCountry.current() : "CA"]);
   document.getElementById("invite-error").classList.remove("show");
   buildRolePicker();
   // Populate property dropdown
@@ -9086,6 +9130,7 @@ function openEditMember(member){
     ).join("");
 
   buildEditRolePicker(member.role || "ops", member.allowed_pages);
+  vmcSetPicker("edit-member-countries", member.countries);
 
   const modal = document.getElementById("edit-member-backdrop");
   modal.classList.add("open");
@@ -9135,6 +9180,8 @@ document.getElementById("edit-member-form").addEventListener("submit", async e =
   if(!name){ failEdit("Name can't be empty."); return; }
   if(pages.length === 0){ failEdit("Pick at least one page this person can access."); return; }
   if(role === "property" && !assigned){ failEdit("Property Managers need an assigned property."); return; }
+  const countries = vmcPicked(data);
+  if(countries.length === 0){ failEdit("Pick at least one country (Canada or Mexico)."); return; }
 
   const m = _editingMember;
   const memberDbId = m.id_db || m.id; // hydrated rows have id_db (real auth.users uuid)
@@ -9152,6 +9199,7 @@ document.getElementById("edit-member-form").addEventListener("submit", async e =
         allowed_pages: role === "admin" ? null : pages,
         assigned_property: role === "property" ? (assigned || null) : null,
       };
+      if (window.VM_COUNTRY_READY) update.countries = countries;
       console.log("[edit-member] updating", memberDbId, update);
       const { error } = await window.vmDb.sb
         .from('team_members')
@@ -9170,6 +9218,9 @@ document.getElementById("edit-member-form").addEventListener("submit", async e =
     m.role = role;
     m.allowed_pages = role === "admin" ? null : pages;
     m.assigned = role === "property" ? (assigned || null) : null;
+    m.countries = countries;
+    // The database holds a Mexico-only teammate to the Mexico pages; mirror that here.
+    if (role !== "admin" && !countries.includes("CA")) m.allowed_pages = pages.filter(p => VMC_MX_PAGES.includes(p));
 
     // Re-derive initials
     const parts = (m.name || "").split(/\s+/).filter(Boolean);
@@ -9239,6 +9290,8 @@ document.getElementById("invite-form").addEventListener("submit", e => {
   if(role === "property" && !assigned) {
     failInvite("Property Managers need an assigned property."); return;
   }
+  const countries = vmcPicked(data);
+  if(countries.length === 0){ failInvite("Pick at least one country (Canada or Mexico)."); return; }
   // Don't allow inviting an email that already exists
   const existing = teamMembers.find(m => m.email.toLowerCase() === email.toLowerCase()) ||
                    pendingInvites.find(i => i.email.toLowerCase() === email.toLowerCase());
@@ -9278,6 +9331,7 @@ document.getElementById("invite-form").addEventListener("submit", e => {
             title: title || roles[role].label,
             pages: pages || [],
             assigned_property: role === "property" ? assigned : null,
+            ...(window.VM_COUNTRY_READY ? { countries } : {}),
             invited_by: CURRENT_USER?.id_db || null,
             status: 'sent',
             sent_at: new Date().toISOString(),
@@ -9429,6 +9483,8 @@ function showHrNavIfAllowed(){
 }
 function applyRolePermissions(){
   if (typeof showHrNavIfAllowed === "function") showHrNavIfAllowed();
+  // Countries: the teammate (or the View-as preview) decides which countries the switcher offers.
+  if (typeof window !== 'undefined' && window.vmCountry) setTimeout(() => { try { const moved = vmCountry.partition(); vmCountry.applyChrome(); if (moved) vmCountry.rerender(); } catch (e) { console.warn('[vmCountry]', e.message); } }, 0);
   const u = activeRole() || signedOutUser();
 
   if (!u.email) {
@@ -10477,7 +10533,7 @@ const VAC_TYPE_LABEL = { standard: 'Standard', master: 'Master', flex: 'Flex', w
 const VAC_CITY_LABEL = { vancouver: 'Vancouver', toronto: 'Toronto', montreal: 'Montreal' };
 const VAC_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function vacTodayIn(city, now){
-  return new Date(now).toLocaleDateString('en-CA', { timeZone: /toronto|montreal/i.test(String(city || '')) ? 'America/Toronto' : 'America/Vancouver' });
+  return new Date(now).toLocaleDateString('en-CA', { timeZone: /toronto|montreal/i.test(String(city || '')) ? 'America/Toronto' : /guadalajara|zapopan|jalisco|m[eé]xico/i.test(String(city || '')) ? 'America/Mexico_City' : 'America/Vancouver' });
 }
 function vacDays(a, b){ return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000); }
 function vacAddDays(iso, n){ return new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10); }
@@ -10582,21 +10638,33 @@ function vacPricedAbove(model){
     .filter(x => x.n >= 3 && x.v.rent >= x.mid * 1.1)
     .sort((a, b) => b.v.rent / b.mid - a.v.rent / a.mid);
 }
-function vacRoomUrl(v){ return 'https://vanmates.com/room?id=' + encodeURIComponent(v.gid); }
+function vacRoomUrl(v){ return v.gid ? 'https://vanmates.com/room?id=' + encodeURIComponent(v.gid) : 'https://vanmates.com.mx/inventario'; }
 function vacAsanaUrl(v){ return 'https://app.asana.com/0/' + (v.projectGid || '0') + '/' + v.gid; }
 function vacShareText(v){
   const house = v.prop && v.room.toLowerCase().indexOf(v.prop.toLowerCase()) === -1 ? ' at ' + v.prop : '';
   return 'Hi! This room is free ' + (v.emptyNow ? 'now' : 'from ' + vacDay(v.from)) + ':\n\n'
     + v.room + house + ' (' + v.city + ')\n'
-    + (v.rent != null ? '$' + v.rent.toLocaleString('en-US') + ' / month, ' : '') + (VAC_TYPE_LABEL[v.type] ? v.typeLabel.toLowerCase() + ' room' : 'room') + '\n\n'
+    + (v.rent != null ? (v.opCountry === 'MX' ? 'MX$' : '$') + v.rent.toLocaleString('en-US') + ' / month, ' : '') + (VAC_TYPE_LABEL[v.type] ? v.typeLabel.toLowerCase() + ' room' : 'room') + '\n\n'
     + 'Photos and booking: ' + vacRoomUrl(v) + '\n\nWant me to hold it for you?';
 }
 /* VAC-CORE-END */
 const VAC_STATE = { tab: 'find', f: { q: '', moveIn: '', maxRent: '', city: '', types: [] }, model: null, cases: {}, hist: null, loadedAt: 0, err: '' };
 let vacLoading = null;
 async function loadVacancies(force){
+  const vc = window.vmCountry ? window.vmCountry.current() : 'CA';
+  // Mexico has no Asana inventory: its vacancies come from the portal's own rooms and leases
+  // (the visible properties/tenants arrays hold Mexico only while Mexico is selected).
+  if (vc === 'MX') {
+    VAC_STATE.model = vmcVacFromPortal(properties, tenants, Date.now());
+    VAC_STATE.country = 'MX'; VAC_STATE.cases = {}; VAC_STATE.hist = null; VAC_STATE.histErr = 'mx';
+    VAC_STATE.err = ''; VAC_STATE.loadedAt = Date.now();
+    vacancies.splice(0, vacancies.length, ...VAC_STATE.model.filter(v => v.listable));
+    if (typeof updateSidebarCounts === 'function') updateSidebarCounts();
+    renderVacancies();
+    return;
+  }
   if (vacLoading) return vacLoading;
-  if (VAC_STATE.model && !force) { renderVacancies(); return; }
+  if (VAC_STATE.model && !force && VAC_STATE.country === 'CA') { renderVacancies(); return; }
   const sb = window.vmDb && window.vmDb.sb;
   if (!sb) { VAC_STATE.err = 'Not connected to the database.'; renderVacancies(); return; }
   vacLoading = (async () => {
@@ -10607,7 +10675,10 @@ async function loadVacancies(force){
         sb.from('checkout_events').select('case_id,at,after').eq('type', 'room_release').gte('at', new Date(Date.now() - 120 * 86400000).toISOString()).order('at', { ascending: false }),
         sb.rpc('vacancy_history_summary')
       ]);
+      // Switched to Mexico while this was loading: leave Mexico's model alone.
+      if (window.vmCountry && window.vmCountry.current() !== 'CA') return;
       VAC_STATE.model = vacFromInventory(rooms, props, Date.now());
+      VAC_STATE.country = 'CA';
       // Latest open checkout per Asana room, for Turnover.
       const byGid = {};
       ((rel && rel.data) || []).forEach(e => { const g = e.after && e.after.match === 'exact' && e.after.asana_gid; if (g && !byGid[g]) byGid[g] = e.case_id; });
@@ -10629,7 +10700,7 @@ async function loadVacancies(force){
   })();
   return vacLoading;
 }
-function vacMoney(n){ return n == null ? '—' : '$' + Number(n).toLocaleString('en-US'); }
+function vacMoney(n){ return n == null ? '—' : (window.__vmcSym || '$') + Number(n).toLocaleString('en-US'); }
 function vacWhen(v){ return v.emptyNow ? 'Available now' : 'From ' + vacDay(v.from) + (v.approx ? ' (approx.)' : ''); }
 function renderVacancies(){
   const root = document.getElementById('vac-root'); if (!root) return;
@@ -10637,7 +10708,7 @@ function renderVacancies(){
   const M = VAC_STATE.model;
   if (sync) {
     const newest = M && M.reduce((a, v) => (v.syncedAt && v.syncedAt > a ? v.syncedAt : a), '');
-    sync.textContent = VAC_STATE.err ? VAC_STATE.err : !M ? 'Loading the inventory…' : `Live from Asana · last change synced ${vacAgo(newest, Date.now())} · ${M.filter(v => v.listable).length} rooms available now or later`;
+    sync.textContent = VAC_STATE.err ? VAC_STATE.err : !M ? 'Loading the inventory…' : VAC_STATE.country === 'MX' ? `Vanmates Mexico · from the portal's rooms and leases · ${M.filter(v => v.listable).length} rooms available now or in the next 60 days` : `Live from Asana · last change synced ${vacAgo(newest, Date.now())} · ${M.filter(v => v.listable).length} rooms available now or later`;
   }
   document.querySelectorAll('#vac-tabs [data-vac-tab]').forEach(t => { const on = t.dataset.vacTab === VAC_STATE.tab; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
   if (!M) { root.innerHTML = VAC_STATE.err ? `<p class="name-sub">${esc(VAC_STATE.err)}</p>` : '<p class="name-sub">Loading…</p>'; return; }
@@ -10722,7 +10793,7 @@ function vacRenderTurnover(root, M){
   root.querySelectorAll('[data-vac-open]').forEach(x => x.addEventListener('click', e => { if (e.target.closest('a')) return; openVacancy(x.dataset.vacOpen); }));
 }
 function vacRenderOverview(root, M){
-  const O = vacOverview(M, vacTodayIn('Vancouver', Date.now())), T = vacRentTable(M), above = vacPricedAbove(M), H = VAC_STATE.hist;
+  const O = vacOverview(M, vacTodayIn(VAC_STATE.country === 'MX' ? 'Guadalajara' : 'Vancouver', Date.now())), T = vacRentTable(M), above = vacPricedAbove(M), H = VAC_STATE.hist;
   const maxW = Math.max(1, ...O.weeks.map(w => w.n));
   const lo = T.rows.length ? Math.min(...T.rows.map(r => r.low)) : 0, hi = T.rows.length ? Math.max(...T.rows.map(r => r.high)) : 1;
   const pos = x => ((x - lo) / Math.max(1, hi - lo) * 100).toFixed(1);
@@ -10756,7 +10827,7 @@ function vacRenderOverview(root, M){
         <div><div class="card-title">Priced above <em>similar rooms</em></div><div class="card-sub">Empty rooms at least 10% over the typical rent for the same type in the same building.</div></div>
         ${above.length ? above.map(x => `<div data-vac-open="${esc(x.v.id)}" style="border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:10px;padding:8px 10px;cursor:pointer"><div class="name-main" style="font-size:13px">${esc(x.v.room)}</div><div class="name-sub">${esc(x.v.prop)} · ${esc(x.v.typeLabel.toLowerCase())} · ${vacMoney(x.v.rent)} vs typical ${vacMoney(x.mid)} (${x.n} rooms)</div><div class="name-sub" style="color:var(--amber)">Empty since ${esc(vacDay(x.v.from))}</div></div>`).join('') : '<div class="name-sub">None right now.</div>'}
         <div style="border-top:1px solid var(--line);padding-top:12px"><div class="card-title">Days <em>to fill</em></div>
-        ${!H ? `<div class="card-sub">${VAC_STATE.histErr && !/vacancy_history_summary|does not exist|schema cache/i.test(VAC_STATE.histErr) ? 'Could not load the room history: ' + esc(VAC_STATE.histErr) : 'Room history is not set up yet (run vacancies-live-2026-10-04.sql).'}</div>`
+        ${!H ? `<div class="card-sub">${VAC_STATE.histErr === 'mx' ? 'Room history comes from the Canadian Asana inventory; Mexico does not have it yet.' : VAC_STATE.histErr && !/vacancy_history_summary|does not exist|schema cache/i.test(VAC_STATE.histErr) ? 'Could not load the room history: ' + esc(VAC_STATE.histErr) : 'Room history is not set up yet (run vacancies-live-2026-10-04.sql).'}</div>`
           : H.days < 21 ? `<div class="card-sub">Collecting: ${H.days} of 21 days of room history so far. Numbers show from about ${esc(vacDay(vacAddDays(String(H.since).slice(0, 10), 21)))}.</div>`
           : `<div class="card-sub">Last 90 days · ${H.fills} room${H.fills === 1 ? '' : 's'} filled</div><div class="kpi-value">${H.avg_days == null ? '—' : esc(String(H.avg_days)) + ' days'}</div>
              ${(H.slow || []).length ? `<div class="name-sub">Slowest: ${(H.slow || []).map(s => `${esc(s.building)} ${esc(String(s.avg))} d`).join(' · ')}</div>` : ''}`}
@@ -10777,7 +10848,7 @@ function openVacancy(id){
   const body = document.getElementById('panel-body');
   body.innerHTML = `
     <div class="panel-kpis">
-      <div class="panel-kpi"><div class="l">Monthly rent</div><div class="v">${vacMoney(v.rent)}</div><div class="s">CAD · per month</div></div>
+      <div class="panel-kpi"><div class="l">Monthly rent</div><div class="v">${vacMoney(v.rent)}</div><div class="s">${v.opCountry === 'MX' ? 'MXN' : 'CAD'} · per month</div></div>
       <div class="panel-kpi"><div class="l">Available</div><div class="v" style="font-size:18px;line-height:1.1">${esc(v.emptyNow ? 'Now' : vacDay(v.from))}</div><div class="s">${v.until ? 'until ' + esc(vacDay(v.until)) : v.emptyNow ? `empty ${v.daysEmpty} day${v.daysEmpty === 1 ? '' : 's'}` : ''}</div></div>
     </div>
     <div class="list-row"><div class="list-main"><div class="list-title">Address</div><div class="list-sub">${esc(v.addr || '—')}</div></div></div>
@@ -10787,7 +10858,7 @@ function openVacancy(id){
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button type="button" class="btn btn-primary" id="vac-copy-msg">Copy message</button>
       <button type="button" class="btn" id="vac-copy-link">Copy room link</button>
-      <a class="btn" href="${esc(vacAsanaUrl(v))}" target="_blank" rel="noopener">Open in Asana</a>
+      ${v.gid ? `<a class="btn" href="${esc(vacAsanaUrl(v))}" target="_blank" rel="noopener">Open in Asana</a>` : ''}
       ${v.pictures ? `<a class="btn" href="${esc(v.pictures)}" target="_blank" rel="noopener">All photos</a>` : ''}
     </div>`;
   const copy = (text, sel) => {
@@ -16790,15 +16861,16 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
   // Branch: add new vs update existing
   let target;
   if (_isAddingProperty) {
-    // Add mode — make sure the name doesn't collide with an existing property
-    if (properties.find(p => p.name === name)) {
+    // Add mode — make sure the name doesn't collide with an existing property. Properties are
+    // keyed by name in BOTH countries, so check the other country's too (vmCountry.all).
+    if ((window.vmCountry ? vmCountry.all("properties") : properties).find(p => p.name === name)) {
       failEdit(`A property called "${name}" already exists. Pick a different name.`);
       return;
     }
     const palette = ["#A88965","#B0855A","#9b6b53","#C19A6B","#8E6F4A","#7d6041","#6E5236","#A6724E","#D17262","#5C8A6B","#3F6E94","#C8923A","#8A7B6C"];
     target = {
       name,
-      city: city || "Vancouver",
+      city: city || (window.vmCountry && vmCountry.current() === "MX" ? "Guadalajara" : "Vancouver"),
       addr: addr || (city ? city + ", —" : "—"),
       type: type || "Co-living",
       rooms: isNaN(rooms) ? 1 : rooms,
@@ -16813,7 +16885,7 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
     if(!target){ failEdit("Couldn't find this property — please reload."); return; }
     // If user is renaming, check for collisions + propagate to tenants
     if(name !== originalName){
-      const dup = properties.find(p => p.name === name);
+      const dup = (window.vmCountry ? vmCountry.all("properties") : properties).find(p => p.name === name);
       if(dup){ failEdit(`Another property already uses the name "${name}".`); return; }
       if(!confirm(`Renaming "${originalName}" to "${name}" will also update the property field on every tenant linked to it. Continue?`)) return;
       _renamedFrom = originalName;
@@ -19827,6 +19899,13 @@ if(_origGoToView){
     if (tmErr && /can_approve_refunds/.test(tmErr.message || '')) {
       ({ data: tms, error: tmErr } = await sb.from('team_members').select(TM_COLS));
     }
+    // Countries (countries-2026-10-13.sql). Read on their own so the team still loads before
+    // that SQL runs (then everyone is Canada).
+    const tmCountries = {};
+    if (!tmErr) {
+      const { data: tc, error: tcErr } = await sb.from('team_members').select('id,countries');
+      if (!tcErr && Array.isArray(tc)) tc.forEach(r => { tmCountries[r.id] = r.countries; });
+    }
     if (tmErr) {
       console.warn("[hydrateTeam] team_members error:", tmErr);
     } else if (Array.isArray(tms)) {
@@ -19846,6 +19925,7 @@ if(_origGoToView){
           avatar_url: row.avatar_url || existing?.avatar_url || null,
           allowed_pages: row.allowed_pages,  // NULL or array
           can_approve_refunds: row.can_approve_refunds === true,  // checkout money steps (vm_is_finance)
+          countries: Array.isArray(tmCountries[row.id]) && tmCountries[row.id].length ? tmCountries[row.id] : ["CA"],
           ini:      existing?.ini || initials,
           lastLogin: existing?.lastLogin || "today",
         };
@@ -30467,7 +30547,7 @@ function renderLeadsChrome(mode){
 const ML_SEL = new Set();
 let ML_GROUPS = {};   // section key → lead ids, for the section's select-all box
 function mlAgo(ms){ const h = Math.max(0, Math.floor(ms / 36e5)); return h < 24 ? h + ' h' : Math.floor(h / 24) + ' d' + (h % 24 ? ' ' + (h % 24) + ' h' : ''); }
-function mlMoney(n){ return '$' + Math.round(Number(n) || 0).toLocaleString('en-CA'); }
+function mlMoney(n){ return (window.__vmcSym || '$') + Math.round(Number(n) || 0).toLocaleString('en-CA'); }
 function mlRow(l, now, today){
   const st = l.status || 'new', act = leadLastActivity(l), rel = leadReleaseAt(l);
   let sub = `${leadSourceLabel(l.source)} · ${st === 'new' ? 'claimed' : 'last activity'} ${act ? mlAgo(now - act) + ' ago' : '—'}`;
@@ -31488,7 +31568,7 @@ function leadWhen(iso){
 // display currency and quietly restate what they asked for.
 function leadMoney(v){
   const s = String(v).trim();
-  return /^\d+(\.\d+)?$/.test(s) ? '$' + Number(s).toLocaleString('en-US') : s;
+  return /^\d+(\.\d+)?$/.test(s) ? (window.__vmcSym || '$') + Number(s).toLocaleString('en-US') : s;
 }
 
 function leadRowHtml(r){
@@ -32706,6 +32786,236 @@ renderLeads();
    Expose the 8 const arrays on window so the persistence layer can reach them,
    then fetch the latest rows from Postgres and re-run all renders. The arrays
    are identical to the seed data on first load, so users won't see a flicker. */
+/* ============ COUNTRIES (2026-10-13) ============
+   One portal, two markets: Vanmates Canada and Vanmates Mexico. Every properties / tenants /
+   leads row carries its country (opCountry, read from the `country` column that
+   countries-2026-10-13.sql adds). The visible arrays only ever hold the SELECTED country; the
+   other country's rows wait in HIDDEN. So every page, count, search, filter, dashboard and CSV
+   export works on one country without knowing countries exist. Vacancies are rebuilt per
+   country (loadVacancies). The real gate is the database (restrictive RLS on country): a
+   Mexico-only teammate never receives a Canadian row. This module is the view + the switcher. */
+const VMC_MX_PAGES = ['dashboard', 'leads', 'tenants', 'properties', 'vacancies'];
+const VMC_INFO = {
+  CA: { code: 'CA', flag: '🇨🇦', name: 'Canada', label: 'Vanmates Canada', ccy: 'CAD', sym: '$', cities: 'Vancouver, Toronto, Montréal', tz: 'America/Vancouver' },
+  MX: { code: 'MX', flag: '🇲🇽', name: 'Mexico', label: 'Vanmates Mexico', ccy: 'MXN', sym: 'MX$', cities: 'Guadalajara', tz: 'America/Mexico_City' }
+};
+// Same lists as public.vm_country_of_city (countries-2026-10-13.sql). Keep them in step.
+const VMC_MX_CITY_RE = /(guadalajara|zapopan|tlaquepaque|tlajomulco|tonal[aá]|jalisco|\bgdl\b|cdmx|ciudad de m[eé]xico|mexico city|quer[eé]taro|monterrey|puerto vallarta|canc[uú]n|m[eé]rida|\bm[eé]xico\b)/i;
+const VMC_CA_CITY_RE = /(vancouver|burnaby|richmond|surrey|coquitlam|north van|victoria|langford|whistler|kelowna|calgary|edmonton|toronto|mississauga|scarborough|north york|montr[eé]al|ottawa|qu[eé]bec|canada|\bbc\b|ontario|バンクーバー|トロント|モントリオール)/i;
+function vmcCityCountry(city){
+  const c = String(city || '');
+  return VMC_MX_CITY_RE.test(c) ? 'MX' : VMC_CA_CITY_RE.test(c) ? 'CA' : null;
+}
+function vmcPicked(fd){ return fd.getAll('countries').map(String).filter(c => c === 'CA' || c === 'MX'); }
+function vmcSetPicker(id, list){
+  const box = document.getElementById(id);
+  if (!box) return;
+  const on = new Set(Array.isArray(list) && list.length ? list : ['CA']);
+  box.querySelectorAll('input[name="countries"]').forEach(cb => {
+    cb.checked = on.has(cb.value);
+    const opt = cb.closest('.role-option');
+    if (opt) opt.classList.toggle('selected', cb.checked);
+    cb.onchange = () => { if (opt) opt.classList.toggle('selected', cb.checked); };
+  });
+}
+// Pure: which country a record belongs to. findProp(name) looks a property up by name.
+function vmcRecordCountry(name, r, findProp){
+  if (!r) return 'CA';
+  if (r.opCountry === 'CA' || r.opCountry === 'MX') return r.opCountry;
+  const c = vmcCityCountry(r.city);
+  if (c) return c;
+  if (name === 'tenants' && r.property && findProp) {
+    const p = findProp(r.property);
+    if (p && p !== r) return vmcRecordCountry('properties', p, null);
+  }
+  return 'CA';
+}
+// Pure: split rows into the selected country (visible, in order) and the rest (hidden). Moves rows,
+// never drops one: a stale copy is removed BEFORE a realtime event re-adds a row (forget()).
+function vmcPartition(visible, hidden, cur, countryOf){
+  const keep = [], out = [];
+  for (const r of visible) (countryOf(r) === cur ? keep : out).push(r);
+  const rest = [];
+  for (const r of hidden) (countryOf(r) === cur ? keep : rest).push(r);
+  return { visible: keep, hidden: rest.concat(out) };
+}
+// Pure: Mexico has no Asana inventory, so its vacancies come from the portal itself: a room
+// whose tenant's lease ends within 60 days opens the day after; rooms a property has beyond its
+// living tenants are open now.
+function vmcVacFromPortal(props, tenants, now){
+  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+  const add = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const days = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+  const low = (rent) => { const m = String(rent || '').replace(/,/g, '').match(/\d+(\.\d+)?/); return m ? Math.round(Number(m[0])) : null; };
+  const out = [];
+  for (const p of props || []) {
+    if (!p || !p.name) continue;
+    const live = (tenants || []).filter(t => t && t.property === p.name && t.status !== 'past' && (!t.moveIn || String(t.moveIn).slice(0, 10) <= add(today, 60)));
+    const byRoom = {};
+    live.forEach(t => { const k = String(t.room || '').trim().toLowerCase() || ('#' + t.id); (byRoom[k] = byRoom[k] || []).push(t); });
+    Object.values(byRoom).forEach(list => {
+      // The room frees up when its LAST lease ends (a booked next tenant keeps it full).
+      const last = list.slice().sort((a, b) => String(b.leaseEnd || '9999').localeCompare(String(a.leaseEnd || '9999')))[0];
+      const end = last.leaseEnd ? String(last.leaseEnd).slice(0, 10) : '';
+      if (!end) return;
+      const from = add(end, 1);
+      if (days(today, from) > 60) return;
+      out.push(vmcVac(p, last.room ? 'Room ' + last.room : 'Room', Number(last.rent) || low(p.rent), from, today, 'mx-' + last.id));
+    });
+    const open = Math.max(0, (Number(p.rooms) || 0) - Object.keys(byRoom).length);
+    for (let i = 1; i <= open; i++) out.push(vmcVac(p, 'Open room ' + i, low(p.rent), today, today, 'mx-' + p.name + '-' + i));
+  }
+  return out;
+  function vmcVac(p, room, rent, from, today0, id){
+    const emptyNow = from <= today0;
+    return {
+      id: 'vac-' + id, gid: '', projectGid: '', room, prop: p.name, city: p.city || 'Guadalajara', addr: p.addr || p.address || '',
+      type: '', typeLabel: 'Room', lease: '', rent: rent == null ? null : rent, status: 'available', from, approx: false, until: null,
+      today: today0, listable: true, emptyNow, daysEmpty: emptyNow ? Math.max(0, days(from, today0)) : 0,
+      photos: [], cover: '', pictures: '', syncedAt: null, availDate: from, listed: true, apps: 0, opCountry: 'MX'
+    };
+  }
+}
+
+window.vmCountry = (function(){
+  const ARRAYS = ['properties', 'tenants', 'leads'];
+  const HIDDEN = { properties: [], tenants: [], leads: [] };
+  const LS = 'vm-country-v1';
+  let cur = (() => { try { return localStorage.getItem(LS) === 'MX' ? 'MX' : 'CA'; } catch (_) { return 'CA'; } })();
+  let wrapped = false, bound = false, ready = false;   // ready: the database load has finished
+  const keyOf = (name) => (r) => (window.vmDb && window.vmDb.keyFor ? window.vmDb.keyFor(name, r) : (r && (r.id || r.name)));
+  const findProp = (n) => (window.properties || []).find(p => p.name === n) || HIDDEN.properties.find(p => p.name === n);
+  const of = (name, r) => vmcRecordCountry(name, r, findProp);
+  const isAdmin = () => typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.role === 'admin';
+
+  function allowed(){
+    // View-as previews the other teammate's countries (cosmetic, like the rest of View-as).
+    if (typeof VIEWING_AS !== 'undefined' && VIEWING_AS) {
+      return VIEWING_AS.role === 'admin' ? ['CA', 'MX'] : (Array.isArray(VIEWING_AS.countries) && VIEWING_AS.countries.length ? VIEWING_AS.countries : ['CA']);
+    }
+    const s = window.VM_MY_COUNTRIES;                       // from the database (vm_my_countries)
+    if (Array.isArray(s) && s.length) return s.filter(c => VMC_INFO[c]);
+    if (isAdmin()) return ['CA', 'MX'];                     // before countries-2026-10-13.sql runs
+    const u = typeof CURRENT_USER !== 'undefined' ? CURRENT_USER : null;
+    return u && Array.isArray(u.countries) && u.countries.length ? u.countries : ['CA'];
+  }
+  function navPages(){ return VMC_MX_PAGES.concat(isAdmin() && !(typeof VIEWING_AS !== 'undefined' && VIEWING_AS) ? ['team', 'settings'] : []); }
+  function pageOk(v){ return cur !== 'MX' || navPages().includes(v); }
+
+  // Returns true when the selected country had to change (no longer allowed).
+  // Before the database load (hydrate) the arrays still hold index.html's seed: never partition
+  // that, or seed rows would linger in HIDDEN after hydrate replaces the visible arrays.
+  function partition(){
+    if (!ready) return false;
+    const al = allowed(), before = cur;
+    if (!al.includes(cur)) cur = al[0] || 'CA';
+    for (const name of ARRAYS) {
+      const arr = window[name];
+      if (!Array.isArray(arr)) continue;
+      const r = vmcPartition(arr, HIDDEN[name], cur, (x) => of(name, x));
+      arr.splice(0, arr.length, ...r.visible);
+      HIDDEN[name].splice(0, HIDDEN[name].length, ...r.hidden);
+    }
+    return before !== cur;
+  }
+  function forget(name, id){
+    const h = HIDDEN[name]; if (!h) return;
+    const k = keyOf(name);
+    for (let i = h.length - 1; i >= 0; i--) if (String(k(h[i])) === String(id)) h.splice(i, 1);
+  }
+  function all(name){ return (window[name] || []).concat(HIDDEN[name] || []); }
+
+  // Text the templates hard-code: "(CAD)" labels and city <option>s of the other country.
+  function sweep(){
+    const info = VMC_INFO[cur];
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: n => /\((CAD|MXN)\)/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+    const nodes = []; while (w.nextNode()) nodes.push(w.currentNode);
+    nodes.forEach(n => { n.nodeValue = n.nodeValue.replace(/\((CAD|MXN)\)/g, '(' + info.ccy + ')'); });
+    document.querySelectorAll('select option').forEach(o => {
+      const c = vmcCityCountry(o.value || o.textContent);
+      const hide = !!c && c !== cur && !o.selected;
+      if (o.hidden !== hide) o.hidden = hide;
+    });
+  }
+  function applyChrome(){
+    const al = allowed();
+    if (!al.includes(cur) && partition()) setTimeout(rerender, 0);
+    const info = VMC_INFO[cur];
+    document.documentElement.dataset.country = cur;
+    window.__vmcSym = info.sym;
+    const $ = (id) => document.getElementById(id);
+    if ($('vmc-flag')) $('vmc-flag').textContent = info.flag;
+    if ($('vmc-name')) $('vmc-name').textContent = info.name;
+    const btn = $('vmc-btn'), multi = al.length > 1;
+    if (btn) { btn.disabled = !multi; btn.title = multi ? 'Switch country' : 'You work in ' + info.label; }
+    if ($('vmc-caret')) $('vmc-caret').style.display = multi ? '' : 'none';
+    const menu = $('vmc-menu');
+    if (menu) menu.innerHTML = al.map(c => `<button type="button" role="menuitem" data-vmc="${c}" class="${c === cur ? 'on' : ''}"><span>${VMC_INFO[c].flag}</span><span>${VMC_INFO[c].label}<span class="vmc-sub">${VMC_INFO[c].ccy} · ${VMC_INFO[c].cities}</span></span></button>`).join('');
+    if ($('vmc-banner-flag')) $('vmc-banner-flag').textContent = info.flag;
+    if ($('vmc-banner-name')) $('vmc-banner-name').textContent = info.label;
+    if ($('vmc-banner-sub')) $('vmc-banner-sub').textContent = info.ccy + ' · ' + info.cities;
+    // Nav: Mexico has its own four modules (+ dashboard); Canada keeps everything.
+    document.querySelectorAll('.nav-item[data-view]').forEach(el => el.classList.toggle('country-hidden', !pageOk(el.dataset.view)));
+    // Currency pill: Canada keeps the CAD↔USD toggle; Mexico is MXN.
+    const cl = $('currency-label'), ct = $('currency-toggle');
+    if (cl) cl.textContent = cur === 'MX' ? 'MXN' : (typeof CURRENT_CCY !== 'undefined' ? CURRENT_CCY : 'CAD');
+    if (ct) { ct.disabled = cur === 'MX'; ct.style.pointerEvents = cur === 'MX' ? 'none' : ''; }
+    const active = document.querySelector('.view.active');
+    if (active && !pageOk(active.dataset.view) && typeof goToView === 'function') goToView('dashboard');
+    sweep();
+  }
+  function rerender(){
+    try { if (typeof TN !== 'undefined') { TN.city = ''; TN.house = ''; TN.page = 1; } } catch (_) {}
+    try { if (typeof PP_UI !== 'undefined') PP_UI.city = ''; } catch (_) {}
+    try { if (typeof LL_UI !== 'undefined') LL_UI.city = ''; } catch (_) {}
+    try { if (typeof VAC_STATE !== 'undefined') VAC_STATE.f.city = ''; } catch (_) {}
+    const fns = ['renderTenants', 'renderPropertiesGrid', 'renderLandlords', 'renderLeads', 'renderContracts',
+                 'updateSidebarCounts', 'refreshDashboard', 'refreshPortfolio'];
+    for (const fn of fns) { try { if (typeof window[fn] === 'function') window[fn](); } catch (e) { console.warn('[vmCountry] ' + fn, e.message); } }
+    try { if (typeof loadVacancies === 'function') loadVacancies(true); } catch (e) { console.warn('[vmCountry] vacancies', e.message); }
+    setTimeout(sweep, 60);
+  }
+  function set(c){
+    if (!VMC_INFO[c] || !allowed().includes(c)) return false;
+    if (c === cur) return true;
+    cur = c;
+    try { localStorage.setItem(LS, c); } catch (_) {}
+    partition(); applyChrome(); rerender();
+    if (typeof showToast === 'function') showToast('Now in ' + VMC_INFO[c].label);
+    return true;
+  }
+  function bind(){
+    if (bound) return; bound = true;
+    const btn = document.getElementById('vmc-btn'), menu = document.getElementById('vmc-menu');
+    if (btn && menu) {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); if (btn.disabled) return; const o = !menu.classList.contains('open'); menu.classList.toggle('open', o); btn.setAttribute('aria-expanded', String(o)); });
+      menu.addEventListener('click', (e) => { const b = e.target.closest('[data-vmc]'); if (!b) return; menu.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); set(b.dataset.vmc); });
+      document.addEventListener('click', () => { menu.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); });
+    }
+    if (!wrapped && typeof goToView === 'function') {
+      wrapped = true;
+      const inner = goToView;
+      goToView = function(v){ if (!pageOk(v)) v = 'dashboard'; const r = inner.apply(this, [v].concat([].slice.call(arguments, 1))); setTimeout(sweep, 60); return r; };
+    }
+  }
+  function init(){
+    bind();
+    ready = true;
+    for (const name of ARRAYS) HIDDEN[name].length = 0;
+    // A teammate without Canada: nothing Canadian stays in the browser (RLS already sends none;
+    // this also drops anything a stale local copy might hold).
+    const al = allowed();
+    partition();
+    for (const name of ARRAYS) {
+      const h = HIDDEN[name];
+      for (let i = h.length - 1; i >= 0; i--) if (!al.includes(of(name, h[i]))) h.splice(i, 1);
+    }
+    applyChrome();
+  }
+  return { init, partition, applyChrome, rerender, set, forget, all, allowed, pageOk, of,
+           current: () => cur, info: () => VMC_INFO[cur], sweep, _hidden: HIDDEN };
+})();
+
 (function vmHydrateBoot(){
   // 1. Expose arrays on window (const refs survive — we only mutate contents)
   window.tenants            = tenants;
@@ -32729,6 +33039,8 @@ renderLeads();
     }
     const summary = await window.vmDb.hydrate();
     console.log('[vmDb] hydrate summary:', summary);
+    // Countries: keep only the selected country in the visible arrays (before any render).
+    try { if (window.vmCountry) window.vmCountry.init(); } catch (e) { console.warn('[vmCountry] init failed:', e.message); }
     if (summary.errors && summary.errors.length){
       window.vmDb.toast(`Loaded with ${summary.errors.length} table errors — see console`, 'error');
     }
@@ -41558,8 +41870,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-13-luattach3"></script>
-<script src="extensions.js?v=2026-10-13-luattach3"></script>
-<script src="ap.js?v=2026-10-13-luattach3"></script>
+<script src="room-changes.js?v=2026-10-13-countries2"></script>
+<script src="extensions.js?v=2026-10-13-countries2"></script>
+<script src="ap.js?v=2026-10-13-countries2"></script>
 </body>
 </html>
