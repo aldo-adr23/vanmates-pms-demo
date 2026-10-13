@@ -1643,7 +1643,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-paypend1"></script>
+<script src="pms-supabase.js?v=2026-10-13-leadcount1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2432,7 +2432,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 
       <div class="card" id="leads-all-card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
-          <div class="card-title"><b id="leads-count">0</b> leads</div>
+          <div class="card-title"><b id="leads-count">0</b> <span id="leads-count-label">leads</span> <span id="leads-new" class="name-sub"></span></div>
           <span class="name-sub" id="leads-my-open" style="display:none"></span>
         </div>
         <table>
@@ -2508,7 +2508,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 
       <div class="card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
-          <div class="card-title"><b id="jleads-count">0</b> LINE leads <span id="jleads-due" class="name-sub"></span></div>
+          <div class="card-title"><b id="jleads-count">0</b> <span id="jleads-count-label">LINE leads</span> <span id="jleads-new" class="name-sub"></span> <span id="jleads-due" class="name-sub"></span></div>
           <div class="name-sub">Captured by Maya on LINE · updates as she learns more</div>
         </div>
         <!-- The table scrolls inside the card instead of spilling past its edge. -->
@@ -16511,9 +16511,9 @@ updateNotifBadge();
 
 /* === Dynamic sidebar counts === */
 function updateSidebarCounts(){
-  const set = (view, value) => {
+  const set = (view, value, title) => {
     const btn = document.querySelector(`.nav-item[data-view="${view}"] .nav-count`);
-    if(btn) btn.textContent = value;
+    if(btn){ btn.textContent = value; if(title) btn.title = title; }
   };
   if(typeof tenants !== "undefined")           set("tenants",           tenants.length);
   if(typeof properties !== "undefined")        set("properties",        properties.length);
@@ -16532,8 +16532,8 @@ function updateSidebarCounts(){
   }
   if(typeof teamMembers !== "undefined")       set("team",              teamMembers.length);
   if(typeof ctTabs === "function" && typeof contracts !== "undefined") set("contracts", ctTabs(contracts).counts.waiting);
-  if(typeof leads !== "undefined")             set("leads",             leads.filter(l => !isJLead(l) && (l.status||'new') === 'new').length);
-  if(typeof leads !== "undefined")             set("jleads",            leads.filter(l => isJLead(l) && (l.status||'new') === 'new' && !(typeof jleadWithCs === 'function' && jleadWithCs(l))).length);
+  if(typeof leads !== "undefined")             set("leads",             leads.filter(leadIsNewForBadge).length, "New leads — nobody has contacted them yet");
+  if(typeof leads !== "undefined")             set("jleads",            leads.filter(jleadIsNewForBadge).length, "New LINE leads — nobody has contacted them yet");
 }
 updateSidebarCounts();
 
@@ -31174,6 +31174,10 @@ function renderLeads(){
   const list = applyLeadFilters();
   const countEl = document.getElementById('leads-count');
   if(countEl) countEl.textContent = list.length;
+  const labelEl = document.getElementById('leads-count-label');
+  if(labelEl) labelEl.textContent = LEAD_FILTERS.status === 'open' ? 'open leads' : 'leads';
+  const newEl = document.getElementById('leads-new');
+  if(newEl){ const n = list.filter(leadIsNewForBadge).length; newEl.textContent = n ? `· ${n} new` : ''; }
   const mineEl = document.getElementById('leads-my-open');
   const viewer = activeRole();
   if(mineEl){
@@ -31308,6 +31312,10 @@ async function jleadCsLoad(force){
   _jleadCsBusy = false;
 }
 function jleadWithCs(l){ return !!(l && _jleadCs && _jleadCs[l.id]); }
+// The sidebar badges count only NEW leads; the list headers show "open · new"
+// with these same predicates so the two numbers always reconcile.
+function leadIsNewForBadge(l){ return !isJLead(l) && (l.status||'new') === 'new'; }
+function jleadIsNewForBadge(l){ return isJLead(l) && (l.status||'new') === 'new' && !jleadWithCs(l); }
 function renderJLeads(){
   const body = document.getElementById('jleads-body');
   if(!body) return;
@@ -31319,6 +31327,10 @@ function renderJLeads(){
   const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches, now, custIdx);
   const countEl = document.getElementById('jleads-count');
   if(countEl) countEl.textContent = list.length;
+  const labelEl = document.getElementById('jleads-count-label');
+  if(labelEl) labelEl.textContent = JLEAD_FILTERS.status === 'open' ? 'open LINE leads' : 'LINE leads';
+  const newEl = document.getElementById('jleads-new');
+  if(newEl){ const n = list.filter(jleadIsNewForBadge).length; newEl.textContent = n ? `· ${n} new` : ''; }
   const dueEl = document.getElementById('jleads-due');
   if(dueEl){
     const all = typeof leads !== 'undefined' ? leads : [];
@@ -42351,8 +42363,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-13-paypend1"></script>
-<script src="extensions.js?v=2026-10-13-paypend1"></script>
-<script src="ap.js?v=2026-10-13-paypend1"></script>
+<script src="room-changes.js?v=2026-10-13-leadcount1"></script>
+<script src="extensions.js?v=2026-10-13-leadcount1"></script>
+<script src="ap.js?v=2026-10-13-leadcount1"></script>
 </body>
 </html>
