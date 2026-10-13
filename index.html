@@ -1596,7 +1596,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-chilpa1"></script>
+<script src="pms-supabase.js?v=2026-10-13-hrecruit1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1743,6 +1743,10 @@
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="9" r="3.5"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/><path d="M3 11h2M19 11h2"/></svg>
       Homestay hosts
       <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="host-recruitment">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 11.5-4.2"/><path d="M18 14v6M15 17h6"/></svg>
+      Host recruitment
     </button>
     <button class="nav-item" data-view="homestay-matching">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="12" r="3"/><path d="M9 12h6"/><path d="M12 4v3M12 17v3"/></svg>
@@ -3899,6 +3903,90 @@ hello@vanmates.com · vanmates.com</textarea>
         </div>
       </div>
 
+    </section>
+
+    <section class="view" data-view="host-recruitment">
+      <style>
+        /* Host recruitment (spec 2026-10-13-host-recruitment-design.md §5). Reuses the ha-* tab/pill/table look. */
+        .rc-banner{padding:16px 18px;margin-bottom:16px;border-left:3px solid var(--red)}
+        .rc-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 14px}
+        .rc-toolbar .rc-grow{flex:1;min-width:120px}
+        .rc-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+        .rc-filters .form-input{max-width:190px;padding:8px 32px 8px 10px;font-size:13px}
+        .rc-filters .filter-search{min-width:200px}
+        .rc-kpis{grid-template-columns:repeat(4,1fr)}
+        .rc-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+        .rc-note{font-size:12.5px;color:var(--muted);line-height:1.5;margin:10px 0 0}
+        .rc-card{margin-bottom:18px}
+        .rc-card > .card-head{padding:14px 18px 0;margin-bottom:8px}
+        .rc-score{display:inline-block;min-width:34px;text-align:center;font-weight:700;border-radius:99px;padding:2px 8px;font-size:12px;background:var(--cream-2)}
+        .rc-score.high{background:var(--green-soft);color:#3e6049}
+        .rc-score.review{background:var(--amber-soft);color:#8a611f}
+        .rc-score.low{background:var(--cream-2);color:var(--ink)}
+        .rc-score.none{background:transparent;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+        .rc-ic{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;margin-right:3px;background:var(--cream-2);color:var(--muted)}
+        .rc-ic.on{background:var(--green-soft);color:#3e6049}
+        .rc-ic.off{background:var(--red-soft);color:var(--red-dark)}
+        .rc-form{padding:16px 18px}
+        .rc-form .form-field{margin-bottom:12px}
+        .rc-form textarea.form-input{min-height:110px}
+        .rc-err{color:var(--red);font-size:12.5px;min-height:16px}
+        .rc-ok{color:var(--green);font-size:12.5px}
+        .rc-result{padding:16px 18px;border-top:1px solid var(--line)}
+        .rc-big{font-family:var(--serif);font-size:34px;font-weight:700;line-height:1}
+        .rc-draft{width:100%;min-height:120px}
+        .rc-timeline{list-style:none;margin:0;padding:0}
+        .rc-timeline li{padding:7px 0;border-top:1px solid var(--cream-2);font-size:13px}
+        .rc-timeline li:first-child{border-top:0}
+        .rc-timeline .ha-sub{margin-top:0}
+        .rc-panel .ha-inline .form-input{width:100%;margin:6px 0}
+        .rc-panel details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+        .rc-pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;background:var(--cream);border-radius:8px;padding:10px;margin-top:6px;max-height:260px;overflow:auto}
+        @media (max-width:900px){.rc-kpis{grid-template-columns:repeat(2,1fr)}.rc-filters .form-input{max-width:none;flex:1 1 140px}}
+      </style>
+      <div class="card rc-banner" id="rc-banner" style="display:none"></div>
+      <div class="ha-tabbar" role="tablist" id="rc-tabs">
+        <button type="button" class="ha-tab on" role="tab" data-rc-tab="dashboard">Dashboard</button>
+        <button type="button" class="ha-tab" role="tab" data-rc-tab="campaigns">Campaigns</button>
+        <button type="button" class="ha-tab" role="tab" data-rc-tab="leads">Leads<span class="ha-n" id="rc-tab-leads-n"></span></button>
+        <button type="button" class="ha-tab" role="tab" data-rc-tab="discovery">Discovery<span class="ha-n" id="rc-tab-disc-n"></span></button>
+        <button type="button" class="ha-tab" role="tab" data-rc-tab="settings">Agent &amp; settings</button>
+      </div>
+      <div class="card-sub" id="rc-status" style="margin:-8px 0 12px;min-height:16px"></div>
+      <div data-rc-pane="dashboard" id="rc-pane-dashboard"></div>
+      <div data-rc-pane="campaigns" id="rc-pane-campaigns" style="display:none"></div>
+      <div data-rc-pane="leads" id="rc-pane-leads" style="display:none">
+        <div class="rc-filters" id="rc-lead-filters">
+          <div class="filter-search">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input id="rc-f-q" data-rc-filter="q" placeholder="Search name, email, phone, HR-ref…" autocomplete="off" />
+          </div>
+          <select class="form-input" id="rc-f-city" data-rc-filter="city" aria-label="City"></select>
+          <select class="form-input" id="rc-f-stage" data-rc-filter="stage" aria-label="Stage"></select>
+          <select class="form-input" id="rc-f-source" data-rc-filter="source" aria-label="Source"></select>
+          <select class="form-input" id="rc-f-owner" data-rc-filter="owner" aria-label="Owner"></select>
+          <select class="form-input" id="rc-f-band" data-rc-filter="band" aria-label="Score">
+            <option value="">Any score</option><option value="high">High priority (80–100)</option><option value="review">Worth reviewing (60–79)</option>
+            <option value="low">Low priority (40–59)</option><option value="none">Not prioritized (&lt;40)</option><option value="unscored">Not scored</option>
+          </select>
+          <select class="form-input" id="rc-f-activity" data-rc-filter="activity" aria-label="Last activity">
+            <option value="">Any activity</option><option value="d7">Active in the last 7 days</option><option value="d30">Active in the last 30 days</option>
+            <option value="quiet14">Quiet 14+ days</option><option value="quiet30">Quiet 30+ days</option>
+          </select>
+        </div>
+        <div class="card">
+          <div class="rc-toolbar">
+            <span class="card-sub rc-grow" id="rc-leads-count"></span>
+            <span class="card-sub" id="rc-sync-msg"></span>
+            <button type="button" class="btn btn-ghost btn-mini" id="rc-sync">Sync now</button>
+            <button type="button" class="btn btn-ghost btn-mini" id="rc-leads-csv">Export CSV</button>
+            <button type="button" class="btn btn-ghost btn-mini" data-rc-refresh>Refresh</button>
+          </div>
+          <div class="ha-wrap" id="rc-leads-list"></div>
+        </div>
+      </div>
+      <div data-rc-pane="discovery" id="rc-pane-discovery" style="display:none"></div>
+      <div data-rc-pane="settings" id="rc-pane-settings" style="display:none"></div>
     </section>
 
     <section class="view" data-view="homestay-finance">
@@ -8681,7 +8769,7 @@ function showToast(msg){
 // Sidebar pages with no checkbox of their own: visible to whoever has the parent page.
 // Affiliates & promo codes (2026-10-10) is the Partners page's people, the same rule as
 // vm_partners_member() on its tables. test/page-access.test.js reads this.
-const PAGE_ALIASES = {"affiliates": "partners"};
+const PAGE_ALIASES = {"affiliates": "partners", "host-recruitment": "homestay-hosts"};
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
   ["leads",            "Leads"],
@@ -9277,7 +9365,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "assistants":"Assistants","tenants":"Tenants","properties":"Properties & rooms",
     "partner-inventory":"Partner inventory","partners":"Partners",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
-    "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance",
+    "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance","host-recruitment":"Host recruitment",
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
     "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
@@ -10930,6 +11018,7 @@ const titles = {
   "homestay-clients": ["Homestay <em>clients</em>", "Students hosted by partner families · contact, host, and rent"],
   "homestay-matching": ["Homestay <em>matching</em>", "Direct and partner requests, shortlists and host profiles"],
   "homestay-hosts": ["Homestay <em>hosts</em>", "Partner families across our cities · profiles, capacity, and history"],
+  "host-recruitment": ["Host <em>recruitment</em>", "City campaigns, prospective hosts and the pipeline into host applications"],
   "homestay-bookings": ["Homestay <em>bookings</em>", "Every homestay stay, by stage — and what needs you"],
   "homestay-finance": ["Homestay <em>finance</em>", "Revenue from clients, payouts to hosts, and net margin"],
   settings: ["<em>Settings</em>", "Workspace, notifications, integrations, and billing"],
@@ -10961,6 +11050,7 @@ function goToView(v, savedView){
   if(v === "homestay-hosts" && typeof loadHostPayoutStatus === "function") loadHostPayoutStatus();
   if(v === "homestay-hosts" && typeof loadHostRooms === "function") loadHostRooms();
   if(v === "homestay-hosts" && typeof haLoad === "function") haLoad();
+  if(v === "host-recruitment" && typeof rcLoad === "function") rcLoad();
   if(v === "homestay-finance" && typeof loadHomestayFinanceLive === "function") loadHomestayFinanceLive();
   if(v === "assistants" && typeof asOpen === "function") asOpen();
   if(v === "sales" && typeof renderSales === "function") renderSales();
@@ -39982,8 +40072,1363 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-13-chilpa1"></script>
-<script src="extensions.js?v=2026-10-13-chilpa1"></script>
-<script src="ap.js?v=2026-10-13-chilpa1"></script>
+<script>
+/* Host recruitment (spec vanmates-homestay-matching docs/superpowers/specs/2026-10-13-host-recruitment-design.md). */
+/* RC-CORE-START */
+// Host recruitment (spec 2026-10-13-host-recruitment-design.md §3, §5). Pure: no DOM, no Supabase, no globals.
+// test/host-recruitment.test.js extracts this fence with new Function and asserts against fixtures.
+const RC_STAGES = [
+  ["discovered", "Discovered"], ["awaiting_review", "Awaiting review"], ["approved_for_outreach", "Approved for outreach"],
+  ["contacted", "Contacted"], ["responded", "Responded"], ["interested", "Interested"],
+  ["application_started", "Application started"], ["application_submitted", "Application submitted"],
+  ["verification_pending", "Verification pending"], ["approved", "Approved"], ["active_in_matching", "Active in matching"],
+  ["not_interested", "Not interested"], ["rejected", "Rejected"], ["unresponsive", "Unresponsive"],
+  ["duplicate", "Duplicate"], ["opted_out", "Opted out"],
+];
+const RC_STAGE_LABEL = Object.fromEntries(RC_STAGES);
+const RC_FORWARD = RC_STAGES.slice(0, 11).map(s => s[0]);
+const RC_TERMINAL = ["not_interested", "rejected", "unresponsive", "duplicate", "opted_out"];
+const RC_STAGE_GROUPS = [
+  ["discovery", "Discovery", ["discovered", "awaiting_review", "approved_for_outreach"]],
+  ["outreach", "Outreach", ["contacted", "responded", "interested"]],
+  ["application", "Application", ["application_started", "application_submitted", "verification_pending"]],
+  ["approved", "Approved", ["approved", "active_in_matching"]],
+  ["closed", "Closed", RC_TERMINAL],
+];
+const RC_SOURCES = [
+  ["landing", "Landing page"], ["referral", "Referral"], ["listing", "Listing (discovery)"], ["event", "Event"],
+  ["partner", "Partner"], ["social", "Social"], ["ads", "Ads"], ["manual", "Manual"], ["other", "Other"],
+];
+const RC_SOURCE_LABEL = Object.fromEntries(RC_SOURCES);
+const RC_CAMPAIGN_STATUSES = [
+  ["draft", "Draft"], ["active", "Active"], ["paused", "Paused"], ["target_reached", "Target reached"],
+  ["completed", "Completed"], ["archived", "Archived"],
+];
+// Cities a campaign may be added for (the host cities). Montréal keeps its accent wherever it is shown.
+const RC_CITIES = [
+  ["vancouver", "Vancouver", "BC"], ["toronto", "Toronto", "ON"], ["montreal", "Montréal", "QC"],
+  ["victoria", "Victoria", "BC"], ["calgary", "Calgary", "AB"], ["edmonton", "Edmonton", "AB"],
+  ["halifax", "Halifax", "NS"], ["ottawa", "Ottawa", "ON"], ["winnipeg", "Winnipeg", "MB"],
+];
+// The PRD rubric (weights 25/20/20/15/10/10). The Worker returns the breakdown; these give labels and order.
+const RC_CRITERIA = [
+  ["occupied_home", "Spare room in an occupied home", 25], ["resident_host", "Resident homeowner or host", 20],
+  ["location", "Location and transport", 20], ["room_household", "Room and household arrangements", 15],
+  ["pricing", "Pricing compatibility", 10], ["availability", "Availability and flexibility", 10],
+];
+const RC_DAY = 86400000;
+
+function rcStageLabel(stage){ return RC_STAGE_LABEL[stage] || String(stage || "—").replace(/_/g, " "); }
+function rcStageGroup(stage){
+  const g = RC_STAGE_GROUPS.find(x => x[2].includes(stage));
+  return g ? g[0] : "discovery";
+}
+function rcIsTerminal(stage){ return RC_TERMINAL.includes(stage); }
+// How far along the forward pipeline a lead got (terminal leads count by their application, if any).
+function rcReached(lead, stage){
+  const target = RC_FORWARD.indexOf(stage);
+  const at = RC_FORWARD.indexOf(lead && lead.stage);
+  if (at >= 0) return at >= target;
+  if (stage === "application_started") return !!(lead && lead.application_id);
+  return false;
+}
+function rcIsApproved(lead){ return !!lead && (lead.stage === "approved" || lead.stage === "active_in_matching"); }
+// Contactable = we may write to them: an address/number, a recorded consent, and no opt-out.
+function rcIsContactable(lead){
+  if (!lead || lead.opted_out_at) return false;
+  const reach = !!(String(lead.email || "").trim() || String(lead.phone || "").trim());
+  return reach && !!(lead.consent_email_at || lead.consent_sms_at);
+}
+function rcScoreCategory(score){
+  if (score == null || score === "" || !isFinite(Number(score))) return { key: "unscored", label: "Not scored" };
+  const s = Number(score);
+  if (s >= 80) return { key: "high", label: "High priority" };
+  if (s >= 60) return { key: "review", label: "Worth reviewing" };
+  if (s >= 40) return { key: "low", label: "Low priority" };
+  return { key: "none", label: "Not prioritized" };
+}
+function rcCityName(idOrCampaign){
+  if (idOrCampaign && typeof idOrCampaign === "object") {
+    if (idOrCampaign.city) return idOrCampaign.city === "Montreal" ? "Montréal" : idOrCampaign.city;
+    idOrCampaign = idOrCampaign.id;
+  }
+  const c = RC_CITIES.find(x => x[0] === idOrCampaign);
+  return c ? c[1] : String(idOrCampaign || "");
+}
+function rcLeadName(lead){
+  const n = [lead && lead.first_name, lead && lead.last_name].filter(x => String(x || "").trim()).join(" ").trim();
+  return n || (lead && lead.email) || (lead && lead.source === "listing" ? "Listing " + (lead.ref || "") : (lead && lead.ref) || "—");
+}
+function rcLastActivity(lead){ return (lead && (lead.last_activity_at || lead.updated_at || lead.created_at)) || null; }
+function rcAgo(iso, now){
+  const t = Date.parse(iso);
+  if (!isFinite(t)) return "";
+  const m = Math.max(0, Math.floor((now - t) / 60000));
+  if (m < 60) return m <= 1 ? "just now" : m + " min ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + " h ago";
+  const d = Math.floor(h / 24);
+  return d === 1 ? "yesterday" : d + " days ago";
+}
+function rcMoney(cents){
+  const n = Math.round(Number(cents) || 0) / 100;
+  return "$" + n.toLocaleString("en-CA", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
+}
+// Cost per lead / per approved host: "—" when nothing was spent or nothing to divide by.
+function rcCostPer(spentCents, n){
+  const s = Number(spentCents) || 0, k = Number(n) || 0;
+  if (s <= 0 || k <= 0) return null;
+  return Math.round(s / k);
+}
+function rcCostText(spentCents, n){ const c = rcCostPer(spentCents, n); return c == null ? "—" : rcMoney(c); }
+function rcPct(n, target){
+  const t = Number(target) || 0;
+  if (t <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((Number(n) || 0) * 100 / t)));
+}
+
+// Per-campaign numbers. events: rc_events rows (only kind 'followup' within 7 days are counted).
+function rcCampaignStats(campaign, leads, events, now){
+  const id = campaign && campaign.id;
+  const mine = (leads || []).filter(l => l.campaign_id === id);
+  const funnel = Object.fromEntries(RC_STAGE_GROUPS.map(g => [g[0], 0]));
+  for (const l of mine) funnel[rcStageGroup(l.stage)]++;
+  const approved = mine.filter(rcIsApproved);
+  const spent = Number(campaign && campaign.spent_cents) || 0;
+  const since = now - 7 * RC_DAY;
+  return {
+    id, name: campaign && campaign.name, city: rcCityName(campaign), status: campaign && campaign.status,
+    target: Number(campaign && campaign.target_hosts) || 0,
+    targetBedrooms: Number(campaign && campaign.target_bedrooms) || 0,
+    budget: Number(campaign && campaign.budget_cents) || 0, spent,
+    leads: mine.length,
+    discovered: mine.filter(l => l.source === "listing").length,
+    contactable: mine.filter(rcIsContactable).length,
+    started: mine.filter(l => rcReached(l, "application_started")).length,
+    submitted: mine.filter(l => rcReached(l, "application_submitted")).length,
+    approved: approved.length,
+    approvedBedrooms: approved.reduce((s, l) => s + (Number(l.rooms) || 0), 0),
+    followups7d: (events || []).filter(e => e.kind === "followup" && e.campaign_id === id && Date.parse(e.at) >= since).length,
+    funnel, pct: rcPct(approved.length, campaign && campaign.target_hosts),
+    costPerLead: rcCostPer(spent, mine.length), costPerApproved: rcCostPer(spent, approved.length),
+    bestSource: rcBestSource(mine),
+  };
+}
+// Source with the most approved hosts, then most applications started, then most leads.
+function rcBestSource(leads){
+  const rows = rcBySource(leads);
+  if (!rows.length) return null;
+  rows.sort((a, b) => b.approved - a.approved || b.started - a.started || b.leads - a.leads || a.source.localeCompare(b.source));
+  return rows[0].source;
+}
+function rcBySource(leads){
+  const m = new Map();
+  for (const l of leads || []) {
+    const k = l.source || "other";
+    if (!m.has(k)) m.set(k, { source: k, label: RC_SOURCE_LABEL[k] || k, leads: 0, contactable: 0, started: 0, submitted: 0, approved: 0 });
+    const r = m.get(k);
+    r.leads++;
+    if (rcIsContactable(l)) r.contactable++;
+    if (rcReached(l, "application_started")) r.started++;
+    if (rcReached(l, "application_submitted")) r.submitted++;
+    if (rcIsApproved(l)) r.approved++;
+  }
+  return [...m.values()].map(r => Object.assign(r, { rate: r.leads ? Math.round(r.approved * 1000 / r.leads) / 10 : 0 }));
+}
+function rcDashboard(campaigns, leads, events, now){
+  const cities = (campaigns || []).filter(c => c.status !== "archived").map(c => rcCampaignStats(c, leads, events, now));
+  const sum = k => cities.reduce((s, c) => s + c[k], 0);
+  const all = leads || [];
+  const approved = all.filter(rcIsApproved);
+  const since = now - 7 * RC_DAY;
+  const bySource = rcBySource(all).sort((a, b) => b.leads - a.leads || a.source.localeCompare(b.source));
+  return {
+    kpis: {
+      activeCities: (campaigns || []).filter(c => c.status === "active").length,
+      leads: all.length,
+      discovered: all.filter(l => l.source === "listing").length,
+      contactable: all.filter(rcIsContactable).length,
+      started: all.filter(l => rcReached(l, "application_started")).length,
+      submitted: all.filter(l => rcReached(l, "application_submitted")).length,
+      approved: approved.length,
+      approvedBedrooms: approved.reduce((s, l) => s + (Number(l.rooms) || 0), 0),
+      followups7d: (events || []).filter(e => e.kind === "followup" && Date.parse(e.at) >= since).length,
+      target: sum("target"), spent: sum("spent"), budget: sum("budget"),
+    },
+    cities, bySource,
+  };
+}
+
+// Leads filter. f: { city, stage ('' | 'open' | 'g:<group>' | stage), source, owner ('' | 'none' | email),
+// band ('' | high | review | low | none | unscored), q, activity ('' | 'd7' | 'd30' | 'quiet14' | 'quiet30') }.
+function rcFilterLeads(leads, f, now){
+  f = f || {};
+  const q = String(f.q || "").trim().toLowerCase();
+  return (leads || []).filter(l => {
+    if (f.city && l.campaign_id !== f.city) return false;
+    if (f.stage === "open" && rcIsTerminal(l.stage)) return false;
+    if (f.stage && f.stage.startsWith("g:") && rcStageGroup(l.stage) !== f.stage.slice(2)) return false;
+    if (f.stage && f.stage !== "open" && !f.stage.startsWith("g:") && l.stage !== f.stage) return false;
+    if (f.source && l.source !== f.source) return false;
+    if (f.owner === "none" && l.owner) return false;
+    if (f.owner && f.owner !== "none" && String(l.owner || "").toLowerCase() !== String(f.owner).toLowerCase()) return false;
+    if (f.band && rcScoreCategory(l.score).key !== f.band) return false;
+    if (f.activity) {
+      const t = Date.parse(rcLastActivity(l));
+      const age = isFinite(t) ? (now - t) / RC_DAY : Infinity;
+      if (f.activity === "d7" && !(age <= 7)) return false;
+      if (f.activity === "d30" && !(age <= 30)) return false;
+      if (f.activity === "quiet14" && !(age >= 14)) return false;
+      if (f.activity === "quiet30" && !(age >= 30)) return false;
+    }
+    if (q) {
+      const hay = [l.ref, l.first_name, l.last_name, l.email, l.phone, [l.first_name, l.last_name].filter(Boolean).join(" ")]
+        .map(x => String(x || "").toLowerCase()).join("\n");
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function rcSortLeads(leads){
+  return (leads || []).slice().sort((a, b) => (Date.parse(rcLastActivity(b)) || 0) - (Date.parse(rcLastActivity(a)) || 0) || (b.id || 0) - (a.id || 0));
+}
+// Discovery list: listing leads, best score first (unscored last).
+function rcListingLeads(leads, toReviewOnly){
+  return (leads || []).filter(l => l.source === "listing" && (!toReviewOnly || l.stage === "discovered" || l.stage === "awaiting_review"))
+    .sort((a, b) => (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score) || (b.id || 0) - (a.id || 0));
+}
+
+// CSV. A cell that a spreadsheet would run as a formula (= + - @, and tab/CR) gets a leading apostrophe.
+function rcCsvCell(v){
+  if (v == null) return "";
+  let s = typeof v === "object" ? JSON.stringify(v) : String(v);
+  if (typeof v !== "number" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function rcCsv(header, rows){
+  return [header].concat(rows || []).map(r => r.map(rcCsvCell).join(",")).join("\r\n") + "\r\n";
+}
+function rcLeadsCsv(leads, campaigns, apps){
+  const camp = new Map((campaigns || []).map(c => [c.id, c]));
+  const app = apps instanceof Map ? apps : new Map();
+  return rcCsv(["ref", "first_name", "last_name", "email", "phone", "city", "stage", "source", "source_detail", "score",
+    "score_category", "owner", "rooms", "lang", "consent_email_at", "consent_sms_at", "opted_out_at", "contactable",
+    "application_ref", "application_status", "listing_url", "last_activity_at", "created_at"],
+  (leads || []).map(l => {
+    const a = l.application_id != null ? app.get(Number(l.application_id)) : null;
+    return [l.ref, l.first_name, l.last_name, l.email, l.phone, rcCityName(camp.get(l.campaign_id) || l.campaign_id),
+      rcStageLabel(l.stage), RC_SOURCE_LABEL[l.source] || l.source, l.source_detail, l.score, l.score == null ? "" : rcScoreCategory(l.score).label,
+      l.owner, l.rooms, l.lang, l.consent_email_at, l.consent_sms_at, l.opted_out_at, rcIsContactable(l) ? "yes" : "no",
+      a ? a.ref : "", a ? a.status : "", l.listing_url, rcLastActivity(l), l.created_at];
+  }));
+}
+function rcDashboardCsv(dash){
+  const groups = RC_STAGE_GROUPS.map(g => g[0]);
+  return rcCsv(["city", "status", "target_hosts", "approved", "pct_to_goal", "leads", "discovered", "contactable",
+    "applications_started", "applications_submitted", "approved_bedrooms", "budget", "spent", "cost_per_lead",
+    "cost_per_approved", "best_source"].concat(groups.map(g => "funnel_" + g)),
+  (dash && dash.cities || []).map(c => [c.city, c.status, c.target, c.approved, c.pct, c.leads, c.discovered, c.contactable,
+    c.started, c.submitted, c.approvedBedrooms, rcMoney(c.budget), rcMoney(c.spent), rcCostText(c.spent, c.leads),
+    rcCostText(c.spent, c.approved), c.bestSource ? (RC_SOURCE_LABEL[c.bestSource] || c.bestSource) : ""].concat(groups.map(g => c.funnel[g]))));
+}
+
+// Form parsing. Each returns { ok, value } or { ok:false, error }.
+function rcParseFollowupDays(text){
+  const parts = String(text == null ? "" : text).split(",").map(s => s.trim()).filter(Boolean);
+  if (!parts.length) return { ok: false, error: "Enter at least one day, e.g. 2, 5, 10" };
+  const days = [];
+  for (const p of parts) {
+    if (!/^\d+$/.test(p)) return { ok: false, error: `"${p}" is not a whole number` };
+    const n = Number(p);
+    if (n < 1 || n > 60) return { ok: false, error: "Days must be between 1 and 60" };
+    if (days.length && n <= days[days.length - 1]) return { ok: false, error: "Days must go up, e.g. 2, 5, 10" };
+    days.push(n);
+  }
+  return { ok: true, value: days };
+}
+function rcParseInt(text, min, max){
+  const s = String(text == null ? "" : text).trim();
+  if (!/^\d+$/.test(s)) return { ok: false, error: "Enter a whole number" };
+  const n = Number(s);
+  if (n < min || n > max) return { ok: false, error: `Enter a number from ${min} to ${max}` };
+  return { ok: true, value: n };
+}
+function rcDollarsToCents(text){
+  const s = String(text == null ? "" : text).replace(/[$,\s]/g, "");
+  if (s === "") return { ok: true, value: 0 };
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return { ok: false, error: "Enter dollars, e.g. 1500 or 1500.50" };
+  return { ok: true, value: Math.round(Number(s) * 100) };
+}
+function rcCentsToDollars(cents){
+  const n = Number(cents) || 0;
+  return n % 100 ? (n / 100).toFixed(2) : String(n / 100);
+}
+function rcParseRates(text){
+  const s = String(text == null ? "" : text).trim();
+  if (!s) return { ok: true, value: null };
+  let v;
+  try { v = JSON.parse(s); } catch (e) { return { ok: false, error: "Rates must be valid JSON (or empty for no figures)" }; }
+  if (v === null) return { ok: true, value: null };
+  if (typeof v !== "object") return { ok: false, error: "Rates must be a JSON object, e.g. {\"full_board_weekly\": 300}" };
+  return { ok: true, value: v };
+}
+function rcParseList(text, allowed){
+  const out = [];
+  for (const raw of String(text == null ? "" : text).split(",")) {
+    const s = raw.trim().toLowerCase();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  if (allowed) {
+    const bad = out.filter(s => !allowed.includes(s));
+    if (bad.length) return { ok: false, error: "Not allowed: " + bad.join(", ") + " (use " + allowed.join(", ") + ")" };
+  }
+  return { ok: true, value: out };
+}
+// Only http(s) links are ever rendered as links.
+function rcSafeUrl(u){
+  const s = String(u == null ? "" : u).trim();
+  if (!/^https?:\/\//i.test(s)) return "";
+  try { const x = new URL(s); return x.protocol === "http:" || x.protocol === "https:" ? x.href : ""; } catch (e) { return ""; }
+}
+function rcNewCampaign(cityKey, existingIds){
+  const c = RC_CITIES.find(x => x[0] === cityKey);
+  if (!c) return { ok: false, error: "Pick a city" };
+  if ((existingIds || []).includes(c[0])) return { ok: false, error: c[1] + " already has a campaign" };
+  return { ok: true, value: { id: c[0], city: c[1], province: c[2], country: "CA",
+    name: c[0] === "montreal" ? "Familles d'accueil Montréal" : c[1] + " host families",
+    languages: c[0] === "montreal" ? ["fr", "en"] : ["en"], status: "draft" } };
+}
+// PostgREST before the SQL is applied: 42P01 (relation does not exist), PGRST205 (not in the schema cache), 404.
+function rcIsMissingTable(err){
+  if (!err) return false;
+  const code = String(err.code || ""), msg = String(err.message || err.details || err.hint || "");
+  return code === "42P01" || code === "PGRST205" || code === "PGRST202" || Number(err.status) === 404
+    || /relation .* does not exist|could not find the table/i.test(msg);
+}
+function rcWorkerError(out, status){
+  const e = out && out.error;
+  if (e === "ai_unavailable" || (status === 503 && !e)) return "AI isn't switched on yet (ANTHROPIC_API_KEY)";
+  if (e === "duplicate") return "Already a lead: " + (out.ref || "?");
+  if (e === "bad_request") return "Missing or malformed: " + ((out.fields || []).map(f => String(f).replace(/_/g, " ")).join(", ") || "check the form");
+  if (e === "unknown_city" || e === "unknown_campaign") return "That campaign doesn't exist";
+  if (e === "not_found") return "Not found: refresh";
+  if (e === "no_email") return "This lead has no email: add one first";
+  if (e === "consent_required") return "Write how the person agreed (consent note)";
+  if (e === "suppressed" || e === "opted_out") return "This person opted out: nothing can be sent";
+  if (e === "host_exists") return "Already a Vanmates host" + (out.host_id ? " (" + out.host_id + ")" : "") + ": the lead is marked Duplicate";
+  if (e === "ai_failed") return "The AI didn't answer" + (out.message ? ": " + out.message : "") + ". Try again";
+  if (e === "forbidden" || e === "unauthorized" || status === 401 || status === 403) return "Not allowed: sign in again";
+  if (e) return String(e).replace(/_/g, " ");
+  if (status === 404) return "The recruitment Worker isn't deployed yet (route not found)";
+  return "HTTP " + status;
+}
+// Score breakdown from the Worker: an array of {key|criterion|name, score|points, max|weight, note|reason}, or an
+// object keyed by criterion ({score, max, note} or a number). Known criteria first, in rubric order.
+function rcBreakdownRows(b){
+  const rows = [];
+  const push = (key, v) => {
+    const k = String(key || "").trim();
+    const known = RC_CRITERIA.find(c => c[0] === k || c[1].toLowerCase() === k.toLowerCase());
+    const o = v != null && typeof v === "object" ? v : { score: v };
+    const score = o.score != null ? o.score : o.points != null ? o.points : o.value;
+    const max = o.max != null ? o.max : o.weight != null ? o.weight : known ? known[2] : null;
+    rows.push({ key: known ? known[0] : k, label: o.label || (known ? known[1] : k.replace(/_/g, " ").replace(/^./, x => x.toUpperCase())),
+      score: score == null || score === "" ? null : Number(score), max: max == null ? null : Number(max),
+      note: String(o.note || o.reason || o.why || o.notes || ""), unknown: o.unknown === true || score == null });
+  };
+  if (Array.isArray(b)) for (const it of b) push(it && (it.key || it.criterion || it.name || it.label), it);
+  else if (b && typeof b === "object") for (const k of Object.keys(b)) push(k, b[k]);
+  const order = k => { const i = RC_CRITERIA.findIndex(c => c[0] === k); return i < 0 ? 99 : i; };
+  return rows.sort((x, y) => order(x.key) - order(y.key));
+}
+function rcEventText(ev){
+  const d = (ev && ev.detail) || {};
+  const k = ev && ev.kind;
+  if (k === "created") return "Lead created" + (d.source ? " (" + (RC_SOURCE_LABEL[d.source] || d.source) + ")" : "");
+  if (k === "stage") return "Stage: " + (d.from ? rcStageLabel(d.from) + " → " : "") + rcStageLabel(d.to || d.stage);
+  if (k === "note") return "Note: " + String(d.text || d.note || "").slice(0, 300);
+  if (k === "assign") return "Owner: " + (d.to || "nobody") + (d.from ? " (was " + d.from + ")" : "");
+  if (k === "email") return "Email sent" + (d.subject ? ": " + d.subject : "") + (d.to ? " to " + d.to : "");
+  if (k === "sms") return "Text sent" + (d.to ? " to " + d.to : "");
+  if (k === "followup") return "Follow-up " + (d.step != null ? "#" + d.step + " " : "") + "sent" + (d.channel ? " by " + d.channel : "");
+  if (k === "optout") return "Opted out" + (d.via ? " (" + d.via + ")" : "");
+  if (k === "ai_score") return "AI score" + (d.score != null ? ": " + d.score + " (" + rcScoreCategory(d.score).label + ")" : "");
+  if (k === "ai_draft") return "AI reply draft" + (d.question ? ": “" + String(d.question).slice(0, 120) + "”" : "");
+  if (k === "invite") return "Invited to apply" + (d.email ? " (" + d.email + ")" : "") + (d.consent_note ? " — consent: " + d.consent_note : "");
+  if (k === "import") return "Imported";
+  return String(k || "event");
+}
+function rcFollowupRule(settings){
+  const s = settings || {};
+  const days = Array.isArray(s.followup_days) && s.followup_days.length ? s.followup_days : [2, 5, 10];
+  const un = s.unresponsive_after_days != null ? s.unresponsive_after_days : 7;
+  return "Follow-ups go out on day " + days.join(", ") + " after a lead is created, by email (and by text when the person agreed to texts), "
+    + "to leads at Interested or Application started who gave consent, are not opted out or suppressed, in an active campaign with follow-ups on. "
+    + "At most 10 per minute. They stop on opt-out, decline, a submitted application or a closed stage. A lead becomes Unresponsive "
+    + un + " days after its last follow-up if the application is still only started.";
+}
+/* RC-CORE-END */
+
+/* ---- Host recruitment page (view host-recruitment). Reads/writes rc_* with the staff Supabase session (RLS =
+   team_members); AI, invites, sync and opt-out go through the matching Worker (HM_WORKER /staff/recruit/*).
+   The drawer is the shared #detail-panel. No browser pop-ups: confirms are inline. ---- */
+const RC = { tab: "dashboard", loaded: false, loading: null, missing: false, error: null,
+  campaigns: [], leads: [], settings: null, followups: [], apps: new Map(), me: "", ai: null,
+  filter: { q: "", city: "", stage: "open", source: "", owner: "", band: "", activity: "" },
+  lead: { id: null, form: null, msg: null, draft: null, events: new Map(), supp: new Map(), busy: false },
+  camp: { id: null, msg: null }, adding: false, addMsg: null, syncMsg: "", settingsMsg: null,
+  disc: { campaign: "", url: "", text: "", busy: false, result: null, error: null, saved: null, reviewOnly: true, msg: null },
+  aiEvents: null, aiEventsError: null };
+const RC_LEAD_ROWS_MAX = 400;
+const rcSb = () => window.vmDb && window.vmDb.sb;
+const rcE = s => esc(s == null ? "" : s);
+const rcDash = '<span class="ha-sub">—</span>';
+const rcKv = (label, html) => `<div class="ha-kv"><span>${rcE(label)}</span><span>${html == null || html === "" ? rcDash : html}</span></div>`;
+const rcSection = (title, inner, extra) => `<div class="panel-section"${extra || ""}><div class="panel-section-title"><span>${title}</span></div>${inner}</div>`;
+function rcWhen(iso){
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return "";
+  return d.toLocaleString("en-CA", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function rcStatus(text, bad){
+  const el = document.getElementById("rc-status");
+  if (el) { el.textContent = text || ""; el.style.color = bad ? "var(--red)" : ""; }
+}
+function rcDbError(err){
+  if (!err) return "";
+  if (String(err.code) === "23505") return "Another live lead already has this email";
+  if (String(err.code) === "42501") return "Not allowed (you need to be on the team)";
+  if (String(err.code) === "23514") return "A value is out of range: check the form";
+  return err.message || String(err);
+}
+function rcTeam(){ return (typeof teamMembers !== "undefined" && Array.isArray(teamMembers) ? teamMembers : []).filter(m => m && m.email); }
+function rcMemberName(email){
+  if (!email) return "";
+  const m = rcTeam().find(x => String(x.email).toLowerCase() === String(email).toLowerCase());
+  return m ? (m.name || m.email) : email;
+}
+function rcCampaign(id){ return RC.campaigns.find(c => c.id === id) || null; }
+function rcStageBadge(stage){
+  const g = rcStageGroup(stage);
+  const cls = stage === "opted_out" || stage === "rejected" ? "badge-red" : g === "approved" ? "badge-green"
+    : g === "application" ? "badge-amber" : g === "outreach" ? "badge-blue" : "badge-grey";
+  return `<span class="badge ${cls}">${rcE(rcStageLabel(stage))}</span>`;
+}
+function rcCampaignBadge(status){
+  const cls = status === "active" ? "badge-green" : status === "paused" ? "badge-amber"
+    : status === "target_reached" || status === "completed" ? "badge-blue" : "badge-grey";
+  const label = (RC_CAMPAIGN_STATUSES.find(s => s[0] === status) || [status, status || "—"])[1];
+  return `<span class="badge ${cls}">${rcE(label)}</span>`;
+}
+function rcScoreHtml(score){
+  if (score == null) return rcDash;
+  const c = rcScoreCategory(score);
+  return `<span class="rc-score ${c.key}" title="${rcE(c.label)}">${rcE(score)}</span>`;
+}
+function rcConsentIcons(l){
+  if (l.opted_out_at) return '<span class="rc-ic off" title="Opted out">Opted out</span>';
+  return `<span class="rc-ic${l.consent_email_at ? " on" : ""}" title="${l.consent_email_at ? "Email consent " + rcE(rcWhen(l.consent_email_at)) : "No email consent"}">Email</span>`
+    + `<span class="rc-ic${l.consent_sms_at ? " on" : ""}" title="${l.consent_sms_at ? "SMS consent " + rcE(rcWhen(l.consent_sms_at)) : "No SMS consent"}">SMS</span>`;
+}
+function rcDownload(name, csv){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+async function rcCopy(text, btn){
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; ta.style.cssText = "position:fixed;left:-9999px";
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+    ta.remove();
+  }
+  if (btn) { const was = btn.textContent; btn.textContent = ok ? "Copied" : "Select and copy"; setTimeout(() => { btn.textContent = was; }, 1500); }
+}
+
+/* ---- Data ---- */
+async function rcWorker(path, body){
+  const sb = rcSb();
+  if (!sb) throw new Error("Not connected");
+  const { data } = await sb.auth.getSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw new Error("Not signed in");
+  let res;
+  try {
+    res = await fetch(HM_WORKER + path, { method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify(body || {}) });
+  } catch (e) { throw new Error("Couldn't reach the Worker: " + ((e && e.message) || e)); }
+  const out = await res.json().catch(() => ({}));
+  if (/\/staff\/recruit\/(score|draft)$/.test(path)) {
+    if (res.ok) RC.ai = true;
+    else if (out && out.error === "ai_unavailable") RC.ai = false;
+  }
+  if (!res.ok) {
+    const err = new Error(rcWorkerError(out, res.status));
+    err.body = out; err.status = res.status;
+    throw err;
+  }
+  return out;
+}
+function rcLoad(){
+  if (RC.loading) return RC.loading;
+  const sb = rcSb();
+  if (!sb) { rcStatus("Not connected to the database yet: refresh in a moment."); return Promise.resolve(); }
+  if (!RC.loaded) rcStatus("Loading…");
+  RC.loading = (async () => {
+    try {
+      try { const s = await sb.auth.getSession(); RC.me = String((s.data && s.data.session && s.data.session.user && s.data.session.user.email) || "").toLowerCase(); } catch (_) {}
+      const since = new Date(Date.now() - 7 * 86400000).toISOString();
+      const [c, l, st, f] = await Promise.all([
+        sb.from("rc_campaigns").select("*").order("id", { ascending: true }),
+        sb.from("rc_leads").select("*").order("updated_at", { ascending: false }).limit(2000),
+        sb.from("rc_settings").select("*").eq("id", 1).maybeSingle(),
+        sb.from("rc_events").select("id,kind,campaign_id,lead_id,at").eq("kind", "followup").gte("at", since).order("at", { ascending: false }).limit(2000),
+      ]);
+      const errs = [c, l, st, f].map(r => r && r.error).filter(Boolean);
+      if (errs.some(rcIsMissingTable)) { RC.missing = true; RC.loaded = true; RC.error = null; return; }
+      if (errs.length) throw errs[0];
+      RC.missing = false;
+      RC.campaigns = c.data || []; RC.leads = l.data || []; RC.settings = st.data || null; RC.followups = f.data || [];
+      // Linked host applications (hm_host_applications), read in chunks.
+      const ids = [...new Set(RC.leads.map(x => x.application_id).filter(x => x != null).map(Number))];
+      const apps = new Map();
+      for (let i = 0; i < ids.length; i += 200) {
+        const r = await sb.from("hm_host_applications").select("id,ref,status,email").in("id", ids.slice(i, i + 200));
+        if (r.error) { console.warn("[rc] applications:", r.error); break; }
+        for (const a of r.data || []) apps.set(Number(a.id), a);
+      }
+      RC.apps = apps;
+      RC.loaded = true; RC.error = null;
+      if (RC.lead.id != null && !RC.leads.some(x => x.id === RC.lead.id)) RC.lead.id = null;
+    } catch (e) {
+      RC.error = rcDbError(e);
+    } finally {
+      RC.loading = null;
+    }
+    rcRender();
+    rcRefreshPanel(false);
+    if (RC.tab === "settings" && !RC.missing) rcLoadAiEvents();
+  })();
+  return RC.loading;
+}
+async function rcLoadAiEvents(){
+  const sb = rcSb();
+  if (!sb) return;
+  const r = await sb.from("rc_events").select("*").in("kind", ["ai_score", "ai_draft"]).order("at", { ascending: false }).limit(50);
+  RC.aiEvents = r.error ? [] : (r.data || []);
+  RC.aiEventsError = r.error ? rcDbError(r.error) : null;
+  if (RC.tab === "settings") rcRenderSettings();
+}
+async function rcLoadLeadEvents(id){
+  const sb = rcSb();
+  if (!sb) return;
+  const lead = RC.leads.find(x => x.id === id);
+  const [ev, sup] = await Promise.all([
+    sb.from("rc_events").select("*").eq("lead_id", id).order("at", { ascending: false }).limit(200),
+    (lead && (lead.email || lead.phone))
+      ? sb.from("rc_suppressions").select("*").in("value", [lead.email && String(lead.email).trim().toLowerCase(), lead.phone && String(lead.phone).trim()].filter(Boolean))
+      : Promise.resolve({ data: [] }),
+  ]);
+  RC.lead.events.set(id, ev.error ? { error: rcDbError(ev.error) } : { rows: ev.data || [] });
+  RC.lead.supp.set(id, sup.error ? [] : (sup.data || []));
+  if (RC.lead.id === id && rcPanelShowing("lead", id)) { rcRenderLeadTimeline(); rcRenderLeadRest(); }
+}
+// Staff change on a lead: write it, then append the timeline event (kind stage|note|assign).
+async function rcUpdateLead(id, patch, event){
+  const sb = rcSb();
+  const lead = RC.leads.find(x => x.id === id);
+  if (!sb || !lead) throw new Error("Lead not loaded: refresh");
+  const body = Object.assign({}, patch, { last_activity_at: new Date().toISOString() });
+  const r = await sb.from("rc_leads").update(body).eq("id", id).select().maybeSingle();
+  if (r.error) throw new Error(rcDbError(r.error));
+  if (!r.data) throw new Error("Not saved: the lead is gone or you can't edit it");
+  const i = RC.leads.findIndex(x => x.id === id);
+  if (i >= 0) RC.leads[i] = r.data;
+  let warn = "";
+  if (event) {
+    const ins = await sb.from("rc_events").insert({ lead_id: id, campaign_id: r.data.campaign_id, kind: event.kind, detail: event.detail || {}, by: RC.me || null });
+    if (ins.error) warn = " (timeline entry failed: " + rcDbError(ins.error) + ")";
+  }
+  return { lead: r.data, warn };
+}
+async function rcRefetchLead(id){
+  const sb = rcSb();
+  const r = await sb.from("rc_leads").select("*").eq("id", id).maybeSingle();
+  if (r.error || !r.data) return null;
+  const i = RC.leads.findIndex(x => x.id === id);
+  if (i >= 0) RC.leads[i] = r.data; else RC.leads.unshift(r.data);
+  if (r.data.application_id != null && !RC.apps.has(Number(r.data.application_id))) {
+    const a = await sb.from("hm_host_applications").select("id,ref,status,email").eq("id", r.data.application_id).maybeSingle();
+    if (!a.error && a.data) RC.apps.set(Number(a.data.id), a.data);
+  }
+  return r.data;
+}
+
+/* ---- Render ---- */
+function rcShowTab(name){
+  RC.tab = name;
+  document.querySelectorAll("[data-rc-tab]").forEach(b => b.classList.toggle("on", b.dataset.rcTab === name));
+  document.querySelectorAll("[data-rc-pane]").forEach(p => { p.style.display = p.dataset.rcPane === name && !RC.missing ? "" : "none"; });
+  rcRender();
+  if (name === "settings" && RC.loaded && !RC.missing) rcLoadAiEvents();
+}
+function rcRender(){
+  const banner = document.getElementById("rc-banner"), tabs = document.getElementById("rc-tabs");
+  if (!banner) return;
+  if (RC.missing) {
+    banner.style.display = "";
+    banner.innerHTML = `<div class="card-title" style="font-size:16px">Host recruitment tables aren't set up yet</div>
+      <div class="card-sub" style="margin-top:6px">Apply <b>sql/2026-10-13-rc-host-recruitment.sql</b> (vanmates-homestay-matching) in the Supabase SQL editor, then press Refresh.</div>
+      <div style="margin-top:10px"><button type="button" class="btn btn-ghost btn-mini" data-rc-refresh>Refresh</button></div>`;
+    if (tabs) tabs.style.display = "none";
+    document.querySelectorAll("[data-rc-pane]").forEach(p => { p.style.display = "none"; });
+    rcStatus("");
+    return;
+  }
+  banner.style.display = "none";
+  if (tabs) tabs.style.display = "";
+  document.querySelectorAll("[data-rc-pane]").forEach(p => { p.style.display = p.dataset.rcPane === RC.tab ? "" : "none"; });
+  if (RC.error) rcStatus("Could not load host recruitment: " + RC.error, true);
+  else if (!RC.loaded) rcStatus("Loading…");
+  else rcStatus(`${RC.leads.length} lead${RC.leads.length === 1 ? "" : "s"} · ${RC.campaigns.length} campaign${RC.campaigns.length === 1 ? "" : "s"}${RC.leads.length >= 2000 ? " · showing the 2,000 most recently updated" : ""}`);
+  const resp = RC.leads.filter(l => l.stage === "responded").length;
+  const review = RC.leads.filter(l => l.source === "listing" && (l.stage === "awaiting_review" || l.stage === "discovered")).length;
+  const n1 = document.getElementById("rc-tab-leads-n"); if (n1) n1.textContent = resp ? String(resp) : "";
+  const n2 = document.getElementById("rc-tab-disc-n"); if (n2) n2.textContent = review ? String(review) : "";
+  if (!RC.loaded && !RC.error) return;
+  if (RC.tab === "dashboard") rcRenderDashboard();
+  else if (RC.tab === "campaigns") rcRenderCampaigns();
+  else if (RC.tab === "leads") rcRenderLeads();
+  else if (RC.tab === "discovery") rcRenderDiscovery();
+  else if (RC.tab === "settings") rcRenderSettings();
+}
+function rcEmpty(title, sub){
+  return `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="9" r="3.5"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg><div class="t">${rcE(title)}</div><div>${rcE(sub || "")}</div></div>`;
+}
+
+function rcRenderDashboard(){
+  const box = document.getElementById("rc-pane-dashboard");
+  if (!box) return;
+  if (RC.error && !RC.loaded) { box.innerHTML = ""; return; }
+  const d = rcDashboard(RC.campaigns, RC.leads, RC.followups, Date.now());
+  const k = d.kpis;
+  const tile = (label, value, sub) => `<div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">${rcE(label)}</div><div class="kpi-value rc-num">${rcE(value)}</div><div class="kpi-trend" style="color:var(--muted)">${rcE(sub || "")}</div></div>`;
+  const groups = RC_STAGE_GROUPS;
+  const cityRows = d.cities.map(c => `<tr class="ha-row" data-rc-open-camp="${rcE(c.id)}">
+      <td><div style="font-weight:600">${rcE(c.city)}</div><div class="ha-sub">${rcCampaignBadge(c.status)}</div></td>
+      <td class="rc-num">${c.target}</td><td class="rc-num">${c.approved}</td>
+      <td class="rc-num"><span class="ha-bar"><span style="width:${c.pct}%"></span></span>${c.pct}%</td>
+      <td class="rc-num">${rcE(rcMoney(c.budget))}</td><td class="rc-num">${rcE(rcMoney(c.spent))}</td>
+      <td class="rc-num">${rcE(rcCostText(c.spent, c.leads))}</td><td class="rc-num">${rcE(rcCostText(c.spent, c.approved))}</td>
+      <td><div class="ha-chips">${groups.map(g => `<span class="ha-chip${c.funnel[g[0]] ? "" : " miss"}" title="${rcE(g[2].map(rcStageLabel).join(", "))}">${rcE(g[1])} ${c.funnel[g[0]]}</span>`).join("")}</div></td>
+      <td>${c.bestSource ? rcE(RC_SOURCE_LABEL[c.bestSource] || c.bestSource) : rcDash}</td>
+    </tr>`).join("");
+  const srcRows = d.bySource.map(s => `<tr><td>${rcE(s.label)}</td><td class="rc-num">${s.leads}</td><td class="rc-num">${s.contactable}</td>
+      <td class="rc-num">${s.started}</td><td class="rc-num">${s.submitted}</td><td class="rc-num">${s.approved}</td><td class="rc-num">${s.rate}%</td></tr>`).join("");
+  box.innerHTML = `
+    <div class="kpi-grid rc-kpis">
+      ${tile("Active cities", k.activeCities, RC.campaigns.length + " campaigns in all")}
+      ${tile("Leads", k.leads, k.discovered + " discovered listings")}
+      ${tile("Contactable leads", k.contactable, "consent recorded, not opted out")}
+      ${tile("Applications started", k.started, k.submitted + " submitted")}
+      ${tile("Applications submitted", k.submitted, "")}
+      ${tile("Approved hosts", k.approved, k.target ? "target " + k.target : "")}
+      ${tile("Approved bedrooms", k.approvedBedrooms, "rooms of approved + active hosts")}
+      ${tile("Follow-ups sent", k.followups7d, "last 7 days")}
+    </div>
+    <div class="card rc-card">
+      <div class="card-head" style="justify-content:space-between"><div class="card-title">By <em>city</em></div>
+        <button type="button" class="btn btn-ghost btn-mini" id="rc-dash-csv">Export CSV</button></div>
+      <div class="ha-wrap">${d.cities.length ? `<table class="ha-table"><thead><tr><th>City</th><th>Target</th><th>Approved</th><th>To goal</th><th>Budget</th><th>Spent</th><th>Per lead</th><th>Per approved host</th><th>Funnel</th><th>Best source</th></tr></thead><tbody>${cityRows}</tbody></table>`
+        : rcEmpty("No campaigns yet", "Add one under Campaigns.")}</div>
+    </div>
+    <div class="card rc-card">
+      <div class="card-head"><div class="card-title">Conversion by <em>source</em></div></div>
+      <div class="ha-wrap">${d.bySource.length ? `<table class="ha-table"><thead><tr><th>Source</th><th>Leads</th><th>Contactable</th><th>Applications started</th><th>Submitted</th><th>Approved</th><th>Lead → approved</th></tr></thead><tbody>${srcRows}</tbody></table>`
+        : rcEmpty("No leads yet", "Landing-page sign-ups and saved listings show up here.")}</div>
+      <p class="rc-note" style="padding:0 18px 16px"><b>Discovered vs contactable.</b> Discovered listings (${k.discovered}) are homes staff found on Kijiji, Craigslist, Facebook and similar sites and scored here. We can't email or text them: staff reply by hand through the site's own reply button. A lead is contactable (${k.contactable}) only when it has an email or phone, a recorded consent (landing form, or "Invite to apply" with the person's OK) and no opt-out. Only contactable leads get follow-ups.</p>
+    </div>`;
+}
+
+function rcRenderCampaigns(){
+  const box = document.getElementById("rc-pane-campaigns");
+  if (!box) return;
+  const existing = RC.campaigns.map(c => c.id);
+  const free = RC_CITIES.filter(c => !existing.includes(c[0]));
+  const add = RC.adding ? `<div class="rc-form" style="border-top:1px solid var(--line)">
+      <div class="form-row">
+        <div class="form-field"><label for="rc-add-city">City</label><select class="form-input" id="rc-add-city">${free.map(c => `<option value="${rcE(c[0])}">${rcE(c[1])}, ${rcE(c[2])}</option>`).join("")}</select></div>
+        <div class="form-field"><label for="rc-add-name">Name (optional)</label><input class="form-input" id="rc-add-name" placeholder="e.g. Ottawa host families" maxlength="120"></div>
+      </div>
+      <div class="rc-err" id="rc-add-err">${RC.addMsg ? rcE(RC.addMsg) : ""}</div>
+      <div style="display:flex;gap:8px"><button type="button" class="btn btn-primary btn-mini" id="rc-add-save"${free.length ? "" : " disabled"}>Create as draft</button>
+      <button type="button" class="btn btn-ghost btn-mini" id="rc-add-cancel">Cancel</button></div></div>` : "";
+  const rows = RC.campaigns.map(c => {
+    const n = RC.leads.filter(l => l.campaign_id === c.id).length;
+    return `<tr class="ha-row" data-rc-open-camp="${rcE(c.id)}">
+      <td><div style="font-weight:600">${rcE(c.name)}</div><div class="ha-sub">${rcE(c.id)}</div></td>
+      <td>${rcE(rcCityName(c))}${c.province ? ", " + rcE(c.province) : ""}</td>
+      <td>${rcCampaignBadge(c.status)}</td>
+      <td class="rc-num">${rcE(c.target_hosts)} hosts<div class="ha-sub">${rcE(c.target_bedrooms)} bedrooms</div></td>
+      <td class="rc-num">${rcE(rcMoney(c.budget_cents))}<div class="ha-sub">spent ${rcE(rcMoney(c.spent_cents))}</div></td>
+      <td>${c.manager ? rcE(rcMemberName(c.manager)) : rcDash}</td>
+      <td>${(c.languages || []).map(x => `<span class="ha-chip">${rcE(String(x).toUpperCase())}</span>`).join(" ")}</td>
+      <td>${c.followups_enabled ? "On" : '<span class="ha-sub">Off</span>'}</td>
+      <td class="rc-num">${n}</td>
+      <td><button type="button" class="btn btn-ghost btn-mini" data-rc-open-camp="${rcE(c.id)}">Edit</button></td>
+    </tr>`;
+  }).join("");
+  box.innerHTML = `<div class="card">
+      <div class="rc-toolbar"><span class="card-sub rc-grow">${RC.campaigns.length} campaign${RC.campaigns.length === 1 ? "" : "s"} · one per city</span>
+        <button type="button" class="btn btn-primary btn-mini" id="rc-add-open"${free.length ? "" : " disabled title=\"Every host city has a campaign\""}>+ Add campaign</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-rc-refresh>Refresh</button></div>
+      ${add}
+      <div class="ha-wrap">${RC.campaigns.length ? `<table class="ha-table"><thead><tr><th>Campaign</th><th>City</th><th>Status</th><th>Target</th><th>Budget</th><th>Manager</th><th>Languages</th><th>Follow-ups</th><th>Leads</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : rcEmpty("No campaigns yet", "Press + Add campaign.")}</div></div>`;
+}
+async function rcAddCampaign(){
+  const sel = document.getElementById("rc-add-city"), nameEl = document.getElementById("rc-add-name");
+  const v = rcNewCampaign(sel && sel.value, RC.campaigns.map(c => c.id));
+  if (!v.ok) { RC.addMsg = v.error; return rcRenderCampaigns(); }
+  const name = String((nameEl && nameEl.value) || "").trim();
+  if (name) v.value.name = name.slice(0, 120);
+  const r = await rcSb().from("rc_campaigns").insert(v.value).select().maybeSingle();
+  if (r.error) { RC.addMsg = "Not created: " + rcDbError(r.error); return rcRenderCampaigns(); }
+  RC.campaigns.push(r.data || v.value);
+  RC.campaigns.sort((a, b) => a.id.localeCompare(b.id));
+  RC.adding = false; RC.addMsg = null;
+  rcRenderCampaigns();
+  rcOpenCampaign(v.value.id);
+}
+
+/* ---- Leads ---- */
+function rcFillSelect(id, options, value){
+  const el = document.getElementById(id);
+  if (!el) return;
+  const html = options.map(o => `<option value="${rcE(o[0])}">${rcE(o[1])}</option>`).join("");
+  if (el.dataset.rcHtml !== html) { el.innerHTML = html; el.dataset.rcHtml = html; }
+  el.value = options.some(o => o[0] === value) ? value : "";
+}
+function rcRenderLeads(){
+  const f = RC.filter;
+  rcFillSelect("rc-f-city", [["", "All cities"]].concat(RC.campaigns.map(c => [c.id, rcCityName(c)])), f.city);
+  rcFillSelect("rc-f-stage", [["open", "Open (not closed)"], ["", "All stages"]].concat(RC_STAGE_GROUPS.map(g => ["g:" + g[0], "— " + g[1]]), RC_STAGES), f.stage);
+  rcFillSelect("rc-f-source", [["", "All sources"]].concat(RC_SOURCES), f.source);
+  const owners = [...new Set(rcTeam().map(m => String(m.email).toLowerCase()).concat(RC.leads.map(l => String(l.owner || "").toLowerCase()).filter(Boolean)))];
+  rcFillSelect("rc-f-owner", [["", "Any owner"], ["none", "Unassigned"]].concat(owners.map(e => [e, rcMemberName(e) + (e === RC.me ? " (me)" : "")])), f.owner);
+  const q = document.getElementById("rc-f-q"); if (q && q !== document.activeElement) q.value = f.q;
+  const box = document.getElementById("rc-leads-list"), count = document.getElementById("rc-leads-count");
+  const sm = document.getElementById("rc-sync-msg"); if (sm) sm.textContent = RC.syncMsg || "";
+  if (!box) return;
+  const list = rcSortLeads(rcFilterLeads(RC.leads, f, Date.now()));
+  if (count) count.textContent = `${list.length} of ${RC.leads.length} lead${RC.leads.length === 1 ? "" : "s"}`;
+  if (!list.length) { box.innerHTML = RC.leads.length ? rcEmpty("No leads match", "Loosen the filters.") : rcEmpty("No leads yet", "Landing-page sign-ups and saved listings land here."); return; }
+  const now = Date.now();
+  const shown = list.slice(0, RC_LEAD_ROWS_MAX);
+  box.innerHTML = `<table class="ha-table"><thead><tr><th>Lead</th><th>City</th><th>Stage</th><th>Source</th><th>Score</th><th>Owner</th><th>Consent</th><th>Application</th><th>Last activity</th></tr></thead><tbody>`
+    + shown.map(l => {
+      const a = l.application_id != null ? RC.apps.get(Number(l.application_id)) : null;
+      const last = rcLastActivity(l);
+      return `<tr class="ha-row" data-rc-open-lead="${rcE(l.id)}">
+        <td><div style="font-weight:600">${rcE(rcLeadName(l))}</div><div class="ha-sub">${rcE(l.ref)}${l.email ? " · " + rcE(l.email) : ""}</div></td>
+        <td>${rcE(rcCityName(rcCampaign(l.campaign_id) || l.campaign_id))}</td>
+        <td>${rcStageBadge(l.stage)}</td>
+        <td>${rcE(RC_SOURCE_LABEL[l.source] || l.source)}</td>
+        <td>${rcScoreHtml(l.score)}</td>
+        <td>${l.owner ? rcE(rcMemberName(l.owner)) : rcDash}</td>
+        <td style="white-space:nowrap">${rcConsentIcons(l)}</td>
+        <td>${a ? `${rcE(a.ref || "#" + a.id)}<div class="ha-sub">${rcE(String(a.status || "").replace(/_/g, " "))}</div>` : l.application_id != null ? "#" + rcE(l.application_id) : rcDash}</td>
+        <td style="white-space:nowrap" title="${rcE(rcWhen(last))}">${last ? rcE(rcAgo(last, now)) : rcDash}</td>
+      </tr>`;
+    }).join("") + "</tbody></table>"
+    + (list.length > shown.length ? `<div class="card-sub" style="padding:12px 14px">Showing the first ${shown.length} of ${list.length}: narrow the filters or export CSV for all.</div>` : "");
+}
+async function rcSync(btn){
+  if (btn) btn.disabled = true;
+  RC.syncMsg = "Syncing…"; rcRenderLeads();
+  try {
+    const out = await rcWorker("/staff/recruit/sync", {});
+    const n = Number(out && out.changed) || 0;
+    RC.syncMsg = n ? `Sync done: ${n} lead${n === 1 ? "" : "s"} moved.` : "Sync done: nothing changed.";
+    await rcLoad();
+  } catch (e) { RC.syncMsg = "Sync failed: " + ((e && e.message) || e); }
+  if (btn) btn.disabled = false;
+  rcRenderLeads();
+}
+
+/* ---- Shared drawer ---- */
+function rcPanelShowing(kind, id){
+  const p = document.getElementById("detail-panel");
+  return !!(p && p.classList.contains("open") && document.querySelector(`#panel-body .rc-panel[data-rc-kind="${kind}"][data-rc-id="${CSS.escape(String(id))}"]`));
+}
+function rcPanelOpen(){
+  document.querySelectorAll(".panel-head .header-edit-btn").forEach(x => x.remove());
+  document.getElementById("ll-more-menu")?.remove();
+  document.getElementById("detail-panel").classList.add("open");
+  document.getElementById("detail-panel").setAttribute("aria-hidden", "false");
+  document.getElementById("panel-backdrop").classList.add("open");
+  document.body.style.overflow = "hidden";
+  const close = document.getElementById("panel-close"); if (close) close.focus();
+}
+function rcPanelHead(initials, title, sub, metaHtml){
+  const hero = document.getElementById("panel-hero");
+  if (hero) { hero.textContent = initials; hero.style.background = "linear-gradient(135deg,#6b5a4a,#2B211A)"; }
+  document.getElementById("panel-title").textContent = title;
+  document.getElementById("panel-sub").textContent = sub;
+  document.getElementById("panel-meta").innerHTML = metaHtml;
+}
+function rcRefreshPanel(full){
+  if (RC.lead.id != null && rcPanelShowing("lead", RC.lead.id)) {
+    if (!RC.leads.some(x => x.id === RC.lead.id)) { if (typeof closeProperty === "function") closeProperty(); return; }
+    rcRenderLeadPanel(full);
+  } else if (RC.camp.id != null && rcPanelShowing("camp", RC.camp.id) && full) rcRenderCampaignPanel();
+}
+
+/* Campaign drawer: every editable rc_campaigns field. */
+function rcOpenCampaign(id, focusPolicy){
+  const c = rcCampaign(id);
+  if (!c) return;
+  RC.camp.id = id; RC.camp.msg = null; RC.lead.id = null;
+  rcRenderCampaignPanel();
+  rcPanelOpen();
+  if (focusPolicy) setTimeout(() => { const p = document.getElementById("rc-camp-policy"); if (p) p.scrollIntoView({ behavior: "smooth", block: "start" }); }, 80);
+}
+function rcRenderCampaignPanel(){
+  const c = rcCampaign(RC.camp.id);
+  if (!c) return;
+  rcPanelHead(String(c.id).slice(0, 2).toUpperCase(), c.name || c.id, [rcCityName(c), c.province, c.country].filter(Boolean).join(" · "), rcCampaignBadge(c.status));
+  const team = rcTeam();
+  const mgrOpts = [["", "Nobody"]].concat(team.map(m => [String(m.email).toLowerCase(), m.name || m.email]));
+  if (c.manager && !mgrOpts.some(o => o[0] === String(c.manager).toLowerCase())) mgrOpts.push([String(c.manager).toLowerCase(), c.manager]);
+  const opt = (opts, v) => opts.map(o => `<option value="${rcE(o[0])}"${String(v || "").toLowerCase() === o[0] ? " selected" : ""}>${rcE(o[1])}</option>`).join("");
+  const field = (label, html, id) => `<div class="form-field"${id ? ` id="${id}"` : ""}><label>${rcE(label)}</label>${html}</div>`;
+  const inp = (name, value, extra) => `<input class="form-input" name="${name}" value="${rcE(value == null ? "" : value)}"${extra || ""}>`;
+  const ta = (name, value, rows) => `<textarea class="form-input" name="${name}" rows="${rows || 4}">${rcE(value == null ? "" : value)}</textarea>`;
+  const body = document.getElementById("panel-body");
+  body.innerHTML = `<form class="ha-panel rc-panel" data-rc-kind="camp" data-rc-id="${rcE(c.id)}" data-rc-camp-form>
+    <div class="ha-status" id="rc-camp-status" style="${RC.camp.msg && RC.camp.msg.bad ? "color:var(--red)" : ""}">${RC.camp.msg ? rcE(RC.camp.msg.text) : ""}</div>
+    ${rcSection("Campaign", `
+      ${field("Name", inp("name", c.name, ' maxlength="120" required'))}
+      <div class="form-row">${field("City", inp("city", c.city, ' maxlength="80" required'))}${field("Province", inp("province", c.province, ' maxlength="40"'))}</div>
+      <div class="form-row">${field("Status", `<select class="form-input" name="status">${opt(RC_CAMPAIGN_STATUSES, c.status)}</select>`)}${field("Manager", `<select class="form-input" name="manager">${opt(mgrOpts, c.manager)}</select>`)}</div>
+      <div class="form-row">${field("Target hosts", inp("target_hosts", c.target_hosts, ' inputmode="numeric"'))}${field("Target bedrooms", inp("target_bedrooms", c.target_bedrooms, ' inputmode="numeric"'))}</div>
+      <div class="form-row">${field("Budget ($" + rcE(c.currency || "CAD") + ")", inp("budget", rcCentsToDollars(c.budget_cents), ' inputmode="decimal"'))}${field("Spent ($" + rcE(c.currency || "CAD") + ")", inp("spent", rcCentsToDollars(c.spent_cents), ' inputmode="decimal"'))}</div>
+      ${field("Sources (comma list)", inp("sources", (c.sources || []).join(", ")))}
+      <div class="ha-sub" style="margin:-6px 0 12px">Allowed: ${rcE(RC_SOURCES.map(s => s[0]).join(", "))}</div>
+      ${field("Languages (comma list)", inp("languages", (c.languages || []).join(", ")))}
+      <label style="display:flex;gap:8px;align-items:center;font-size:13.5px;margin-bottom:12px"><input type="checkbox" name="followups_enabled"${c.followups_enabled ? " checked" : ""}> Automatic follow-ups on</label>
+      ${field("Neighbourhoods", ta("neighbourhoods", c.neighbourhoods, 2))}
+      ${field("Schools", ta("schools", c.schools, 2))}`)}
+    ${rcSection("Approved answers (the AI may use only these)", `
+      ${field("Policy (English)", ta("policy_en", c.policy_en, 10))}
+      ${field("Policy (French)", ta("policy_fr", c.policy_fr, 10))}
+      ${field("Rates (JSON, empty = no pay figures quoted)", ta("rates", c.rates == null ? "" : JSON.stringify(c.rates, null, 2), 5))}`, ' id="rc-camp-policy"')}
+    ${rcSection("Notes", field("Notes", ta("notes", c.notes, 3)))}
+    <div class="rc-err" id="rc-camp-err"></div>
+    <div class="ha-actions"><button type="submit" class="btn btn-primary">Save campaign</button></div>
+    <div class="ha-sub" style="margin-top:10px">Created ${rcE(rcWhen(c.created_at))} · updated ${rcE(rcWhen(c.updated_at))}</div>
+  </form>`;
+}
+async function rcSaveCampaign(form){
+  const c = rcCampaign(form.dataset.rcId);
+  const err = document.getElementById("rc-camp-err");
+  const bad = t => { if (err) err.textContent = t; };
+  if (!c) return bad("Campaign not loaded: refresh");
+  const g = n => (form.elements[n] ? form.elements[n].value : "");
+  const name = g("name").trim(), city = g("city").trim();
+  if (!name || !city) return bad("Name and city are required");
+  const th = rcParseInt(g("target_hosts"), 0, 100000); if (!th.ok) return bad("Target hosts: " + th.error);
+  const tb = rcParseInt(g("target_bedrooms"), 0, 100000); if (!tb.ok) return bad("Target bedrooms: " + tb.error);
+  const bu = rcDollarsToCents(g("budget")); if (!bu.ok) return bad("Budget: " + bu.error);
+  const sp = rcDollarsToCents(g("spent")); if (!sp.ok) return bad("Spent: " + sp.error);
+  const so = rcParseList(g("sources"), RC_SOURCES.map(s => s[0])); if (!so.ok) return bad("Sources: " + so.error);
+  const la = rcParseList(g("languages"), ["en", "fr"]); if (!la.ok) return bad("Languages: " + la.error);
+  if (!la.value.length) return bad("Languages: at least one (en, fr)");
+  const ra = rcParseRates(g("rates")); if (!ra.ok) return bad(ra.error);
+  const patch = { name: name.slice(0, 120), city: city.slice(0, 80), province: g("province").trim() || null, status: g("status"),
+    manager: g("manager") || null, target_hosts: th.value, target_bedrooms: tb.value, budget_cents: bu.value, spent_cents: sp.value,
+    sources: so.value, languages: la.value, followups_enabled: !!(form.elements.followups_enabled && form.elements.followups_enabled.checked),
+    neighbourhoods: g("neighbourhoods").trim() || null, schools: g("schools").trim() || null,
+    policy_en: g("policy_en").trim() || null, policy_fr: g("policy_fr").trim() || null, rates: ra.value, notes: g("notes").trim() || null };
+  bad("");
+  const btn = form.querySelector('button[type="submit"]'); if (btn) btn.disabled = true;
+  const r = await rcSb().from("rc_campaigns").update(patch).eq("id", c.id).select().maybeSingle();
+  if (btn) btn.disabled = false;
+  if (r.error || !r.data) return bad("Not saved: " + (r.error ? rcDbError(r.error) : "no permission"));
+  const i = RC.campaigns.findIndex(x => x.id === c.id);
+  if (i >= 0) RC.campaigns[i] = r.data;
+  RC.camp.msg = { text: "Saved." };
+  rcRenderCampaignPanel();
+  rcRender();
+}
+
+/* Lead drawer. */
+function rcOpenLead(id){
+  id = Number(id);
+  const l = RC.leads.find(x => x.id === id);
+  if (!l) return;
+  if (RC.lead.id !== id) { RC.lead.form = null; RC.lead.msg = null; RC.lead.draft = null; }
+  RC.lead.id = id; RC.camp.id = null;
+  rcRenderLeadPanel(true);
+  rcPanelOpen();
+  rcLoadLeadEvents(id);
+}
+function rcLeadSay(text, bad){
+  RC.lead.msg = text ? { text, bad: !!bad } : null;
+  const el = document.getElementById("rc-lp-status");
+  if (el) { el.textContent = text || ""; el.style.color = bad ? "var(--red)" : ""; }
+}
+function rcRenderLeadPanel(full){
+  const l = RC.leads.find(x => x.id === RC.lead.id);
+  if (!l) return;
+  const name = rcLeadName(l);
+  const ini = String(name).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "HR";
+  const cat = l.score != null ? rcScoreCategory(l.score) : null;
+  rcPanelHead(ini, name, [l.ref, l.email, rcCityName(rcCampaign(l.campaign_id) || l.campaign_id)].filter(Boolean).join(" · "),
+    `<span class="ha-meta">${rcE(rcStageLabel(l.stage))}</span><span class="ha-meta">${rcE(RC_SOURCE_LABEL[l.source] || l.source)}</span>`
+    + (cat ? `<span class="ha-meta">${rcE(l.score)} · ${rcE(cat.label)}</span>` : "")
+    + `<span class="ha-meta${rcIsContactable(l) ? "" : " ha-need"}">${rcIsContactable(l) ? "Contactable" : "Not contactable"}</span>`);
+  const body = document.getElementById("panel-body");
+  let root = body.querySelector(`.rc-panel[data-rc-kind="lead"][data-rc-id="${l.id}"]`);
+  if (!root) {
+    body.innerHTML = `<div class="ha-panel rc-panel" data-rc-kind="lead" data-rc-id="${rcE(l.id)}"><div class="ha-status" id="rc-lp-status"></div>
+      <div id="rc-lp-actions" style="margin-bottom:22px"></div><div id="rc-lp-pipeline"></div><div id="rc-lp-rest"></div><div id="rc-lp-timeline"></div></div>`;
+    full = true;
+  }
+  if (full) {
+    rcLeadSay(RC.lead.msg && RC.lead.msg.text, RC.lead.msg && RC.lead.msg.bad);
+    rcRenderLeadActions();
+    rcRenderLeadPipeline();
+  }
+  rcRenderLeadRest();
+  rcRenderLeadTimeline();
+}
+function rcRenderLeadActions(){
+  const l = RC.leads.find(x => x.id === RC.lead.id), box = document.getElementById("rc-lp-actions");
+  if (!l || !box) return;
+  const term = rcIsTerminal(l.stage), at = RC_FORWARD.indexOf(l.stage), busy = RC.lead.busy ? " disabled" : "";
+  const btns = [];
+  if (!term && at >= 0 && at < RC_FORWARD.indexOf("contacted")) btns.push(`<button type="button" class="btn btn-ghost btn-mini" data-rc-quick="contacted"${busy}>Mark contacted</button>`);
+  if (!term && at >= 0 && at < RC_FORWARD.indexOf("responded")) btns.push(`<button type="button" class="btn btn-ghost btn-mini" data-rc-quick="responded"${busy}>Mark responded</button>`);
+  if (!term && l.application_id == null && !l.opted_out_at) btns.push(`<button type="button" class="btn btn-primary btn-mini" data-rc-form="invite"${busy}>Invite to apply…</button>`);
+  btns.push(`<button type="button" class="btn btn-ghost btn-mini" data-rc-form="draft"${busy}>AI draft reply…</button>`);
+  if (!l.opted_out_at) btns.push(`<button type="button" class="btn btn-ghost btn-mini" data-rc-form="optout"${busy}>Opt out…</button>`);
+  let form = "";
+  if (RC.lead.form === "invite") {
+    form = `<div class="ha-inline"><div style="font-weight:600">Invite to apply</div>
+      <div class="ha-sub">Starts the host application and emails the link from homestay@vanmates.com. Only with the person's OK.</div>
+      ${l.email ? `<div class="ha-line">To: <b>${rcE(l.email)}</b></div>` : `<label class="ha-sub" for="rc-inv-email">Email</label><input class="form-input" id="rc-inv-email" type="email" placeholder="name@example.com" autocomplete="off">`}
+      <div class="form-row" style="margin:0"><div><label class="ha-sub" for="rc-inv-first">First name</label><input class="form-input" id="rc-inv-first" maxlength="80" value="${rcE(l.first_name || "")}" autocomplete="off"></div>
+        <div><label class="ha-sub" for="rc-inv-last">Last name</label><input class="form-input" id="rc-inv-last" maxlength="80" value="${rcE(l.last_name || "")}" autocomplete="off"></div></div>
+      <label class="ha-sub" for="rc-inv-note">How they agreed (required)</label>
+      <input class="form-input" id="rc-inv-note" maxlength="300" placeholder="e.g. Agreed on Kijiji chat 13 Oct">
+      <div class="ha-actions"><button type="button" class="btn btn-primary btn-mini" data-rc-do="invite"${busy}>Send invite</button><button type="button" class="btn btn-ghost btn-mini" data-rc-form-cancel>Cancel</button></div></div>`;
+  } else if (RC.lead.form === "draft") {
+    const d = RC.lead.draft;
+    form = `<div class="ha-inline"><div style="font-weight:600">AI draft reply</div>
+      <div class="ha-sub">Paste the host's question. The draft uses only this campaign's approved answers; anything else says a coordinator will confirm.</div>
+      <textarea class="form-input" id="rc-draft-q" rows="4" maxlength="4000" placeholder="e.g. How much do hosts get paid? Can I host if I have a dog?">${rcE(d && d.question || "")}</textarea>
+      <div class="ha-actions"><button type="button" class="btn btn-primary btn-mini" data-rc-do="draft"${busy}>Draft reply</button><button type="button" class="btn btn-ghost btn-mini" data-rc-form-cancel>Close</button></div>
+      ${d && d.text ? `<div style="margin-top:12px">${d.needsStaff ? '<div style="margin-bottom:6px"><span class="badge badge-amber">Needs a coordinator</span> <span class="ha-sub">Part of the question isn\'t covered by the approved answers: a coordinator must confirm it.</span></div>' : ""}<div class="ha-sub">Draft (${rcE(l.lang === "fr" ? "French" : "English")}${d.model ? ", " + rcE(d.model) : ""}): check it before sending</div>
+        <textarea class="form-input rc-draft" id="rc-draft-out" readonly>${rcE(d.text)}</textarea>
+        <button type="button" class="btn btn-ghost btn-mini" data-rc-copy="rc-draft-out">Copy</button></div>` : ""}</div>`;
+  } else if (RC.lead.form === "optout") {
+    form = `<div class="ha-inline"><div style="font-weight:600">Opt out ${rcE(rcLeadName(l))}?</div>
+      <div class="ha-sub">Stops every email and text to this person, moves the lead to Opted out and adds their email and phone to the suppression list. This can't be undone here.</div>
+      <div class="ha-actions" style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-rc-do="optout"${busy}>Yes, opt out</button><button type="button" class="btn btn-ghost btn-mini" data-rc-form-cancel>Cancel</button></div></div>`;
+  }
+  box.innerHTML = `<div class="ha-actions">${btns.join("")}</div>${form}`;
+}
+function rcRenderLeadPipeline(){
+  const l = RC.leads.find(x => x.id === RC.lead.id), box = document.getElementById("rc-lp-pipeline");
+  if (!l || !box) return;
+  const stages = RC_STAGES.filter(s => s[0] !== "opted_out" || l.stage === "opted_out");
+  const team = rcTeam();
+  const owners = [["", "Unassigned"]].concat(team.map(m => [String(m.email).toLowerCase(), (m.name || m.email) + (String(m.email).toLowerCase() === RC.me ? " (me)" : "")]));
+  if (l.owner && !owners.some(o => o[0] === String(l.owner).toLowerCase())) owners.push([String(l.owner).toLowerCase(), l.owner]);
+  const busy = RC.lead.busy ? " disabled" : "";
+  box.innerHTML = rcSection("Pipeline", `
+    <div class="form-row">
+      <div class="form-field"><label for="rc-lp-stage">Stage</label><select class="form-input" id="rc-lp-stage"${busy}${l.stage === "opted_out" ? " disabled" : ""}>${stages.map(s => `<option value="${s[0]}"${s[0] === l.stage ? " selected" : ""}>${rcE(s[1])}</option>`).join("")}</select></div>
+      <div class="form-field"><label for="rc-lp-owner">Owner</label><select class="form-input" id="rc-lp-owner"${busy}>${owners.map(o => `<option value="${rcE(o[0])}"${o[0] === String(l.owner || "").toLowerCase() ? " selected" : ""}>${rcE(o[1])}</option>`).join("")}</select></div>
+    </div>
+    <div class="form-field"><label for="rc-lp-notes">Notes</label><textarea class="form-input" id="rc-lp-notes" rows="3" maxlength="5000">${rcE(l.notes || "")}</textarea></div>
+    <div class="ha-actions" style="margin-top:8px"><button type="button" class="btn btn-ghost btn-mini" data-rc-do="notes"${busy}>Save notes</button></div>`);
+}
+function rcRenderLeadRest(){
+  const l = RC.leads.find(x => x.id === RC.lead.id), box = document.getElementById("rc-lp-rest");
+  if (!l || !box) return;
+  const c = rcCampaign(l.campaign_id);
+  const a = l.application_id != null ? RC.apps.get(Number(l.application_id)) : null;
+  const url = rcSafeUrl(l.listing_url);
+  const supp = RC.lead.supp.get(l.id) || [];
+  const sd = l.score_detail && typeof l.score_detail === "object" ? l.score_detail : null;
+  const appHtml = l.application_id == null ? "" : a
+    ? `<button type="button" class="btn btn-ghost btn-mini" data-rc-open-app="${rcE(a.id)}">${rcE(a.ref || "#" + a.id)} · ${rcE(String(a.status || "").replace(/_/g, " "))}</button>`
+    : `#${rcE(l.application_id)}`;
+  let score = "";
+  if (l.score != null || sd) {
+    const rows = rcBreakdownRows(sd && sd.breakdown);
+    score = rcSection("AI score", rcKv("Score", l.score != null ? `${rcScoreHtml(l.score)} ${rcE(rcScoreCategory(l.score).label)}` : "")
+      + (sd && sd.summary ? rcKv("Summary", rcE(sd.summary)) : "")
+      + (sd && Array.isArray(sd.unknowns) && sd.unknowns.length ? rcKv("Unknowns", rcE(sd.unknowns.join("\n"))) : "")
+      + (rows.length ? `<div class="ha-wrap" style="margin-top:6px">${rcBreakdownTable(rows)}</div>` : "")
+      + (sd && sd.draft_message ? `<div style="margin-top:10px"><div class="ha-sub">Suggested message</div><textarea class="form-input rc-draft" id="rc-lp-sugg" readonly>${rcE(sd.draft_message)}</textarea><button type="button" class="btn btn-ghost btn-mini" data-rc-copy="rc-lp-sugg">Copy</button></div>` : "")
+      + (sd && sd.model ? `<div class="ha-sub" style="margin-top:6px">Model ${rcE(sd.model)}</div>` : ""));
+  }
+  box.innerHTML = rcSection("Person", rcKv("Name", rcE([l.first_name, l.last_name].filter(Boolean).join(" ")))
+      + rcKv("Email", l.email ? `<a href="${rcE(safeHref("mailto:" + l.email))}">${rcE(l.email)}</a>` : "")
+      + rcKv("Phone", rcE(l.phone)) + rcKv("Language", l.lang === "fr" ? "French" : "English")
+      + rcKv("Rooms", rcE(l.rooms)) + rcKv("Message", rcE(l.message)))
+    + rcSection("Lead", rcKv("Ref", rcE(l.ref)) + rcKv("Campaign", c ? `<button type="button" class="btn btn-ghost btn-mini" data-rc-open-camp="${rcE(c.id)}">${rcE(c.name)}</button>` : rcE(l.campaign_id))
+      + rcKv("Source", rcE(RC_SOURCE_LABEL[l.source] || l.source) + (l.source_detail ? " · " + rcE(l.source_detail) : ""))
+      + rcKv("UTM", l.utm ? rcE(JSON.stringify(l.utm)) : "")
+      + rcKv("Application", appHtml) + rcKv("Host id", rcE(l.host_id))
+      + rcKv("Follow-ups", `step ${rcE(l.followup_step || 0)}` + (l.next_followup_at ? ` · next ${rcE(rcWhen(l.next_followup_at))}` : "") + (l.last_followup_at ? ` · last ${rcE(rcWhen(l.last_followup_at))}` : ""))
+      + rcKv("Last activity", rcE(rcWhen(rcLastActivity(l)))) + rcKv("Created", rcE(rcWhen(l.created_at))) + rcKv("Updated", rcE(rcWhen(l.updated_at))))
+    + rcSection("Consent", rcKv("Email consent", l.consent_email_at ? rcE(rcWhen(l.consent_email_at)) : '<span class="ha-sub">No</span>')
+      + rcKv("SMS consent", l.consent_sms_at ? rcE(rcWhen(l.consent_sms_at)) : '<span class="ha-sub">No</span>')
+      + rcKv("Consent text", rcE(l.consent_text)) + rcKv("Consent IP", rcE(l.consent_ip))
+      + rcKv("Opted out", l.opted_out_at ? `<span class="ha-need">${rcE(rcWhen(l.opted_out_at))}</span>` : '<span class="ha-sub">No</span>')
+      + rcKv("Suppressed", supp.length ? supp.map(s => rcE(s.kind + " " + s.value + (s.reason ? " (" + s.reason + ")" : ""))).join("<br>") : '<span class="ha-sub">No</span>'))
+    + score
+    + (l.listing_url || l.listing_text ? rcSection("Listing", rcKv("Listing", url ? `<a href="${rcE(url)}" target="_blank" rel="noopener noreferrer">${rcE(url.length > 70 ? url.slice(0, 70) + "…" : url)}</a>` : rcE(l.listing_url))
+      + (l.listing_text ? `<details style="margin-top:8px"><summary>Listing text</summary><div class="rc-pre">${rcE(l.listing_text)}</div></details>` : "")
+      + '<div class="ha-sub" style="margin-top:8px">Reply through the site\'s own reply button. Don\'t copy contact details off the listing.</div>') : "");
+}
+function rcBreakdownTable(rows){
+  return `<table class="ha-table"><thead><tr><th>Criterion</th><th>Score</th><th>Note</th></tr></thead><tbody>${rows.map(r =>
+    `<tr><td>${rcE(r.label)}</td><td class="rc-num">${r.score == null ? '<span class="ha-sub">unknown</span>' : rcE(r.score) + (r.max != null ? " / " + rcE(r.max) : "")}</td><td>${rcE(r.note)}</td></tr>`).join("")}</tbody></table>`;
+}
+function rcRenderLeadTimeline(){
+  const box = document.getElementById("rc-lp-timeline");
+  if (!box || RC.lead.id == null) return;
+  const ev = RC.lead.events.get(RC.lead.id);
+  let inner;
+  if (!ev) inner = '<div class="card-sub">Loading…</div>';
+  else if (ev.error) inner = `<div class="card-sub" style="color:var(--red)">Could not load the timeline: ${rcE(ev.error)}</div>`;
+  else if (!ev.rows.length) inner = '<div class="card-sub">Nothing yet.</div>';
+  else inner = `<ul class="rc-timeline">${ev.rows.map(e => `<li>${rcE(rcEventText(e))}<div class="ha-sub">${rcE(rcWhen(e.at))}${e.by ? " · " + rcE(rcMemberName(e.by)) : ""}</div></li>`).join("")}</ul>`;
+  box.innerHTML = rcSection("Timeline", inner);
+}
+async function rcLeadChange(kind, value){
+  const l = RC.leads.find(x => x.id === RC.lead.id);
+  if (!l || RC.lead.busy) return;
+  let patch, event, done;
+  if (kind === "stage") {
+    if (value === l.stage) return;
+    patch = { stage: value }; event = { kind: "stage", detail: { from: l.stage, to: value } }; done = "Stage: " + rcStageLabel(value) + ".";
+  } else if (kind === "owner") {
+    const to = value || null;
+    if ((to || "") === String(l.owner || "").toLowerCase()) return;
+    patch = { owner: to }; event = { kind: "assign", detail: { from: l.owner || null, to } }; done = to ? "Owner: " + rcMemberName(to) + "." : "Unassigned.";
+  } else if (kind === "notes") {
+    const el = document.getElementById("rc-lp-notes");
+    const text = String(el ? el.value : "").trim();
+    if (text === String(l.notes || "").trim()) return rcLeadSay("No change to save.");
+    patch = { notes: text || null }; event = { kind: "note", detail: { text: text.slice(0, 500) } }; done = "Notes saved.";
+  } else return;
+  RC.lead.busy = true; rcLeadSay("Saving…");
+  try {
+    const r = await rcUpdateLead(l.id, patch, event);
+    RC.lead.busy = false;
+    RC.lead.msg = { text: done + r.warn, bad: !!r.warn };
+    rcRenderLeadPanel(true);
+    rcRender();
+    rcLoadLeadEvents(l.id);
+  } catch (e) {
+    RC.lead.busy = false;
+    RC.lead.msg = { text: "Not saved: " + ((e && e.message) || e), bad: true };
+    rcRenderLeadPanel(true);
+  }
+}
+async function rcLeadDo(action){
+  const l = RC.leads.find(x => x.id === RC.lead.id);
+  if (!l || RC.lead.busy) return;
+  if (action === "notes") return rcLeadChange("notes");
+  if (action === "invite") {
+    const emailEl = document.getElementById("rc-inv-email"), noteEl = document.getElementById("rc-inv-note");
+    const email = emailEl ? String(emailEl.value || "").trim().toLowerCase() : "";
+    const first = String((document.getElementById("rc-inv-first") || {}).value || "").trim();
+    const last = String((document.getElementById("rc-inv-last") || {}).value || "").trim();
+    const note = String((noteEl && noteEl.value) || "").trim();
+    if (!l.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return rcLeadSay("Type the person's email first.", true);
+    if (!first || !last) return rcLeadSay("Type the person's first and last name (the application needs both).", true);
+    if (note.length < 3) return rcLeadSay("Write how the person agreed, e.g. \"Agreed on Kijiji chat 13 Oct\".", true);
+    RC.lead.busy = true; rcLeadSay("Sending the invite…"); rcRenderLeadActions();
+    try {
+      const body = { lead_id: l.id, consent_note: note, first_name: first, last_name: last };
+      if (!l.email) body.email = email;
+      const out = await rcWorker("/staff/recruit/invite", body);
+      await rcRefetchLead(l.id);
+      RC.lead.form = null;
+      RC.lead.msg = out && out.emailed === false
+        ? { text: "Application started" + (out.ref ? " (" + out.ref + ")" : "") + ", but the invite email didn't go out: use Send continue link in Homestay hosts › Applications.", bad: true }
+        : { text: "Invite emailed: application " + ((out && out.ref) || "") + " started." };
+    } catch (e) {
+      RC.lead.msg = { text: "Invite not sent: " + ((e && e.message) || e), bad: true };
+      if (e && e.body && (e.body.error === "host_exists" || e.body.error === "suppressed")) { await rcRefetchLead(l.id); RC.lead.form = null; }
+    }
+    RC.lead.busy = false;
+    rcRenderLeadPanel(true); rcRender(); rcLoadLeadEvents(l.id);
+    return;
+  }
+  if (action === "draft") {
+    const q = String((document.getElementById("rc-draft-q") || {}).value || "").trim();
+    if (q.length < 3) return rcLeadSay("Paste the host's question first.", true);
+    RC.lead.draft = { question: q, text: "" };
+    RC.lead.busy = true; rcLeadSay("Drafting…"); rcRenderLeadActions();
+    try {
+      const out = await rcWorker("/staff/recruit/draft", { lead_id: l.id, question: q });
+      RC.lead.draft = { question: q, text: String((out && (out.draft || out.text)) || ""), needsStaff: !!(out && out.needs_staff), model: (out && out.model) || "" };
+      RC.lead.msg = RC.lead.draft.text ? { text: "Draft ready: read it, then copy." } : { text: "The AI returned an empty draft.", bad: true };
+    } catch (e) { RC.lead.msg = { text: "No draft: " + ((e && e.message) || e), bad: true }; }
+    RC.lead.busy = false;
+    rcRenderLeadPanel(true); rcLoadLeadEvents(l.id);
+    return;
+  }
+  if (action === "optout") {
+    RC.lead.busy = true; rcLeadSay("Opting out…"); rcRenderLeadActions();
+    try {
+      await rcWorker("/staff/recruit/optout", { lead_id: l.id });
+      await rcRefetchLead(l.id);
+      RC.lead.form = null; RC.lead.msg = { text: "Opted out: nothing more will be sent." };
+    } catch (e) { RC.lead.msg = { text: "Not opted out: " + ((e && e.message) || e), bad: true }; }
+    RC.lead.busy = false;
+    rcRenderLeadPanel(true); rcRender(); rcLoadLeadEvents(l.id);
+  }
+}
+
+/* ---- Discovery ---- */
+function rcRenderDiscovery(){
+  const box = document.getElementById("rc-pane-discovery");
+  if (!box) return;
+  const D = RC.disc;
+  // Keep what is typed: read the live form before redrawing.
+  const live = document.getElementById("rc-disc-text");
+  if (live) { D.text = live.value; D.url = (document.getElementById("rc-disc-url") || {}).value || ""; D.campaign = (document.getElementById("rc-disc-camp") || {}).value || D.campaign; }
+  const camps = RC.campaigns.filter(c => c.status !== "archived").sort((a, b) => (a.status === "active" ? 0 : 1) - (b.status === "active" ? 0 : 1) || a.id.localeCompare(b.id));
+  if (!D.campaign && camps.length) D.campaign = camps[0].id;
+  const r = D.result;
+  let result = "";
+  if (D.error) result = `<div class="rc-result"><div class="rc-err">${rcE(D.error)}</div>${D.dupRef ? rcDupHtml(D.dupRef) : ""}</div>`;
+  else if (r) {
+    const cat = rcScoreCategory(r.score);
+    const rows = rcBreakdownRows(r.breakdown);
+    result = `<div class="rc-result">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap"><span class="rc-big">${rcE(r.score == null ? "—" : r.score)}</span><span class="rc-score ${cat.key}">${rcE(cat.label)}</span></div>
+      ${r.summary ? `<p style="margin:10px 0 0;font-size:13.5px">${rcE(r.summary)}</p>` : ""}
+      ${rows.length ? `<div class="ha-wrap" style="margin-top:12px">${rcBreakdownTable(rows)}</div>` : ""}
+      ${Array.isArray(r.unknowns) && r.unknowns.length ? `<div style="margin-top:12px"><div class="ha-sub">Unknown from the listing</div><ul style="margin:4px 0 0 18px;font-size:13px">${r.unknowns.map(u => `<li>${rcE(typeof u === "string" ? u : JSON.stringify(u))}</li>`).join("")}</ul></div>` : ""}
+      ${r.draft_message ? `<div style="margin-top:12px"><div class="ha-sub">Suggested message</div><textarea class="form-input rc-draft" id="rc-disc-msg" readonly>${rcE(r.draft_message)}</textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-ghost btn-mini" data-rc-copy="rc-disc-msg">Copy</button>
+        <span class="ha-sub">Send this yourself through the site's own reply button. Don't copy contact details off the listing.</span></div></div>` : `<div class="ha-sub" style="margin-top:12px">Send any message yourself through the site's own reply button. Don't copy contact details off the listing.</div>`}
+      <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${D.saved ? `<span class="rc-ok">Saved as ${rcE(D.saved.ref || "a lead")}</span>${D.saved.id != null ? `<button type="button" class="btn btn-ghost btn-mini" data-rc-open-lead="${rcE(D.saved.id)}">Open lead</button>` : ""}`
+          : `<button type="button" class="btn btn-primary btn-mini" id="rc-disc-save"${D.busy ? " disabled" : ""}>Save as lead</button><span class="ha-sub">Saves it at Awaiting review.</span>`}
+      </div></div>`;
+  }
+  const all = rcListingLeads(RC.leads, false), toReview = rcListingLeads(RC.leads, true);
+  const list = D.reviewOnly ? toReview : all;
+  const rowsHtml = list.slice(0, 300).map(l => {
+    const url = rcSafeUrl(l.listing_url);
+    const sd = l.score_detail && typeof l.score_detail === "object" ? l.score_detail : {};
+    const canDecide = l.stage === "discovered" || l.stage === "awaiting_review";
+    return `<tr>
+      <td>${rcScoreHtml(l.score)}</td>
+      <td><button type="button" class="ptn-name-link" data-rc-open-lead="${rcE(l.id)}"><strong>${rcE(l.ref)}</strong></button><div class="ha-sub">${rcE(rcCityName(rcCampaign(l.campaign_id) || l.campaign_id))}</div></td>
+      <td>${rcStageBadge(l.stage)}</td>
+      <td style="max-width:360px">${sd.summary ? rcE(String(sd.summary).slice(0, 200)) : rcDash}${url ? `<div class="ha-sub"><a href="${rcE(url)}" target="_blank" rel="noopener noreferrer">${rcE((() => { try { return new URL(url).hostname; } catch (e) { return "listing"; } })())}</a></div>` : ""}</td>
+      <td style="white-space:nowrap">${canDecide ? `<button type="button" class="btn btn-primary btn-mini" data-rc-disc-stage="approved_for_outreach" data-rc-id="${rcE(l.id)}">Approve for outreach</button> <button type="button" class="btn btn-ghost btn-mini" data-rc-disc-stage="rejected" data-rc-id="${rcE(l.id)}">Reject</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+  box.innerHTML = `<div class="card rc-card">
+      <div class="card-head" style="padding:14px 18px 0"><div class="card-title">Score a <em>listing</em></div></div>
+      <div class="rc-form">
+        <div class="card-sub" style="margin-bottom:12px">Paste a listing you found (Kijiji, Craigslist, Facebook, …). The AI scores it against the rubric, marks what it can't tell and drafts a short message. Nothing is sent: you reply by hand through the site. No scraping, no copying contact details.</div>
+        <div class="form-row">
+          <div class="form-field"><label for="rc-disc-camp">Campaign</label><select class="form-input" id="rc-disc-camp">${camps.map(c => `<option value="${rcE(c.id)}"${c.id === D.campaign ? " selected" : ""}>${rcE(rcCityName(c))} · ${rcE(c.name)}</option>`).join("")}</select></div>
+          <div class="form-field"><label for="rc-disc-url">Listing URL</label><input class="form-input" id="rc-disc-url" type="url" placeholder="https://…" value="${rcE(D.url)}" maxlength="2000"></div>
+        </div>
+        <div class="form-field"><label for="rc-disc-text">Listing text</label><textarea class="form-input" id="rc-disc-text" rows="8" maxlength="20000" placeholder="Paste the listing's title and description">${rcE(D.text)}</textarea></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-primary btn-mini" id="rc-disc-score"${D.busy || !camps.length ? " disabled" : ""}>${D.busy ? "Working…" : "Score with AI"}</button>
+          ${r || D.error ? '<button type="button" class="btn btn-ghost btn-mini" id="rc-disc-clear">Clear</button>' : ""}
+          <span class="rc-err" id="rc-disc-msg-line">${D.msg ? rcE(D.msg) : ""}</span></div>
+      </div>
+      ${result}
+    </div>
+    <div class="card rc-card">
+      <div class="rc-toolbar"><span class="card-title rc-grow" style="font-size:16px">Discovered <em>listings</em></span>
+        <div class="ha-pills" style="margin:0"><button type="button" class="ha-pill${D.reviewOnly ? " on" : ""}" data-rc-disc-filter="review">To review<span class="ha-pn">${toReview.length}</span></button>
+        <button type="button" class="ha-pill${D.reviewOnly ? "" : " on"}" data-rc-disc-filter="all">All listings<span class="ha-pn">${all.length}</span></button></div></div>
+      <div class="ha-wrap">${list.length ? `<table class="ha-table"><thead><tr><th>Score</th><th>Lead</th><th>Stage</th><th>Summary</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table>`
+        : rcEmpty(D.reviewOnly ? "Nothing to review" : "No listings yet", "Score a listing above and save it.")}</div>
+    </div>`;
+}
+function rcDupHtml(ref){
+  const l = RC.leads.find(x => x.ref === ref);
+  return l ? ` <button type="button" class="btn btn-ghost btn-mini" data-rc-open-lead="${rcE(l.id)}">Open ${rcE(ref)}</button>` : "";
+}
+async function rcDiscScore(save){
+  const D = RC.disc;
+  if (D.busy) return;
+  const live = document.getElementById("rc-disc-text");
+  if (live) { D.text = live.value; D.url = (document.getElementById("rc-disc-url") || {}).value || ""; D.campaign = (document.getElementById("rc-disc-camp") || {}).value || D.campaign; }
+  const text = String(D.text || "").trim(), urlRaw = String(D.url || "").trim();
+  if (!D.campaign) { D.msg = "Pick a campaign."; return rcRenderDiscovery(); }
+  if (text.length < 20) { D.msg = "Paste the listing text (at least a few lines)."; return rcRenderDiscovery(); }
+  if (urlRaw && !rcSafeUrl(urlRaw)) { D.msg = "The URL must start with http:// or https://"; return rcRenderDiscovery(); }
+  D.msg = null; D.busy = true; D.error = null; D.dupRef = null;
+  if (!save) { D.result = null; D.saved = null; }
+  rcRenderDiscovery();
+  try {
+    const body = { campaign_id: D.campaign, listing_text: text };
+    if (urlRaw) body.listing_url = rcSafeUrl(urlRaw);
+    // Saving reuses the result already shown (no second AI call) when the text and campaign are unchanged.
+    if (save) { body.save = true; if (D.result && D.scored && D.scored.text === text && D.scored.campaign === D.campaign && D.scored.url === (body.listing_url || "")) body.result = D.result; }
+    const out = await rcWorker("/staff/recruit/score", body);
+    D.result = out;
+    if (!save) D.scored = { text, campaign: D.campaign, url: body.listing_url || "" };
+    if (save) {
+      const lead = out && out.lead;
+      D.saved = lead ? { id: lead.id, ref: lead.ref } : { ref: "a lead" };
+      if (lead && lead.id != null) { await rcRefetchLead(lead.id); }
+      else await rcLoad();
+    }
+  } catch (e) {
+    D.error = (save ? "Not saved: " : "") + ((e && e.message) || e);
+    if (e && e.body && e.body.error === "duplicate") D.dupRef = e.body.ref || null;
+    if (save && e && e.body && e.body.error === "duplicate") D.error = "Already a lead: " + (e.body.ref || "?");
+  }
+  D.busy = false;
+  rcRender();
+}
+async function rcDiscStage(id, stage, btn){
+  const l = RC.leads.find(x => x.id === Number(id));
+  if (!l) return;
+  if (btn) btn.disabled = true;
+  try {
+    await rcUpdateLead(l.id, { stage }, { kind: "stage", detail: { from: l.stage, to: stage } });
+    RC.disc.msg = null;
+  } catch (e) { RC.disc.msg = "Not saved: " + ((e && e.message) || e); }
+  rcRender();
+}
+
+/* ---- Agent & settings ---- */
+function rcRenderSettings(){
+  const box = document.getElementById("rc-pane-settings");
+  if (!box) return;
+  const s = RC.settings;
+  const ai = RC.ai === true ? '<span class="badge badge-green">AI is on</span>'
+    : RC.ai === false ? '<span class="badge badge-red">AI isn\'t switched on yet (ANTHROPIC_API_KEY)</span>'
+    : '<span class="badge badge-grey">Not checked yet</span> <span class="ha-sub">The first Score or Draft shows whether it is on.</span>';
+  const settingsForm = s ? `<form class="rc-form" data-rc-settings-form>
+      <div class="form-row">
+        <div class="form-field"><label for="rc-s-days">Follow-up days (after the lead is created)</label><input class="form-input" id="rc-s-days" name="followup_days" value="${rcE((s.followup_days || []).join(", "))}" placeholder="2, 5, 10"></div>
+        <div class="form-field"><label for="rc-s-un">Unresponsive after (days since last follow-up)</label><input class="form-input" id="rc-s-un" name="unresponsive_after_days" value="${rcE(s.unresponsive_after_days)}" inputmode="numeric"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label for="rc-s-hour">Daily report hour (UTC, 0–23)</label><input class="form-input" id="rc-s-hour" name="daily_report_hour_utc" value="${rcE(s.daily_report_hour_utc)}" inputmode="numeric"></div>
+        <div class="form-field"><label>&nbsp;</label><label style="display:flex;gap:8px;align-items:center;font-size:13.5px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink)"><input type="checkbox" name="daily_report"${s.daily_report ? " checked" : ""}> Daily Slack report on</label></div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13.5px;margin-bottom:12px"><input type="checkbox" name="require_approval_listing"${s.require_approval_listing ? " checked" : ""}> Listing leads need staff approval before outreach</label>
+      <div class="rc-err" id="rc-s-err">${RC.settingsMsg && RC.settingsMsg.bad ? rcE(RC.settingsMsg.text) : ""}</div>
+      <div style="display:flex;gap:10px;align-items:center"><button type="submit" class="btn btn-primary btn-mini">Save settings</button>
+        ${RC.settingsMsg && !RC.settingsMsg.bad ? `<span class="rc-ok">${rcE(RC.settingsMsg.text)}</span>` : ""}
+        <span class="ha-sub">${s.last_daily_report_on ? "Last daily report: " + rcE(s.last_daily_report_on) : "No daily report sent yet"}</span></div>
+      <p class="rc-note">${rcE(rcFollowupRule(s))}</p>
+    </form>` : `<div class="rc-form">${rcEmpty("Settings row missing", "The SQL inserts it (rc_settings id 1): re-run sql/2026-10-13-rc-host-recruitment.sql.")}</div>`;
+  const pol = RC.campaigns.map(c => `<tr class="ha-row" data-rc-open-policy="${rcE(c.id)}"><td><div style="font-weight:600">${rcE(rcCityName(c))}</div><div class="ha-sub">${rcE(c.name)}</div></td>
+      <td>${c.policy_en ? "Set" : '<span class="ha-need">Missing</span>'}</td>
+      <td>${(c.languages || []).includes("fr") ? (c.policy_fr ? "Set" : '<span class="ha-need">Missing</span>') : (c.policy_fr ? "Set" : '<span class="ha-sub">Not needed</span>')}</td>
+      <td>${c.rates == null ? '<span class="ha-sub">No figures (a coordinator confirms pay)</span>' : "Set"}</td>
+      <td><button type="button" class="btn btn-ghost btn-mini" data-rc-open-policy="${rcE(c.id)}">Edit policy</button></td></tr>`).join("");
+  const evs = RC.aiEvents;
+  const leadById = new Map(RC.leads.map(l => [l.id, l]));
+  const aiRows = evs == null ? '<div class="card-sub" style="padding:12px 14px">Loading…</div>'
+    : RC.aiEventsError ? `<div class="card-sub" style="padding:12px 14px;color:var(--red)">Could not load: ${rcE(RC.aiEventsError)}</div>`
+    : !evs.length ? rcEmpty("No AI decisions yet", "Scores and reply drafts show up here.")
+    : `<table class="ha-table"><thead><tr><th>When</th><th>Kind</th><th>Lead</th><th>City</th><th>Result</th><th>By</th></tr></thead><tbody>${evs.map(e => {
+        const d = e.detail || {}, l = leadById.get(e.lead_id);
+        const res = e.kind === "ai_score" ? (d.score != null ? `${rcScoreHtml(d.score)} ${rcE(rcScoreCategory(d.score).label)}` : "") + (d.summary ? `<div class="ha-sub">${rcE(String(d.summary).slice(0, 160))}</div>` : "")
+          : rcE(String(d.question || d.draft || "").slice(0, 160));
+        return `<tr${l ? ` class="ha-row" data-rc-open-lead="${rcE(l.id)}"` : ""}><td style="white-space:nowrap">${rcE(rcWhen(e.at))}</td><td>${e.kind === "ai_score" ? "Score" : "Reply draft"}${d.model ? `<div class="ha-sub">${rcE(d.model)}</div>` : ""}</td>
+          <td>${l ? rcE(l.ref) : e.lead_id != null ? "#" + rcE(e.lead_id) : rcDash}</td><td>${rcE(rcCityName(rcCampaign(e.campaign_id) || e.campaign_id || ""))}</td><td>${res || rcDash}</td><td>${e.by ? rcE(rcMemberName(e.by)) : rcDash}</td></tr>`;
+      }).join("")}</tbody></table>`;
+  box.innerHTML = `<div class="card rc-card"><div class="card-head" style="padding:14px 18px 0"><div class="card-title">Follow-ups &amp; <em>daily report</em></div></div>${settingsForm}</div>
+    <div class="card rc-card"><div class="rc-form"><div class="card-title" style="font-size:16px;margin-bottom:8px">AI</div>${ai}
+      <div class="ha-sub" style="margin-top:8px">Model claude-sonnet-5-5 on the matching Worker. It scores pasted listings and drafts replies from each campaign's approved answers only; it never contacts anyone.</div></div></div>
+    <div class="card rc-card"><div class="card-head" style="padding:14px 18px 0"><div class="card-title">Approved answers &amp; <em>rates</em></div></div>
+      <div class="ha-wrap">${RC.campaigns.length ? `<table class="ha-table"><thead><tr><th>Campaign</th><th>English</th><th>French</th><th>Rates</th><th></th></tr></thead><tbody>${pol}</tbody></table>` : rcEmpty("No campaigns yet", "")}</div></div>
+    <div class="card rc-card"><div class="rc-toolbar"><span class="card-title rc-grow" style="font-size:16px">Recent AI <em>decisions</em></span><button type="button" class="btn btn-ghost btn-mini" id="rc-ai-refresh">Refresh</button></div>
+      <div class="ha-wrap">${aiRows}</div></div>`;
+}
+async function rcSaveSettings(form){
+  const g = n => (form.elements[n] ? form.elements[n].value : "");
+  const fail = t => { RC.settingsMsg = { text: t, bad: true }; rcRenderSettings(); };
+  const days = rcParseFollowupDays(g("followup_days")); if (!days.ok) return fail("Follow-up days: " + days.error);
+  const un = rcParseInt(g("unresponsive_after_days"), 1, 90); if (!un.ok) return fail("Unresponsive after: " + un.error);
+  const hr = rcParseInt(g("daily_report_hour_utc"), 0, 23); if (!hr.ok) return fail("Report hour: " + hr.error);
+  const patch = { followup_days: days.value, unresponsive_after_days: un.value, daily_report_hour_utc: hr.value,
+    daily_report: !!form.elements.daily_report.checked, require_approval_listing: !!form.elements.require_approval_listing.checked };
+  const r = await rcSb().from("rc_settings").update(patch).eq("id", 1).select().maybeSingle();
+  if (r.error || !r.data) return fail("Not saved: " + (r.error ? rcDbError(r.error) : "no permission"));
+  RC.settings = r.data; RC.settingsMsg = { text: "Saved." };
+  rcRenderSettings();
+}
+
+/* ---- Events ---- */
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-rc-tab],[data-rc-refresh],[data-rc-open-camp],[data-rc-open-lead],[data-rc-open-policy],[data-rc-open-app],[data-rc-quick],[data-rc-form],[data-rc-form-cancel],[data-rc-do],[data-rc-copy],[data-rc-disc-stage],[data-rc-disc-filter],#rc-sync,#rc-leads-csv,#rc-dash-csv,#rc-add-open,#rc-add-cancel,#rc-add-save,#rc-disc-score,#rc-disc-save,#rc-disc-clear,#rc-ai-refresh");
+  if (!t) return;
+  if (t.disabled) return;
+  if (t.dataset.rcTab) return rcShowTab(t.dataset.rcTab);
+  if (t.dataset.rcRefresh !== undefined) return rcLoad();
+  if (t.dataset.rcCopy) { const el = document.getElementById(t.dataset.rcCopy); if (el) rcCopy(el.value || el.textContent || "", t); return; }
+  if (t.dataset.rcOpenApp) { ev.preventDefault(); if (typeof haOpenFromProfile === "function") haOpenFromProfile(t.dataset.rcOpenApp); return; }
+  if (t.dataset.rcDiscStage) { ev.stopPropagation(); return rcDiscStage(t.dataset.rcId, t.dataset.rcDiscStage, t); }
+  if (t.dataset.rcDiscFilter) { RC.disc.reviewOnly = t.dataset.rcDiscFilter === "review"; return rcRenderDiscovery(); }
+  if (t.dataset.rcOpenLead) return rcOpenLead(t.dataset.rcOpenLead);
+  if (t.dataset.rcOpenPolicy) return rcOpenCampaign(t.dataset.rcOpenPolicy, true);
+  if (t.dataset.rcOpenCamp) return rcOpenCampaign(t.dataset.rcOpenCamp);
+  if (t.dataset.rcQuick) return rcLeadChange("stage", t.dataset.rcQuick);
+  if (t.dataset.rcForm) { RC.lead.form = RC.lead.form === t.dataset.rcForm ? null : t.dataset.rcForm; rcLeadSay(""); rcRenderLeadActions(); return; }
+  if (t.dataset.rcFormCancel !== undefined) { RC.lead.form = null; rcRenderLeadActions(); return; }
+  if (t.dataset.rcDo) return rcLeadDo(t.dataset.rcDo);
+  if (t.id === "rc-sync") return rcSync(t);
+  if (t.id === "rc-leads-csv") return rcDownload(`host-recruitment-leads-${new Date().toISOString().slice(0, 10)}.csv`, rcLeadsCsv(rcSortLeads(rcFilterLeads(RC.leads, RC.filter, Date.now())), RC.campaigns, RC.apps));
+  if (t.id === "rc-dash-csv") return rcDownload(`host-recruitment-cities-${new Date().toISOString().slice(0, 10)}.csv`, rcDashboardCsv(rcDashboard(RC.campaigns, RC.leads, RC.followups, Date.now())));
+  if (t.id === "rc-add-open") { RC.adding = true; RC.addMsg = null; return rcRenderCampaigns(); }
+  if (t.id === "rc-add-cancel") { RC.adding = false; return rcRenderCampaigns(); }
+  if (t.id === "rc-add-save") { t.disabled = true; return rcAddCampaign(); }
+  if (t.id === "rc-disc-score") return rcDiscScore(false);
+  if (t.id === "rc-disc-save") return rcDiscScore(true);
+  if (t.id === "rc-disc-clear") { Object.assign(RC.disc, { url: "", text: "", result: null, error: null, saved: null, msg: null, dupRef: null }); const x = document.getElementById("rc-disc-text"); if (x) x.value = ""; const u = document.getElementById("rc-disc-url"); if (u) u.value = ""; return rcRenderDiscovery(); }
+  if (t.id === "rc-ai-refresh") { RC.aiEvents = null; rcRenderSettings(); return rcLoadAiEvents(); }
+});
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (!t || !t.closest) return;
+  if (t.dataset && t.dataset.rcFilter && t.tagName === "SELECT") { RC.filter[t.dataset.rcFilter] = t.value; return rcRenderLeads(); }
+  if (t.id === "rc-lp-stage") return rcLeadChange("stage", t.value);
+  if (t.id === "rc-lp-owner") return rcLeadChange("owner", t.value);
+});
+document.addEventListener("input", (ev) => {
+  const t = ev.target;
+  if (t && t.id === "rc-f-q") { RC.filter.q = t.value; rcRenderLeads(); }
+});
+document.addEventListener("submit", (ev) => {
+  const f = ev.target;
+  if (!f || !f.matches) return;
+  if (f.matches("[data-rc-camp-form]")) { ev.preventDefault(); rcSaveCampaign(f); }
+  else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
+});
+</script>
+<script src="room-changes.js?v=2026-10-13-hrecruit1"></script>
+<script src="extensions.js?v=2026-10-13-hrecruit1"></script>
+<script src="ap.js?v=2026-10-13-hrecruit1"></script>
 </body>
 </html>
