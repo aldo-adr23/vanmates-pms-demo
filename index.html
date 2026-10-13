@@ -1596,7 +1596,7 @@
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-12-hrview1"></script>
+<script src="pms-supabase.js?v=2026-10-12-luasst1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2251,6 +2251,10 @@
             <button type="button" class="as-agent" data-agent="ruf">
               <div class="as-agent-name">Ruf</div>
               <div class="card-sub">Room finder — budget, city, neighbourhood, dates, room type.<br>e.g. <em>$1200 Vancouver October private room</em></div>
+            </button>
+            <button type="button" class="as-agent" data-agent="lu">
+              <div class="as-agent-name">Lu</div>
+              <div class="card-sub">Bookkeeper — receipts, expenses, AP, QuickBooks questions. Payroll for Denisse and Aldo.</div>
             </button>
           </div>
           <button type="button" class="btn btn-ghost" id="as-new" style="width:100%;margin:12px 0 8px">New conversation</button>
@@ -10913,7 +10917,7 @@ const titles = {
   partners: ["<em>Partners</em>", "Agencies on partners.vanmates.com: accounts, users and their bookings"],
   affiliates: ["Affiliates &amp; <em>promo codes</em>", "Promo codes and referral links, affiliate partners, partner sales and their analytics"],
   sales: ["<em>Sales</em>", "Placement fees against target, open deals and the leads that need a touch"],
-  assistants: ["<em>Assistants</em>", "Chat with Hugo and Ruf — same powers as in Slack, signed in as you"],
+  assistants: ["<em>Assistants</em>", "Chat with Hugo, Ruf and Lu — same powers as in Slack, signed in as you"],
   properties: ["Properties &amp; <em>rooms</em>", `${properties.length} properties · ${properties.reduce((s,p)=>s+(p.rooms||0),0)} rooms · ${[...new Set(tenants.map(t => t.city))].filter(Boolean).length} cities`],
   portfolio: ["<em>Portfolio</em> performance", "Revenue, profit, and margin per property · April 2026"],
   landlords: ["<em>Landlords</em>", "Every property with its landlord and contract · renewals and gaps"],
@@ -38268,8 +38272,10 @@ window.HM = HM;
   const AS_CONNECT_MS = 90e3, AS_IDLE_MS = 150e3, AS_MAX_MS = 320e3;
   const $ = (id) => document.getElementById(id);
 
+  const AS_AGENTS = ['hugo', 'ruf', 'lu'];
+  const AS_NAMES = { hugo: 'Hugo', ruf: 'Ruf', lu: 'Lu' };
   let agent = 'hugo';
-  let store = { hugo: [], ruf: [] };
+  let store = { hugo: [], ruf: [], lu: [] };
   let currentId = null;
   let inFlight = null;   // AbortController while a reply streams
 
@@ -38280,13 +38286,13 @@ window.HM = HM;
     return Array.isArray(u.allowed_pages) && u.allowed_pages.includes('assistants');
   }
   function load(){
-    try { const raw = localStorage.getItem(asStorageKey(userEmail())); store = raw ? JSON.parse(raw) : { hugo: [], ruf: [] }; }
-    catch (_) { store = { hugo: [], ruf: [] }; }
-    if (!Array.isArray(store.hugo)) store.hugo = []; if (!Array.isArray(store.ruf)) store.ruf = [];
+    try { const raw = localStorage.getItem(asStorageKey(userEmail())); store = raw ? JSON.parse(raw) : {}; }
+    catch (_) { store = {}; }
+    AS_AGENTS.forEach((a) => { if (!Array.isArray(store[a])) store[a] = []; });
     // A message saved mid-stream (the tab was closed or reloaded before the
     // reply finished) must not keep its spinner forever: clear the flag and,
     // when nothing arrived, turn it into an error so Retry is offered.
-    ['hugo', 'ruf'].forEach((a) => store[a].forEach((c) => {
+    AS_AGENTS.forEach((a) => store[a].forEach((c) => {
       if (!Array.isArray(c.messages)) c.messages = [];
       c.messages.forEach((m) => {
         if (!m.streaming) return;
@@ -38296,7 +38302,7 @@ window.HM = HM;
     }));
   }
   function save(){
-    asPrune(store, 'hugo', AS_MAX_CONVERSATIONS); asPrune(store, 'ruf', AS_MAX_CONVERSATIONS);
+    AS_AGENTS.forEach((a) => asPrune(store, a, AS_MAX_CONVERSATIONS));
     try { localStorage.setItem(asStorageKey(userEmail()), JSON.stringify(store)); } catch (_) { /* quota or private mode: the page still works for this visit */ }
   }
   function current(){ return asFind(store, agent, currentId); }
@@ -38318,7 +38324,7 @@ window.HM = HM;
     // Before the first event the label says "connecting" (a cold Fly machine
     // can take ~10 s); once text has arrived, a tool call reads "working".
     let label = '';
-    if (m.working) label = agent === 'ruf' ? 'Ruf is looking…' : (m.text ? 'Hugo is working…' : 'Connecting to Hugo…');
+    if (m.working) label = agent === 'ruf' ? 'Ruf is looking…' : agent === 'lu' ? 'Lu is checking…' : (m.text ? 'Hugo is working…' : 'Connecting to Hugo…');
     // asRender('') is an empty <p> — a blank line above the label — so skip it.
     return '<div class="as-msg agent">' + (m.text ? asRender(m.text) : '') + (label ? '<div class="as-working">' + label + '</div>' : '') + '</div>';
   }
@@ -38331,6 +38337,8 @@ window.HM = HM;
     if (!c || !c.messages.length) {
       t.innerHTML = '<div class="as-empty">' + (agent === 'hugo'
         ? 'Ask Hugo anything you would ask in Slack — it remembers this conversation.'
+        : agent === 'lu'
+        ? 'Ask Lu about receipts, expenses, AP or QuickBooks. To send a receipt or a sheet, DM Lu in Slack.'
         : 'Give Ruf the whole request in one line: budget, city, dates, room type.') + '</div>';
       return;
     }
@@ -38340,7 +38348,7 @@ window.HM = HM;
   }
   function renderAll(){
     document.querySelectorAll('.as-agent').forEach((b) => b.classList.toggle('active', b.dataset.agent === agent));
-    $('as-input').placeholder = agent === 'hugo' ? 'Message Hugo…' : 'e.g. 2 rooms in Vancouver under $1400 moving in October';
+    $('as-input').placeholder = agent !== 'ruf' ? 'Message ' + AS_NAMES[agent] + '…' : 'e.g. 2 rooms in Vancouver under $1400 moving in October';
     $('as-hint').textContent = agent === 'ruf' ? 'Ruf reads each message on its own — put the whole request in one line.' : '';
     renderList(); renderTranscript(true);
   }
@@ -38399,7 +38407,7 @@ window.HM = HM;
       // A TypeError from fetch is the network layer (offline, CORS, Hugo down);
       // the browser's own wording ("Failed to fetch") is not worth showing.
       const msg = (e && e.name === 'AbortError')
-        ? (agent === 'hugo' ? 'Hugo took too long to answer. It may still be finishing in the background — try again in a minute.' : 'Ruf took too long to answer.')
+        ? (agent === 'hugo' ? 'Hugo took too long to answer. It may still be finishing in the background — try again in a minute.' : AS_NAMES[agent] + ' took too long to answer.')
         : (e instanceof TypeError) ? "Can't reach Hugo right now — check your connection and try again."
         : (e.message || 'Request failed');
       state = asReduce(state, { type: 'error', message: msg }); paint();
@@ -39934,8 +39942,8 @@ function ctNewFor(who) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>
-<script src="room-changes.js?v=2026-10-12-hrview1"></script>
-<script src="extensions.js?v=2026-10-12-hrview1"></script>
-<script src="ap.js?v=2026-10-12-hrview1"></script>
+<script src="room-changes.js?v=2026-10-12-luasst1"></script>
+<script src="extensions.js?v=2026-10-12-luasst1"></script>
+<script src="ap.js?v=2026-10-12-luasst1"></script>
 </body>
 </html>
