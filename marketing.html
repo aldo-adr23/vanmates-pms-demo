@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Email marketing · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Same sign-in gate as hr.html. Everything else (who may see which business area) is decided by the Worker (/mk/*).
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now()));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'marketing.html'); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root{
+  --cream:#FAF5ED; --cream-2:#F4ECDD; --red:#B94A3F; --red-dark:#A13A30; --red-soft:#F3DDD8; --ink:#2B211A; --muted:#8A7B6C;
+  --line:#E4DBC9; --green:#5C8A6B; --green-soft:#E2EDDF; --amber:#C8923A; --amber-soft:#F4E5C7; --blue:#3F6E94; --blue-soft:#DCE7F1;
+  --surface:#FFFFFF; --serif:"Playfair Display", Georgia, serif; --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05); --radius: 14px;
+  --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e; --scrim:rgba(43,33,26,.38); --toast:#2B211A; --toast-ink:#FAF5ED;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
+  --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --scrim:rgba(0,0,0,.55); --toast:#F4ECDD; --toast-ink:#1F1A16;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+[hidden] { display: none !important; }
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none;
+  font-family: var(--serif); font-style: italic; font-weight: 700; font-size: 15px; text-decoration: none; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; white-space: nowrap; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.sp { flex: 1; min-width: 0; }
+.tabs { display: flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.tab { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; min-height: 30px; }
+.tab:hover { color: var(--ink); }
+.tab.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
+  border: 1px solid transparent; white-space: nowrap; background: transparent; }
+a.btn { text-decoration: none; color: var(--ink); }
+.btn-primary { background: var(--red); color: var(--on-red); }
+.btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); }
+.btn-ghost:hover { background: var(--cream-2); }
+.btn-warn { background: var(--amber-soft); color: var(--b-amber); }
+.btn-danger { background: var(--red-soft); color: var(--red); }
+.btn-sm { min-height: 26px; padding: 2px 9px; font-size: 12px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn:focus-visible, .tab:focus-visible, .row:focus-visible, .chip:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.wrap { padding: 0 16px 40px; padding-bottom: max(40px, env(safe-area-inset-bottom)); max-width: 1400px; margin: 0 auto; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.pad { padding: 14px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.note { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.chips { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; flex-wrap: wrap; }
+.chip { flex: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 0 10px; font-size: 12px; font-weight: 600; min-height: 28px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chip.on { background: var(--red); border-color: var(--red); color: var(--on-red); }
+input.inp, select.sel, textarea.inp { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 34px; padding: 6px 10px;
+  font: inherit; font-size: 13px; outline: 0; min-width: 0; width: 100%; }
+input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+textarea.inp { resize: vertical; min-height: 64px; }
+input[type=checkbox] { accent-color: var(--red); }
+.split { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.split.wide { grid-template-columns: minmax(0, 1fr) minmax(0, 560px); }
+@media (max-width: 999px) { .split, .split.wide { grid-template-columns: minmax(0, 1fr); } }
+.list { overflow: hidden; }
+.row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr); gap: 4px 12px; align-items: center; width: 100%; text-align: left;
+  border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 9px 14px; min-height: 46px; }
+.row:last-child { border-bottom: 0; }
+button.row:hover { background: var(--cream); }
+.row.on { background: var(--cream-2); box-shadow: inset 3px 0 0 var(--red); }
+.row.hd { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); min-height: 0; }
+.row b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row small { color: var(--muted); font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.r2 { grid-template-columns: minmax(0, 1fr) auto; }
+.row.r5 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 640px) { .row, .row.r5 { grid-template-columns: minmax(0, 1fr) auto; } .row .c3, .row .c4, .row .c5 { display: none; } .row.hd { display: none; } }
+.st { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.st-ok { background: var(--green-soft); color: var(--b-green); } .st-warn { background: var(--amber-soft); color: var(--b-amber); }
+.st-bad { background: var(--red-soft); color: var(--red); } .st-cur { background: var(--blue-soft); color: var(--b-blue); } .st-none { background: var(--cream-2); color: var(--muted); }
+h2.h { font-family: var(--serif); font-size: 21px; margin: 0 0 4px; }
+h3.h { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
+@media (max-width: 560px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
+label.f.full { grid-column: 1 / -1; }
+label.cb { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.empty { padding: 28px 14px; text-align: center; color: var(--muted); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.kpi { padding: 12px 14px; }
+.kpi .v { font-family: var(--serif); font-size: 26px; font-weight: 700; line-height: 1.1; }
+.kpi .l { font-size: 12px; color: var(--muted); font-weight: 600; }
+.kpi .s { font-size: 11.5px; color: var(--muted); }
+.warnbox { background: var(--amber-soft); color: var(--b-amber); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; margin: 0 0 10px; }
+.warnbox ul { margin: 4px 0 0; padding-left: 18px; }
+.errbox { background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; margin: 0 0 10px; }
+.okbox { background: var(--green-soft); color: var(--b-green); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; margin: 0 0 10px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px;
+  border-radius: 999px; font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; transition: .2s ease; max-width: calc(100vw - 32px); z-index: 80; }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.modal { position: fixed; inset: 0; background: var(--scrim); display: none; align-items: flex-start; justify-content: center; padding: 5vh 16px; z-index: 50; overflow: auto; }
+.modal.open { display: flex; }
+.mcard { width: 100%; max-width: 620px; background: var(--surface); border-radius: var(--radius); padding: 18px; }
+.mcard.wide { max-width: 1000px; }
+.mcard h2 { font-family: var(--serif); margin: 0 0 10px; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.cal .dh { font-size: 10.5px; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 2px 4px; }
+.cal .dc { min-height: 74px; border: 1px solid var(--line); border-radius: 8px; padding: 3px; background: var(--surface); font-size: 11px; overflow: hidden; }
+.cal .dc.x { background: transparent; border-color: transparent; }
+.cal .dn { color: var(--muted); font-weight: 700; }
+.cal .ev { display: block; width: 100%; text-align: left; border: 0; border-radius: 5px; padding: 2px 4px; margin-top: 2px; font-size: 11px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--blue-soft); color: var(--b-blue); }
+.cal .ev.st-ok { background: var(--green-soft); color: var(--b-green); } .cal .ev.st-bad { background: var(--red-soft); color: var(--red); }
+.cal .ev.st-none { background: var(--cream-2); color: var(--muted); } .cal .ev.st-warn { background: var(--amber-soft); color: var(--b-amber); }
+@media (max-width: 640px) { .cal .dc { min-height: 48px; } .cal .ev { font-size: 0; height: 6px; padding: 0; } }
+.blk { border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin-bottom: 8px; background: var(--cream); }
+.blk .bh { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.pv-frame { width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 10px; background: #FAF5ED; }
+.pv-frame.mobile { width: 390px; max-width: 100%; }
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 90px; padding-top: 6px; }
+.bars .b { flex: 1; background: var(--blue-soft); border-radius: 4px 4px 0 0; position: relative; min-height: 2px; }
+.bars .b i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--blue); border-radius: 4px 4px 0 0; }
+.legend { display: flex; gap: 12px; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: var(--blue-soft); }
+.legend span.o::before { background: var(--blue); }
+.progress { height: 8px; background: var(--cream-2); border-radius: 999px; overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--red); transition: width .4s; }
+.tl { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.tl li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.tl li span { color: var(--muted); }
+table.t { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.t th { text-align: left; font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.t td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.scrollx { overflow-x: auto; }
+.lock { max-width: 480px; margin: 12vh auto; padding: 28px; text-align: center; }
+.lock h1 { font-family: var(--serif); margin: 0 0 6px; }
+.stop-on { background: var(--red); color: var(--on-red); padding: 8px 14px; border-radius: 10px; font-weight: 700; margin: 0 0 10px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
+  <span class="page-title">Email <em>marketing</em></span>
+  <select class="sel" id="scopeSel" style="width:auto;min-width:160px" hidden aria-label="Business area"></select>
+  <span class="sp"></span>
+  <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab on" data-tab="overview">Overview</button>
+    <button type="button" class="tab" data-tab="lists">Lists &amp; contacts</button>
+    <button type="button" class="tab" data-tab="templates">Templates</button>
+    <button type="button" class="tab" data-tab="campaigns">Campaigns</button>
+    <button type="button" class="tab" data-tab="automations">Automations</button>
+    <button type="button" class="tab" data-tab="reports">Reports</button>
+    <button type="button" class="tab" data-tab="access" id="tabAccess" hidden>Access &amp; settings</button>
+  </nav>
+</div>
+
+<main class="wrap" id="app"><div class="empty">Loading…</div></main>
+
+<div class="modal" id="modal"><div class="mcard" id="modalCard" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script src="marketing-core.js?v=2026-10-14-mkt1"></script>
+<script>
+(function () {
+  'use strict';
+  var HM = 'https://vanmates-homestay-matching.talatcan.workers.dev';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
+    { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var TZS = ['America/Vancouver', 'America/Edmonton', 'America/Winnipeg', 'America/Toronto', 'America/Halifax', 'America/Mexico_City', 'UTC'];
+  var LANGS = { en: 'English', fr: 'French', es: 'Spanish', ja: 'Japanese', ko: 'Korean', pt: 'Portuguese', zh: 'Chinese' };
+  var CONSENT = { express: 'Express', implied: 'Implied (2 years)', unknown: 'Unknown', withdrawn: 'Withdrawn' };
+  var S = { me: null, scope: null, tab: 'overview', lists: [], listId: null, contacts: [], ctTotal: 0, q: '', consent: '', templates: [], tplId: null, tpl: null,
+    campaigns: [], campId: null, camp: null, view: 'calendar', month: null, emailId: null, report: null, reportCamp: null, rfilter: 'all', rsusp: false, poll: null };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 4500); }
+  function st(s) { return '<span class="st st-' + MK.statusTone(s) + '">' + esc(MK.statusLabel(s)) + '</span>'; }
+  function opts(map, sel, blank) {
+    return (blank !== undefined ? '<option value="">' + esc(blank) + '</option>' : '') + Object.keys(map).map(function (k) {
+      return '<option value="' + esc(k) + '"' + (String(k) === String(sel) ? ' selected' : '') + '>' + esc(map[k]) + '</option>'; }).join('');
+  }
+  function can(a) { var s = (S.me && S.me.scopes || []).find(function (x) { return x.id === S.scope; }); return !!(s && s.actions.indexOf(a) >= 0); }
+  function scopeName(id) { var s = (S.me.scopes || []).find(function (x) { return x.id === id; }); return s ? s.name : id; }
+
+  async function api(action, body) {
+    var sess = (await sb.auth.getSession()).data.session;
+    if (!sess) { location.replace('signin.html'); throw new Error('signed out'); }
+    var r = await fetch(HM + '/mk/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sess.access_token }, body: JSON.stringify(body || {}) });
+    var j = await r.json().catch(function () { return { error: 'failed' }; });
+    if (!r.ok) { var e = new Error(MK.errorText(j.error, j.detail)); e.code = j.error; e.detail = j.detail; e.status = r.status; throw e; }
+    return j;
+  }
+  async function act(fn, okMsg) {
+    try { var r = await fn(); if (okMsg) toast(okMsg); return r; }
+    catch (e) { toast(e.message); if (Array.isArray(e.detail)) showProblems('Not saved', e.detail); return null; }
+  }
+  function modal(html, wide) { $('modalCard').className = 'mcard' + (wide ? ' wide' : ''); $('modalCard').innerHTML = html; $('modal').classList.add('open'); }
+  function closeModal() { $('modal').classList.remove('open'); $('modalCard').innerHTML = ''; }
+  $('modal').addEventListener('click', function (e) { if (e.target === $('modal')) closeModal(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+  function showProblems(title, list) {
+    modal('<h2>' + esc(title) + '</h2><div class="warnbox"><ul>' + list.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></div><div class="actions"><button class="btn btn-ghost" data-x="close">Close</button></div>');
+  }
+
+  // ---------- boot ----------
+  async function boot() {
+    try { S.me = await api('me'); }
+    catch (e) { $('app').innerHTML = '<div class="card lock"><h1>Email marketing</h1><p class="muted">' + esc(e.message) + '</p><a class="btn btn-ghost" href="index.html">Back to the portal</a></div>'; return; }
+    if (!S.me.scopes.length) {
+      $('app').innerHTML = '<div class="card lock"><h1>No access yet</h1><p class="muted">Email marketing is opened per business area. Ask an administrator to give you access.</p><a class="btn btn-ghost" href="index.html">Back to the portal</a></div>';
+      return;
+    }
+    var saved = null; try { saved = localStorage.getItem('mk-scope'); } catch (e) {}
+    S.scope = S.me.scopes.some(function (s) { return s.id === saved; }) ? saved : S.me.scopes[0].id;
+    var sel = $('scopeSel');
+    sel.innerHTML = S.me.scopes.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === S.scope ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('');
+    sel.hidden = S.me.scopes.length < 2;
+    sel.addEventListener('change', function () { S.scope = sel.value; try { localStorage.setItem('mk-scope', S.scope); } catch (e) {} S.listId = S.campId = S.camp = S.tplId = S.tpl = S.report = null; go(S.tab); });
+    $('tabs').hidden = false;
+    $('tabAccess').hidden = !S.me.admin;
+    $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) go(b.dataset.tab); });
+    var h = (location.hash || '').replace('#', '');
+    go(['overview', 'lists', 'templates', 'campaigns', 'automations', 'reports', 'access'].indexOf(h) >= 0 ? h : 'overview');
+  }
+  function go(tab) {
+    S.tab = tab;
+    clearInterval(S.poll); S.poll = null;
+    document.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('on', t.dataset.tab === tab); });
+    try { history.replaceState(null, '', '#' + tab); } catch (e) {}
+    $('app').innerHTML = '<div class="empty">Loading…</div>';
+    ({ overview: overview, lists: lists, templates: templates, campaigns: campaigns, automations: automations, reports: reports, access: access })[tab]();
+  }
+
+  // ---------- overview ----------
+  async function overview() {
+    var o = await act(function () { return api('overview', { scope: S.scope }); });
+    if (!o) return;
+    var s = o.scopes[0] || {};
+    var m = s.metrics_90d || {};
+    var max = Math.max.apply(null, (s.weeks || []).map(function (w) { return w.sent; }).concat([1]));
+    $('app').innerHTML = (o.emergency_stop ? '<div class="stop-on">Emergency stop is ON: no marketing email is being sent.</div>' : '') +
+      '<p class="note">' + esc(scopeName(S.scope)) + ' · last 90 days. Opens are <b>tracked opens</b>: privacy features open images without a person and blocked images hide real opens.</p>' +
+      '<div class="kpis">' +
+        kpi(MK.num(s.contacts), 'Contacts', MK.num(s.eligible) + ' can receive marketing') +
+        kpi(MK.num(m.sent), 'Sent', MK.num(m.reached_people) + ' people reached') +
+        kpi(MK.pct(m.open_rate), 'Tracked open rate', MK.num(m.unique_opens) + ' unique · ' + MK.num(m.total_opens) + ' total') +
+        kpi(MK.pct(m.click_rate), 'Click rate', MK.num(m.unique_clicks) + ' unique · ' + MK.num(m.total_clicks) + ' total') +
+        kpi(MK.num(m.conversions), 'Actions completed', MK.pct(m.conversion_rate) + ' of delivered') +
+        kpi(MK.num(s.failures), 'Need review', 'failed or unknown sends') +
+      '</div>' +
+      '<div class="split wide"><div>' +
+        '<div class="card pad"><h3 class="h" style="margin-top:0">Engagement, last 12 weeks</h3><div class="bars">' + (s.weeks || []).map(function (w) {
+          return '<div class="b" style="height:' + Math.max(2, Math.round(w.sent / max * 100)) + '%" title="Week of ' + esc(w.week) + ': ' + w.sent + ' sent, ' + w.opens + ' tracked opens, ' + w.clicks + ' clicks"><i style="height:' + (w.sent ? Math.round(w.opens / w.sent * 100) : 0) + '%"></i></div>'; }).join('') +
+        '</div><div class="legend"><span>Sent</span><span class="o">Unique tracked opens (share of sent)</span></div></div>' +
+        '<h3 class="h">Recent campaigns</h3><div class="card list">' + ((s.campaigns || []).length ? s.campaigns.map(function (c) {
+          return '<button class="row r2" data-open-camp="' + c.id + '"><span><b>' + esc(c.name) + '</b><small>' + esc(c.kind === 'sequence' ? 'Automation' : 'Broadcast') + (c.start_date ? ' · ' + esc(c.start_date) + ' → ' + esc(c.end_date || '') : '') + '</small></span>' + st(c.status) + '</button>'; }).join('')
+          : '<div class="empty">No campaigns yet. <button class="btn btn-primary btn-sm" data-go="campaigns">Create one</button></div>') + '</div>' +
+      '</div><div>' +
+        '<h3 class="h" style="margin-top:0">Upcoming sends</h3><div class="card list">' + ((s.upcoming || []).length ? s.upcoming.map(function (u) {
+          return '<button class="row r2" data-open-camp="' + u.campaign_id + '"><span><b>' + esc(u.subject || '(no subject)') + '</b><small>' + esc(u.campaign) + '</small></span><span class="small muted">' + esc(MK.when(u.send_at)) + '</span></button>'; }).join('')
+          : '<div class="empty">Nothing scheduled.</div>') + '</div>' +
+        (s.failures ? '<div class="warnbox" style="margin-top:10px">' + s.failures + ' send(s) failed or have an unknown outcome. <button class="btn btn-warn btn-sm" data-go="reports">Review</button></div>' : '') +
+      '</div></div>';
+  }
+  function kpi(v, l, s) { return '<div class="card kpi"><div class="v">' + esc(v) + '</div><div class="l">' + esc(l) + '</div><div class="s">' + esc(s || '') + '</div></div>'; }
+
+  // ---------- lists & contacts ----------
+  async function lists() {
+    var r = await act(function () { return api('lists.list', { scope: S.scope }); });
+    if (!r) return;
+    S.lists = r.lists;
+    await loadContacts();
+  }
+  async function loadContacts() {
+    var r = await act(function () { return api('contacts.list', { scope: S.scope, list_id: S.listId || undefined, q: S.q, consent: S.consent || undefined, limit: 300 }); });
+    if (!r) return;
+    S.contacts = r.contacts; S.ctTotal = r.total;
+    renderLists();
+  }
+  function renderLists() {
+    var l = S.lists.find(function (x) { return x.id === S.listId; });
+    $('app').innerHTML = '<div class="split"><div>' +
+      '<div class="toolbar"><b style="flex:1">Lists</b>' + (can('edit') ? '<button class="btn btn-primary btn-sm" data-x="new-list">New list</button>' : '') + '</div>' +
+      '<div class="card list"><button class="row r2' + (!S.listId ? ' on' : '') + '" data-list=""><span><b>All contacts</b><small>Everyone in ' + esc(scopeName(S.scope)) + '</small></span></button>' +
+      S.lists.map(function (x) {
+        return '<button class="row r2' + (x.id === S.listId ? ' on' : '') + '" data-list="' + x.id + '"><span><b>' + esc(x.name) + '</b><small>' + (x.type === 'dynamic' ? 'Dynamic · ' + esc(MK.describeRule(x.rule)) : 'Static') + (x.city ? ' · ' + esc(x.city) : '') + '</small></span><span class="small muted">' + MK.num(x.members) + '</span></button>'; }).join('') +
+      '</div></div><div>' +
+      '<div class="toolbar"><input class="inp" id="ctQ" placeholder="Search name, email, city, tag" value="' + esc(S.q) + '" style="max-width:280px">' +
+        '<select class="sel" id="ctConsent" style="width:auto">' + opts(CONSENT, S.consent, 'Any consent') + '</select><span class="sp"></span>' +
+        (can('edit') ? '<button class="btn btn-ghost btn-sm" data-x="add-contact">Add contact</button>' : '') +
+        (can('import') ? '<button class="btn btn-ghost btn-sm" data-x="import">Import CSV / Excel</button>' : '') +
+        (can('export') ? '<button class="btn btn-ghost btn-sm" data-x="export-list">Export</button>' : '') + '</div>' +
+      (l ? '<div class="card pad" style="margin-bottom:10px"><div class="toolbar" style="margin:0"><span style="flex:1"><b>' + esc(l.name) + '</b> <span class="muted small">' + esc(l.description || '') + '</span>' +
+        (l.subscribe_url ? '<br><span class="small muted">Public sign-up form: <a href="' + esc(l.subscribe_url) + '" target="_blank" rel="noopener">' + esc(l.subscribe_url) + '</a></span>' : '') + '</span>' +
+        (can('edit') ? '<button class="btn btn-ghost btn-sm" data-x="edit-list">Edit</button><button class="btn btn-danger btn-sm" data-x="archive-list">Archive</button>' : '') + '</div></div>' : '') +
+      '<div class="card list"><div class="row hd"><span>Contact</span><span class="c2">City</span><span class="c3">Status</span><span class="c4">Consent</span></div>' +
+      (S.contacts.length ? S.contacts.map(function (c) {
+        return '<button class="row" data-contact="' + c.id + '"><span><b>' + esc(c.name || c.email) + '</b><small>' + esc(c.email) + (c.tags && c.tags.length ? ' · ' + esc(c.tags.join(', ')) : '') + '</small></span><span class="c2 small">' + esc(c.city || '—') + '</span><span class="c3 small">' + esc(c.host_status || '—') + '</span><span class="c4">' + consentPill(c.consent) + '</span></button>'; }).join('')
+        : '<div class="empty">No contacts here yet.</div>') +
+      '</div><p class="note" style="margin-top:6px">' + MK.num(S.ctTotal) + ' contact(s)' + (S.ctTotal > S.contacts.length ? ' · showing the first ' + S.contacts.length : '') + '. Contacts synced from the portal start with consent "Unknown": they get marketing only after someone records their consent.</p></div></div>';
+    var qi = $('ctQ'); qi.addEventListener('input', function () { clearTimeout(qi._t); qi._t = setTimeout(function () { S.q = qi.value; loadContacts(); }, 300); });
+    $('ctConsent').addEventListener('change', function (e) { S.consent = e.target.value; loadContacts(); });
+  }
+  function consentPill(c) { return '<span class="st st-' + (c === 'express' || c === 'implied' ? 'ok' : c === 'withdrawn' ? 'bad' : 'warn') + '">' + esc(CONSENT[c] || c) + '</span>'; }
+
+  function listForm(l) {
+    var rows = l && l.rule ? MK.rowsFromRule(l.rule) : [{ field: 'host_status', op: 'is', value: 'host' }];
+    modal('<h2>' + (l ? 'Edit list' : 'New list') + '</h2><div class="grid2">' +
+      '<label class="f full">Name<input class="inp" id="lName" value="' + esc(l ? l.name : '') + '"></label>' +
+      '<label class="f full">Description<input class="inp" id="lDesc" value="' + esc(l && l.description || '') + '"></label>' +
+      (l ? '' : '<label class="f">Type<select class="sel" id="lType"><option value="static">Static (people you add)</option><option value="dynamic">Dynamic (saved rules)</option></select></label>') +
+      '<label class="f">City (optional)<input class="inp" id="lCity" value="' + esc(l && l.city || '') + '"></label>' +
+      '<label class="cb full" id="lPubWrap"><input type="checkbox" id="lPub"' + (l && l.public_form ? ' checked' : '') + '> Public sign-up form (people subscribe themselves with express consent)</label>' +
+      '</div><div id="ruleBox"' + (l && l.type === 'dynamic' ? '' : ' hidden') + '><h3 class="h">Rules</h3><div class="toolbar">Match <select class="sel" id="rMatch" style="width:auto"><option value="all">all conditions (AND)</option><option value="any"' + (l && l.rule && l.rule.match === 'any' ? ' selected' : '') + '>any condition (OR)</option></select></div><div id="rRows"></div>' +
+      '<button class="btn btn-ghost btn-sm" data-x="rule-add">Add condition</button><div id="rPrev" class="note" style="margin-top:8px"></div></div>' +
+      '<div class="actions"><button class="btn btn-primary" data-x="list-save" data-id="' + (l ? l.id : '') + '">Save</button><button class="btn btn-ghost" data-x="rule-preview">Preview audience</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+    S._rules = rows; drawRules();
+    var t = $('lType');
+    if (t) t.addEventListener('change', function () { $('ruleBox').hidden = t.value !== 'dynamic'; $('lPubWrap').hidden = t.value === 'dynamic'; });
+    if (l && l.type === 'dynamic') $('lPubWrap').hidden = true;
+  }
+  function drawRules() {
+    var fields = {}; MK.RULE_FIELDS.forEach(function (f) { fields[f[0]] = f[1]; });
+    var facts = {}; MK.FACTS.forEach(function (f) { facts[f[0]] = f[1]; });
+    $('rRows').innerHTML = S._rules.map(function (r, i) {
+      return '<div class="toolbar"><select class="sel" data-r="' + i + '" data-k="field" style="width:auto">' + opts(fields, r.field) + '</select>' +
+        '<select class="sel" data-r="' + i + '" data-k="op" style="width:auto"><option value="is">is</option><option value="is_not"' + (r.op === 'is_not' ? ' selected' : '') + '>is not</option></select>' +
+        (r.field === 'fact' ? '<select class="sel" data-r="' + i + '" data-k="value">' + opts(facts, r.value, 'Choose…') + '</select>'
+          : r.field === 'consent' ? '<select class="sel" data-r="' + i + '" data-k="value">' + opts(CONSENT, r.value, 'Choose…') + '</select>'
+          : '<input class="inp" data-r="' + i + '" data-k="value" value="' + esc(r.value) + '" placeholder="value (comma = or)">') +
+        '<button class="btn btn-ghost btn-sm" data-x="rule-del" data-i="' + i + '" aria-label="Remove">✕</button></div>'; }).join('');
+    $('rRows').querySelectorAll('[data-r]').forEach(function (el) {
+      el.addEventListener('change', function () { S._rules[+el.dataset.r][el.dataset.k] = el.value; if (el.dataset.k === 'field') { S._rules[+el.dataset.r].value = ''; drawRules(); } });
+      el.addEventListener('input', function () { S._rules[+el.dataset.r][el.dataset.k] = el.value; });
+    });
+  }
+
+  async function contactDrawer(id) {
+    var r = await act(function () { return api('contacts.get', { id: id }); });
+    if (!r) return;
+    var c = r.contact;
+    modal('<h2>' + esc(c.name || c.email) + '</h2><p class="note">' + esc(c.email) + ' · ' + esc(c.host_status || 'contact') + (c.portal_ref ? ' · synced from the portal (' + esc(c.portal_ref) + ')' : '') + '</p>' +
+      '<div class="grid2">' +
+      (c.portal_ref ? '' : '<label class="f">Name<input class="inp" id="cName" value="' + esc(c.name || '') + '"></label><label class="f">City<input class="inp" id="cCity" value="' + esc(c.city || '') + '"></label>' +
+        '<label class="f">Language<select class="sel" id="cLang">' + opts(LANGS, c.language) + '</select></label>') +
+      '<label class="f">Tags (comma separated)<input class="inp" id="cTags" value="' + esc((c.tags || []).join(', ')) + '"></label>' +
+      '<label class="f">Consent<select class="sel" id="cConsent">' + opts(CONSENT, c.consent) + '</select></label>' +
+      '<label class="f full">Consent evidence (where and when they agreed)<input class="inp" id="cEv" value="' + esc(c.consent_evidence || '') + '"></label></div>' +
+      (r.suppressions.length ? '<div class="warnbox" style="margin-top:10px">Suppressed: ' + r.suppressions.map(function (s) { return esc(s.reason) + (s.topic ? ' (' + esc(s.topic) + ')' : ' (all marketing)'); }).join(', ') + '. Suppression can\'t be lifted from here.</div>' : '') +
+      '<div class="actions">' + (can('edit') ? '<button class="btn btn-primary" data-x="contact-save" data-id="' + c.id + '">Save</button><button class="btn btn-ghost" data-x="contact-archive" data-id="' + c.id + '" data-restore="' + (c.status === 'archived' ? 1 : '') + '">' + (c.status === 'archived' ? 'Restore' : 'Archive') + '</button>' : '') +
+      '<button class="btn btn-ghost" data-x="close">Close</button></div>' +
+      '<h3 class="h">Lists</h3><p class="small">' + (r.lists.length ? r.lists.map(function (l) { return esc(l.name); }).join(', ') : 'No static lists') + '</p>' +
+      '<h3 class="h">Activity</h3><ul class="tl">' + (r.timeline.length ? r.timeline.map(function (t) {
+        return '<li><b>' + esc(t.email || '(email)') + '</b> — ' + esc(MK.statusLabel(t.status)) + (t.sent_at ? ' <span>' + esc(MK.when(t.sent_at)) + '</span>' : '') +
+          (t.events.length ? '<br><span>' + t.events.map(function (e) { return esc(e.kind) + (e.suspected ? ' (suspected ' + esc(e.suspect_reason || 'automated') + ')' : '') + ' ' + esc(MK.when(e.occurred_at)); }).join(' · ') + '</span>' : '') + '</li>'; }).join('')
+        : '<li class="muted">No emails yet.</li>') + '</ul>' +
+      (r.conversions.length ? '<h3 class="h">Actions</h3><ul class="tl">' + r.conversions.map(function (x) { return '<li>' + esc(x.action.replace(/_/g, ' ')) + ' <span>' + esc(MK.when(x.occurred_at)) + '</span></li>'; }).join('') + '</ul>' : ''), true);
+  }
+
+  // Import: parse in the browser (CSV, or XLSX via SheetJS), map columns, preview on the server, then commit.
+  function importDialog() {
+    modal('<h2>Import contacts</h2><p class="note">CSV or Excel (.xlsx). Every contact needs a source and a consent status: express, implied, unknown or withdrawn. Unknown consent can\'t receive marketing. Unsubscribes and bounces are kept, whatever the file says.</p>' +
+      '<input type="file" id="impFile" accept=".csv,.xlsx,.xls,text/csv"><div id="impMap" style="margin-top:10px"></div>' +
+      '<div class="actions"><button class="btn btn-ghost" data-x="close">Close</button></div>', true);
+    $('impFile').addEventListener('change', async function (e) {
+      var f = e.target.files[0]; if (!f) return;
+      var parsed;
+      if (/\.xlsx?$/i.test(f.name)) {
+        await loadXlsx();
+        var wb = window.XLSX.read(await f.arrayBuffer(), { type: 'array' });
+        var rows = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
+        parsed = { headers: rows.length ? Object.keys(rows[0]) : [], rows: rows };
+      } else parsed = MK.parseCsv(await f.text());
+      S._imp = parsed; S._map = MK.guessMapping(parsed.headers);
+      drawImportMap();
+    });
+  }
+  function loadXlsx() {
+    if (window.XLSX) return Promise.resolve();
+    return new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
+  }
+  function drawImportMap() {
+    var h = {}; S._imp.headers.forEach(function (x) { h[x] = x; });
+    var fields = [['email', 'Email *'], ['name', 'Name'], ['first_name', 'First name'], ['language', 'Language'], ['country', 'Country (2 letters)'], ['city', 'City'], ['tags', 'Tags'], ['source', 'Source'], ['consent', 'Consent'], ['consent_evidence', 'Consent evidence'], ['consent_at', 'Consent date']];
+    $('impMap').innerHTML = '<p class="small"><b>' + S._imp.rows.length + '</b> rows. Match your columns:</p><div class="grid3">' + fields.map(function (f) {
+      return '<label class="f">' + esc(f[1]) + '<select class="sel" data-map="' + f[0] + '">' + opts(h, S._map[f[0]], '— none —') + '</select></label>'; }).join('') + '</div>' +
+      '<h3 class="h">When a column is empty</h3><div class="grid3"><label class="f">Source<input class="inp" id="impSrc" placeholder="e.g. host fair 2026"></label>' +
+      '<label class="f">Consent<select class="sel" id="impCons">' + opts(CONSENT, '', 'required in file') + '</select></label><label class="f">Evidence<input class="inp" id="impEv" placeholder="e.g. signed up at the fair"></label></div>' +
+      '<h3 class="h">Add to list</h3><select class="sel" id="impList">' + opts(Object.fromEntries(S.lists.filter(function (l) { return l.type === 'static'; }).map(function (l) { return [l.id, l.name]; })), S.listId, '— no list —') + '</select>' +
+      '<div class="actions"><button class="btn btn-ghost" data-x="imp-preview">Check the file</button><button class="btn btn-primary" data-x="imp-commit" disabled id="impGo">Import</button></div><div id="impOut"></div>';
+    $('impMap').querySelectorAll('[data-map]').forEach(function (el) { el.addEventListener('change', function () { S._map[el.dataset.map] = el.value || undefined; $('impGo').disabled = true; }); });
+  }
+  function impBody() {
+    var map = {}; Object.keys(S._map).forEach(function (k) { if (S._map[k]) map[k] = S._map[k]; });
+    return { scope: S.scope, rows: S._imp.rows, mapping: map, defaults: { source: $('impSrc').value, consent: $('impCons').value, consent_evidence: $('impEv').value }, list_id: +$('impList').value || undefined };
+  }
+  function downloadText(name, text) { var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000); }
+
+  // ---------- templates ----------
+  async function templates() {
+    var r = await act(function () { return api('templates.list', { scope: S.scope }); });
+    if (!r) return;
+    S.templates = r.templates;
+    if (S.tplId && !S.tpl) await openTemplate(S.tplId); else drawTemplates();
+  }
+  async function openTemplate(id) {
+    var r = await act(function () { return api('templates.get', { id: id }); });
+    if (!r) return;
+    var v = r.versions[0];
+    S.tplId = id; S.tpl = { id: id, name: r.template.name, folder: r.template.folder, version: r.template.version, subject: v.subject, preheader: v.preheader, language: v.language, blocks: v.blocks, versions: r.versions };
+    drawTemplates();
+  }
+  function drawTemplates() {
+    var folders = {};
+    S.templates.forEach(function (t) { (folders[t.folder] = folders[t.folder] || []).push(t); });
+    $('app').innerHTML = '<div class="split"><div><div class="toolbar"><b style="flex:1">Templates</b>' + (can('templates') ? '<button class="btn btn-primary btn-sm" data-x="tpl-new">New template</button>' : '') + '</div>' +
+      Object.keys(folders).sort().map(function (f) { return '<h3 class="h">' + esc(f) + '</h3><div class="card list">' + folders[f].map(function (t) {
+        return '<button class="row r2' + (t.id === S.tplId ? ' on' : '') + '" data-tpl="' + t.id + '"><span><b>' + esc(t.name) + '</b><small>Version ' + t.version + '</small></span></button>'; }).join('') + '</div>'; }).join('') +
+      '</div><div id="tplEd">' + (S.tpl ? '' : '<div class="card empty">Choose a template to edit, or start a new one.</div>') + '</div></div>';
+    if (S.tpl) editor($('tplEd'), S.tpl, 'template');
+  }
+
+  // The shared email editor (templates and campaign emails).
+  function editor(host, m, kind) {
+    var ro = kind === 'email' && ['sent', 'sending', 'cancelled'].indexOf(m.status) >= 0;
+    var camp = S.camp && S.camp.campaign;
+    host.innerHTML = '<div class="card pad">' +
+      (kind === 'template' ? '<div class="grid2"><label class="f">Name<input class="inp" id="eName" value="' + esc(m.name) + '"></label><label class="f">Folder<input class="inp" id="eFolder" value="' + esc(m.folder) + '"></label></div>'
+        : '<div class="toolbar" style="margin:0"><b style="flex:1">#' + m.seq + ' ' + esc(m.name || '') + '</b>' + st(m.status) + '</div><p class="note">' + esc(m.objective || '') + '</p>') +
+      ((m.blockers || []).length ? '<div class="warnbox"><b>Needs attention</b><ul>' + m.blockers.map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('') + '</ul></div>' : '') +
+      '<div class="grid2" style="margin-top:8px"><label class="f full">Subject<input class="inp" id="eSubj" value="' + esc(m.subject) + '"' + (ro ? ' disabled' : '') + '></label>' +
+      '<label class="f full">Preview text<input class="inp" id="ePre" value="' + esc(m.preheader) + '"' + (ro ? ' disabled' : '') + '></label>' +
+      (kind === 'email' && camp.kind === 'broadcast' ? '<label class="f">Send date (' + esc(camp.timezone) + ')<input class="inp" type="date" id="eDate" value="' + esc(m.local_date || '') + '"' + (ro ? ' disabled' : '') + '></label><label class="f">Time<input class="inp" type="time" id="eTime" value="' + esc(m.local_time || '10:00') + '"' + (ro ? ' disabled' : '') + '></label>' : '') +
+      (kind === 'email' && camp.kind === 'sequence' ? '<label class="f">Days after the previous step<input class="inp" type="number" min="0" max="365" id="eDelay" value="' + esc(m.delay_days) + '"' + (ro ? ' disabled' : '') + '></label>' : '') +
+      '</div><p class="note" style="margin-top:8px">Personal fields: {{first_name|there}}, {{name|…}}, {{city|your city}}. Always give a fallback after the bar. Links: [label](https://…), bold: **text**. The availability button uses https://hosts.vanmates.com/m/a (each host gets their own form link).</p>' +
+      '<div id="eBlocks"></div>' + (ro ? '' : '<div class="toolbar">Add: ' + ['heading', 'text', 'list', 'button', 'notice', 'image', 'divider'].map(function (t) { return '<button class="btn btn-ghost btn-sm" data-add="' + t + '">' + t + '</button>'; }).join('') + '</div>') +
+      '<div class="actions">' + (ro ? '' : '<button class="btn btn-primary" data-x="' + (kind === 'template' ? 'tpl-save' : 'email-save') + '">Save' + (kind === 'template' ? ' as new version' : '') + '</button>') +
+      '<button class="btn btn-ghost" data-x="preview" data-mode="desktop">Preview</button><button class="btn btn-ghost" data-x="preview" data-mode="mobile">Mobile preview</button>' +
+      (kind === 'email' ? '<button class="btn btn-ghost" data-x="email-test">Send me a test</button>' : '') +
+      (S.me.ai_ready && can('ai') && !ro ? '<button class="btn btn-ghost" data-x="ai-rewrite">AI rewrite…</button>' : '') +
+      (kind === 'email' && !ro ? '<button class="btn btn-ghost" data-x="email-dup">Duplicate</button>' + (m.status === 'skipped' ? '<button class="btn btn-ghost" data-x="email-unskip">Unskip</button>' : '<button class="btn btn-ghost" data-x="email-skip">Skip</button>') : '') +
+      (kind === 'email' && m.status === 'held' ? '<label class="cb"><input type="checkbox" id="eConfirm"> I checked the amounts against our real terms</label>' : '') +
+      '</div>' +
+      (kind === 'template' && m.versions ? '<h3 class="h">Versions</h3><ul class="tl">' + m.versions.map(function (v) { return '<li>v' + v.version + ' · ' + esc(v.subject) + ' <span>' + esc(v.created_by) + ' · ' + esc(MK.when(v.created_at)) + '</span></li>'; }).join('') + '</ul>' : '') +
+      '</div>';
+    S._ed = { m: m, kind: kind, blocks: JSON.parse(JSON.stringify(m.blocks || [])), ro: ro };
+    drawBlocks();
+  }
+  function drawBlocks() {
+    var E = S._ed, dis = E.ro ? ' disabled' : '';
+    $('eBlocks').innerHTML = E.blocks.map(function (b, i) {
+      var body = b.type === 'list' ? '<textarea class="inp" data-b="' + i + '" data-k="items"' + dis + ' placeholder="One item per line">' + esc((b.items || []).join('\n')) + '</textarea>'
+        : b.type === 'button' ? '<div class="grid2"><input class="inp" data-b="' + i + '" data-k="label" value="' + esc(b.label) + '"' + dis + ' placeholder="Button text"><input class="inp" data-b="' + i + '" data-k="url" value="' + esc(b.url) + '"' + dis + ' placeholder="https://"></div>'
+        : b.type === 'image' ? '<div class="grid2"><input class="inp" data-b="' + i + '" data-k="url" value="' + esc(b.url) + '"' + dis + ' placeholder="https:// image address"><input class="inp" data-b="' + i + '" data-k="alt" value="' + esc(b.alt) + '"' + dis + ' placeholder="Description"></div>'
+        : b.type === 'divider' ? ''
+        : b.type === 'heading' ? '<input class="inp" data-b="' + i + '" data-k="text" value="' + esc(b.text) + '"' + dis + '>'
+        : '<textarea class="inp" data-b="' + i + '" data-k="text"' + dis + ' rows="' + (b.type === 'text' ? 4 : 2) + '">' + esc(b.text) + '</textarea>';
+      return '<div class="blk"><div class="bh"><span style="flex:1">' + esc(b.type) + '</span>' + (E.ro ? '' : '<button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="-1" aria-label="Move up">↑</button><button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="1" aria-label="Move down">↓</button><button class="btn btn-ghost btn-sm" data-rm="' + i + '" aria-label="Remove">✕</button>') + '</div>' + body + '</div>'; }).join('');
+    $('eBlocks').querySelectorAll('[data-b]').forEach(function (el) {
+      el.addEventListener('input', function () { var b = E.blocks[+el.dataset.b]; b[el.dataset.k] = el.dataset.k === 'items' ? el.value.split('\n') : el.value; });
+    });
+  }
+  function edValues() {
+    var E = S._ed;
+    return { subject: $('eSubj').value, preheader: $('ePre').value, blocks: E.blocks.map(function (b) { return b.type === 'list' ? Object.assign({}, b, { items: (b.items || []).filter(function (x) { return String(x).trim(); }) }) : b; }) };
+  }
+  async function preview(mode) {
+    var v = edValues(), E = S._ed;
+    var r = await act(function () { return api('emails.preview', Object.assign({ scope: S.scope }, E.kind === 'email' ? { id: E.m.id } : {}, v)); });
+    if (!r) return;
+    modal('<h2>' + esc(r.subject) + '</h2>' + (r.problems.length ? '<div class="warnbox"><ul>' + r.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></div>' : '') +
+      '<p class="note">Sample recipient: Alex in Vancouver. ' + (mode === 'mobile' ? 'Phone width (390 px).' : 'Desktop.') + '</p><iframe class="pv-frame' + (mode === 'mobile' ? ' mobile' : '') + '" sandbox="" id="pvf"></iframe>' +
+      '<details style="margin-top:8px"><summary class="small">Plain-text version</summary><pre style="white-space:pre-wrap;font-size:12px">' + esc(r.text) + '</pre></details><div class="actions"><button class="btn btn-ghost" data-x="close">Close</button></div>', true);
+    $('pvf').srcdoc = r.html;
+  }
+
+  // ---------- campaigns ----------
+  async function campaigns() {
+    if (S.campId) return openCampaign(S.campId);
+    var r = await act(function () { return api('campaigns.list', { scope: S.scope }); });
+    if (!r) return;
+    S.campaigns = r.campaigns;
+    $('app').innerHTML = '<div class="toolbar"><b style="flex:1">Campaigns</b>' + (can('edit') ? '<button class="btn btn-primary" data-x="camp-new" data-kind="broadcast">New campaign</button>' : '') + '</div>' +
+      '<div class="card list"><div class="row hd r5"><span>Campaign</span><span class="c2">Status</span><span class="c3">Emails</span><span class="c4">First send</span><span class="c5">Last send</span></div>' +
+      (S.campaigns.filter(function (c) { return c.kind === 'broadcast'; }).map(campRow).join('') || '<div class="empty">No campaigns yet. Create one and let the AI write the whole year.</div>') + '</div>';
+  }
+  function campRow(c) {
+    var n = Object.keys(c.emails || {}).reduce(function (s, k) { return s + c.emails[k]; }, 0);
+    return '<button class="row r5" data-open-camp="' + c.id + '"><span><b>' + esc(c.name) + '</b><small>' + (c.gen_status && c.gen_status !== 'done' ? 'AI: ' + esc(MK.statusLabel(c.gen_status)) : (c.paused_reason ? esc(c.paused_reason) : '')) + '</small></span>' +
+      '<span class="c2">' + st(c.status) + '</span><span class="c3 small">' + n + (c.emails && c.emails.sent ? ' · ' + c.emails.sent + ' sent' : '') + '</span><span class="c4 small">' + esc(MK.when(c.first_send)) + '</span><span class="c5 small">' + esc(MK.when(c.last_send)) + '</span></button>';
+  }
+  function newCampaign(kind) {
+    var lists = Object.fromEntries(S.lists.map(function (l) { return [l.id, l.name]; }));
+    var topics = Object.fromEntries(S.me.topics.filter(function (t) { return t.scope === S.scope; }).map(function (t) { return [t.id, t.name]; }));
+    var tzs = Object.fromEntries(TZS.map(function (t) { return [t, t]; }));
+    modal('<h2>' + (kind === 'sequence' ? 'New automation' : 'New campaign') + '</h2><div class="grid2">' +
+      '<label class="f full">Name<input class="inp" id="nName" placeholder="' + (kind === 'sequence' ? 'e.g. Availability follow-up' : 'e.g. Host year 2026–27') + '"></label>' +
+      (kind === 'broadcast' ? '<label class="f full">Lists (everyone in them, de-duplicated)<select class="sel" id="nLists" multiple size="' + Math.min(6, Math.max(2, S.lists.length)) + '">' + opts(lists) + '</select></label>' : '') +
+      '<label class="f">Subscription topic<select class="sel" id="nTopic">' + opts(topics, Object.keys(topics)[0]) + '</select></label>' +
+      '<label class="f">Timezone<select class="sel" id="nTz">' + opts(tzs, 'America/Vancouver') + '</select></label>' +
+      '<label class="f">Language<select class="sel" id="nLang">' + opts(LANGS, 'en') + '</select></label></div>' +
+      (S.lists.length || kind === 'sequence' ? '' : '<div class="warnbox" style="margin-top:10px">Create a list first (Lists &amp; contacts).</div>') +
+      '<div class="actions"><button class="btn btn-primary" data-x="camp-create" data-kind="' + kind + '">Create draft</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+  }
+  async function openCampaign(id) {
+    S.campId = id;
+    if (!S.lists.length) { var l = await act(function () { return api('lists.list', { scope: S.scope }); }); if (l) S.lists = l.lists; }
+    var r = await act(function () { return api('campaigns.get', { id: id }); });
+    if (!r) { S.campId = null; return; }
+    S.camp = r;
+    if (!S.month || !r.emails.some(function (e) { return (e.local_date || '').slice(0, 7) === S.month; })) S.month = MK.monthsOf(r.emails)[0];
+    drawCampaign();
+    var gen = r.job && ['queued', 'generating'].indexOf(r.job.status) >= 0;
+    clearInterval(S.poll); S.poll = null;
+    if (gen) S.poll = setInterval(function () { if (S.tab === 'campaigns' || S.tab === 'automations') refreshCampaign(); }, 5000);
+  }
+  async function refreshCampaign() {
+    var r = await api('campaigns.get', { id: S.campId }).catch(function () { return null; });
+    if (!r) return;
+    var was = S.camp.job && S.camp.job.status;
+    S.camp = r;
+    if (!S.emailId) drawCampaign();
+    if (!(r.job && ['queued', 'generating'].indexOf(r.job.status) >= 0)) { clearInterval(S.poll); S.poll = null; if (was && was !== r.job.status) toast('The AI finished: ' + MK.statusLabel(r.job.status) + '.'); }
+  }
+  function drawCampaign() {
+    var r = S.camp, c = r.campaign, job = r.job, E = r.emails;
+    var live = ['scheduled', 'running'].indexOf(c.status) >= 0;
+    var head = '<div class="toolbar"><button class="btn btn-ghost btn-sm" data-x="camp-back">← All</button><b style="font-family:var(--serif);font-size:20px;flex:1">' + esc(c.name) + '</b>' + st(c.status) +
+      (c.status === 'draft' && can('send') ? '<button class="btn btn-primary" data-x="camp-preflight">Review &amp; activate</button>' : '') +
+      (live && can('send') ? '<button class="btn btn-warn" data-x="camp-pause">Pause</button>' : '') +
+      (c.status === 'paused' && can('send') ? '<button class="btn btn-primary" data-x="camp-resume">Resume</button>' : '') +
+      (['draft', 'scheduled', 'running', 'paused'].indexOf(c.status) >= 0 && can('send') ? '<button class="btn btn-danger" data-x="camp-cancel">Cancel</button>' : '') +
+      (can('edit') ? '<button class="btn btn-ghost" data-x="camp-dup">Duplicate</button>' : '') + '</div>' +
+      (c.paused_reason ? '<div class="warnbox">Paused: ' + esc(c.paused_reason) + '</div>' : '') +
+      '<p class="note">' + esc(c.kind === 'sequence' ? 'Automation' : 'Broadcast') + ' · ' + esc(scopeName(c.scope)) + ' · ' + (r.lists.length ? 'Lists: ' + r.lists.map(function (l) { return esc(l.name); }).join(', ') : 'no lists') +
+      ' · Topic: ' + esc(c.topic || '—') + ' · ' + esc(c.timezone) + (c.status === 'draft' && can('edit') ? ' · <button class="btn btn-ghost btn-sm" data-x="camp-settings">Change</button>' : '') + '</p>';
+    var genBox = '';
+    if (job && ['queued', 'generating'].indexOf(job.status) >= 0) {
+      genBox = '<div class="card pad" style="margin-bottom:10px"><b>The AI is writing ' + job.total + ' emails…</b> ' + job.done + ' done<div class="progress" style="margin-top:6px"><i style="width:' + Math.round(job.done / Math.max(1, job.total) * 100) + '%"></i></div><p class="note" style="margin:6px 0 0">Drafts appear as each batch of 4 finishes. Nothing is scheduled or sent.' + (job.error ? ' Last error (retrying): ' + esc(job.error) : '') + '</p></div>';
+    } else if (job && job.status === 'partial') {
+      genBox = '<div class="warnbox">Some emails could not be written: #' + job.missing.join(', #') + '. ' + esc(job.error || '') + ' Add them by hand or skip them.</div>';
+    } else if (job && job.status === 'failed') {
+      genBox = '<div class="errbox">The AI could not plan this campaign: ' + esc(job.error || '') + '</div>';
+    }
+    if (job && (job.defaults || []).length && c.status === 'draft') genBox += '<div class="okbox"><b>Defaults used</b> (change any email to override): ' + job.defaults.map(esc).join(' ') + '</div>';
+    var body;
+    if (!E.length && c.status === 'draft') body = briefForm(c);
+    else {
+      body = '<div class="toolbar"><div class="chips"><button class="chip' + (S.view === 'calendar' ? ' on' : '') + '" data-view="calendar">Calendar</button><button class="chip' + (S.view === 'list' ? ' on' : '') + '" data-view="list">List</button></div><span class="sp"></span>' +
+        (can('edit') && ['draft', 'paused', 'scheduled', 'running'].indexOf(c.status) >= 0 ? '<button class="btn btn-ghost btn-sm" data-x="email-add">Add email</button>' : '') +
+        (S.me.ai_ready && can('ai') && c.status === 'draft' && job && job.status !== 'generating' ? '<button class="btn btn-ghost btn-sm" data-x="camp-revise">Revise with AI…</button>' : '') + '</div>' +
+        (S.view === 'calendar' && c.kind === 'broadcast' ? calendar(E) : emailList(E, c));
+    }
+    var auto = c.kind === 'sequence' ? autoBox(r) : '';
+    $('app').innerHTML = head + genBox + auto + '<div class="split wide"><div>' + body + '</div><div id="emailEd">' + (S.emailId ? '' : (E.length ? '<div class="card empty">Choose an email to edit, preview or test.</div>' : '')) + '</div></div>';
+    if (S.emailId) { var e = E.find(function (x) { return x.id === S.emailId; }); if (e) editor($('emailEd'), e, 'email'); else S.emailId = null; }
+  }
+  function briefForm(c) {
+    return '<div class="card pad"><h2 class="h">Write it with AI</h2><p class="note">Describe the campaign. The AI writes every email (subject, preview text, body, call to action) and proposes dates. It only uses the facts you approve below and never invents prices, pay or rewards. Nothing is scheduled until you activate.</p>' +
+      '<label class="f full">Instruction<textarea class="inp" id="bPrompt" rows="3" placeholder="Create a 12-month campaign for our Homestay hosts. Send two emails per month about availability, hosting tips, referrals and engagement."></textarea></label>' +
+      '<div class="grid3" style="margin-top:8px"><label class="f">Months<input class="inp" type="number" min="1" max="24" id="bMonths" placeholder="from the instruction"></label><label class="f">Emails per month<input class="inp" type="number" min="1" max="8" id="bPer" placeholder="from the instruction"></label>' +
+      '<label class="f">Start date<input class="inp" type="date" id="bStart"></label><label class="f">Send time<input class="inp" type="time" id="bTime" value="10:00"></label>' +
+      '<label class="f">Tone<input class="inp" id="bTone" placeholder="warm, practical"></label><label class="f">Main call to action<input class="inp" id="bCta" placeholder="update availability"></label>' +
+      '<label class="f full">Objective<input class="inp" id="bObj" placeholder="Keep hosts engaged and availability up to date"></label><label class="f full">Notes for the writer<input class="inp" id="bNotes"></label></div>' +
+      '<div class="actions">' + (S.me.ai_ready && can('ai') ? '<button class="btn btn-primary" data-x="camp-generate">Generate all emails</button>' : '<span class="muted small">AI is not available; add emails by hand.</span>') +
+      '<button class="btn btn-ghost" data-x="email-add">Add an email by hand</button><button class="btn btn-ghost" data-x="facts">Approved facts…</button></div></div>';
+  }
+  function calendar(E) {
+    var weeks = MK.monthGrid(S.month, E);
+    return '<div class="card pad"><div class="toolbar"><button class="btn btn-ghost btn-sm" data-month="-1" aria-label="Previous month">←</button><b style="flex:1;text-align:center">' + esc(new Date(S.month + '-15T12:00:00Z').toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })) + '</b><button class="btn btn-ghost btn-sm" data-month="1" aria-label="Next month">→</button></div>' +
+      '<div class="cal">' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(function (d) { return '<div class="dh">' + d + '</div>'; }).join('') +
+      weeks.map(function (w) { return w.map(function (d) {
+        return d ? '<div class="dc"><span class="dn">' + d.day + '</span>' + d.items.map(function (e) { return '<button class="ev st-' + MK.statusTone(e.status) + '" data-email="' + e.id + '" title="' + esc(e.subject) + '">' + esc(e.local_time) + ' ' + esc(e.subject || e.name) + '</button>'; }).join('') + '</div>' : '<div class="dc x"></div>'; }).join(''); }).join('') +
+      '</div><p class="note" style="margin:8px 0 0">' + E.length + ' emails · ' + MK.monthsOf(E).length + ' months. Use the list view to reorder.</p></div>';
+  }
+  function emailList(E, c) {
+    return '<div class="card list">' + E.map(function (e, i) {
+      var movable = ['draft', 'held', 'scheduled', 'skipped'].indexOf(e.status) >= 0 && can('edit');
+      return '<div class="row r2' + (e.id === S.emailId ? ' on' : '') + '"><button class="btn" style="justify-content:flex-start;text-align:left;min-width:0" data-email="' + e.id + '"><span style="min-width:0"><b>#' + e.seq + ' ' + esc(e.subject || e.name || '(empty)') + '</b><small>' +
+        (c.kind === 'sequence' ? (e.delay_days ? e.delay_days + ' day(s) after the previous step' : 'right away') : esc(e.local_date || '') + ' ' + esc(e.local_time)) + ((e.blockers || []).length ? ' · ⚠ ' + e.blockers.length + ' to fix' : '') + '</small></span></button>' +
+        '<span style="display:flex;gap:4px;align-items:center">' + st(e.status) + (movable ? '<button class="btn btn-ghost btn-sm" data-reorder="' + i + '" data-d="-1" aria-label="Move up">↑</button><button class="btn btn-ghost btn-sm" data-reorder="' + i + '" data-d="1" aria-label="Move down">↓</button>' : '') + '</span></div>'; }).join('') + '</div>';
+  }
+  function autoBox(r) {
+    var a = r.automation, t = a ? a.trigger : {};
+    var lists = Object.fromEntries(S.lists.map(function (l) { return [l.id, l.name]; }));
+    var camps = Object.fromEntries((S.campaigns || []).filter(function (c) { return c.kind === 'broadcast'; }).map(function (c) { return [c.id, c.name]; }));
+    var editable = can('edit') && ['draft', 'paused'].indexOf(r.campaign.status) >= 0;
+    return '<div class="card pad" style="margin-bottom:10px"><h3 class="h" style="margin-top:0">Trigger</h3>' +
+      '<div class="grid3"><label class="f">When<select class="sel" id="aType"' + (editable ? '' : ' disabled') + '>' + opts({ list_entry: 'Someone joins a list', clicked_no_action: 'Clicked but didn\'t complete', portal_event: 'Prospect starts an application' }, t.type || 'list_entry') + '</select></label>' +
+      '<label class="f" id="aListW">List<select class="sel" id="aList"' + (editable ? '' : ' disabled') + '>' + opts(lists, t.list_id, 'Choose…') + '</select></label>' +
+      '<label class="f" id="aSrcW">After campaign<select class="sel" id="aSrc"' + (editable ? '' : ' disabled') + '>' + opts(camps, t.source_campaign_id, 'Choose…') + '</select></label>' +
+      '<label class="f" id="aHrsW">Wait (hours)<input class="inp" type="number" id="aHrs" min="1" max="720" value="' + esc(t.after_hours || 48) + '"' + (editable ? '' : ' disabled') + '></label>' +
+      '<label class="f">Stops when<select class="sel" id="aStop"' + (editable ? '' : ' disabled') + '>' + opts({ availability_submitted: 'They send an availability update', application_submitted: 'They submit a host application' }, t.stop_action || 'availability_submitted') + '</select></label>' +
+      '<label class="cb"><input type="checkbox" id="aInc"' + (t.include_existing ? ' checked' : '') + (editable ? '' : ' disabled') + '> Include people already in the list</label>' +
+      '<label class="cb"><input type="checkbox" id="aRe"' + (a && a.reentry ? ' checked' : '') + (editable ? '' : ' disabled') + '> Allow re-entry</label></div>' +
+      '<p class="note" style="margin:8px 0 0">Each person starts at step 1 when the trigger happens. Before every step we stop for: unsubscribe, suppression, completed action, lost eligibility, or a paused campaign. ' +
+      (r.enrollments ? 'Enrolled: ' + Object.keys(r.enrollments).map(function (k) { return r.enrollments[k] + ' ' + k; }).join(', ') + '.' : '') + '</p>' +
+      (editable ? '<div class="actions"><button class="btn btn-ghost btn-sm" data-x="auto-save">Save trigger</button></div>' : '') + '</div>';
+  }
+
+  async function factsModal() {
+    var f = await act(function () { return api('facts.list', { scope: S.scope }); });
+    if (!f) return;
+    modal('<h2>Approved facts</h2><p class="note">The only facts the AI may state (amounts, rewards, dates, policies). Mark a fact "may change" (volatile): if it changes after a campaign is activated, emails using it are held for review instead of sending old wording.</p>' +
+      '<table class="t"><tr><th>Key</th><th>Fact</th><th>May change</th><th></th></tr>' + (f.facts.map(function (x) { return '<tr><td>' + esc(x.key) + '</td><td>' + esc(x.value) + '</td><td>' + (x.volatile ? 'yes' : '') + '</td><td>' + (can('templates') ? '<button class="btn btn-ghost btn-sm" data-x="fact-del" data-k="' + esc(x.key) + '">Remove</button>' : '') + '</td></tr>'; }).join('') || '<tr><td colspan="4" class="muted">No facts yet: the AI will write neutral copy without amounts.</td></tr>') + '</table>' +
+      (can('templates') ? '<div class="grid3" style="margin-top:10px"><label class="f">Key<input class="inp" id="fKey" placeholder="referral_reward"></label><label class="f">Fact<input class="inp" id="fVal" placeholder="A $100 thank-you after their first student"></label><label class="cb"><input type="checkbox" id="fVol"> May change</label></div>' : '') +
+      '<div class="actions">' + (can('templates') ? '<button class="btn btn-primary btn-sm" data-x="fact-save">Add / update</button>' : '') + '<button class="btn btn-ghost btn-sm" data-x="close">Close</button></div>', true);
+  }
+
+  // ---------- automations ----------
+  async function automations() {
+    S.campId = null;
+    var r = await act(function () { return api('campaigns.list', { scope: S.scope }); });
+    if (!r) return;
+    S.campaigns = r.campaigns;
+    var seqs = r.campaigns.filter(function (c) { return c.kind === 'sequence'; });
+    $('app').innerHTML = '<div class="toolbar"><b style="flex:1">Automations</b>' + (can('edit') ? '<button class="btn btn-primary" data-x="camp-new" data-kind="sequence">New automation</button>' : '') + '</div>' +
+      '<p class="note">Automations send a sequence to each person when something happens: they join a list, they click without completing the action (e.g. no availability update), or a prospect starts an application. Broadcasts send on calendar dates to everyone eligible at that moment; people added later get future emails only.</p>' +
+      '<div class="card list"><div class="row hd r5"><span>Automation</span><span class="c2">Status</span><span class="c3">Steps</span><span class="c4">First</span><span class="c5">Last</span></div>' + (seqs.map(campRow).join('') || '<div class="empty">No automations yet.</div>') + '</div>';
+  }
+
+  // ---------- reports ----------
+  async function reports() {
+    var r = await act(function () { return api('campaigns.list', { scope: S.scope }); });
+    if (!r) return;
+    S.campaigns = r.campaigns;
+    var withSends = r.campaigns.filter(function (c) { return c.status !== 'draft'; });
+    if (!S.reportCamp && withSends.length) S.reportCamp = withSends[0].id;
+    var rev = await api('deliveries.review', { scope: S.scope }).catch(function () { return { rows: [] }; });
+    var rep = S.reportCamp ? await act(function () { return api('analytics', { campaign_id: S.reportCamp }); }) : null;
+    var rec = S.reportCamp ? await act(function () { return api('recipients', { campaign_id: S.reportCamp, filter: S.rfilter, include_suspected: S.rsusp }); }) : null;
+    var t = rep ? rep.totals : {};
+    $('app').innerHTML = '<div class="toolbar"><select class="sel" id="rCamp" style="max-width:360px">' + opts(Object.fromEntries(withSends.map(function (c) { return [c.id, c.name + ' (' + MK.statusLabel(c.status) + ')']; })), S.reportCamp, withSends.length ? undefined : 'No active or finished campaigns') + '</select><span class="sp"></span>' +
+      (rep ? '<span class="small muted">Updated ' + esc(MK.when(rep.refreshed_at)) + (rep.last_event_at ? ' · last event ' + esc(MK.when(rep.last_event_at)) : '') + '</span> <button class="btn btn-ghost btn-sm" data-go="reports">Refresh</button>' : '') + '</div>' +
+      (rev.rows.length ? '<div class="warnbox"><b>' + rev.rows.length + ' send(s) need review</b> — failed, or the outcome is unknown (never retried automatically).<div class="scrollx"><table class="t" style="margin-top:6px"><tr><th>To</th><th>Campaign</th><th>Status</th><th>Reason</th><th></th></tr>' + rev.rows.slice(0, 50).map(function (x) {
+        return '<tr><td>' + esc(x.to_email) + '</td><td>' + esc(x.campaign) + '</td><td>' + esc(x.status) + '</td><td class="small">' + esc(x.reason || '') + '</td><td>' + (x.status === 'unknown' && can('send') ? '<button class="btn btn-ghost btn-sm" data-resolve="' + x.id + '" data-o="sent">It was sent</button><button class="btn btn-ghost btn-sm" data-resolve="' + x.id + '" data-o="not_sent">Not sent</button>' : '') +
+          (can('send') ? '<button class="btn btn-ghost btn-sm" data-resolve="' + x.id + '" data-o="bounced">Bounced</button>' : '') + '</td></tr>'; }).join('') + '</table></div></div>' : '') +
+      (!rep ? '<div class="card empty">Reports appear once a campaign is active.</div>' :
+      '<div class="kpis">' + kpi(MK.num(t.sent), 'Sent', 'accepted by Gmail') + kpi(MK.num(t.delivered), 'Delivered', MK.num(t.bounced) + ' bounced · ' + MK.pct(t.bounce_rate)) +
+        kpi(MK.pct(t.open_rate), 'Tracked open rate', MK.num(t.unique_opens) + ' unique · ' + MK.num(t.total_opens) + ' total · ' + MK.num(t.suspected_opens) + ' suspected') +
+        kpi(MK.pct(t.click_rate), 'Click rate', MK.num(t.unique_clicks) + ' unique · ' + MK.num(t.total_clicks) + ' total') +
+        kpi(MK.num(t.conversions), 'Actions', MK.pct(t.conversion_rate)) + kpi(MK.num(t.unsubscribes), 'Unsubscribes', MK.pct(t.unsubscribe_rate)) +
+        kpi(t.replies === null ? 'n/a' : MK.num(t.replies), 'Replies', 'not captured for this sender') + kpi(MK.num(t.reached_people), 'People reached', rep.completed + ' sent · ' + rep.scheduled + ' scheduled') + '</div>' +
+      '<div class="card pad scrollx"><h3 class="h" style="margin-top:0">Per email</h3><table class="t"><tr><th>#</th><th>Email</th><th>Status</th><th>Sent</th><th>Open rate</th><th>Click rate</th><th>Actions</th><th></th></tr>' +
+        rep.emails.map(function (e) { var m = e.metrics; return '<tr><td>' + e.seq + '</td><td>' + esc(e.subject) + '<br><span class="small muted">' + esc(MK.when(e.send_at)) + '</span></td><td>' + st(e.status) + '</td><td>' + MK.num(m.sent) + '</td><td>' + MK.pct(m.open_rate) + '</td><td>' + MK.pct(m.click_rate) + '</td><td>' + MK.num(m.conversions) + '</td><td>' + (m.sent ? '<button class="btn btn-ghost btn-sm" data-recip-email="' + e.id + '">Who</button>' : '') + '</td></tr>'; }).join('') +
+        '</table></div>' +
+      '<h3 class="h">Recipients</h3><div class="toolbar"><div class="chips">' + [['all', 'All'], ['opened', 'Opened'], ['clicked', 'Clicked'], ['not_opened', 'No tracked open'], ['converted', 'Completed action'], ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced'], ['failed', 'Failed'], ['suppressed', 'Excluded']].map(function (f) {
+        return '<button class="chip' + (S.rfilter === f[0] ? ' on' : '') + '" data-rf="' + f[0] + '">' + f[1] + '</button>'; }).join('') + '</div><label class="cb small"><input type="checkbox" id="rSusp"' + (S.rsusp ? ' checked' : '') + '> Include suspected proxy opens / bot clicks</label><span class="sp"></span>' +
+        (can('export') ? '<button class="btn btn-ghost btn-sm" data-x="export-recip">Export this view</button>' : '') + '</div>' +
+      '<div class="card scrollx"><table class="t"><tr><th>Recipient</th><th>Delivery</th><th>First / last open</th><th>Opens</th><th>First / last click</th><th>Links</th><th>Action</th></tr>' +
+        ((rec && rec.rows.length) ? rec.rows.map(function (x) { return '<tr><td><b>' + esc(x.name || '') + '</b><br><span class="small">' + esc(x.email) + '</span>' + (S.reportEmail ? '' : '<br><span class="small muted">' + esc(x.subject) + '</span>') + '</td><td>' + esc(MK.statusLabel(x.status)) + (x.unsubscribed ? '<br><span class="st st-bad">unsubscribed</span>' : '') + '</td><td class="small">' + esc(MK.when(x.first_open)) + '<br>' + esc(MK.when(x.last_open)) + '</td><td>' + x.opens + (x.suspected_only ? ' <span class="small muted">(suspected only)</span>' : '') + '</td><td class="small">' + esc(MK.when(x.first_click)) + '<br>' + esc(MK.when(x.last_click)) + '</td><td class="small" style="max-width:240px;overflow-wrap:anywhere">' + esc(x.links) + '</td><td>' + (x.converted ? '✓' : '') + '</td></tr>'; }).join('')
+          : '<tr><td colspan="7" class="empty">Nobody in this view.</td></tr>') + '</table></div>' + (rec && rec.total > rec.rows.length ? '<p class="note">Showing ' + rec.rows.length + ' of ' + rec.total + '. Export for all.</p>' : '') +
+      '<details class="card pad" style="margin-top:12px"><summary><b>How these numbers are counted</b></summary><ul class="small">' + rep.methodology.map(function (m) { return '<li>' + esc(m) + '</li>'; }).join('') + '</ul><p class="small muted">' + rep.unattributed_conversions_in_area + ' action(s) in this area had no recent campaign click and are not credited to any campaign.</p></details>');
+    var rc = $('rCamp'); if (rc) rc.addEventListener('change', function () { S.reportCamp = +rc.value; S.reportEmail = null; reports(); });
+    var rs = $('rSusp'); if (rs) rs.addEventListener('change', function () { S.rsusp = rs.checked; reports(); });
+  }
+
+  // ---------- access & settings (admins) ----------
+  async function access() {
+    var r = await act(function () { return api('grants.list', {}); });
+    if (!r) return;
+    var a = await act(function () { return api('audit.list', {}); }) || { rows: [] };
+    var st0 = S.me.settings;
+    var people = r.team.filter(function (t) { return t.role !== 'admin'; });
+    $('app').innerHTML = (st0.emergency_stop ? '<div class="stop-on">Emergency stop is ON.</div>' : '') +
+      '<div class="split wide"><div><h3 class="h" style="margin-top:0">Who can do what</h3><p class="note">Admins can do everything. Everyone else needs a grant per business area. A list manager (all boxes) can manage lists, import/export, write and send without approval. Removing "send" pauses that person\'s campaigns before their next email.</p>' +
+      '<div class="card scrollx"><table class="t"><tr><th>Person</th><th>Area</th><th>City</th>' + r.actions.map(function (x) { return '<th>' + esc(x) + '</th>'; }).join('') + '<th></th></tr>' +
+      r.grants.map(function (g) { var p = r.team.find(function (t) { return t.id === g.user_id; }) || {}; return '<tr><td>' + esc(p.name || p.email || g.user_id) + '</td><td>' + esc(scopeName(g.scope)) + '</td><td>' + esc(g.city || 'all') + '</td>' + r.actions.map(function (x) { return '<td>' + (g.actions.indexOf(x) >= 0 ? '✓' : '') + '</td>'; }).join('') +
+        '<td><button class="btn btn-ghost btn-sm" data-grant-edit="' + esc(g.user_id) + '|' + esc(g.scope) + '">Edit</button><button class="btn btn-danger btn-sm" data-grant-del="' + esc(g.user_id) + '|' + esc(g.scope) + '">Remove</button></td></tr>'; }).join('') +
+      '</table></div><div class="actions"><button class="btn btn-primary btn-sm" data-x="grant-new">Give access</button></div>' +
+      '<h3 class="h">Audit log</h3><div class="card scrollx"><table class="t"><tr><th>When</th><th>Who</th><th>What</th><th>Resource</th></tr>' + a.rows.slice(0, 120).map(function (x) {
+        return '<tr><td class="small">' + esc(MK.when(x.at)) + '</td><td class="small">' + esc(x.actor) + '</td><td>' + esc(x.action) + '</td><td class="small">' + esc(x.resource) + '</td></tr>'; }).join('') + '</table></div></div>' +
+      '<div><h3 class="h" style="margin-top:0">Sending rules</h3><div class="card pad"><div class="grid2">' +
+      '<label class="f">Max marketing emails per person<input class="inp" type="number" id="sCap" min="1" max="50" value="' + esc(st0.cap_count) + '"></label>' +
+      '<label class="f">…in this many days<input class="inp" type="number" id="sDays" min="1" max="60" value="' + esc(st0.cap_days) + '"></label>' +
+      '<label class="f">Attribution window (days)<input class="inp" type="number" id="sAttr" min="1" max="90" value="' + esc(st0.attribution_days) + '"></label>' +
+      '<label class="f">Sends per minute<input class="inp" type="number" id="sTick" min="1" max="200" value="' + esc(st0.sends_per_tick) + '"></label>' +
+      '<label class="f full">Postal address in every email (CASL)<input class="inp" id="sAddr" value="' + esc(st0.postal_address) + '"></label>' +
+      '<label class="cb full"><input type="checkbox" id="sImpl"' + (st0.allow_implied ? ' checked' : '') + '> Allow implied consent (existing business relationship, 2 years)</label></div>' +
+      '<div class="actions"><button class="btn btn-primary btn-sm" data-x="settings-save">Save</button></div></div>' +
+      '<h3 class="h">Emergency stop</h3><div class="card pad"><p class="note">Stops every marketing send immediately (all areas). Already-accepted messages can\'t be recalled.</p>' +
+      (st0.emergency_stop ? '<button class="btn btn-primary" data-x="stop-off">Turn sending back on</button>' : '<button class="btn btn-danger" data-x="stop-on">Stop all marketing email</button>') + '</div>' +
+      '<h3 class="h">Senders</h3><div class="card pad small">' + S.me.senders.map(function (s) { return '<div>' + esc(scopeName(s.scope)) + ': ' + esc(s.name) + ' &lt;' + esc(s.email) + '&gt; ' + (s.verified ? '<span class="st st-ok">verified</span>' : '<span class="st st-warn">not verified</span>') + '</div>'; }).join('') + '</div></div></div>';
+    S._team = people; S._grants = r.grants; S._actions = r.actions; S._scopes = r.scopes;
+  }
+  function grantForm(userId, scope) {
+    var g = (S._grants || []).find(function (x) { return x.user_id === userId && x.scope === scope; }) || { actions: S._actions };
+    modal('<h2>Access</h2><div class="grid2"><label class="f">Person<select class="sel" id="gUser"' + (userId ? ' disabled' : '') + '>' + opts(Object.fromEntries(S._team.map(function (t) { return [t.id, (t.name || t.email) + ' (' + t.email + ')']; })), userId) + '</select></label>' +
+      '<label class="f">Business area<select class="sel" id="gScope"' + (scope ? ' disabled' : '') + '>' + opts(Object.fromEntries(S._scopes.map(function (s) { return [s.id, s.name]; })), scope) + '</select></label>' +
+      '<label class="f">Only this city (optional)<input class="inp" id="gCity" value="' + esc(g.city || '') + '"></label><label class="f">Only this country (optional)<input class="inp" id="gCountry" value="' + esc(g.country || '') + '" maxlength="2"></label></div>' +
+      '<h3 class="h">Allowed</h3><div class="chips">' + S._actions.map(function (x) { return '<label class="cb" style="margin-right:10px"><input type="checkbox" data-ga="' + esc(x) + '"' + (g.actions.indexOf(x) >= 0 ? ' checked' : '') + '> ' + esc(x) + '</label>'; }).join('') + '</div>' +
+      '<div class="actions"><button class="btn btn-primary" data-x="grant-save">Save</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+  }
+
+  // ---------- events ----------
+  document.addEventListener('click', async function (ev) {
+    var t = ev.target.closest('button, [data-x]');
+    if (!t) return;
+    var d = t.dataset;
+    if (d.go) return go(d.go);
+    if (d.openCamp) { S.tab = 'campaigns'; document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.tab === 'campaigns'); }); S.emailId = null; return openCampaign(+d.openCamp); }
+    if (d.list !== undefined) { S.listId = d.list ? +d.list : null; return loadContacts(); }
+    if (d.contact) return contactDrawer(+d.contact);
+    if (d.tpl) { S.tpl = null; return openTemplate(+d.tpl); }
+    if (d.add) { S._ed.blocks.push(MK.newBlock(d.add)); return drawBlocks(); }
+    if (d.mv) { S._ed.blocks = MK.moveBlock(S._ed.blocks, +d.mv, +d.d); return drawBlocks(); }
+    if (d.rm) { S._ed.blocks.splice(+d.rm, 1); return drawBlocks(); }
+    if (d.view) { S.view = d.view; return drawCampaign(); }
+    if (d.month) { S.month = MK.addMonth(S.month, +d.month); return drawCampaign(); }
+    if (d.email) { S.emailId = +d.email; return drawCampaign(); }
+    if (d.rf) { S.rfilter = d.rf; return reports(); }
+    if (d.recipEmail) { S.rfilter = 'all'; var rr = await act(function () { return api('recipients', { email_id: +d.recipEmail, include_suspected: S.rsusp }); }); if (rr) modal('<h2>Recipients</h2><div class="scrollx"><table class="t"><tr><th>Recipient</th><th>Delivery</th><th>Opens</th><th>Clicks</th><th>Action</th></tr>' + rr.rows.map(function (x) { return '<tr><td>' + esc(x.email) + '</td><td>' + esc(MK.statusLabel(x.status)) + '</td><td>' + x.opens + '</td><td>' + x.clicks + '</td><td>' + (x.converted ? '✓' : '') + '</td></tr>'; }).join('') + '</table></div><div class="actions"><button class="btn btn-ghost" data-x="close">Close</button></div>', true); return; }
+    if (d.resolve) { if (await act(function () { return api('deliveries.resolve', { id: +d.resolve, outcome: d.o }); }, 'Updated.')) reports(); return; }
+    if (d.reorder) {
+      var E = S.camp.emails.filter(function (e) { return ['draft', 'held', 'scheduled', 'skipped'].indexOf(e.status) >= 0; });
+      var all = S.camp.emails, i = +d.reorder, item = all[i];
+      var k = E.indexOf(item), j = k + (+d.d);
+      if (k < 0 || j < 0 || j >= E.length) return;
+      var order = E.map(function (e) { return e.id; }); var tmp = order[k]; order[k] = order[j]; order[j] = tmp;
+      if (await act(function () { return api('emails.reorder', { campaign_id: S.campId, order: order }); }, 'Order changed; dates stay in place.')) openCampaign(S.campId);
+      return;
+    }
+    if (d.grantEdit) { var p = d.grantEdit.split('|'); return grantForm(p[0], p[1]); }
+    if (d.grantDel) { var q = d.grantDel.split('|'); if (await act(function () { return api('grants.delete', { user_id: q[0], scope: q[1] }); }, 'Access removed.')) access(); return; }
+    switch (d.x) {
+      case 'close': return closeModal();
+      case 'new-list': return listForm(null);
+      case 'edit-list': return listForm(S.lists.find(function (x) { return x.id === S.listId; }));
+      case 'rule-add': S._rules.push({ field: 'city', op: 'is', value: '' }); return drawRules();
+      case 'rule-del': S._rules.splice(+d.i, 1); return drawRules();
+      case 'rule-preview': {
+        var rule = MK.ruleFromRows($('rMatch').value, S._rules);
+        var pv = await act(function () { return api('segments.preview', { scope: S.scope, rule: rule }); });
+        if (pv) $('rPrev').innerHTML = '<b>' + pv.eligible + '</b> of ' + pv.total + ' match and can receive marketing.' + (Object.keys(pv.excluded).length ? ' Excluded: ' + Object.keys(pv.excluded).map(function (k) { return pv.excluded[k] + ' ' + esc(k); }).join(', ') + '.' : '') + (pv.sample.length ? '<br>' + pv.sample.slice(0, 8).map(function (s) { return esc(s.email); }).join(', ') : '');
+        return;
+      }
+      case 'list-save': {
+        var type = $('lType') ? $('lType').value : (S.lists.find(function (x) { return x.id === +d.id; }) || {}).type;
+        var body = { id: +d.id || undefined, scope: S.scope, name: $('lName').value, description: $('lDesc').value, city: $('lCity').value, type: type, public_form: $('lPub').checked,
+          rule: type === 'dynamic' ? MK.ruleFromRows($('rMatch').value, S._rules) : undefined };
+        var r = await act(function () { return api('lists.save', body); }, 'List saved.');
+        if (r) { closeModal(); S.listId = r.id; lists(); }
+        return;
+      }
+      case 'archive-list': {
+        var a1 = await act(function () { return api('lists.archive', { id: S.listId }); });
+        if (!a1) return;
+        modal('<h2>Archive this list?</h2>' + (a1.affected.length ? '<div class="warnbox">These campaigns use it and will be paused:<ul>' + a1.affected.map(function (c) { return '<li>' + esc(c.name) + ' (' + esc(MK.statusLabel(c.status)) + ')</li>'; }).join('') + '</ul></div>' : '<p class="note">No campaign uses it.</p>') +
+          '<p class="note">Contacts stay; only the list is archived. Unsubscribes and history are kept.</p><div class="actions"><button class="btn btn-danger" data-x="archive-list-go">Archive</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+        return;
+      }
+      case 'archive-list-go': if (await act(function () { return api('lists.archive', { id: S.listId, confirm: true }); }, 'List archived.')) { closeModal(); S.listId = null; lists(); } return;
+      case 'add-contact':
+        modal('<h2>Add contact</h2><div class="grid2"><label class="f full">Email<input class="inp" id="aEmail" type="email"></label><label class="f">Name<input class="inp" id="aName"></label><label class="f">City<input class="inp" id="aCity"></label>' +
+          '<label class="f">Consent<select class="sel" id="aCons">' + opts(CONSENT, 'unknown') + '</select></label><label class="f">Source<input class="inp" id="aSrc" placeholder="e.g. phone call"></label>' +
+          '<label class="f full">Consent evidence<input class="inp" id="aEv" placeholder="e.g. agreed by email on 2026-10-14"></label></div><div class="actions"><button class="btn btn-primary" data-x="add-contact-go">Add</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+        return;
+      case 'add-contact-go': {
+        var r2 = await act(function () { return api('contacts.save', { scope: S.scope, email: $('aEmail').value, name: $('aName').value, first_name: ($('aName').value || '').split(' ')[0], city: $('aCity').value, consent: $('aCons').value, consent_evidence: $('aEv').value, source: $('aSrc').value, list_id: S.listId || undefined }); }, 'Contact added.');
+        if (r2) { closeModal(); lists(); }
+        return;
+      }
+      case 'contact-save': {
+        var b = { id: +d.id, tags: $('cTags').value, consent: $('cConsent').value, consent_evidence: $('cEv').value };
+        if ($('cName')) Object.assign(b, { name: $('cName').value, city: $('cCity').value, language: $('cLang').value });
+        if (await act(function () { return api('contacts.save', b); }, 'Saved.')) { closeModal(); loadContacts(); }
+        return;
+      }
+      case 'contact-archive': if (await act(function () { return api('contacts.archive', { id: +d.id, restore: !!d.restore }); }, 'Done.')) { closeModal(); loadContacts(); } return;
+      case 'import': return importDialog();
+      case 'imp-preview': {
+        var p1 = await act(function () { return api('import.preview', impBody()); });
+        if (!p1) return;
+        $('impOut').innerHTML = '<div class="' + (p1.error_count ? 'warnbox' : 'okbox') + '" style="margin-top:10px"><b>' + p1.valid + '</b> valid · <b>' + p1.new + '</b> new · <b>' + p1.existing + '</b> already here (will be updated; unsubscribes kept) · ' + p1.duplicates_in_file + ' duplicate(s) in the file · ' + p1.error_count + ' row(s) with errors' + (p1.out_of_area ? ' · ' + p1.out_of_area + ' outside your area (skipped)' : '') +
+          (p1.errors_csv ? ' <button class="btn btn-ghost btn-sm" data-x="imp-errors">Download row errors</button>' : '') + '</div>';
+        S._impErr = p1.errors_csv;
+        $('impGo').disabled = !p1.valid;
+        return;
+      }
+      case 'imp-errors': return downloadText('import-errors.csv', S._impErr || '');
+      case 'imp-commit': {
+        var c1 = await act(function () { return api('import.commit', impBody()); });
+        if (!c1) return;
+        toast('Imported: ' + c1.created + ' new, ' + c1.updated + ' updated' + (c1.errors ? ', ' + c1.errors + ' row(s) skipped' : '') + '.');
+        if (c1.errors_csv) S._impErr = c1.errors_csv;
+        closeModal(); lists();
+        return;
+      }
+      case 'export-list': {
+        var x1 = await act(function () { return api('export', S.listId ? { kind: 'list', list_id: S.listId } : { kind: 'contacts', scope: S.scope }); });
+        if (x1) { location.href = x1.url; toast('Download started. The link expires in 15 minutes.'); }
+        return;
+      }
+      case 'export-recip': {
+        var x2 = await act(function () { return api('export', { kind: 'recipients', campaign_id: S.reportCamp, filter: S.rfilter, include_suspected: S.rsusp }); });
+        if (x2) location.href = x2.url;
+        return;
+      }
+      case 'tpl-new': S.tplId = null; S.tpl = { id: null, name: 'New template', folder: 'General', version: 0, subject: '', preheader: '', blocks: [MK.newBlock('heading'), MK.newBlock('text')] }; return drawTemplates();
+      case 'tpl-save': {
+        var v = edValues();
+        var r3 = await act(function () { return api('templates.save', Object.assign({ id: S.tpl.id || undefined, scope: S.scope, name: $('eName').value, folder: $('eFolder').value, expected_version: S.tpl.version || undefined }, v)); }, 'Saved as a new version.');
+        if (r3) { S.tpl = null; S.tplId = r3.id; templates(); }
+        return;
+      }
+      case 'preview': return preview(d.mode);
+      case 'ai-rewrite':
+        modal('<h2>AI rewrite</h2><p class="note">Tell the AI what to change. You\'ll see the new draft in the editor before anything is saved. It only uses approved facts.</p><textarea class="inp" id="aiIns" rows="3" placeholder="Shorter, friendlier, mention the winter intake"></textarea><div class="actions"><button class="btn btn-primary" data-x="ai-go">Rewrite</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+        return;
+      case 'ai-go': {
+        t.disabled = true; t.textContent = 'Writing…';
+        var v2 = edValues();
+        var r4 = await act(function () { return api('templates.ai', Object.assign({ scope: S.scope, instruction: $('aiIns').value }, v2)); });
+        closeModal();
+        if (!r4) return;
+        $('eSubj').value = r4.draft.subject; $('ePre').value = r4.draft.preheader; S._ed.blocks = r4.draft.blocks; drawBlocks();
+        if (r4.draft.blockers.length) showProblems('Check before saving', r4.draft.blockers); else toast('Draft ready. Review it, then save.');
+        return;
+      }
+      case 'camp-new': if (!S.lists.length) { var ll = await act(function () { return api('lists.list', { scope: S.scope }); }); if (ll) S.lists = ll.lists; } return newCampaign(d.kind);
+      case 'camp-create': {
+        var lsel = $('nLists') ? Array.from($('nLists').selectedOptions).map(function (o) { return +o.value; }) : [];
+        var r5 = await act(function () { return api('campaigns.create', { scope: S.scope, kind: d.kind, name: $('nName').value, list_ids: lsel, topic: $('nTopic').value, timezone: $('nTz').value, language: $('nLang').value }); }, 'Draft created.');
+        if (r5) { closeModal(); S.emailId = null; openCampaign(r5.id); }
+        return;
+      }
+      case 'camp-back': { var back = S.camp && S.camp.campaign.kind === 'sequence' ? 'automations' : 'campaigns'; S.campId = null; S.camp = null; S.emailId = null; return go(back); }
+      case 'camp-settings': {
+        var c2 = S.camp.campaign;
+        var lists2 = Object.fromEntries(S.lists.map(function (l) { return [l.id, l.name]; }));
+        modal('<h2>Campaign settings</h2><div class="grid2"><label class="f full">Name<input class="inp" id="sName" value="' + esc(c2.name) + '"></label>' + (c2.kind === 'broadcast' ? '<label class="f full">Lists<select class="sel" id="sLists" multiple size="5">' + Object.keys(lists2).map(function (k) { return '<option value="' + k + '"' + (c2.list_ids.indexOf(+k) >= 0 ? ' selected' : '') + '>' + esc(lists2[k]) + '</option>'; }).join('') + '</select></label>' : '') +
+          '<label class="f">Topic<select class="sel" id="sTopic">' + opts(Object.fromEntries(S.me.topics.filter(function (x) { return x.scope === c2.scope; }).map(function (x) { return [x.id, x.name]; })), c2.topic, 'Choose…') + '</select></label>' +
+          '<label class="f">Timezone<select class="sel" id="sTz">' + opts(Object.fromEntries(TZS.map(function (z) { return [z, z]; })), c2.timezone) + '</select></label></div><div class="actions"><button class="btn btn-primary" data-x="camp-settings-go">Save</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+        return;
+      }
+      case 'camp-settings-go': {
+        var c3 = S.camp.campaign;
+        var body2 = { id: c3.id, expected_revision: c3.revision, name: $('sName').value, topic: $('sTopic').value, timezone: $('sTz').value };
+        if ($('sLists')) body2.list_ids = Array.from($('sLists').selectedOptions).map(function (o) { return +o.value; });
+        if (await act(function () { return api('campaigns.save', body2); }, 'Saved.')) { closeModal(); openCampaign(c3.id); }
+        return;
+      }
+      case 'camp-generate': {
+        var brief = { months: +$('bMonths').value || undefined, per_month: +$('bPer').value || undefined, start_date: $('bStart').value || undefined, send_time: $('bTime').value || undefined,
+          tone: $('bTone').value || undefined, cta: $('bCta').value || undefined, objective: $('bObj').value || undefined, notes: $('bNotes').value || undefined, timezone: S.camp.campaign.timezone, language: S.camp.campaign.language };
+        var r6 = await act(function () { return api('campaigns.generate', { id: S.campId, prompt: $('bPrompt').value, brief: brief }); });
+        if (r6) { toast(r6.slots.length + ' emails planned from ' + r6.slots[0].local_date + ' to ' + r6.slots[r6.slots.length - 1].local_date + '. The AI is writing them now.'); openCampaign(S.campId); }
+        return;
+      }
+      case 'camp-revise':
+        modal('<h2>Revise with AI</h2><p class="note">Describe the change. By default only emails nobody edited by hand are rewritten; you\'ll see the list before it runs.</p><textarea class="inp" id="rvIns" rows="3"></textarea><label class="f" style="margin-top:8px">Only these email numbers (optional, comma separated)<input class="inp" id="rvSeqs"></label><div class="actions"><button class="btn btn-primary" data-x="camp-revise-check">Show affected emails</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+        return;
+      case 'camp-revise-check':
+      case 'camp-revise-go': {
+        var seqs = ($('rvSeqs').value || '').split(',').map(function (x) { return +x.trim(); }).filter(Boolean);
+        var r7 = await act(function () { return api('campaigns.revise', { id: S.campId, instruction: $('rvIns').value, seqs: seqs, confirm: d.x === 'camp-revise-go' }); });
+        if (!r7) return;
+        if (r7.confirm_needed) {
+          $('modalCard').insertAdjacentHTML('beforeend', '<div class="warnbox" style="margin-top:10px">Will rewrite: ' + (r7.affected.map(function (a) { return '#' + a.seq; }).join(', ') || 'nothing') + (r7.kept_manual.length ? '<br>Kept (edited by hand): #' + r7.kept_manual.join(', #') : '') + '</div><div class="actions"><button class="btn btn-primary" data-x="camp-revise-go">Rewrite these</button></div>');
+          return;
+        }
+        closeModal(); toast('The AI is revising ' + r7.affected.length + ' email(s).'); openCampaign(S.campId);
+        return;
+      }
+      case 'facts': return factsModal();
+      case 'fact-save': if (await act(function () { return api('facts.save', { scope: S.scope, key: $('fKey').value, value: $('fVal').value, volatile: $('fVol').checked }); }, 'Fact saved.')) factsModal(); return;
+      case 'fact-del': if (await act(function () { return api('facts.delete', { scope: S.scope, key: d.k }); }, 'Removed.')) factsModal(); return;
+      case 'email-add': if (await act(function () { return api('emails.add', { campaign_id: S.campId }); }, 'Email added.')) openCampaign(S.campId); return;
+      case 'email-dup': if (await act(function () { return api('emails.duplicate', { id: S.emailId }); }, 'Duplicated.')) openCampaign(S.campId); return;
+      case 'email-skip': if (await act(function () { return api('emails.skip', { id: S.emailId }); }, 'Skipped.')) openCampaign(S.campId); return;
+      case 'email-unskip': if (await act(function () { return api('emails.unskip', { id: S.emailId }); }, 'Unskipped: review and save it.')) openCampaign(S.campId); return;
+      case 'email-save': {
+        var m = S._ed.m, v3 = edValues();
+        var body3 = Object.assign({ id: m.id, expected_revision: m.revision }, v3);
+        if ($('eDate')) { body3.local_date = $('eDate').value; body3.local_time = $('eTime').value; }
+        if ($('eDelay')) body3.delay_days = +$('eDelay').value;
+        if ($('eConfirm') && $('eConfirm').checked) body3.confirm_facts = true;
+        var r8 = await act(function () { return api('emails.save', body3); });
+        if (r8) { toast(r8.blockers.length ? 'Saved, with ' + r8.blockers.length + ' thing(s) to fix.' : 'Saved.'); openCampaign(S.campId); }
+        return;
+      }
+      case 'email-test': {
+        var r9 = await act(function () { return api('emails.test', { id: S.emailId }); });
+        if (r9) toast('Test sent to ' + r9.to + '. Save first if you changed something: the test uses the saved version.');
+        return;
+      }
+      case 'auto-save': {
+        var tr = { type: $('aType').value, list_id: +$('aList').value || undefined, source_campaign_id: +$('aSrc').value || undefined, after_hours: +$('aHrs').value || 48, include_existing: $('aInc').checked, stop_action: $('aStop').value, action: $('aStop').value };
+        if (await act(function () { return api('automations.save', { campaign_id: S.campId, trigger: tr, reentry: $('aRe').checked }); }, 'Trigger saved.')) openCampaign(S.campId);
+        return;
+      }
+      case 'camp-preflight': {
+        var pf = await act(function () { return api('campaigns.preflight', { id: S.campId }); });
+        if (!pf) return;
+        var c4 = S.camp.campaign;
+        modal('<h2>Activate “' + esc(c4.name) + '”?</h2><table class="t"><tr><td>Sender</td><td>' + esc(pf.sender || '—') + '</td></tr>' +
+          '<tr><td>Audience now</td><td><b>' + pf.eligible + '</b> can receive it (of ' + pf.total + ' in the lists). ' + Object.keys(pf.excluded).map(function (k) { return pf.excluded[k] + ' ' + esc(k); }).join(', ') + '</td></tr>' +
+          (c4.kind === 'broadcast' ? '<tr><td>Dates</td><td>' + esc(MK.when(pf.first_send, pf.timezone)) + ' → ' + esc(MK.when(pf.last_send, pf.timezone)) + ' (' + esc(pf.timezone) + ')</td></tr>' : '') +
+          '<tr><td>Emails</td><td>' + pf.emails + '</td></tr></table>' +
+          (c4.kind === 'broadcast' ? '<p class="note">Lists are re-checked before every send: people who join later get the remaining emails, people who unsubscribe or lose eligibility get none.</p>' : '<p class="note">Each person enters at step 1 when the trigger happens.</p>') +
+          (pf.problems.length ? '<div class="warnbox"><b>Fix these first</b><ul>' + pf.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></div>' : '') +
+          '<div class="actions">' + (pf.problems.length ? '' : '<button class="btn btn-primary" data-x="camp-activate">Activate and schedule ' + pf.emails + ' email(s)</button>') + '<button class="btn btn-ghost" data-x="close">Not yet</button></div>', true);
+        return;
+      }
+      case 'camp-activate': if (await act(function () { return api('campaigns.activate', { id: S.campId, expected_revision: S.camp.campaign.revision }); }, 'Activated. Emails are scheduled.')) { closeModal(); openCampaign(S.campId); } return;
+      case 'camp-pause': if (await act(function () { return api('campaigns.pause', { id: S.campId }); }, 'Paused. Nothing more is sent until you resume.')) openCampaign(S.campId); return;
+      case 'camp-resume':
+      case 'camp-resume-go': {
+        var r10 = await act(function () { return api('campaigns.resume', { id: S.campId, overdue: d.o, days: 1 }); });
+        if (!r10) return;
+        if (r10.choose_needed) {
+          modal('<h2>Some emails are overdue</h2><p class="note">These were due while the campaign was paused:</p><ul class="tl">' + r10.overdue.map(function (o) { return '<li>#' + o.seq + ' ' + esc(o.subject) + ' <span>' + esc(MK.when(o.send_at)) + '</span></li>'; }).join('') + '</ul>' +
+            '<div class="actions"><button class="btn btn-ghost" data-x="camp-resume-go" data-o="skip">Skip them</button><button class="btn btn-ghost" data-x="camp-resume-go" data-o="reschedule">Move them to tomorrow</button><button class="btn btn-primary" data-x="camp-resume-go" data-o="send_now">Send them now</button></div>');
+          return;
+        }
+        closeModal(); toast('Resumed.'); openCampaign(S.campId);
+        return;
+      }
+      case 'camp-cancel':
+        modal('<h2>Cancel this campaign?</h2><p class="note">Every email not yet sent is cancelled for good. Messages Gmail already accepted can\'t be recalled and stay in the report.</p><div class="actions"><button class="btn btn-danger" data-x="camp-cancel-go">Cancel campaign</button><button class="btn btn-ghost" data-x="close">Keep it</button></div>');
+        return;
+      case 'camp-cancel-go': if (await act(function () { return api('campaigns.cancel', { id: S.campId }); }, 'Cancelled.')) { closeModal(); openCampaign(S.campId); } return;
+      case 'camp-dup': { var r11 = await act(function () { return api('campaigns.duplicate', { id: S.campId }); }, 'Copied as a new draft.'); if (r11) { S.emailId = null; openCampaign(r11.id); } return; }
+      case 'grant-new': return grantForm(null, null);
+      case 'grant-save': {
+        var acts = Array.from(document.querySelectorAll('[data-ga]')).filter(function (x) { return x.checked; }).map(function (x) { return x.dataset.ga; });
+        if (await act(function () { return api('grants.save', { user_id: $('gUser').value, scope: $('gScope').value, actions: acts, city: $('gCity').value, country: $('gCountry').value }); }, 'Access saved.')) { closeModal(); access(); }
+        return;
+      }
+      case 'settings-save': {
+        var r12 = await act(function () { return api('settings.save', { cap_count: +$('sCap').value, cap_days: +$('sDays').value, attribution_days: +$('sAttr').value, sends_per_tick: +$('sTick').value, postal_address: $('sAddr').value, allow_implied: $('sImpl').checked }); }, 'Settings saved.');
+        if (r12) { S.me = await api('me'); access(); }
+        return;
+      }
+      case 'stop-on': case 'stop-off': {
+        if (await act(function () { return api('settings.save', { emergency_stop: d.x === 'stop-on' }); }, d.x === 'stop-on' ? 'Emergency stop is on.' : 'Sending is back on.')) { S.me = await api('me'); access(); }
+        return;
+      }
+    }
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
