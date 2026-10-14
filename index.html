@@ -1647,7 +1647,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-14-jorgeluis1"></script>
+<script src="pms-supabase.js?v=2026-10-14-celstaff1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -23158,7 +23158,8 @@ function celCents(v){
 /* CEL-CORE-END */
 
 const CEL_STATE = { rows: null, today: null, loading: null, error: '', filters: { status: 'open', category: '', owner: '', from: '', to: '' },
-  openId: null, detail: null, detailErr: '', allOptions: false, msg: '', settings: null, settingsAgency: '', showSettings: false };
+  openId: null, detail: null, detailErr: '', allOptions: false, msg: '', settings: null, settingsAgency: '', showSettings: false,
+  cancelAsk: null, assignAsk: '', checkedAt: null };
 
 async function celCall(method, path, body){
   const res = await rcvApi(method, path, body);
@@ -23183,12 +23184,67 @@ function celLoad(force){
 }
 async function celOpen(id){
   CEL_STATE.openId = id; CEL_STATE.detail = null; CEL_STATE.detailErr = ''; CEL_STATE.msg = '';
+  CEL_STATE.cancelAsk = null; CEL_STATE.assignAsk = '';
   renderPartners();
   try {
     CEL_STATE.detail = await celCall('GET', `/api/staff/cat/bookings/${encodeURIComponent(id)}${CEL_STATE.allOptions ? '?all=1' : ''}`);
+    CEL_STATE.checkedAt = new Date();
   } catch (e) { CEL_STATE.detailErr = e.message || String(e); }
   if (CEL_STATE.openId === id) renderPartners();
 }
+
+// Auto-refresh (Aldo 2026-10-14: the tab kept saying "Offered" after the school confirmed and the room was booked).
+// Every 30 s while the CEL tab is on screen, and when the window comes back into focus, the list and the open booking
+// are re-read quietly; the page re-renders only when something changed and nobody is typing in it.
+const CEL_POLL_MS = 30000;
+function celOnScreen(){
+  const root = document.getElementById('ptn-root');
+  return !document.hidden && typeof PTN_STATE !== 'undefined' && PTN_STATE.tab === 'cel' && !!root && root.offsetParent !== null;
+}
+function celEditing(){
+  const root = document.getElementById('ptn-root');
+  if (!root) return false;
+  const a = document.activeElement;
+  if (a && root.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  if (CEL_STATE.cancelAsk) return true;
+  return [...root.querySelectorAll('input, textarea, select')].some(el => el.tagName === 'SELECT'
+    ? [...el.options].some(o => o.selected !== o.defaultSelected)
+    : (el.type === 'checkbox' || el.type === 'radio') ? el.checked !== el.defaultChecked : el.value !== el.defaultValue);
+}
+let celPolling = false;
+async function celPoll(){
+  if (celPolling || !celOnScreen() || CEL_STATE.loading || CEL_STATE.rows === null) return;
+  celPolling = true;
+  try {
+    const id = CEL_STATE.openId;
+    const [list, detail] = await Promise.all([
+      celCall('GET', '/api/staff/cat/bookings').catch(() => null),
+      id ? celCall('GET', `/api/staff/cat/bookings/${encodeURIComponent(id)}${CEL_STATE.allOptions ? '?all=1' : ''}`).catch(() => null) : null,
+    ]);
+    let changed = false;
+    if (list && JSON.stringify(list.bookings || []) !== JSON.stringify(CEL_STATE.rows)) {
+      CEL_STATE.rows = list.bookings || []; CEL_STATE.today = list.today; changed = true;
+    }
+    if (detail && id && CEL_STATE.openId === id) {
+      CEL_STATE.checkedAt = new Date();
+      if (JSON.stringify(detail) !== JSON.stringify(CEL_STATE.detail)) {
+        const was = CEL_STATE.detail && CEL_STATE.detail.booking && CEL_STATE.detail.booking.status;
+        CEL_STATE.detail = detail; changed = true;
+        const now = detail.booking && detail.booking.status;
+        if (was && now && was !== now) CEL_STATE.msg = '↻ Updated: ' + celStatus(was).label + ' → ' + celStatus(now).label;
+      }
+    }
+    if (changed && !celEditing()) renderPartners();
+    else if (!changed && id) { const el = document.querySelector('[data-cel-checked]'); if (el) el.textContent = celCheckedText(); }
+  } finally { celPolling = false; }
+}
+function celCheckedText(){
+  const t = CEL_STATE.checkedAt;
+  return 'Updates automatically' + (t ? ' · checked ' + t.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '');
+}
+setInterval(celPoll, CEL_POLL_MS);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) celPoll(); });
+window.addEventListener('focus', () => celPoll());
 async function celSettingsLoad(agencyId){
   CEL_STATE.settingsAgency = agencyId || '';
   try {
@@ -23257,12 +23313,14 @@ function celDetailHtml(){
     ? `${b.weeks} week${b.weeks === 1 ? '' : 's'} × ${celMoney(b.weekly_cents)} = <strong>${celMoney(b.accommodation_cents)}</strong> · placement ${celMoney(b.placement_cents)} · cleaning ${b.cleaning_cents == null ? '<span class="tag-pill gold">not set</span>' : celMoney(b.cleaning_cents)} · student deposit ${celMoney(b.deposit_cents)}`
     : '<span class="name-sub">locked when confirmed</span>';
   const opts = (d.options || []);
-  const msg = CEL_STATE.msg ? `<p class="name-sub" style="color:var(--${CEL_STATE.msg.startsWith('✓') ? 'green' : 'red'})">${esc(CEL_STATE.msg)}</p>` : '';
+  const msgTone = CEL_STATE.msg.startsWith('✓') ? 'green' : CEL_STATE.msg.startsWith('↻') || CEL_STATE.msg.startsWith('⚠') ? 'blue' : 'red';
+  const msg = CEL_STATE.msg ? `<p class="name-sub" style="color:var(--${msgTone})">${esc(CEL_STATE.msg)}</p>` : '';
   const section = (title, inner) => `<div class="card" style="padding:14px 16px;margin-bottom:12px"><h3 style="margin:0 0 10px;font-size:15px">${esc(title)}</h3>${inner}</div>`;
   const offer = b.status === 'ALTERNATIVE' ? `${esc(celLabel(CEL_CATS, b.offer_category || b.category))}, ${esc(celLabel(CEL_BATHS, b.offer_bath || b.bath))} · ${esc(ptnDay(b.offer_check_in || b.check_in))} → ${esc(ptnDay(b.offer_check_out || b.check_out))}` : '';
   return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${back}
       <h2 style="margin:0">${esc(b.id)} · ${esc(b.student_name || b.student_ref)}</h2>${ptnPill(st)}${sg ? ptnPill(sg) : ''}
-      ${b.attention_reason ? `<span class="tag-pill red">${esc(b.attention_reason === 'OVERCOMMITTED' ? 'Over-committed: confirmed demand exceeds free rooms' : b.attention_reason)}</span>` : ''}</div>
+      ${b.attention_reason ? `<span class="tag-pill red">${esc(b.attention_reason === 'OVERCOMMITTED' ? 'Over-committed: confirmed demand exceeds free rooms' : b.attention_reason)}</span>` : ''}
+      <span class="name-sub" data-cel-checked style="margin-left:auto">${esc(celCheckedText())}</span></div>
     ${msg}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;align-items:start">
       <div>
@@ -23313,9 +23371,16 @@ function celDetailHtml(){
             <select class="form-input" name="bath" style="max-width:170px">${ptnOptions(CEL_BATHS, b.bath)}</select>
             <button class="btn btn-ghost" type="submit">Save</button>
             <span class="name-sub" style="flex-basis:100%">A confirmed booking keeps its locked weekly rate when only the dates move; a new category or bathroom is re-rated.</span></form>`) : ''}
-        ${!closed ? section('Cancel', `<form data-cel-cancel style="display:flex;gap:8px;flex-wrap:wrap">
+        ${!closed ? section('Cancel', CEL_STATE.cancelAsk != null
+          // asked on the page, not with a browser pop-up (Aldo 2026-10-14)
+          ? `<div data-cel-cancel-ask style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <span>Cancel <strong>${esc(b.id)}</strong>? Reason: “${esc(CEL_STATE.cancelAsk)}”.
+              ${b.status === 'ASSIGNED' ? 'The room is released, the school invoice voided and an unpaid student deposit voided.' : 'The school is told the request is cancelled.'}</span>
+            <button class="btn btn-primary" type="button" data-cel-cancel-yes>Yes, cancel ${esc(b.id)}</button>
+            <button class="btn btn-ghost" type="button" data-cel-cancel-no>Keep it</button></div>`
+          : `<form data-cel-cancel style="display:flex;gap:8px;flex-wrap:wrap">
             <input class="form-input" name="reason" placeholder="Reason (required)" style="flex:1;min-width:220px">
-            <button class="btn btn-ghost" type="submit">Cancel booking</button>
+            <button class="btn btn-ghost" type="submit">Cancel booking…</button>
             ${b.status === 'ASSIGNED' ? '<span class="name-sub" style="flex-basis:100%">Releases the room, voids the school invoice (paid part becomes agency credit) and voids an unpaid student deposit. Void the contract in Contracts.</span>' : ''}</form>`) : ''}
         ${d.deposit && d.deposit.status === 'open' ? section('Student deposit', `<form data-cel-deposit style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <select class="form-input" name="method" style="max-width:180px">${ptnOptions([['bank_transfer', 'Bank transfer'], ['card', 'Card (by hand)'], ['other', 'Other']], 'bank_transfer')}</select>
@@ -23444,7 +23509,14 @@ function celWire(root){
   });
   on('[data-cel-assign]', 'click', b => {
     const reason = (root.querySelector('[data-cel-override]') || {}).value || '';
-    if (b.dataset.celRank !== '0' && !reason.trim() && !confirm('You are not picking the top recommendation. Assign without an override reason?')) return;
+    // not the top pick and no reason: ask on the page (a second click on the same room assigns it), no browser pop-up
+    if (b.dataset.celRank !== '0' && !reason.trim() && CEL_STATE.assignAsk !== b.dataset.celAssign) {
+      CEL_STATE.assignAsk = b.dataset.celAssign;
+      CEL_STATE.msg = '⚠ That is not the top recommendation. Add an override reason, or click Assign on the same room again to assign it without one.';
+      renderPartners();
+      return;
+    }
+    CEL_STATE.assignAsk = '';
     b.disabled = true;
     celAction(id, 'assign', { room_id: b.dataset.celAssign, override_reason: reason.trim() || undefined }, 'Room assigned — invoice issued, school + student emailed');
   });
@@ -23459,7 +23531,15 @@ function celWire(root){
     e.preventDefault();
     const reason = f.reason.value.trim();
     if (!reason) { f.reason.focus(); return; }
-    if (!confirm('Cancel ' + id + '?')) return;
+    CEL_STATE.cancelAsk = reason;
+    renderPartners();
+  });
+  on('[data-cel-cancel-no]', 'click', () => { CEL_STATE.cancelAsk = null; renderPartners(); });
+  on('[data-cel-cancel-yes]', 'click', b => {
+    const reason = CEL_STATE.cancelAsk;
+    if (!reason) return;
+    b.disabled = true;
+    CEL_STATE.cancelAsk = null;
     celAction(id, 'cancel', { reason }, 'Cancelled');
   });
   on('[data-cel-deposit]', 'submit', (f, e) => {
@@ -42681,8 +42761,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-14-jorgeluis1"></script>
-<script src="extensions.js?v=2026-10-14-jorgeluis1"></script>
-<script src="ap.js?v=2026-10-14-jorgeluis1"></script>
+<script src="room-changes.js?v=2026-10-14-celstaff1"></script>
+<script src="extensions.js?v=2026-10-14-celstaff1"></script>
+<script src="ap.js?v=2026-10-14-celstaff1"></script>
 </body>
 </html>
