@@ -1647,7 +1647,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-14-mkt1"></script>
+<script src="pms-supabase.js?v=2026-10-14-offeredit1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21068,6 +21068,17 @@ function hmCreateBox(o, nowMs){
 function hmCanBuildOffer(c, inv){
   return !!c && c.status === "OFFER_REVIEW" && !!inv && inv.response === "available" && !inv.closed_at && !!inv.verified;
 }
+// Edit a sent offer (Worker POST /offer-edit): the open homes staff may remove, and the verified hosts they may add
+// (available, matched to a room, never in this offer: a removed host can't come back). `cur` = the current offer's rows.
+function hmOfferEditChoices(c, cur, invs){
+  const open = (cur || []).filter(o => o.status === "sent");
+  const ok = !!c && c.status === "OFFER_SENT" && open.length > 0 && !(cur || []).some(o => o.status === "accepted");
+  if (!ok) return { canEdit: false, open: [], addable: [], room: 0 };
+  const inOffer = new Set((cur || []).map(o => Number(o.invitation_id)));
+  const addable = (invs || []).filter(i => i.response === "available" && !i.closed_at && !!i.verified && !!i.room_id
+    && !inOffer.has(Number(i.id)));
+  return { canEdit: true, open, addable, room: Math.max(0, 5 - open.length) };
+}
 // Agency case in a city with auto_release_partner: the Worker's minute cron sends a matched home with an approved
 // listing to the agency by itself (Worker src/release.ts, hm_due_partner_releases); staff build nothing. A home the
 // cron skipped (a release_skipped event on its invitation) stays with staff, who build the offer as usual.
@@ -36154,6 +36165,14 @@ function hmWorkerErrorText(out, res){
   if (out.error === "no_recipient_email") return "The student has no email address";
   if (out.error === "arrival_too_close") return "Arrival is too close for an offer: book it by hand";
   if (out.error === "bad_dates") return "Check the arrival and departure dates";
+  // Edit a sent offer (offer-edit, hm_edit_offer).
+  if (out.error === "not_offer_sent") return "Only an offer that is out (Offer sent) can be edited: refresh";
+  if (out.error === "already_in_offer") return "That host is already in this offer, or was removed from it (a removed host can't be added back)";
+  if (out.error === "no_home_left") return "At least one home must stay. To cancel the whole offer use Withdraw offer";
+  if (out.error === "no_change") return "Tick a home to remove or a host to add";
+  if (out.error === "bad_expiry") return "Arrival is too close to restart the deadline: book it by hand";
+  if (out.error === "recipient_mismatch") return "That home doesn't match this case's recipient: refresh";
+  if (out.error === "no_function") return "Editing offers isn't switched on yet (the database update hasn't been run). Ask Aldo";
   if (out.error === "no_open_offer") return "There is no open offer to withdraw";
   if (out.error === "not_open") return "That offer is no longer open: refresh";
   if (out.error === "not_retryable") return "The booking request may have reached n8n: check Homestay bookings, then record the booking by hand";
@@ -36543,6 +36562,51 @@ function hmOfferPreviewHtml(p){
       <button class="btn btn-primary" type="button" data-hm-offer-send>Send offer</button>
     </div></div>`;
 }
+// "Edit offer": remove open homes, add verified hosts (Worker POST /offer-edit). ch = hmOfferEditChoices(...).
+function hmOfferEditPanelHtml(ch){
+  const hostName = hid => ((HM.hosts || []).find(h => h.host_id === hid) || {}).display_name || hid;
+  const rm = ch.open.map(o => `<label class="list-row" style="display:flex;gap:8px;align-items:center;cursor:pointer">
+      <input type="checkbox" data-hm-edit-rm="${hmEsc(o.id)}">
+      <span class="list-main"><span class="list-title">${hmEsc(hostName(o.host_id) || o.host_first_name)} · ${hmEsc(o.room_label || "room")}</span>
+      <span class="list-sub" style="display:block">${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · tick to remove</span></span></label>`).join("");
+  const add = ch.addable.map(i => `<div class="list-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;flex:1">
+        <input type="checkbox" data-hm-edit-add="${hmEsc(i.id)}">
+        <span class="list-main"><span class="list-title">${hmEsc(hostName(i.host_id))} · ${hmEsc((i.verified && i.verified.room_label) || i.room_id || "")}</span>
+        <span class="list-sub" style="display:block">${i.verified && i.verified.weekly_rate_cents ? hmEsc(hmMoney(i.verified.weekly_rate_cents)) + "/wk · " : ""}tick to add</span></span></label>
+      <label class="card-sub">Weekly price $ <input class="form-input" data-hm-edit-rate="${hmEsc(i.id)}" inputmode="decimal" style="width:100px" placeholder="${i.verified && i.verified.weekly_rate_cents ? hmEsc((i.verified.weekly_rate_cents / 100).toFixed(2)) : ""}"></label>
+    </div>`).join("");
+  return `<div style="margin-top:10px;padding:10px;border:2px solid var(--ink);border-radius:10px" data-hm-edit-panel>
+    <div class="list-title">Edit offer</div>
+    <div class="card-sub">Remove homes or add hosts who said they can host. Adding a home restarts the deadline and emails the student the updated list (an agency gets the new homes). A removed host is emailed that the offer is off. At most 5 homes.</div>
+    <div class="card-sub" style="margin-top:8px"><b>In the offer</b></div>${rm}
+    <div class="card-sub" style="margin-top:8px"><b>Add a host</b></div>
+    ${add || '<div class="card-sub">No other host has confirmed for this case. Match another host first (Hosts list below, or record a phone answer).</div>'}
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" type="button" data-hm-edit-preview>Preview changes</button>
+      <button class="btn btn-ghost" type="button" data-hm-edit-cancel>Cancel</button>
+    </div>
+    <div data-hm-edit-out style="margin-top:8px"></div>
+  </div>`;
+}
+function hmOfferEditPreviewHtml(d){
+  const hostName = p => ((HM.hosts || []).find(h => h.host_id === p.host_id) || {}).display_name || p.host_first_name || "Host";
+  const removed = (HM.offers || []).filter(o => d.remove.includes(Number(o.id)));
+  const exp = new Date(d.expires_at);
+  return `<div class="list-row" style="display:block;border:1px dashed var(--line);padding:8px;border-radius:8px">
+    <div class="list-title">Preview</div>
+    ${removed.map(o => `<div class="list-sub">Remove ${hmEsc(o.host_first_name || o.host_id)} · ${hmEsc(o.room_label || "room")} (the host is emailed that the offer is off)</div>`).join("")}
+    ${d.previews.map(p => `<div style="margin-top:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px">
+      <div class="list-title">Add ${hmEsc(hostName(p))} · ${hmEsc(p.room_label || "room")}${p.area ? " · " + hmEsc(p.area) : ""}</div>
+      <div class="list-sub">student pays ${hmEsc(hmMoney(p.weekly_rate_cents))}/wk · host gets ${hmEsc(hmMoney(p.host_weekly_cents))}/wk
+        · Vanmates keeps ${hmEsc(hmMoney(p.margin_cents))}/wk · due when booking ${hmEsc(hmMoney(p.total_due_now_cents))}</div>
+      <details><summary class="card-sub">Price lines</summary>${hmOfferRowsHtml(p)}</details></div>`).join("")}
+    <div class="list-sub" style="margin-top:6px">${d.deadline_restarts
+      ? `New deadline for every home: ${isNaN(exp) ? "?" : hmEsc(hmWhen(exp))}. The ${d.previews[0] && d.previews[0].recipient === "partner" ? "agency" : "student"} is emailed once.`
+      : `The deadline stays ${isNaN(exp) ? "" : hmEsc(hmWhen(exp))}. The student is not emailed.`}</div>
+    <button class="btn btn-primary" type="button" data-hm-edit-save style="margin-top:8px">Save changes</button>
+  </div>`;
+}
 // The combined preview of one offer with several homes (offer-set dry_run). d = HM.optionDraft.
 function hmOptionsPreviewHtml(d){
   const n = d.previews.length;
@@ -36652,6 +36716,8 @@ async function hmOpenCase(id){
   const offerOut = offers.some(o => ["sent", "accepted"].includes(o.status));
   const verifiedInvs = offerOut ? [] : invs.filter(i => hmCanBuildOffer(c, i));
   const box = cur ? hmCreateBox(cur, nowMs) : null;
+  const editChoices = hmOfferEditChoices(c, curSet, invs);
+  HM.offerEdit = null;
   const chipOf = s => HM_OFFER_STATUS[s] || [s, "grey"];
   const optChipOf = s => HM_OPTION_STATUS[s] || [s, "grey"];
   // Several homes in one offer: direct students only (the Worker refuses agency cases: options_direct_only).
@@ -36692,7 +36758,7 @@ async function hmOpenCase(id){
   const singleHtml = o => `<div class="list-row" style="display:block">
       <div class="list-title" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}
         <span class="badge badge-${hmEsc(chipOf(o.status)[1])}">${hmEsc(chipOf(o.status)[0])}</span>
-        ${o.status === "sent" ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-left:auto">Withdraw offer</button>' : ""}</div>
+        ${o.status === "sent" ? `${editChoices.canEdit ? '<button class="btn btn-ghost" type="button" data-hm-offer="edit" style="margin-left:auto">Edit offer</button>' : ""}<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" ${editChoices.canEdit ? "" : 'style="margin-left:auto"'}>Withdraw offer</button>` : ""}</div>
       <div class="list-sub">To ${o.recipient === "partner" ? "the agency" : "the student"}${o.recipient_email ? " (" + hmEsc(o.recipient_email) + ")" : ""}${o.billing_plan ? " · " + hmEsc(o.billing_plan) : ""}
         · ${hmEsc(hmMoney(o.weekly_rate_cents))}/wk · answer by ${hmEsc(hmWhen(o.expires_at))}${o.decided_reason ? " · " + hmEsc(o.decided_reason) : ""}</div>
       ${hmOfferRowsHtml(o)}
@@ -36706,8 +36772,8 @@ async function hmOpenCase(id){
     const first = g[0];
     return `<div class="list-row" style="display:block" data-hm-offer-group="${hmEsc(first.group_id)}">
       <div class="list-title" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">Offer with ${hmEsc(g.length)} homes <span class="badge badge-${hmEsc(gs[1])}">${hmEsc(gs[0])}</span>
-        ${g.some(o => o.status === "sent") ? '<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" style="margin-left:auto">Withdraw offer</button>' : ""}</div>
-      <div class="list-sub">To the student${first.recipient_email ? " (" + hmEsc(first.recipient_email) + ")" : ""}${isNaN(exp) ? "" : " · expires " + hmEsc(hmWhen(exp))} · the student picks one home</div>
+        ${g.some(o => o.status === "sent") ? `${editChoices.canEdit ? '<button class="btn btn-ghost" type="button" data-hm-offer="edit" style="margin-left:auto">Edit offer</button>' : ""}<button class="btn btn-ghost" type="button" data-hm-offer="withdraw" ${editChoices.canEdit ? "" : 'style="margin-left:auto"'}>Withdraw offer</button>` : ""}</div>
+      <div class="list-sub">To ${first.recipient === "partner" ? "the agency" : "the student"}${first.recipient_email ? " (" + hmEsc(first.recipient_email) + ")" : ""}${isNaN(exp) ? "" : " · expires " + hmEsc(hmWhen(exp))} · the student picks one home</div>
       ${g.map(o => `<div style="margin-top:6px;padding:6px 8px;border:1px solid ${o.status === "accepted" ? "var(--ink)" : "var(--line)"};border-radius:8px">
         <div class="list-title">${hmEsc(o.host_first_name || nameOf(o.host_id))} · ${hmEsc(o.room_label || "")}${o.area ? " · " + hmEsc(o.area) : ""}
           <span class="badge badge-${hmEsc(optChipOf(o.status)[1])}">${hmEsc(optChipOf(o.status)[0])}</span></div>
@@ -36747,6 +36813,7 @@ async function hmOpenCase(id){
     ${matchedRows}
     ${builderHtml}
     ${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : (verifiedInvs.length ? "" : '<div class="card-sub">No offer yet.</div>')}
+    ${editChoices.canEdit ? '<div id="hm-offer-edit"></div>' : ""}
     ${earlierHtml}`;
   // An offer is out (or accepted): the Offer section moves to the top of the case, with Withdraw on its title row.
   const offerTop = `<div id="hm-offer-top" style="margin-top:12px;padding:0 12px 12px;border:2px solid var(--line);border-radius:10px">${offerSection}</div>`;
@@ -36988,7 +37055,7 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send]");
+  const t = ev.target.closest("[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
@@ -37143,6 +37210,81 @@ document.addEventListener("click", async (ev) => {
       await loadHomestayMatching();
       const line = hmHostEmailLine(r, name);
       hmNotice({ title: "Match undone", lines: [line ? (r.host_emailed ? `Match undone. ${line}` : `Match undone, ${line}`) : "Match undone."],
+        buttons: [{ label: "OK", primary: true }] });
+      return;
+    }
+    if (t.dataset.hmOffer === "edit") {
+      const box = document.getElementById("hm-offer-edit");
+      if (!box) return;
+      if (box.innerHTML) { box.innerHTML = ""; HM.offerEdit = null; return; }
+      const offerGroupsNow = hmOfferGroups(HM.offers || []);
+      const ch = hmOfferEditChoices(c, offerGroupsNow[0] || [], HM.invitations || []);
+      if (!ch.canEdit) { msg("This offer can't be edited now: refresh"); return; }
+      box.innerHTML = hmOfferEditPanelHtml(ch);
+      box.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (t.hasAttribute("data-hm-edit-cancel")) {
+      const box = document.getElementById("hm-offer-edit");
+      if (box) box.innerHTML = "";
+      HM.offerEdit = null;
+      return;
+    }
+    if (t.hasAttribute("data-hm-edit-preview")) {
+      const panel = t.closest("[data-hm-edit-panel]");
+      const out = panel.querySelector("[data-hm-edit-out]");
+      const remove = [...panel.querySelectorAll("[data-hm-edit-rm]:checked")].map(x => Number(x.dataset.hmEditRm));
+      const add = [];
+      for (const x of panel.querySelectorAll("[data-hm-edit-add]:checked")) {
+        const id = Number(x.dataset.hmEditAdd);
+        const inp = panel.querySelector(`[data-hm-edit-rate="${CSS.escape(String(id))}"]`);
+        const v = inp && inp.value.trim() ? Math.round(Number(inp.value) * 100) : null;
+        if (v !== null && !(v > 0)) { out.textContent = "Type each weekly price in dollars, or leave it blank"; return; }
+        add.push(v === null ? { invitation_id: id } : { invitation_id: id, weekly_rate_cents: v });
+      }
+      if (!remove.length && !add.length) { out.textContent = "Tick a home to remove or a host to add"; return; }
+      out.textContent = "Pricing…";
+      let r;
+      try { r = await hmWorker(`/staff/cases/${c.id}/offer-edit`, { add, remove, dry_run: true }); }
+      catch (e) { out.textContent = "Error: " + (e.message || e); return; }
+      if (HM.selected !== c.id) return;
+      const previews = r.previews || [];
+      HM.offerEdit = { case_id: c.id, remove, previews, expires_at: r.expires_at, deadline_restarts: !!r.deadline_restarts,
+        add: previews.map(p => ({ invitation_id: Number(p.invitation_id), weekly_rate_cents: p.weekly_rate_cents, expected_total_cents: p.total_due_now_cents })) };
+      out.innerHTML = hmOfferEditPreviewHtml(HM.offerEdit);
+      return;
+    }
+    if (t.hasAttribute("data-hm-edit-save")) {
+      const dft = HM.offerEdit;
+      if (!dft || dft.case_id !== c.id) { msg("Press Preview changes first"); return; }
+      const nAdd = dft.add.length, nRm = dft.remove.length;
+      const what = [nAdd ? `add ${nAdd} home${nAdd === 1 ? "" : "s"}` : "", nRm ? `remove ${nRm} home${nRm === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+      const go = await hmNotice({ title: "Save the changes to this offer?",
+        lines: [`This will ${what}.${nAdd ? " The deadline restarts and the student gets one updated email." : " The student is not emailed."}${nRm ? " Each removed host is emailed that the offer is off." : ""}`],
+        buttons: [{ label: "Save changes", primary: true, value: true }, { label: "Cancel", value: false }] });
+      if (go !== true) return;
+      t.disabled = true;
+      msg("Saving…");
+      // expected_total_cents per added home: the Worker refuses (price_changed) if a fresh total differs from the preview.
+      let r;
+      try { r = await hmWorker(`/staff/cases/${c.id}/offer-edit`, { add: dft.add, remove: dft.remove }); }
+      catch (e) {
+        t.disabled = false;
+        const out = t.closest("[data-hm-edit-out]");
+        if (out) out.insertAdjacentHTML("beforeend", `<div class="card-sub" style="color:var(--red);margin-top:6px">Error: ${hmEsc(e.message || e)}</div>`);
+        msg("Error: " + (e.message || e));
+        return;
+      }
+      HM.offerEdit = null;
+      const exp = r && r.expires_at ? new Date(r.expires_at) : null;
+      const expTxt = exp && !isNaN(exp) ? hmWhen(exp) : "";
+      const failed = nAdd && r.emailed === false;
+      HM.flash = { id: c.id, text: failed ? `Offer updated, but the email did not go out. Send this link yourself: ${r.link || "(no link: check the timeline)"}` : "Offer updated." };
+      await loadHomestayMatching();
+      hmNotice({ title: failed ? "Offer updated, email failed" : "Offer updated",
+        lines: failed
+          ? [`The offer was updated, but the email to ${r.recipient_email || "the student"} failed: send this link:`, { text: r.link || "(no link: check the timeline)", select: true }]
+          : [`Offer updated${nAdd ? ` and ${r.recipient_email || "the student"} emailed` : ""}.${expTxt ? " Answer by " + expTxt + "." : ""}`],
         buttons: [{ label: "OK", primary: true }] });
       return;
     }
@@ -42780,8 +42922,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-14-mkt1"></script>
-<script src="extensions.js?v=2026-10-14-mkt1"></script>
-<script src="ap.js?v=2026-10-14-mkt1"></script>
+<script src="room-changes.js?v=2026-10-14-offeredit1"></script>
+<script src="extensions.js?v=2026-10-14-offeredit1"></script>
+<script src="ap.js?v=2026-10-14-offeredit1"></script>
 </body>
 </html>
