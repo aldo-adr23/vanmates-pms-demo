@@ -1604,6 +1604,8 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 .lpp-banner{font-size:13px;padding:6px 10px;border-radius:8px;background:rgba(217,164,0,.14);margin-bottom:8px}
 .lpp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.lpp-filters .form-input{max-width:200px}
 .lpp-table td{vertical-align:top}.lpp-table a.lpp-link{word-break:break-all}
+/* Follow up (Leads) */
+.lfu-overdue{color:#B94A3F;font-weight:700}.lfu-today{color:#9a6b00;font-weight:700}
 .ml-bulk{position:sticky;bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--ink,#2b2620);color:#fff;border-radius:10px;padding:8px 12px;margin-top:14px}
 .ml-bulk select,.ml-bulk input{max-width:180px}
 .ml-grid td.num a{cursor:pointer;text-decoration:underline dotted}
@@ -1645,7 +1647,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-13-leadsvc1"></script>
+<script src="pms-supabase.js?v=2026-10-14-followup1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2397,6 +2399,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       </div>
       <div id="leads-mine" style="display:none"></div>
       <div id="leads-team" style="display:none"></div>
+      <div id="leads-fu" style="display:none"></div>
       <div id="leads-pp" style="display:none"></div>
       <div class="filter-bar" id="leads-all-filters">
         <div class="filter-search">
@@ -2425,6 +2428,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <option value="new">New</option>
           <option value="contacted">Contacted</option>
           <option value="qualified">Qualified</option>
+          <option value="follow_up">Follow up</option>
           <option value="payment_pending">Payment pending</option>
           <option value="won">Won</option>
           <option value="lost">Lost</option>
@@ -2487,6 +2491,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <option value="new">New</option>
           <option value="contacted">Contacted</option>
           <option value="qualified">Qualified</option>
+          <option value="follow_up">Follow up</option>
           <option value="payment_pending">Payment pending</option>
           <option value="won">Won</option>
           <option value="lost">Lost</option>
@@ -4465,12 +4470,33 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
   </div>
 </div>
 
+<!-- ============ FOLLOW UP: stage ============ -->
+<div class="modal-backdrop" id="lfu-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="lfu-title" style="max-width:480px">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M12 14v3l2 1"/></svg></div>
+      <div><div class="modal-title" id="lfu-title">Follow up</div><div class="modal-sub">The customer wants to talk later. This frees a slot in your open-lead limit; the lead stays yours and comes back as due on the date you pick.</div></div>
+      <button class="modal-close" id="lfu-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field"><label for="lfu-date">Follow up on</label><input class="form-input" id="lfu-date" type="date" /></div>
+      <div class="form-field"><label for="lfu-reason">Why later (optional)</label><input class="form-input" id="lfu-reason" maxlength="200" placeholder="Moving in January · waiting on visa · comparing options" autocomplete="off" /></div>
+      <div class="card-sub">When the date comes, switch the status back to <b>Contacted</b> or <b>Qualified</b> to work it again (it then counts in your limit).</div>
+      <div class="card-sub" id="lfu-error" style="color:var(--red-dark);min-height:18px;margin-top:4px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-ghost" id="lfu-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="lfu-save" type="button">Move to Follow up</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ PAYMENT PENDING: stage + reminder ============ -->
 <div class="modal-backdrop" id="lpp-backdrop" aria-hidden="true">
   <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="lpp-title" style="max-width:520px">
     <div class="modal-head">
       <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/></svg></div>
-      <div><div class="modal-title" id="lpp-title">Payment pending</div><div class="modal-sub" id="lpp-sub">The customer agreed to book and has the payment link. This frees a slot in your 30-lead limit; the lead stays yours.</div></div>
+      <div><div class="modal-title" id="lpp-title">Payment pending</div><div class="modal-sub" id="lpp-sub">The customer agreed to book and has the payment link. This frees a slot in your open-lead limit; the lead stays yours.</div></div>
       <button class="modal-close" id="lpp-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="modal-body">
@@ -29741,7 +29767,7 @@ const LEAD_SOURCES = {
   'whatsapp-maya': 'WhatsApp (Maya)',
   'hugo': 'Hugo booking'
 };
-const LEAD_STATUSES = ['new','contacted','qualified','payment_pending','won','lost'];
+const LEAD_STATUSES = ['new','contacted','qualified','follow_up','payment_pending','won','lost'];
 const LEAD_FILTERS = { search:'', source:'', status:'open' };
 let _editingLeadId = null;
 /* LEAD-CLAIM-CORE-START */
@@ -29840,13 +29866,20 @@ function myLeadsSections(list, nowMs, today, dueFn){
 // extraReps: emails to consider even with no open leads (they show if they sold).
 function teamGrid(all, nowMs, today, dueFn, soldFn, extraReps){
   const by = {};
-  const row = e => by[e] || (by[e] = { email: e, new: 0, contacted: 0, qualified: 0, due: 0, stale: 0, open: 0, pp: 0, sold: 0, deals: 0 });
+  const row = e => by[e] || (by[e] = { email: e, new: 0, contacted: 0, qualified: 0, due: 0, stale: 0, open: 0, pp: 0, fu: 0, fuDue: 0, sold: 0, deals: 0 });
   const unassigned = { new: 0, contacted: 0, qualified: 0 };
   (all || []).forEach(l => {
     if(!mlRegular(l)) return;
     const st = l.status || 'new';
     // Payment pending: still the rep's, but outside the cap (counted on its own).
     if(st === 'payment_pending'){ if(l.claimed_at) row(String(l.claimed_by || '').toLowerCase()).pp++; return; }
+    // Follow up: the same, plus how many have reached their date.
+    if(st === 'follow_up'){
+      if(!l.claimed_at) return;
+      const r = row(String(l.claimed_by || '').toLowerCase()), d = dueFn(l, today).state;
+      r.fu++; if(d === 'today' || d === 'overdue') r.fuDue++;
+      return;
+    }
     if(LEAD_OPEN_STATUSES.indexOf(st) < 0) return;
     if(!l.claimed_at){ unassigned[st]++; return; }
     const r = row(String(l.claimed_by || '').toLowerCase());
@@ -29857,7 +29890,7 @@ function teamGrid(all, nowMs, today, dueFn, soldFn, extraReps){
   });
   (extraReps || []).forEach(e => { if(e) row(String(e).toLowerCase()); });
   const rows = Object.values(by).map(r => { const s = soldFn(r.email) || {}; r.sold = Number(s.closed) || 0; r.deals = Number(s.deals) || 0; return r; })
-    .filter(r => r.open > 0 || r.deals > 0 || r.pp > 0)
+    .filter(r => r.open > 0 || r.deals > 0 || r.pp > 0 || r.fu > 0)
     .sort((a, b) => (b.sold - a.sold) || (b.open - a.open) || a.email.localeCompare(b.email));
   return { rows, unassigned };
 }
@@ -29985,6 +30018,63 @@ function lppDefaultSendAt(now){
   return lppLocalInput(d);
 }
 /* PAY-PENDING-CORE-END */
+/* FOLLOW-UP-CORE-START */
+// Follow up: the customer wants to talk later (moving months from now, waiting on a visa…). The lead stays
+// the rep's but outside the open-lead cap and the auto-release, which only count new / contacted / qualified.
+// l.follow_up_at = the day to pick it up again ('YYYY-MM-DD'); l.fu = {since, reason, by}. Pure.
+const LFU_STATUS = 'follow_up';
+const LFU_DAY_MS = 864e5;
+function lfuDay(v){
+  const s = String(v || '').slice(0, 10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  const d = new Date(s + 'T00:00:00Z');
+  return isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? '' : s;
+}
+function lfuAddDays(day, n){ const d = new Date(day + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function lfuDiff(a, b){ return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / LFU_DAY_MS); }
+function lfuDefaultDate(today){ return lfuAddDays(today, 14); }
+// '' when the date is fine, else what to tell the rep.
+function lfuCheckDate(v, today){
+  const d = lfuDay(v);
+  if(!d) return 'Pick a follow-up date.';
+  if(d <= today) return 'Pick a date after today.';
+  if(d > lfuAddDays(today, 365)) return 'Pick a date within a year.';
+  return '';
+}
+// {date, state: overdue | today | week | later | none, days until (negative = late)}
+function lfuDue(l, today){
+  const d = lfuDay(l && l.follow_up_at);
+  if(!d) return { date: '', state: 'none', days: null };
+  const days = lfuDiff(today, d);
+  return { date: d, state: days < 0 ? 'overdue' : days === 0 ? 'today' : days <= 7 ? 'week' : 'later', days };
+}
+function lfuDaysIn(l, nowMs){
+  const s = Date.parse((l && l.fu && l.fu.since) || '');
+  return isNaN(s) ? 0 : Math.max(0, Math.floor((nowMs - s) / LFU_DAY_MS));
+}
+// email null → everyone's (admins); else that rep's.
+function lfuLeads(all, email){
+  const me = email == null ? null : String(email).toLowerCase();
+  return (all || []).filter(l => l && !l.deleted_at && (l.status || 'new') === LFU_STATUS
+    && (me == null || String(l.claimed_by || '').toLowerCase() === me));
+}
+// f = {rep, when: due | week | later}. Soonest date first; leads with no date last.
+function lfuFilter(list, f, today){
+  f = f || {};
+  return (list || []).filter(l => {
+    if(f.rep && String(l.claimed_by || '').toLowerCase() !== String(f.rep).toLowerCase()) return false;
+    const st = lfuDue(l, today).state;
+    if(f.when === 'due' && st !== 'overdue' && st !== 'today') return false;
+    if(f.when === 'week' && st !== 'week') return false;
+    if(f.when === 'later' && st !== 'later') return false;
+    return true;
+  }).sort((a, b) => (lfuDay(a.follow_up_at) || '9999').localeCompare(lfuDay(b.follow_up_at) || '9999') || String(a.name || '').localeCompare(String(b.name || '')));
+}
+function lfuCounts(list, today){
+  const due = (list || []).filter(l => { const s = lfuDue(l, today).state; return s === 'overdue' || s === 'today'; }).length;
+  return { total: (list || []).length, due };
+}
+/* FOLLOW-UP-CORE-END */
 /* TAYLOR-CORE-START */
 // Taylor (AI sales assistant) emails web leads from TAYLOR_EMAIL and claims the ones she works
 // (taylor-assign-2026-10-12.sql); a rep takes one over with "Take over from Taylor".
@@ -30442,7 +30532,7 @@ function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s ? leadTermText(s) 
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
 function leadCap(s){ return s ? (s.charAt(0).toUpperCase() + s.slice(1)).replace(/_/g, ' ') : '—'; }
 function leadStatusBadge(st){
-  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', follow_up:'#c2410c', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
   const c = colors[st] || '#9aa0a6';
   return `<span class="badge" style="background:${c}1a;color:${c};border-color:${c}33">${esc(leadCap(st))}</span>`;
 }
@@ -30687,7 +30777,7 @@ function leadsViewMode(){
     LEAD_VIEW.mode = saved;
   }
   const admin = leadsIsAdmin();
-  const allowed = admin ? ['team', 'mine', 'pp', 'all'] : ['mine', 'pp', 'all'];
+  const allowed = admin ? ['team', 'mine', 'fu', 'pp', 'all'] : ['mine', 'fu', 'pp', 'all'];
   let m = allowed.indexOf(LEAD_VIEW.mode) >= 0 ? LEAD_VIEW.mode : allowed[0];
   if(m === 'mine' && admin && !LEAD_VIEW.asRep) m = 'team';
   return m;
@@ -30710,7 +30800,9 @@ function renderLeadsChrome(mode){
   bar.style.display = v.email ? '' : 'none';
   const lppN = lppPendingLeads(leads, admin ? null : String(v.email || '').toLowerCase()).length;
   const lppTab = ['pp', 'Payment pending' + (lppN ? ` (${lppN})` : '')];
-  const tabs = admin ? [['team', 'Team'], lppTab, ['all', 'All leads']] : [['mine', 'My leads'], lppTab, ['all', 'All leads']];
+  const lfuC = lfuCounts(lfuLeads(leads, admin ? null : String(v.email || '').toLowerCase()), salesDay(new Date()));
+  const lfuTab = ['fu', 'Follow up' + (lfuC.total ? ` (${lfuC.total}${lfuC.due ? ` · ${lfuC.due} due` : ''})` : '')];
+  const tabs = admin ? [['team', 'Team'], lfuTab, lppTab, ['all', 'All leads']] : [['mine', 'My leads'], lfuTab, lppTab, ['all', 'All leads']];
   document.getElementById('leads-view-seg').innerHTML = tabs.map(([k, lab]) =>
     `<button type="button" data-lv="${k}" class="${(mode === k || (k === 'team' && mode === 'mine' && admin)) ? 'on' : ''}">${lab}</button>`).join('');
   const as = document.getElementById('leads-view-as');
@@ -30726,6 +30818,7 @@ function renderLeadsChrome(mode){
   document.getElementById('leads-mine').style.display = mode === 'mine' ? '' : 'none';
   document.getElementById('leads-team').style.display = mode === 'team' ? '' : 'none';
   document.getElementById('leads-pp').style.display = mode === 'pp' ? '' : 'none';
+  document.getElementById('leads-fu').style.display = mode === 'fu' ? '' : 'none';
   document.getElementById('leads-all-filters').style.display = mode === 'all' ? '' : 'none';
   document.getElementById('leads-all-card').style.display = mode === 'all' ? '' : 'none';
 }
@@ -30739,7 +30832,7 @@ function mlMoney(n){ return (window.__vmcSym || '$') + Math.round(Number(n) || 0
 function mlStatusControl(l){
   const st = l.status || 'new';
   if(!lppCanAct(l)) return leadStatusBadge(st);
-  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', follow_up:'#c2410c', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
   const c = colors[st] || '#9aa0a6';
   return `<select class="ml-st" data-ml-st="${esc(l.id)}" aria-label="Change status" title="Change status" style="background-color:${c}1a;color:${c};border-color:${c}33">` +
     LEAD_STATUSES.map(s => `<option value="${s}" ${s === st ? 'selected' : ''}>${esc(leadCap(s))}</option>`).join('') + `</select>`;
@@ -30747,10 +30840,11 @@ function mlStatusControl(l){
 async function mlStatusChange(sel){
   const l = leads.find(x => String(x.id) === String(sel.dataset.mlSt));
   if(!l) return;
-  const prev = l.status || 'new', next = sel.value, back = () => { sel.value = prev; renderMyLeads(); };
+  const prev = l.status || 'new', next = sel.value, back = () => { sel.value = prev; renderLeads(); };
   if(next === prev) return;
   if(!lppCanAct(l)){ showToast('Claim this lead first'); back(); return; }
   if(next === LPP_STATUS){ lppOpenStage(l, back); return; }
+  if(next === LFU_STATUS){ lfuOpenStage(l, back); return; }
   if(['qualified', 'won', 'lost'].includes(next) && typeof openDealModal === 'function'){ openDealModal(l.id, next, back); return; }
   const ok = await salesWriteLead(l, { status: next, last_touched_at: new Date().toISOString() });
   if(ok) showToast('Status: ' + leadCap(next)); else back();
@@ -30820,6 +30914,7 @@ function renderMyLeads(){
   const email = leadsViewEmail(), now = Date.now(), today = salesDay(new Date());
   const mine = myLeadsFor(leads, email);
   const myPp = lppPendingLeads(leads, email || '');
+  const myFu = lfuFilter(lfuLeads(leads, email || ''), {}, today);
   [...ML_SEL].forEach(id => { if(!mine.some(l => String(l.id) === id)) ML_SEL.delete(id); });
   const sec = myLeadsSections(mine, now, today, salesDue);
   const s = typeof window.salesMonthFor === 'function' ? window.salesMonthFor(email) : null;
@@ -30843,6 +30938,7 @@ function renderMyLeads(){
       <div class="ml-big ${open >= LEAD_CAP ? 'ml-red' : ''}">${open} open <span class="card-sub">/ ${LEAD_CAP} limit</span></div>
       <div class="ml-stage"><i style="width:${pct('new')}%;background:#B94A3F"></i><i style="width:${pct('contacted')}%;background:#d9a400"></i><i style="width:${pct('qualified')}%;background:#3b7d4f"></i></div>
       <div class="card-sub">New ${cnt.new} · Contacted ${cnt.contacted} · Qualified ${cnt.qualified}</div>
+      ${myFu.length ? `<div class="card-sub">+ ${myFu.length} follow up (not counted)</div>` : ''}
       ${myPp.length ? `<div class="card-sub">+ ${myPp.length} payment pending (not counted)</div>` : ''}
     </div>`;
   const f = LEAD_VIEW.focus;
@@ -30860,6 +30956,10 @@ function renderMyLeads(){
     return `<div class="ml-sec"><label class="${cls}">${arr.length ? `<input type="checkbox" data-ml-all="${key}" ${all ? 'checked' : ''} aria-label="Select all in ${esc(title)}"> ` : ''}${title}</label><span>${arr.length}</span></div>` +
       (arr.length ? arr.map(l => mlRow(l, now, today)).join('') : `<div class="card-sub" style="padding:8px 2px">Nothing due</div>`);
   }).join('');
+  const fuDue = lfuCounts(myFu, today).due;
+  const fuHtml = !f && myFu.length ? `<div class="ml-sec"><span>Follow up${fuDue ? ` · <span class="lfu-overdue">${fuDue} due</span>` : ''}</span><span>${myFu.length}</span></div>` + myFu.map(l =>
+    `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${mlStatusControl(l)}</div>
+      <div class="name-sub">follow up ${lfuDueText(l, today)}${l.fu && l.fu.reason ? ' · ' + esc(l.fu.reason) : ''}</div></div></div>`).join('') : '';
   const lppHtml = !f && myPp.length ? `<div class="ml-sec"><span>Payment pending</span><span>${myPp.length}</span></div>` + myPp.map(l => {
     const d = lppDaysPending(l, now), paid = l.pp_state && l.pp_state.paid;
     return `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${paid ? lppPill('paid') : ''}</div>
@@ -30883,7 +30983,7 @@ function renderMyLeads(){
       <button class="btn btn-mini" type="button" data-ml-bulk="clear" aria-label="Clear selection">✕</button>
     </div>` : '';
   box.innerHTML = viewing + `<div class="ml-head">${soldCard}${pipeCard}</div>` +
-    `<div class="card card-pad">${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${lppHtml}${closedHtml}</div>` + bulk;
+    `<div class="card card-pad">${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${fuHtml}${lppHtml}${closedHtml}</div>` + bulk;
 }
 
 async function mlAct(kind, id){
@@ -30949,15 +31049,16 @@ function renderTeamGrid(){
   box.innerHTML = `<div class="card card-pad ml-grid"><div class="card-head"><div><div class="card-title">Team <em>pipeline</em></div>
     <div class="card-sub">Regular leads (LINE is on JLeads) · click a number to see those leads</div></div></div>
     <div style="overflow-x:auto"><table><thead><tr><th>Rep</th><th class="right">New</th><th class="right">Contacted</th><th class="right">Qualified</th>
-      <th class="right">Due</th><th class="right">Going stale</th><th class="right" title="Payment pending: not counted in the limit">Pay pending</th><th class="right">Sold this month</th><th class="right">Open / ${LEAD_CAP}</th></tr></thead><tbody>
+      <th class="right">Due</th><th class="right">Going stale</th><th class="right" title="Follow up: not counted in the limit">Follow up</th><th class="right" title="Payment pending: not counted in the limit">Pay pending</th><th class="right">Sold this month</th><th class="right">Open / ${LEAD_CAP}</th></tr></thead><tbody>
     ${g.rows.map(r => `<tr><td><a data-ml-go="${esc(r.email)}" data-ml-focus="">${esc(leadsRepName(r.email))}</a></td>
       ${cell(r.email, 'new', r.new)}${cell(r.email, 'contacted', r.contacted)}${cell(r.email, 'qualified', r.qualified)}
       ${cell(r.email, 'due', r.due)}${cell(r.email, 'stale', r.stale, r.stale ? 'ml-red' : '')}
+      <td class="num right">${r.fu ? `<a data-lfu-go="${esc(r.email)}">${r.fu}</a>${r.fuDue ? `<div class="name-sub lfu-overdue">${r.fuDue} due</div>` : ''}` : '0'}</td>
       <td class="num right">${r.pp ? `<a data-lpp-go="${esc(r.email)}">${r.pp}</a>` : '0'}</td>
       <td class="right"><b>${mlMoney(r.sold)}</b><div class="name-sub">${r.deals} deal${r.deals === 1 ? '' : 's'}</div></td>
       <td class="right ${r.open >= LEAD_CAP ? 'ml-red' : ''}"><b>${r.open}</b></td></tr>`).join('')}
-    <tr><td>Unassigned</td>${unCell('new')}${unCell('contacted')}${unCell('qualified')}<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>
-    ${team ? `<tr><td><b>Team</b></td><td colspan="6"></td><td class="right"><b>${mlMoney(team.month.closed)}</b><div class="name-sub">${team.month.target != null ? team.month.pct + '% of ' + mlMoney(team.month.target) : 'no team target'}</div></td><td></td></tr>` : ''}
+    <tr><td>Unassigned</td>${unCell('new')}${unCell('contacted')}${unCell('qualified')}<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>
+    ${team ? `<tr><td><b>Team</b></td><td colspan="7"></td><td class="right"><b>${mlMoney(team.month.closed)}</b><div class="name-sub">${team.month.target != null ? team.month.pct + '% of ' + mlMoney(team.month.target) : 'no team target'}</div></td><td></td></tr>` : ''}
     </tbody></table></div></div>`;
 }
 
@@ -31222,6 +31323,84 @@ function renderPayPending(){
   </div>`;
 }
 
+/* ---- Follow up: stage dialog + tab. Pure helpers: FOLLOW-UP-CORE. Nothing server-side: the cap and
+   the auto-release only count new / contacted / qualified, so a follow_up lead is outside both. */
+const LFU_FILTERS = { rep: '', when: '' };
+const LFU_STAGE = { id: null, onCancel: null };
+function lfuOpenStage(l, onCancel){
+  LFU_STAGE.id = l.id; LFU_STAGE.onCancel = onCancel || null;
+  const today = salesDay(new Date()), cur = lfuDay(l.follow_up_at);
+  document.getElementById('lfu-title').textContent = `Follow up · ${l.name || 'Lead'}`;
+  const d = document.getElementById('lfu-date');
+  d.min = lfuAddDays(today, 1); d.max = lfuAddDays(today, 365);
+  d.value = cur && cur > today ? cur : lfuDefaultDate(today);
+  document.getElementById('lfu-reason').value = (l.fu && l.fu.reason) || '';
+  document.getElementById('lfu-error').textContent = '';
+  document.getElementById('lfu-backdrop').classList.add('open');
+  setTimeout(() => d.focus(), 30);
+}
+function lfuCloseStage(cancelled){
+  document.getElementById('lfu-backdrop').classList.remove('open');
+  if(cancelled && typeof LFU_STAGE.onCancel === 'function') LFU_STAGE.onCancel();
+  LFU_STAGE.id = null; LFU_STAGE.onCancel = null;
+}
+async function lfuSaveStage(){
+  const l = lppLead(LFU_STAGE.id); if(!l) return lfuCloseStage(true);
+  const err = document.getElementById('lfu-error'), btn = document.getElementById('lfu-save');
+  const date = document.getElementById('lfu-date').value, reason = document.getElementById('lfu-reason').value.trim().slice(0, 200);
+  const bad = lfuCheckDate(date, salesDay(new Date()));
+  if(bad){ err.textContent = bad; return; }
+  btn.disabled = true;
+  try {
+    const now = new Date().toISOString();
+    const ok = await salesWriteLead(l, { status: LFU_STATUS, follow_up_at: date, fu: { since: now, reason, by: String((activeRole() || {}).email || '') }, last_touched_at: now });
+    if(!ok){ err.textContent = 'Not saved. Check the lead is yours and try again.'; return; }
+    LFU_STAGE.onCancel = null;
+    lfuCloseStage(false);
+    lppRerender(l.id);
+    showToast('Moved to Follow up · ' + fmtDate(date) + ' · your lead slot is free');
+  } finally { btn.disabled = false; }
+}
+function lfuDueText(l, today){
+  const d = lfuDue(l, today);
+  if(d.state === 'none') return '<span class="name-sub">no date</span>';
+  if(d.state === 'overdue') return `<span class="lfu-overdue">${esc(fmtDate(d.date))} · ${-d.days} day${d.days === -1 ? '' : 's'} late</span>`;
+  if(d.state === 'today') return `<span class="lfu-today">Today</span>`;
+  return `${esc(fmtDate(d.date))} <span class="name-sub">· in ${d.days} day${d.days === 1 ? '' : 's'}</span>`;
+}
+
+// ---- Follow up tab
+function renderFollowUp(){
+  const box = document.getElementById('leads-fu'); if(!box) return;
+  const admin = leadsIsAdmin(), me = String((activeRole() || {}).email || '').toLowerCase(), now = Date.now(), today = salesDay(new Date());
+  const mine = lfuLeads(leads, admin ? null : me);
+  const rows = lfuFilter(mine, LFU_FILTERS, today), c = lfuCounts(mine, today);
+  const reps = [...new Set(mine.map(l => String(l.claimed_by || '').toLowerCase()).filter(Boolean))].sort();
+  const opt = (v, lab, cur) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`;
+  const filters = `<div class="lpp-filters">
+    ${admin ? `<select class="form-input" data-lfu-f="rep">${opt('', 'All reps', LFU_FILTERS.rep)}${reps.map(e => opt(e, leadsRepName(e), LFU_FILTERS.rep)).join('')}</select>` : ''}
+    <select class="form-input" data-lfu-f="when">${opt('', 'Any date', LFU_FILTERS.when)}${opt('due', 'Due today or late', LFU_FILTERS.when)}${opt('week', 'Next 7 days', LFU_FILTERS.when)}${opt('later', 'Later', LFU_FILTERS.when)}</select>
+  </div>`;
+  const body = rows.map(l => {
+    const st = lfuDue(l, today).state, lc = lppLastContact(l), days = lfuDaysIn(l, now);
+    return `<tr class="${st === 'overdue' ? 'lpp-a7' : st === 'today' ? 'lpp-a3' : ''}" data-lfu-row="${esc(l.id)}" style="cursor:pointer">
+      <td><div class="name-main">${esc(l.name || '—')}</div><div class="name-sub">${esc(l.email || l.phone || '')}</div></td>
+      <td>${esc(leadsRepName(l.claimed_by))}</td>
+      <td>${lfuDueText(l, today)}</td>
+      <td>${l.fu && l.fu.reason ? esc(l.fu.reason) : '<span class="name-sub">—</span>'}</td>
+      <td class="right">${days}</td>
+      <td>${lc ? esc(mlAgo(now - lc)) + ' ago' : '—'}</td>
+      <td>${mlStatusControl(l)}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<div class="card card-pad"><div class="card-head"><div><div class="card-title">Follow <em>up</em></div>
+    <div class="card-sub">${c.total} lead${c.total === 1 ? '' : 's'}${c.due ? ` · <b class="lfu-overdue">${c.due} due</b>` : ''} · customers who want to talk later · not counted in the ${LEAD_CAP}-lead limit · switch the status back to work one again</div></div></div>
+    ${filters}
+    ${rows.length ? `<div style="overflow-x:auto"><table class="lpp-table"><thead><tr><th>Customer</th><th>Sales rep</th><th>Follow up on</th><th>Why later</th><th class="right">Days in stage</th><th>Last contact</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div>`
+      : `<div class="card-sub" style="padding:8px 2px">${mine.length ? 'No leads match these filters.' : 'No leads in Follow up. Move a lead here from its Status when the customer wants to talk later.'}</div>`}
+  </div>`;
+}
+
 function renderLeads(){
   const body = document.getElementById('leads-body');
   if(!body) return;
@@ -31230,6 +31409,7 @@ function renderLeads(){
   if(mode === 'mine') renderMyLeads();
   else if(mode === 'team') renderTeamGrid();
   else if(mode === 'pp') renderPayPending();
+  else if(mode === 'fu') renderFollowUp();
   const list = applyLeadFilters();
   const countEl = document.getElementById('leads-count');
   if(countEl) countEl.textContent = list.length;
@@ -33109,6 +33289,7 @@ async function saveLead(){
     notes:    document.getElementById('lead-notes').value,
     follow_up_at: (document.getElementById('lead-follow-up') || {}).value || null
   };
+  if(patch.status === LFU_STATUS && !lfuDay(patch.follow_up_at)){ showToast('A Follow up lead needs a follow-up date'); return; }
   // Open-and-Save with nothing changed is not activity (it would dodge the stale-lead release).
   if(leadSaveTouches(l, patch)) patch.last_touched_at = new Date().toISOString();
   // An admin handing the lead to someone moves the claim too, so the new owner
@@ -33160,6 +33341,8 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     if(e.target.closest('[data-lv-clear]')){ LEAD_VIEW.focus = ''; renderLeads(); return; }
     const lppGo = e.target.closest('[data-lpp-go]');
     if(lppGo){ LPP_FILTERS.rep = lppGo.dataset.lppGo; leadsSetMode('pp', '', ''); return; }
+    const lfuGo = e.target.closest('[data-lfu-go]');
+    if(lfuGo){ LFU_FILTERS.rep = lfuGo.dataset.lfuGo; leadsSetMode('fu', '', ''); return; }
     const go = e.target.closest('[data-ml-go]');
     if(go){ leadsSetMode('mine', go.dataset.mlGo, go.dataset.mlFocus || ''); return; }
     if(e.target.closest('[data-ml-un]')){
@@ -33223,6 +33406,14 @@ document.getElementById('lead-status') && document.getElementById('lead-status')
     lppOpenStage(pl, () => { sel.value = prev; });
     return;
   }
+  // Follow up asks for the date and saves at once too.
+  if(next === LFU_STATUS && next !== prev){
+    const fl = leads.find(x => String(x.id) === String(_editingLeadId));
+    if(!fl) return;
+    if(!lppCanAct(fl)){ showToast('Claim this lead first'); sel.value = prev; return; }
+    lfuOpenStage(fl, () => { sel.value = prev; });
+    return;
+  }
   if(!['qualified', 'won', 'lost'].includes(next) || next === prev || typeof openDealModal !== 'function'){ sel.dataset.prev = next; return; }
   const l = leads.find(x => String(x.id) === String(_editingLeadId));
   if(!l) return;
@@ -33242,6 +33433,12 @@ document.getElementById('lead-status') && document.getElementById('lead-status')
   on('lppr-save', 'click', lppSaveReminder);
   on('lppr-backdrop', 'click', e => { if(e.target.id === 'lppr-backdrop') lppCloseReminder(); });
   on('lead-pp', 'click', lppBlockClick);
+  on('lfu-close', 'click', () => lfuCloseStage(true));
+  on('lfu-cancel', 'click', () => lfuCloseStage(true));
+  on('lfu-save', 'click', lfuSaveStage);
+  on('lfu-backdrop', 'click', e => { if(e.target.id === 'lfu-backdrop') lfuCloseStage(true); });
+  on('leads-fu', 'change', e => { const f = e.target.closest('[data-lfu-f]'); if(f){ LFU_FILTERS[f.dataset.lfuF] = f.value; renderFollowUp(); } });
+  on('leads-fu', 'click', e => { if(e.target.closest('a, [data-ml-st]')) return; const r = e.target.closest('[data-lfu-row]'); if(r) openLead(r.dataset.lfuRow); });
   on('leads-pp', 'change', e => { const f = e.target.closest('[data-lpp-f]'); if(f){ LPP_FILTERS[f.dataset.lppF] = f.value; renderPayPending(); } });
   on('leads-pp', 'click', e => { if(e.target.closest('a')) return; const r = e.target.closest('[data-lpp-row]'); if(r) openLead(r.dataset.lppRow); });
   document.addEventListener('keydown', e => {
@@ -42452,8 +42649,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-13-leadsvc1"></script>
-<script src="extensions.js?v=2026-10-13-leadsvc1"></script>
-<script src="ap.js?v=2026-10-13-leadsvc1"></script>
+<script src="room-changes.js?v=2026-10-14-followup1"></script>
+<script src="extensions.js?v=2026-10-14-followup1"></script>
+<script src="ap.js?v=2026-10-14-followup1"></script>
 </body>
 </html>
