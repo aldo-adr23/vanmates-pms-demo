@@ -275,7 +275,7 @@
         ${field('Vendor', e(d.vendor || ''))}
         ${field('Paid', r.paid_at ? e(when(r.paid_at)) + (r.paid_ref ? ' · ' + e(r.paid_ref) : '') : '')}
         ${field('Approved', r.approved_at ? e(when(r.approved_at)) + ' · ' + e(r.approved_by || '') : '')}
-        ${field('Source', r.doc_url ? `<a href="${e(r.doc_url)}" target="_blank" rel="noopener">Open the original</a>` : e(r.source))}
+        ${field('Source', r.doc_url ? `<a class="btn btn-ghost btn-mini" style="text-decoration:none" href="${e(r.doc_url)}" target="_blank" rel="noopener">${r.type === 'employee_expense' ? 'View receipt' : 'Open the original'} ↗</a>` : e(r.source))}
         ${d.recentAverageCents ? field('Usual amount', e(money(d.recentAverageCents))) : ''}
       </div>
       ${days.length ? H('By day') + `<div style="display:grid;grid-template-columns:auto auto;gap:2px 16px;max-width:280px">${days.map(([k, v]) => `<span class="name-sub">${e(k)}</span><span style="text-align:right">${e(money(v))}</span>`).join('')}</div>` : ''}
