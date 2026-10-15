@@ -353,6 +353,8 @@ table.t tr.best td { background: var(--green-soft); }
 .pvwrap iframe { width: 100%; height: min(70vh, 720px); border: 0; border-radius: 10px; background: #FAF5ED; box-shadow: 0 4px 18px rgba(43,33,26,.08); transition: width .2s; }
 .pvwrap.phone iframe { width: 390px; max-width: 100%; }
 .aiinline { margin: 10px 12px 0; }
+.edv-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.edai .qchips { padding: 10px 12px 6px; } .edai .composer.sm { margin: 0 12px 12px; }
 .edhead { margin-bottom: 4px; } .edhead b { display: block; font-family: var(--serif); font-size: 18px; } .edhead span { display: block; color: var(--muted); font-size: 12.5px; }
 details.ab summary, details.tips summary { cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--red); margin-top: 4px; }
 details.ab[open] summary { margin-bottom: 4px; }
@@ -360,6 +362,32 @@ details.ab { grid-column: 1 / -1; }
 .inboxrow { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; min-width: 0; }
 .inboxrow .av { width: 30px; height: 30px; border-radius: 50%; background: var(--red); color: var(--on-red); display: grid; place-items: center; font-weight: 800; flex: none; }
 .inboxrow div { min-width: 0; } .inboxrow b, .inboxrow span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .inboxrow span { color: var(--muted); font-size: 12px; }
+.planview { margin-bottom: 22px; }
+.pv-head { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
+.pv-head .ask-k { justify-content: flex-start; }
+.pv-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .pv-grid { grid-template-columns: minmax(0, 1fr); } }
+.pv-side { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 10px; }
+@media (max-width: 1000px) { .pv-side { position: static; } }
+.plan-main.busy { opacity: .45; pointer-events: none; transition: opacity .2s; }
+.pchat .msgs { max-height: 300px; min-height: 0; }
+.aud { padding: 14px; } .aud-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; } .aud-h b { font-size: 14px; }
+.aud-n { font-weight: 800; color: var(--red); font-size: 13px; }
+.aud-empty { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.aud-sub { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }
+.lrows { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.lrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1.5px solid var(--line); border-radius: 12px; background: var(--surface); padding: 9px 12px; }
+.lrow:hover { border-color: var(--muted); } .lrow.on { border-color: var(--red); background: var(--red-soft); }
+.lrow .ck { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 800; color: var(--on-red); flex: none; background: var(--surface); }
+.lrow.on .ck { background: var(--red); border-color: var(--red); }
+.lrow .lm { flex: 1; min-width: 0; } .lrow .lm b, .lrow .lm small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .lrow .lm small { color: var(--muted); font-size: 11.5px; }
+.lrow .lc { font-weight: 800; font-variant-numeric: tabular-nums; }
+.addopts { display: flex; flex-direction: column; gap: 6px; }
+.addopt { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px dashed var(--line); border-radius: 12px; background: var(--cream); padding: 9px 12px; transition: border-color .15s, background .15s; }
+.addopt:hover { border-style: solid; border-color: var(--red); background: var(--surface); }
+.addopt .ai-ic { width: 30px; height: 30px; border-radius: 9px; background: var(--red-soft); color: var(--red); display: grid; place-items: center; font-weight: 800; flex: none; }
+.addopt b { display: block; font-size: 13px; } .addopt small { display: block; color: var(--muted); font-size: 11.5px; }
+.aud-foot { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); } .aud-foot .btn.wide { margin-top: 0; } .aud-foot .note { margin: 8px 0 0; text-align: center; }
 .stop-on { background: var(--red); color: var(--on-red); padding: 8px 14px; border-radius: 10px; font-weight: 700; margin: 0 0 10px; }
 </style>
 </head>
@@ -387,7 +415,7 @@ details.ab { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-15-mkai3"></script>
+<script src="marketing-core.js?v=2026-10-15-mkai4"></script>
 <script>
 (function () {
   'use strict';
@@ -489,6 +517,7 @@ details.ab { grid-column: 1 / -1; }
     if (!host) return;
     var aiOk = S.me.ai_ready && can('ai');
     if (!A.plan && !A.busy) {
+      host.className = 'hero card';
       host.innerHTML = '<div class="ask"><div class="ask-k">✨ AI campaign builder · <span>' + esc(scopeName(S.scope)) + '</span></div>' +
         '<h1>What would you like to promote today?</h1>' +
         '<div class="composer"><textarea id="aiQ" rows="2" placeholder="e.g. I want a 6-month email campaign promoting our Partners Portal to educational agencies.">' + esc(A.prompt) + '</textarea>' +
@@ -502,19 +531,36 @@ details.ab { grid-column: 1 / -1; }
       q.addEventListener('input', function () { A.prompt = q.value; q.style.height = 'auto'; q.style.height = Math.min(220, q.scrollHeight) + 'px'; });
       return;
     }
-    var bubbles = '<div class="thread"><div class="bub me">' + esc(A.prompt) + '</div>' +
-      (A.busy ? '<div class="bub ai typing"><span></span><span></span><span></span> Planning your campaign…</div>' : (A.reply ? '<div class="bub ai">' + esc(A.reply) + '</div>' : '')) + '</div>';
-    if (A.busy) { host.innerHTML = '<div class="ask small"><div class="ask-k">✨ AI campaign builder · <span>' + esc(scopeName(S.scope)) + '</span></div>' + bubbles + '<div class="skel"></div><div class="skel s"></div></div>'; return; }
+    // Plan view: the plan on the left; on the right a sticky column with the AI conversation and who gets it.
+    host.className = 'planview';
+    var turns = [{ me: A.prompt }].concat(A.turns || []);
+    var msgs = turns.map(function (t) { return t.me ? '<div class="bub me">' + esc(t.me) + '</div>' : '<div class="bub ai">' + esc(t.ai) + '</div>'; }).join('') +
+      (A.busy ? '<div class="bub ai typing"><span></span><span></span><span></span> ' + (A.plan ? 'Updating the plan…' : 'Planning your campaign…') + '</div>' : '');
+    var chat = '<div class="card chat pchat"><div class="chat-h">✨ AI assistant<span class="sp"></span><span class="small muted">' + (A.busy ? 'thinking…' : 'ask for changes') + '</span></div>' +
+      '<div class="msgs" id="aiMsgs">' + msgs + '</div>' +
+      (A.plan ? '<div class="qchips">' + ['Fewer emails', 'Friendlier tone', 'Focus on commissions', 'Add a welcome email first', 'Write it in Spanish'].map(function (x) { return '<button class="idea" data-refine="' + esc(x) + '"' + (A.busy ? ' disabled' : '') + '>' + esc(x) + '</button>'; }).join('') + '</div>' +
+        '<div class="composer sm"><textarea id="aiRefine" rows="1" placeholder="Reply to change the plan…"' + (A.busy ? ' disabled' : '') + '></textarea><button class="send" data-x="ai-refine" aria-label="Update the plan"' + (A.busy ? ' disabled' : '') + '>↑</button></div>' : '') + '</div>';
+    var head = '<div class="pv-head"><span class="ask-k">✨ AI campaign builder · <span>' + esc(scopeName(S.scope)) + '</span></span><span class="sp"></span><button class="btn btn-ghost btn-sm" data-x="ai-reset">Start over</button></div>';
+    if (!A.plan) {
+      host.innerHTML = head + '<div class="pv-grid"><div class="card pad"><div class="skel" style="height:26px;width:55%"></div><div class="skel"></div><div class="skel s"></div><div class="skel"></div><div class="skel s"></div></div><aside class="pv-side">' + chat + '</aside></div>';
+      return;
+    }
     var p = A.plan;
     var total = p.months * p.per_month;
     var lists = S.lists.map(function (l) {
       var on = A.listIds.indexOf(l.id) >= 0;
-      return '<button class="tile lt' + (on ? ' on' : '') + '" data-ailist="' + l.id + '" aria-pressed="' + on + '"><div class="meta"><span class="ck">' + (on ? '✓' : '') + '</span><b>' + esc(l.name) + '</b><small>' + MK.num(l.members) + ' people · ' + (l.type === 'dynamic' ? 'updates itself' : 'fixed list') + '</small></div></button>'; }).join('');
+      return '<button class="lrow' + (on ? ' on' : '') + '" data-ailist="' + l.id + '" aria-pressed="' + on + '"><span class="ck">' + (on ? '✓' : '') + '</span><span class="lm"><b>' + esc(l.name) + '</b><small>' + (l.type === 'dynamic' ? 'Updates itself' : 'Fixed list') + '</small></span><span class="lc">' + MK.num(l.members) + '</span></button>'; }).join('');
     var people = S.lists.filter(function (l) { return A.listIds.indexOf(l.id) >= 0; }).reduce(function (a, l) { return a + (l.members || 0); }, 0);
     var tpls = Object.fromEntries((S._ovTpls || []).map(function (t) { return [t.id, t.name + ' (' + t.folder + ')']; }));
-    host.innerHTML = '<div class="ask small"><div class="ask-k">✨ AI campaign builder · <span>' + esc(scopeName(S.scope)) + '</span><span class="sp"></span><button class="linkbtn" data-x="ai-reset">Start over</button></div>' + bubbles + '</div>' +
-      '<div class="plan">' +
-        '<div class="plan-main">' +
+    var add = '<div class="addopts">' +
+      '<button class="addopt" data-x="ai-csv"><span class="ai-ic">⬆</span><span><b>Import a CSV</b><small>Upload a spreadsheet of contacts</small></span></button>' +
+      '<button class="addopt" data-x="ai-paste"><span class="ai-ic">✎</span><span><b>Paste addresses</b><small>Type or paste a few emails</small></span></button>' +
+      '<button class="addopt" data-x="w-newlist"><span class="ai-ic">≡</span><span><b>Build from rules</b><small>e.g. active agencies in Japan</small></span></button></div>';
+    var aud = '<div class="card aud"><div class="aud-h"><b>Who gets it</b>' + (A.listIds.length ? '<span class="aud-n">' + MK.num(people) + ' people</span>' : '') + '</div>' +
+      (S.lists.length ? '<div class="lrows">' + lists + '</div><div class="aud-sub">Or add people</div>' : '<p class="aud-empty">No lists in ' + esc(scopeName(S.scope)) + ' yet. Add the people who should get this campaign:</p>') + add +
+      '<div class="aud-foot"><button class="btn btn-primary btn-lg wide" data-x="ai-build" id="aiBuild"' + (A.busy ? ' disabled' : '') + '>✨ Write all ' + total + ' emails</button>' +
+      '<p class="note">' + (A.listIds.length ? 'Unsubscribed, bounced and no-consent contacts are skipped automatically. ' : 'You can also choose the audience later, before launch. ') + 'You review every email before anything is sent.</p></div></div>';
+    host.innerHTML = head + '<div class="pv-grid"><div class="card pad plan-main' + (A.busy ? ' busy' : '') + '">' +
           '<input class="plan-name" id="pName" value="' + esc(p.name) + '" aria-label="Campaign name">' +
           '<p class="plan-obj">' + esc(p.objective) + '</p>' +
           '<div class="pstats">' +
@@ -527,28 +573,29 @@ details.ab { grid-column: 1 / -1; }
           '</div>' +
           (p.strategy.length ? '<h3 class="h">Strategy</h3><ul class="strat">' + p.strategy.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
           (p.calendar.length ? '<h3 class="h">Calendar</h3><div class="months">' + p.calendar.map(function (m) { return '<div class="mo"><b>Month ' + m.month + '</b><span>' + esc(m.focus) + '</span></div>'; }).join('') + '</div>' : '') +
-          '<div class="pmeta"><div><span>Audience</span>' + esc(p.audience) + '</div><div><span>Tone</span><input class="inp" data-pf="tone" value="' + esc(p.tone) + '"></div><div><span>Main button</span>' + esc(p.cta_label) + ' <a class="small" href="' + esc(p.cta_url) + '" target="_blank" rel="noopener">' + esc(p.cta_url.replace(/^https:\/\//, '')) + '</a></div>' +
-            '<div><span>Design</span>Vanmates brand (logo, colours, fonts) on every email' + (Object.keys(tpls).length ? ' · model on <select class="sel inl" data-pf="tpl">' + opts(tpls, A.tplId || '', 'no template (AI layout)') + '</select>' : '') + '</div></div>' +
-          '<div class="refine"><input class="inp" id="aiRefine" placeholder="Ask for changes to the plan, e.g. “make it 8 emails and focus on commissions”"><button class="btn btn-ghost" data-x="ai-refine">Update plan</button></div>' +
-        '</div>' +
-        '<div class="plan-aud"><h3 class="h" style="margin-top:0">Who gets it</h3>' +
-          '<div class="tiles lists one">' + lists + '</div>' +
-          '<div class="audadd"><button class="btn btn-ghost btn-sm" data-x="ai-csv">⬆ Import a CSV</button><button class="btn btn-ghost btn-sm" data-x="ai-paste">✎ Paste addresses</button><button class="btn btn-ghost btn-sm" data-x="w-newlist">+ List from rules</button></div>' +
-          '<p class="note" style="margin:8px 0 0">' + (A.listIds.length ? 'Up to <b>' + MK.num(people) + '</b> people. Unsubscribed, bounced and no-consent contacts are skipped automatically.' : 'Choose a list now or later (before launch).') + '</p>' +
-          '<button class="btn btn-primary btn-lg wide" data-x="ai-build" id="aiBuild">✨ Write all ' + total + ' emails</button>' +
-          '<p class="note" style="text-align:center;margin:6px 0 0">You review every email before anything is scheduled.</p>' +
-        '</div>' +
-      '</div>';
+          '<h3 class="h">Details</h3><div class="pmeta"><div><span>Audience</span>' + esc(p.audience) + '</div><div><span>Tone</span><input class="inp" data-pf="tone" value="' + esc(p.tone) + '"></div>' +
+            '<div><span>Main button</span>' + esc(p.cta_label) + '<br><a class="small" href="' + esc(p.cta_url) + '" target="_blank" rel="noopener">' + esc(p.cta_url.replace(/^https:\/\//, '')) + '</a></div>' +
+            '<div><span>Design</span>Vanmates brand: logo, colours and fonts on every email' + (Object.keys(tpls).length ? '<select class="sel" data-pf="tpl" style="margin-top:6px">' + opts(tpls, A.tplId || '', 'Layout: AI chooses') + '</select>' : '') + '</div></div>' +
+        '</div><aside class="pv-side">' + chat + aud + '</aside></div>';
+    var m = $('aiMsgs'); if (m) m.scrollTop = m.scrollHeight;
+    var rq = $('aiRefine');
+    if (rq) {
+      rq.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); var v = rq.value.trim(); if (v) aiPlan(v); } });
+      rq.addEventListener('input', function () { rq.style.height = 'auto'; rq.style.height = Math.min(160, rq.scrollHeight) + 'px'; });
+    }
   }
   async function aiPlan(extra) {
     var A = S.ai;
     var q = $('aiQ'); if (q) A.prompt = q.value.trim();
     if (A.prompt.length < 8) { A.error = 'Describe what you want to promote in a sentence.'; return drawAi(); }
+    if (!extra) { A.turns = []; A.changes = []; }
+    else { A.turns.push({ me: extra }); A.changes.push(extra); }
     A.busy = true; A.error = ''; drawAi();
     var r;
-    try { r = await api('ai.plan', { scope: S.scope, prompt: A.prompt + (extra ? '\nChanges requested: ' + extra : ''), start_date: A.start || undefined, timezone: A.tz }); }
-    catch (e) { A.busy = false; A.error = e.message; if (!extra) A.plan = null; return drawAi(); }
-    A.busy = false; A.plan = r.plan; A.slots = r.slots; A.reply = r.plan.reply || (r.ai ? 'Here’s a plan.' : 'Here’s a starting plan with simple defaults.');
+    try { r = await api('ai.plan', { scope: S.scope, prompt: A.prompt + (A.changes.length ? '\nChanges requested (apply all, latest last): ' + A.changes.join('; ') : ''), start_date: A.start || undefined, timezone: A.tz }); }
+    catch (e) { A.busy = false; if (extra) { A.turns.push({ ai: 'Sorry, that didn\u2019t work: ' + e.message }); A.changes.pop(); } else { A.error = e.message; A.plan = null; } return drawAi(); }
+    A.busy = false; A.plan = r.plan; A.slots = r.slots; A.reply = r.plan.reply || (r.ai ? 'Here\u2019s a plan.' : 'Here\u2019s a starting plan with simple defaults.');
+    A.turns.push({ ai: A.reply });
     if (r.lists) S.lists = r.lists;
     if (!extra || !A.listIds.length) A.listIds = r.plan.list_ids.slice();
     drawAi();
@@ -968,9 +1015,12 @@ details.ab { grid-column: 1 / -1; }
       $('app').innerHTML = head + meta + genBox + '<div class="edv"><div class="edv-bar"><button class="btn btn-ghost btn-sm" data-x="ed-close">\u2190 All emails</button>' +
         '<span class="edv-nav"><button class="btn btn-ghost btn-sm" data-ednav="-1"' + (i ? '' : ' disabled') + ' aria-label="Previous email">\u2039</button><b>Email ' + e.seq + '</b><span class="muted small">of ' + E.length + '</span><button class="btn btn-ghost btn-sm" data-ednav="1"' + (i < E.length - 1 ? '' : ' disabled') + ' aria-label="Next email">\u203a</button></span>' + st(e.status) +
         '<span class="sp"></span><span id="edState" class="small muted"></span>' + (ro ? '' : '<button class="btn btn-ghost btn-sm" data-x="ed-discard" id="edDiscard" hidden>Discard changes</button><button class="btn btn-primary" data-x="email-save">Save</button>') + '</div>' +
-        '<div class="edv-grid"><div id="emailEd"></div><div class="edv-pv"><div class="card pvcard"><div class="pvbar"><div class="chips"><button class="chip' + (S.pvMode !== 'phone' ? ' on' : '') + '" data-pvmode="desktop">Desktop</button><button class="chip' + (S.pvMode === 'phone' ? ' on' : '') + '" data-pvmode="phone">Phone</button></div><span class="sp"></span><span class="small muted" id="pvState">Live preview</span></div>' +
+        '<div class="edv-grid"><div class="edv-form">' +
+        (S.me.ai_ready && can('ai') && !ro ? '<div class="card chat edai"><div class="chat-h">\u2728 AI assistant<span class="sp"></span><span class="small muted">changes this email; you review before saving</span></div>' +
+          '<div class="qchips">' + ['Shorter', 'Warmer', 'Stronger button', 'More modern', 'More engaging opening', 'Fix spelling'].map(function (x) { return '<button class="idea" data-edai="' + esc(x) + '">' + esc(x) + '</button>'; }).join('') + '</div>' +
+          '<div class="composer sm"><textarea id="edAiQ" rows="1" placeholder="Describe a change\u2026 e.g. mention the January intake"></textarea><button class="send" data-x="ed-ai" aria-label="Apply">\u2191</button></div></div>' : '') +
+        '<div id="emailEd"></div></div><div class="edv-pv"><div class="card pvcard"><div class="pvbar"><div class="chips"><button class="chip' + (S.pvMode !== 'phone' ? ' on' : '') + '" data-pvmode="desktop">Desktop</button><button class="chip' + (S.pvMode === 'phone' ? ' on' : '') + '" data-pvmode="phone">Phone</button></div><span class="sp"></span><span class="small muted" id="pvState">Live preview</span></div>' +
         '<div class="inboxrow"><span class="av">V</span><div><b id="pvFrom">' + esc((S.me.senders.find(function (x) { return x.scope === c.scope; }) || {}).name || 'Vanmates') + '</b><b id="pvSubj" style="font-weight:600"></b><span id="pvPre"></span></div></div><div class="pvwrap' + (S.pvMode === 'phone' ? ' phone' : '') + '"><iframe id="livePv" sandbox="" title="Email preview"></iframe></div><div id="pvProblems"></div>' +
-        (S.me.ai_ready && can('ai') && !ro ? '<div class="composer sm aiinline"><textarea id="edAiQ" rows="1" placeholder="\u2728 Ask AI to change this email\u2026 e.g. shorter, warmer, stronger button"></textarea><button class="send" data-x="ed-ai" aria-label="Apply">\u2191</button></div>' : '') +
         '</div></div></div></div>';
       editor($('emailEd'), e, 'email');
       wireEditorView();
@@ -1295,6 +1345,8 @@ details.ab { grid-column: 1 / -1; }
     if (d.ailist) { var al = S.ai.listIds, id1 = +d.ailist, at1 = al.indexOf(id1); if (at1 >= 0) al.splice(at1, 1); else al.push(id1); return drawAi(); }
     if (d.view) { S.view = d.view; return drawCampaign(); }
     if (d.chip) return chatSend(d.chip);
+    if (d.refine) return aiPlan(d.refine);
+    if (d.edai) { $('edAiQ').value = d.edai; return document.querySelector('[data-x=ed-ai]').click(); }
     if (d.pvmode) { S.pvMode = d.pvmode; document.querySelectorAll('[data-pvmode]').forEach(function (b) { b.classList.toggle('on', b.dataset.pvmode === d.pvmode); }); var pw = document.querySelector('.pvwrap'); if (pw) pw.classList.toggle('phone', d.pvmode === 'phone'); return; }
     if (d.ednav) {
       if (S._edDirty) { if ($('edState')) $('edState').innerHTML = '<b style="color:var(--red)">Save or discard first</b>'; return; }
