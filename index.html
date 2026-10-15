@@ -1606,6 +1606,11 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 .lpp-table td{vertical-align:top}.lpp-table a.lpp-link{word-break:break-all}
 /* Follow up (Leads) */
 .lfu-overdue{color:#B94A3F;font-weight:700}.lfu-today{color:#9a6b00;font-weight:700}
+.lfu-sub{display:flex;justify-content:space-between;margin:10px 0 2px;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#7a6f63)}
+.lfu-sub-overdue{color:#B94A3F}.lfu-sub-today{color:#9a6b00}
+.ml-row.lfu-row{border-left:3px solid transparent;padding-left:8px}
+.ml-row.lfu-r-overdue{border-left-color:#B94A3F;background:rgba(185,74,63,.06)}
+.ml-row.lfu-r-today{border-left-color:#d9a400;background:rgba(217,164,0,.07)}
 .ml-bulk{position:sticky;bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--ink,#2b2620);color:#fff;border-radius:10px;padding:8px 12px;margin-top:14px}
 .ml-bulk select,.ml-bulk input{max-width:180px}
 .ml-grid td.num a{cursor:pointer;text-decoration:underline dotted}
@@ -1647,7 +1652,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-14-aprcpt1"></script>
+<script src="pms-supabase.js?v=2026-10-15-furows1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -30184,6 +30189,13 @@ function lfuCounts(list, today){
   const due = (list || []).filter(l => { const s = lfuDue(l, today).state; return s === 'overdue' || s === 'today'; }).length;
   return { total: (list || []).length, due };
 }
+// Sections for the Follow up lists, most urgent first: [key, title, leads]. Empty sections are left out.
+function lfuGroups(list, today){
+  const by = { overdue: [], today: [], upcoming: [], none: [] };
+  (list || []).forEach(l => { const s = lfuDue(l, today).state; by[s === 'week' || s === 'later' ? 'upcoming' : s].push(l); });
+  return [['overdue', 'Overdue', by.overdue], ['today', 'Due today', by.today], ['upcoming', 'Upcoming', by.upcoming], ['none', 'No date set', by.none]]
+    .filter(g => g[2].length);
+}
 /* FOLLOW-UP-CORE-END */
 /* TAYLOR-CORE-START */
 // Taylor (AI sales assistant) emails web leads from TAYLOR_EMAIL and claims the ones she works
@@ -30656,7 +30668,7 @@ function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s ? leadTermText(s) 
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
 function leadCap(s){ return s ? (s.charAt(0).toUpperCase() + s.slice(1)).replace(/_/g, ' ') : '—'; }
 function leadStatusBadge(st){
-  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', follow_up:'#c2410c', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', follow_up:'#9333ea', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
   const c = colors[st] || '#9aa0a6';
   return `<span class="badge" style="background:${c}1a;color:${c};border-color:${c}33">${esc(leadCap(st))}</span>`;
 }
@@ -30959,7 +30971,7 @@ function mlMoney(n){ return (window.__vmcSym || '$') + Math.round(Number(n) || 0
 function mlStatusControl(l){
   const st = l.status || 'new';
   if(!lppCanAct(l)) return leadStatusBadge(st);
-  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', follow_up:'#c2410c', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
+  const colors = { new:'#2563eb', contacted:'#7c5cff', qualified:'#b8860b', follow_up:'#9333ea', payment_pending:'#0e7490', won:'#1f9d57', lost:'#9aa0a6' };
   const c = colors[st] || '#9aa0a6';
   return `<select class="ml-st" data-ml-st="${esc(l.id)}" aria-label="Change status" title="Change status" style="background-color:${c}1a;color:${c};border-color:${c}33">` +
     LEAD_STATUSES.map(s => `<option value="${s}" ${s === st ? 'selected' : ''}>${esc(leadCap(s))}</option>`).join('') + `</select>`;
@@ -31002,6 +31014,16 @@ async function mlFieldChange(sel){
   const ok = await salesWriteLead(l, isCity ? { city: sel.value } : { service: sel.value });
   if(ok) showToast(isCity ? 'City: ' + sel.value : 'Service: ' + sel.options[sel.selectedIndex].text);
 }
+// Name + status/city/service pills, email · phone, what they asked for, then the row's own status line.
+// Shared by every lead row so changing the status never hides what we know about the customer.
+function mlRowMain(l, sub){
+  const p = leadPayloadOf(l), det = mlDetails(l, p);
+  const detTxt = [det.moveIn && 'move-in ' + esc(/^\d{4}-\d{2}-\d{2}/.test(det.moveIn) ? fmtDate(det.moveIn) : det.moveIn),
+    det.months && esc(det.months) + ' mo', det.budget && esc(leadMoney(det.budget)), det.room && esc(det.room)].filter(Boolean).join(' · ');
+  const email = String(l.email || p.email || '').trim(), phone = String(l.phone || p.phone || '').trim();
+  const contact = [email && `<a href="mailto:${esc(email)}">${esc(email)}</a>`, phone && `<a href="tel:${esc(phone.replace(/[^\d+]/g, ''))}">${esc(phone)}</a>`].filter(Boolean).join(' · ');
+  return `<div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${mlStatusControl(l)} ${mlCityControl(l, det.city)} ${mlServiceControl(l, p)}</div>${contact ? `<div class="name-sub ml-contact">${contact}</div>` : ''}${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>`;
+}
 function mlRow(l, now, today){
   const st = l.status || 'new', act = leadLastActivity(l), rel = leadReleaseAt(l);
   let sub = `${leadSourceLabel(l.source)} · ${st === 'new' ? 'claimed' : 'last activity'} ${act ? mlAgo(now - act) + ' ago' : '—'}`;
@@ -31018,16 +31040,11 @@ function mlRow(l, now, today){
     else if(d.state === 'today') sub += first ? ' · contact today' : ' · follow-up due today';
     else if(l.follow_up_at) sub += ` · follow-up ${fmtDate(l.follow_up_at)}`;
   }
-  const det = mlDetails(l, leadPayloadOf(l));
-  const detTxt = [det.moveIn && 'move-in ' + esc(/^\d{4}-\d{2}-\d{2}/.test(det.moveIn) ? fmtDate(det.moveIn) : det.moveIn),
-    det.months && esc(det.months) + ' mo', det.budget && esc(leadMoney(det.budget)), det.room && esc(det.room)].filter(Boolean).join(' · ');
   const wa = leadWhatsAppFor(l);
   const id = esc(l.id);
-  const p = leadPayloadOf(l), email = String(l.email || p.email || '').trim(), phone = String(l.phone || p.phone || '').trim();
-  const contact = [email && `<a href="mailto:${esc(email)}">${esc(email)}</a>`, phone && `<a href="tel:${esc(phone.replace(/[^\d+]/g, ''))}">${esc(phone)}</a>`].filter(Boolean).join(' · ');
   return `<div class="ml-row" data-ml-lead="${id}">
     <input type="checkbox" data-ml-check="${id}" ${ML_SEL.has(String(l.id)) ? 'checked' : ''} aria-label="Select">
-    <div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${mlStatusControl(l)} ${mlCityControl(l, det.city)} ${mlServiceControl(l, p)}</div>${contact ? `<div class="name-sub ml-contact">${contact}</div>` : ''}${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>
+    ${mlRowMain(l, sub)}
     <div class="ml-acts">
       ${wa.ok ? `<button class="btn btn-mini" type="button" data-ml-act="wa" data-id="${id}" title="Opens WhatsApp ${esc(wa.display)} and logs the contact">WhatsApp</button>` : ''}
       <button class="btn btn-mini" type="button" data-ml-act="log" data-id="${id}" title="You called, emailed or messaged them some other way. Counts as activity${st === 'new' ? ' and marks the lead Contacted' : ''}.">Log contact</button>
@@ -31084,9 +31101,7 @@ function renderMyLeads(){
       (arr.length ? arr.map(l => mlRow(l, now, today)).join('') : `<div class="card-sub" style="padding:8px 2px">Nothing due</div>`);
   }).join('');
   const fuDue = lfuCounts(myFu, today).due;
-  const fuHtml = !f && myFu.length ? `<div class="ml-sec"><span>Follow up${fuDue ? ` · <span class="lfu-overdue">${fuDue} due</span>` : ''}</span><span>${myFu.length}</span></div>` + myFu.map(l =>
-    `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${mlStatusControl(l)}</div>
-      <div class="name-sub">follow up ${lfuDueText(l, today)}${l.fu && l.fu.reason ? ' · ' + esc(l.fu.reason) : ''}</div></div></div>`).join('') : '';
+  const fuHtml = !f && myFu.length ? `<div class="ml-sec"><span>Follow up${fuDue ? ` · <span class="lfu-overdue">${fuDue} due</span>` : ''}</span><span>${myFu.length}</span></div>` + lfuListHtml(myFu, now, today, false) : '';
   const lppHtml = !f && myPp.length ? `<div class="ml-sec"><span>Payment pending</span><span>${myPp.length}</span></div>` + myPp.map(l => {
     const d = lppDaysPending(l, now), paid = l.pp_state && l.pp_state.paid;
     return `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${paid ? lppPill('paid') : ''}</div>
@@ -31118,6 +31133,7 @@ async function mlAct(kind, id){
   if(!l) return;
   if(kind === 'lost'){ if(typeof openDealModal === 'function') openDealModal(l.id, 'lost'); return; }
   if(kind === 'pp'){ lppOpenStage(l, null); return; }
+  if(kind === 'fudate'){ lfuOpenStage(l, null); return; }
   if(kind === 'wa' || kind === 'log'){
     // Open WhatsApp first, still inside the click, so the popup is not blocked.
     if(kind === 'wa'){ const wa = leadWhatsAppFor(l); if(!wa.ok){ showToast(leadWhatsAppProblem(wa, l.name, l.phone)); return; }
@@ -31479,8 +31495,8 @@ async function lfuSaveStage(){
   if(bad){ err.textContent = bad; return; }
   btn.disabled = true;
   try {
-    const now = new Date().toISOString();
-    const ok = await salesWriteLead(l, { status: LFU_STATUS, follow_up_at: date, fu: { since: now, reason, by: String((activeRole() || {}).email || '') }, last_touched_at: now });
+    const now = new Date().toISOString(), since = l.status === LFU_STATUS && l.fu && l.fu.since ? l.fu.since : now;
+    const ok = await salesWriteLead(l, { status: LFU_STATUS, follow_up_at: date, fu: { since, reason, by: String((activeRole() || {}).email || '') }, last_touched_at: now });
     if(!ok){ err.textContent = 'Not saved. Check the lead is yours and try again.'; return; }
     LFU_STAGE.onCancel = null;
     lfuCloseStage(false);
@@ -31496,6 +31512,25 @@ function lfuDueText(l, today){
   return `${esc(fmtDate(d.date))} <span class="name-sub">· in ${d.days} day${d.days === 1 ? '' : 's'}</span>`;
 }
 
+// A Follow up lead in the same row layout as My leads. Overdue rows get a red edge, today's an amber one.
+function lfuRow(l, now, today, showRep){
+  const due = lfuDue(l, today), act = leadLastActivity(l), days = lfuDaysIn(l, now), id = esc(l.id);
+  const sub = [`follow-up ${lfuDueText(l, today)}`, l.fu && l.fu.reason ? esc(l.fu.reason) : '',
+    `last activity ${act ? mlAgo(now - act) + ' ago' : '—'}`, `in follow up ${days} d`, showRep ? esc(leadsRepName(l.claimed_by)) : ''].filter(Boolean).join(' · ');
+  const wa = leadWhatsAppFor(l), can = lppCanAct(l);
+  return `<div class="ml-row lfu-row lfu-r-${due.state}" data-ml-lead="${id}">
+    ${mlRowMain(l, sub)}
+    <div class="ml-acts">
+      ${wa.ok ? `<button class="btn btn-mini" type="button" data-ml-act="wa" data-id="${id}" title="Opens WhatsApp ${esc(wa.display)}">WhatsApp</button>` : ''}
+      ${can ? `<button class="btn btn-mini" type="button" data-ml-act="fudate" data-id="${id}" title="Pick another follow-up day">Change date</button>` : ''}
+      ${can ? `<button class="btn btn-mini" type="button" data-ml-act="lost" data-id="${id}">Lost</button>` : ''}
+    </div></div>`;
+}
+function lfuListHtml(list, now, today, showRep){
+  return lfuGroups(list, today).map(([key, title, arr]) =>
+    `<div class="lfu-sub lfu-sub-${key}"><span>${title}</span><span>${arr.length}</span></div>` + arr.map(l => lfuRow(l, now, today, showRep)).join('')).join('');
+}
+
 // ---- Follow up tab
 function renderFollowUp(){
   const box = document.getElementById('leads-fu'); if(!box) return;
@@ -31508,22 +31543,10 @@ function renderFollowUp(){
     ${admin ? `<select class="form-input" data-lfu-f="rep">${opt('', 'All reps', LFU_FILTERS.rep)}${reps.map(e => opt(e, leadsRepName(e), LFU_FILTERS.rep)).join('')}</select>` : ''}
     <select class="form-input" data-lfu-f="when">${opt('', 'Any date', LFU_FILTERS.when)}${opt('due', 'Due today or late', LFU_FILTERS.when)}${opt('week', 'Next 7 days', LFU_FILTERS.when)}${opt('later', 'Later', LFU_FILTERS.when)}</select>
   </div>`;
-  const body = rows.map(l => {
-    const st = lfuDue(l, today).state, lc = lppLastContact(l), days = lfuDaysIn(l, now);
-    return `<tr class="${st === 'overdue' ? 'lpp-a7' : st === 'today' ? 'lpp-a3' : ''}" data-lfu-row="${esc(l.id)}" style="cursor:pointer">
-      <td><div class="name-main">${esc(l.name || '—')}</div><div class="name-sub">${esc(l.email || l.phone || '')}</div></td>
-      <td>${esc(leadsRepName(l.claimed_by))}</td>
-      <td>${lfuDueText(l, today)}</td>
-      <td>${l.fu && l.fu.reason ? esc(l.fu.reason) : '<span class="name-sub">—</span>'}</td>
-      <td class="right">${days}</td>
-      <td>${lc ? esc(mlAgo(now - lc)) + ' ago' : '—'}</td>
-      <td>${mlStatusControl(l)}</td>
-    </tr>`;
-  }).join('');
   box.innerHTML = `<div class="card card-pad"><div class="card-head"><div><div class="card-title">Follow <em>up</em></div>
     <div class="card-sub">${c.total} lead${c.total === 1 ? '' : 's'}${c.due ? ` · <b class="lfu-overdue">${c.due} due</b>` : ''} · customers who want to talk later · not counted in the ${LEAD_CAP}-lead limit · switch the status back to work one again</div></div></div>
     ${filters}
-    ${rows.length ? `<div style="overflow-x:auto"><table class="lpp-table"><thead><tr><th>Customer</th><th>Sales rep</th><th>Follow up on</th><th>Why later</th><th class="right">Days in stage</th><th>Last contact</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div>`
+    ${rows.length ? lfuListHtml(rows, now, today, admin)
       : `<div class="card-sub" style="padding:8px 2px">${mine.length ? 'No leads match these filters.' : 'No leads in Follow up. Move a lead here from its Status when the customer wants to talk later.'}</div>`}
   </div>`;
 }
@@ -33564,8 +33587,16 @@ document.getElementById('lead-status') && document.getElementById('lead-status')
   on('lfu-cancel', 'click', () => lfuCloseStage(true));
   on('lfu-save', 'click', lfuSaveStage);
   on('lfu-backdrop', 'click', e => { if(e.target.id === 'lfu-backdrop') lfuCloseStage(true); });
-  on('leads-fu', 'change', e => { const f = e.target.closest('[data-lfu-f]'); if(f){ LFU_FILTERS[f.dataset.lfuF] = f.value; renderFollowUp(); } });
-  on('leads-fu', 'click', e => { if(e.target.closest('a, [data-ml-st]')) return; const r = e.target.closest('[data-lfu-row]'); if(r) openLead(r.dataset.lfuRow); });
+  on('leads-fu', 'change', e => {
+    const f = e.target.closest('[data-lfu-f]'); if(f){ LFU_FILTERS[f.dataset.lfuF] = f.value; renderFollowUp(); return; }
+    const st = e.target.closest('[data-ml-st]'); if(st){ mlStatusChange(st); return; }
+    const p = e.target.closest('[data-ml-city],[data-ml-svc]'); if(p) mlFieldChange(p);
+  });
+  on('leads-fu', 'click', e => {
+    if(e.target.closest('a, select, [data-lfu-f]')) return;
+    const act = e.target.closest('[data-ml-act]'); if(act){ mlAct(act.dataset.mlAct, act.dataset.id); return; }
+    const r = e.target.closest('[data-ml-lead]'); if(r) openLead(r.dataset.mlLead);
+  });
   on('leads-pp', 'change', e => { const f = e.target.closest('[data-lpp-f]'); if(f){ LPP_FILTERS[f.dataset.lppF] = f.value; renderPayPending(); } });
   on('leads-pp', 'click', e => { if(e.target.closest('a')) return; const r = e.target.closest('[data-lpp-row]'); if(r) openLead(r.dataset.lppRow); });
   document.addEventListener('keydown', e => {
@@ -42922,8 +42953,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-14-aprcpt1"></script>
-<script src="extensions.js?v=2026-10-14-aprcpt1"></script>
-<script src="ap.js?v=2026-10-14-aprcpt1"></script>
+<script src="room-changes.js?v=2026-10-15-furows1"></script>
+<script src="extensions.js?v=2026-10-15-furows1"></script>
+<script src="ap.js?v=2026-10-15-furows1"></script>
 </body>
 </html>
