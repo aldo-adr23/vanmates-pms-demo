@@ -387,7 +387,7 @@ details.ab { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-15-mkai2"></script>
+<script src="marketing-core.js?v=2026-10-15-mkai3"></script>
 <script>
 (function () {
   'use strict';
@@ -561,6 +561,7 @@ details.ab { grid-column: 1 / -1; }
     var r = await act(function () { return api('campaigns.build', { scope: S.scope, plan: p, list_ids: A.listIds, start_date: A.start || undefined, timezone: A.tz, prompt: A.prompt, notes: A.tplId ? tplNotes(A.tplId) : undefined }); });
     if (!r) { btn.disabled = false; btn.textContent = 'Try again'; return; }
     toast((r.slots || []).length + ' emails planned. The AI is writing them now.');
+    kick(r.id);
     S.ai = null; S.emailId = null; S.tab = 'campaigns';
     document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.tab === 'campaigns'); });
     try { history.replaceState(null, '', '#campaigns'); } catch (e) {}
@@ -921,6 +922,8 @@ details.ab { grid-column: 1 / -1; }
     if (!S.emailId && !(document.activeElement && document.activeElement.id === 'chatQ')) drawCampaign();
     if (!(r.job && ['queued', 'generating'].indexOf(r.job.status) >= 0)) { clearInterval(S.poll); S.poll = null; if (was && was !== r.job.status) toast('The AI finished: ' + MK.statusLabel(r.job.status) + '.'); }
   }
+  // Start the AI now rather than at the next cron minute (fire and forget; the page polls for drafts).
+  function kick(id) { api('campaigns.kick', { id: id }).then(function () { if (S.campId === id) refreshCampaign(); }).catch(function () {}); }
   function drawCampaign() {
     S._inReview = false;
     var r = S.camp, c = r.campaign, job = r.job, E = r.emails;
@@ -1073,7 +1076,7 @@ details.ab { grid-column: 1 / -1; }
     catch (e) { S._chatBusy = false; S.camp.chat.push({ role: 'ai', text: e.message }); drawCampaign(); return; }
     S._chatBusy = false;
     S.camp.chat = r.chat;
-    if (r.action !== 'none') toast('Working on it: the emails update in a moment.');
+    if (r.action !== 'none') { toast('Working on it: the emails update in a moment.'); kick(S.campId); }
     openCampaign(S.campId);
   }
   function briefForm(c) {
@@ -1322,7 +1325,7 @@ details.ab { grid-column: 1 / -1; }
       case 'ai-go': return aiPlan();
       case 'chat-go': return chatSend();
       case 'ins-ai': S._insAi = S.reportCamp; return reports();
-      case 'followup': { var rfu = await act(function () { return api('campaigns.followup', { id: S.reportCamp }); }, 'Follow-up drafted: the AI is writing it.'); if (rfu) { S.tab = 'automations'; document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.tab === 'automations'); }); try { history.replaceState(null, '', '#automations'); } catch (e) {} openCampaign(rfu.id); } return; }
+      case 'followup': { var rfu = await act(function () { return api('campaigns.followup', { id: S.reportCamp }); }, 'Follow-up drafted: the AI is writing it.'); if (rfu) { S.tab = 'automations'; document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.tab === 'automations'); }); try { history.replaceState(null, '', '#automations'); } catch (e) {} openCampaign(rfu.id); kick(rfu.id); } return; }
       case 'camp-results': S.reportCamp = S.campId; S.campId = null; S.camp = null; S.emailId = null; return go('reports');
       case 'ed-close': if (S._edDirty) { if ($('edState')) $('edState').innerHTML = '<b style="color:var(--red)">Save or discard first</b>'; return; } S.emailId = null; return drawCampaign();
       case 'ed-discard': S._edDirty = false; return drawCampaign();
@@ -1460,7 +1463,7 @@ details.ab { grid-column: 1 / -1; }
         var brief = { months: +$('bMonths').value || undefined, per_month: +$('bPer').value || undefined, start_date: $('bStart').value || undefined, send_time: $('bTime').value || undefined,
           tone: $('bTone').value || undefined, cta: $('bCta').value || undefined, objective: $('bObj').value || undefined, notes: $('bNotes').value || undefined, timezone: S.camp.campaign.timezone, language: S.camp.campaign.language };
         var r6 = await act(function () { return api('campaigns.generate', { id: S.campId, prompt: $('bPrompt').value, brief: brief }); });
-        if (r6) { toast(r6.slots.length + ' emails planned from ' + r6.slots[0].local_date + ' to ' + r6.slots[r6.slots.length - 1].local_date + '. The AI is writing them now.'); openCampaign(S.campId); }
+        if (r6) { toast(r6.slots.length + ' emails planned from ' + r6.slots[0].local_date + ' to ' + r6.slots[r6.slots.length - 1].local_date + '. The AI is writing them now.'); openCampaign(S.campId); kick(S.campId); }
         return;
       }
       case 'camp-revise':
@@ -1475,7 +1478,7 @@ details.ab { grid-column: 1 / -1; }
           $('modalCard').insertAdjacentHTML('beforeend', '<div class="warnbox" style="margin-top:10px">Will rewrite: ' + (r7.affected.map(function (a) { return '#' + a.seq; }).join(', ') || 'nothing') + (r7.kept_manual.length ? '<br>Kept (edited by hand): #' + r7.kept_manual.join(', #') : '') + '</div><div class="actions"><button class="btn btn-primary" data-x="camp-revise-go">Rewrite these</button></div>');
           return;
         }
-        closeModal(); toast('The AI is revising ' + r7.affected.length + ' email(s).'); openCampaign(S.campId);
+        closeModal(); toast('The AI is revising ' + r7.affected.length + ' email(s).'); openCampaign(S.campId); kick(S.campId);
         return;
       }
       case 'facts': return factsModal();
