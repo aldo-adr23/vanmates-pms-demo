@@ -1652,7 +1652,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-15-mkai5"></script>
+<script src="pms-supabase.js?v=2026-10-15-ptndup1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -23016,6 +23016,30 @@ function ptnAgencyRowAction(agency, users){
 }
 // A new agency's status from the create form's "Activate now" box.
 function ptnNewAgencyStatus(activateNow){ return activateNow ? 'active' : 'pending'; }
+// "Duplicate" on an agency row: a New agency form pre-filled with the source's settings
+// (language, currency, billing terms, commission, links-only, rep, kind, contract rule) and
+// none of its branding: name, legal name, country, contacts, billing email/address, room link
+// tag, payment reference and logo stay blank, so the new agency gets its own tag/ref (made
+// from its name) and uploads its own logo. CEL-style category bookings are not copied (the
+// CEL tab switches an agency on, with its rates); the form says so.
+const PTN_DUP_KEYS = ['language', 'currency', 'payment_terms', 'credit_limit_cents', 'commission_model', 'commission_pct',
+  'commission_flat_cents', 'commission_monthly_cents', 'homestay_commission_cents', 'links_only', 'rep_id', 'kind', 'contract_required'];
+function ptnDuplicateDraft(source){
+  const src = source || {}, draft = {};
+  PTN_DUP_KEYS.forEach(k => { if (k in src) draft[k] = src[k]; });
+  draft.dup_of = src.id || null;
+  draft.dup_name = src.name || '';
+  draft.dup_category = src.booking_model === 'category';
+  return draft;
+}
+// Columns the create form has no field for, copied straight onto the new row's insert.
+function ptnDuplicateInsertExtras(draft){
+  const out = {};
+  if (!draft || !draft.dup_of) return out;
+  if ('kind' in draft && draft.kind) out.kind = draft.kind;
+  if ('contract_required' in draft) out.contract_required = !!draft.contract_required;
+  return out;
+}
 /* PARTNER-ONBOARD-CORE-END */
 /* ---- Partners (DOM side of PARTNERS-CORE) ------------------------------------
    Admin only. Reads through the signed-in admin's session; RLS (vm_is_admin())
@@ -23024,7 +23048,7 @@ function ptnNewAgencyStatus(activateNow){ return activateNow ? 'active' : 'pendi
    team_members.role = 'admin'. Cancel goes through partner_cancel_booking, which
    also releases the room and queues the Asana write-back. */
 const PARTNERS_APP = 'https://partners.vanmates.com';
-const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, editUser: null, cancelId: null, confirmRemoveLogo: null, filters: { agency: '', city: '', status: '' } };
+const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, dupFrom: null, editUser: null, cancelId: null, confirmRemoveLogo: null, filters: { agency: '', city: '', status: '' } };
 let ptnData = null, ptnLoading = null, ptnLoadedAt = 0;
 // Admins, and anyone an admin gave the Partners page (allowed_pages), the same rule
 // as vm_partners_member() in partners-page-access-2026-10-05.sql.
@@ -23734,7 +23758,8 @@ function ptnBillingLine(a){
 function ptnAgencyFormHtml(a){
   a = a || {};
   return `<form class="card" data-ptn-agency-form style="padding:16px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
-    <strong style="grid-column:1/-1">${a.id ? 'Edit ' + esc(a.name) : 'New agency'}</strong>
+    <strong style="grid-column:1/-1">${a.id ? 'Edit ' + esc(a.name) : a.dup_of ? 'New agency — copy of ' + esc(a.dup_name) + '\'s settings' : 'New agency'}</strong>
+    ${a.dup_of ? `<p class="name-sub" style="grid-column:1/-1;margin:0">Copied from ${esc(a.dup_name)}: language, currency, billing terms, commission, links only, rep and the rest of its setup. Not copied: its name, contacts, billing details, room link tag, payment reference and logo (the new agency's admin uploads their own logo in Account → Your logo).${a.dup_category ? ' CEL-style category bookings are not copied: switch the new agency on from the CEL tab.' : ''}</p>` : ''}
     ${ptnField('name', 'Agency name *', a.name)}
     ${ptnField('country', 'Country', a.country)}
     ${ptnSelectField('language', 'Language', PTN_LANG_OPTS, a.language || 'en')}
@@ -23770,7 +23795,8 @@ function ptnAgenciesHtml(){
   const d = ptnData;
   const linksOn = ptnLinksOn(), fin = ptnStaffAdmin();
   if (linksOn && !PTN_REPS && !ptnRepsLoading) ptnLoadReps();
-  const edit = PTN_STATE.editAgency === 'new' ? {} : (PTN_STATE.editAgency && d.agencies.find(a => a.id === PTN_STATE.editAgency));
+  const dupSrc = PTN_STATE.editAgency === 'new' && PTN_STATE.dupFrom && d.agencies.find(a => a.id === PTN_STATE.dupFrom);
+  const edit = PTN_STATE.editAgency === 'new' ? (dupSrc ? ptnDuplicateDraft(dupSrc) : {}) : (PTN_STATE.editAgency && d.agencies.find(a => a.id === PTN_STATE.editAgency));
   const count = (list, id) => list.filter(x => x.agency_id === id).length;
   return `<div style="margin-bottom:12px"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button></div>
     ${edit ? ptnAgencyFormHtml(edit) : ''}
@@ -23786,7 +23812,8 @@ function ptnAgenciesHtml(){
         ${linksOn ? `<td>${esc(ptnRepName(PTN_REPS || [], a.rep_id))}</td>` : ''}
         <td>${count(d.users, a.id)}${count(d.users, a.id) ? '' : ptnNoUsersHtml(a, true)}</td><td>${count(d.bookings, a.id)}</td>
         <td style="white-space:nowrap"><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
-          <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button></td>
+          <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button>
+          <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-dup="${esc(a.id)}" title="New agency with ${esc(a.name)}'s settings, without its name, contacts, tag or logo">Duplicate</button></td>
       </tr>`).join('')}</tbody></table></div>` : '<p class="name-sub">No agencies yet.</p>'}`;
 }
 // Activate / Resend button under an agency's status pill (see ptnAgencyRowAction); the
@@ -23937,9 +23964,10 @@ function ptnWire(root){
   const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => fn(el, e)));
   on('#ptn-refresh', 'click', b => { b.disabled = true; ptnReload(); });
   on('[data-ptn-tab]', 'click', b => { PTN_STATE.tab = b.dataset.ptnTab; renderPartners(); window.scrollTo(0, 0); });
-  on('[data-ptn-agency-new]', 'click', () => { PTN_STATE.editAgency = 'new'; renderPartners(); });
-  on('[data-ptn-agency-edit]', 'click', b => { PTN_STATE.editAgency = b.dataset.ptnAgencyEdit; renderPartners(); window.scrollTo(0, 0); });
-  on('[data-ptn-agency-cancel]', 'click', () => { PTN_STATE.editAgency = null; renderPartners(); });
+  on('[data-ptn-agency-new]', 'click', () => { PTN_STATE.editAgency = 'new'; PTN_STATE.dupFrom = null; renderPartners(); });
+  on('[data-ptn-agency-dup]', 'click', b => { PTN_STATE.editAgency = 'new'; PTN_STATE.dupFrom = b.dataset.ptnAgencyDup; renderPartners(); window.scrollTo(0, 0); });
+  on('[data-ptn-agency-edit]', 'click', b => { PTN_STATE.editAgency = b.dataset.ptnAgencyEdit; PTN_STATE.dupFrom = null; renderPartners(); window.scrollTo(0, 0); });
+  on('[data-ptn-agency-cancel]', 'click', () => { PTN_STATE.editAgency = null; PTN_STATE.dupFrom = null; renderPartners(); });
   on('[data-ptn-agency-users]', 'click', b => { PTN_STATE.agencyId = b.dataset.ptnAgencyUsers; PTN_STATE.editUser = null; PTN_STATE.tab = 'users'; renderPartners(); window.scrollTo(0, 0); });
   on('[data-ptn-agency-form]', 'submit', (f, e) => { e.preventDefault(); ptnSaveAgency(f); });
   on('[data-ptn-agency-form] select[name="commission_model"]', 'change', s => {
@@ -24024,13 +24052,15 @@ async function ptnSaveAgency(form){
   if (links.ok && Object.keys(links.patch).length) Object.assign(bill.patch, links.patch);
   if (!r.ok || !bill.ok || !comm.ok || !links.ok) { msg.textContent = r.errors.concat(bill.errors, comm.errors, links.errors).join('. '); return; }
   if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
+  const dupSrc = !id && PTN_STATE.dupFrom && ptnData.agencies.find(a => a.id === PTN_STATE.dupFrom);
+  const extras = dupSrc ? ptnDuplicateInsertExtras(ptnDuplicateDraft(dupSrc)) : {};
   const row = Object.assign({}, r.row, comm.fields, { updated_at: new Date().toISOString(), updated_by: ptnActor() });
   msg.textContent = 'Saving…'; if (btn) btn.disabled = true;
   let newId;
   try {
-    newId = await ptnWrite(id ? sb.from('partner_agencies').update(row).eq('id', id) : sb.from('partner_agencies').insert(row));
+    newId = await ptnWrite(id ? sb.from('partner_agencies').update(row).eq('id', id) : sb.from('partner_agencies').insert(Object.assign({}, row, extras)));
   } catch (e) { msg.textContent = 'Could not save: ' + (e.message || e); if (btn) btn.disabled = false; return; }
-  if (!id) { PTN_STATE.agencyId = newId; PTN_STATE.editAgency = newId; }
+  if (!id) { PTN_STATE.agencyId = newId; PTN_STATE.editAgency = newId; PTN_STATE.dupFrom = null; }
   let userNote = '', createdId = null;
   if (firstUser) {
     const plan = ptnFirstUserPlan(Object.assign({}, r.row, { id: newId }), ptnData.users, ptnData.agencies);
@@ -42953,8 +42983,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-15-mkai5"></script>
-<script src="extensions.js?v=2026-10-15-mkai5"></script>
-<script src="ap.js?v=2026-10-15-mkai5"></script>
+<script src="room-changes.js?v=2026-10-15-ptndup1"></script>
+<script src="extensions.js?v=2026-10-15-ptndup1"></script>
+<script src="ap.js?v=2026-10-15-ptndup1"></script>
 </body>
 </html>
