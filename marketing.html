@@ -341,6 +341,25 @@ label.f.big textarea { font-size: 14.5px; padding: 12px 14px; border-radius: 12p
 .abx { margin-top: 4px; font-size: 11.5px; color: var(--muted); } .abx span { display: inline-block; width: 16px; height: 16px; border-radius: 4px; background: var(--blue-soft); color: var(--b-blue); text-align: center; font-weight: 800; font-size: 10px; line-height: 16px; margin-right: 4px; }
 .rbar { display: inline-block; width: 44px; height: 6px; border-radius: 3px; background: var(--cream-2); vertical-align: middle; margin-right: 6px; overflow: hidden; } .rbar i { display: block; height: 100%; background: var(--blue); }
 table.t tr.best td { background: var(--green-soft); }
+/* email editor view */
+.edv-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; position: sticky; top: 6px; z-index: 5; box-shadow: var(--shadow-sm); }
+.edv-nav { display: inline-flex; align-items: center; gap: 6px; }
+.edv-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .edv-grid { grid-template-columns: minmax(0, 1fr); } }
+.edv-pv { position: sticky; top: 70px; } @media (max-width: 1000px) { .edv-pv { position: static; } }
+.pvcard { overflow: hidden; padding-bottom: 10px; }
+.pvbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.pvwrap { background: var(--cream-2); padding: 14px; display: flex; justify-content: center; }
+.pvwrap iframe { width: 100%; height: min(70vh, 720px); border: 0; border-radius: 10px; background: #FAF5ED; box-shadow: 0 4px 18px rgba(43,33,26,.08); transition: width .2s; }
+.pvwrap.phone iframe { width: 390px; max-width: 100%; }
+.aiinline { margin: 10px 12px 0; }
+.edhead { margin-bottom: 4px; } .edhead b { display: block; font-family: var(--serif); font-size: 18px; } .edhead span { display: block; color: var(--muted); font-size: 12.5px; }
+details.ab summary, details.tips summary { cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--red); margin-top: 4px; }
+details.ab[open] summary { margin-bottom: 4px; }
+details.ab { grid-column: 1 / -1; }
+.inboxrow { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; min-width: 0; }
+.inboxrow .av { width: 30px; height: 30px; border-radius: 50%; background: var(--red); color: var(--on-red); display: grid; place-items: center; font-weight: 800; flex: none; }
+.inboxrow div { min-width: 0; } .inboxrow b, .inboxrow span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .inboxrow span { color: var(--muted); font-size: 12px; }
 .stop-on { background: var(--red); color: var(--on-red); padding: 8px 14px; border-radius: 10px; font-weight: 700; margin: 0 0 10px; }
 </style>
 </head>
@@ -368,7 +387,7 @@ table.t tr.best td { background: var(--green-soft); }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-15-mkai1"></script>
+<script src="marketing-core.js?v=2026-10-15-mkai2"></script>
 <script>
 (function () {
   'use strict';
@@ -803,20 +822,20 @@ table.t tr.best td { background: var(--green-soft); }
     var camp = S.camp && S.camp.campaign;
     host.innerHTML = '<div class="card pad">' +
       (kind === 'template' ? '<div class="grid2"><label class="f">Name<input class="inp" id="eName" value="' + esc(m.name) + '"></label><label class="f">Folder<input class="inp" id="eFolder" value="' + esc(m.folder) + '"></label></div>'
-        : '<div class="toolbar" style="margin:0"><button class="btn btn-ghost btn-sm" data-x="ed-close">\u2190 Assistant</button><b style="flex:1">#' + m.seq + ' ' + esc(m.name || '') + '</b>' + st(m.status) + '</div><p class="note">' + esc(m.objective || '') + '</p>') +
+        : '<div class="edhead"><b>' + esc(m.name || 'Email ' + m.seq) + '</b>' + (m.objective ? '<span>' + esc(m.objective) + '</span>' : '') + '</div>') +
       ((m.blockers || []).length ? '<div class="warnbox"><b>Needs attention</b><ul>' + m.blockers.map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('') + '</ul></div>' : '') +
       '<div class="grid2" style="margin-top:8px"><label class="f full">Subject<input class="inp" id="eSubj" value="' + esc(m.subject) + '"' + (ro ? ' disabled' : '') + '></label>' +
       '<label class="f full">Preview text<input class="inp" id="ePre" value="' + esc(m.preheader) + '"' + (ro ? ' disabled' : '') + '></label>' +
-      (kind === 'email' ? '<label class="f full">Subject B for an A/B test (optional: half the recipients get it)<input class="inp" id="eSubjB" value="' + esc(m.audience && m.audience.subject_b || '') + '"' + (ro ? ' disabled' : '') + ' placeholder="Leave empty for no test"></label>' : '') +
+      (kind === 'email' ? '<details class="f full ab"' + (m.audience && m.audience.subject_b ? ' open' : '') + '><summary>A/B test a second subject</summary><label class="f">Subject B (half the recipients get it)<input class="inp" id="eSubjB" value="' + esc(m.audience && m.audience.subject_b || '') + '"' + (ro ? ' disabled' : '') + ' placeholder="Leave empty for no test"></label></details>' : '') +
       (kind === 'email' && camp.kind === 'broadcast' ? '<label class="f">Send date (' + esc(camp.timezone) + ')<input class="inp" type="date" id="eDate" value="' + esc(m.local_date || '') + '"' + (ro ? ' disabled' : '') + '></label><label class="f">Time<input class="inp" type="time" id="eTime" value="' + esc(m.local_time || '10:00') + '"' + (ro ? ' disabled' : '') + '></label>' : '') +
       (kind === 'email' && camp.kind === 'sequence' ? '<label class="f">Days after the previous step<input class="inp" type="number" min="0" max="365" id="eDelay" value="' + esc(m.delay_days) + '"' + (ro ? ' disabled' : '') + '></label>' : '') +
-      '</div><p class="note" style="margin-top:8px">Personal fields: {{first_name|there}}, {{name|…}}, {{city|your city}}. Always give a fallback after the bar. Links: [label](https://…), bold: **text**. The availability button uses https://hosts.vanmates.com/m/a (each host gets their own form link).</p>' +
+      '</div><details class="tips"><summary>Writing tips</summary><p class="note" style="margin:6px 0 0">Personal fields: {{first_name|there}}, {{name|…}}, {{city|your city}}. Always give a fallback after the bar. Links: [label](https://…), bold: **text**.' + (S.scope === 'homestay_hosts' ? ' The availability button uses https://hosts.vanmates.com/m/a (each host gets their own form link).' : '') + '</p></details>' +
       '<div id="eBlocks"></div>' + (ro ? '' : '<div class="toolbar">Add: ' + ['heading', 'text', 'list', 'button', 'notice', 'image', 'divider'].map(function (t) { return '<button class="btn btn-ghost btn-sm" data-add="' + t + '">' + t + '</button>'; }).join('') + '</div>') +
-      '<div class="actions">' + (ro ? '' : '<button class="btn btn-primary" data-x="' + (kind === 'template' ? 'tpl-save' : 'email-save') + '">Save' + (kind === 'template' ? ' as new version' : '') + '</button>') +
-      '<button class="btn btn-ghost" data-x="preview" data-mode="desktop">Preview</button><button class="btn btn-ghost" data-x="preview" data-mode="mobile">Mobile preview</button>' +
+      '<div class="actions">' + (ro || kind === 'email' ? '' : '<button class="btn btn-primary" data-x="tpl-save">Save as new version</button>') +
+      (kind === 'email' ? '' : '<button class="btn btn-ghost" data-x="preview" data-mode="desktop">Preview</button><button class="btn btn-ghost" data-x="preview" data-mode="mobile">Mobile preview</button>') +
       (kind === 'email' ? '<button class="btn btn-ghost" data-x="email-test">Send me a test</button>' : '') +
       (kind === 'email' && can('templates') ? '<button class="btn btn-ghost" data-x="email-tpl">Save as template</button>' : '') +
-      (S.me.ai_ready && can('ai') && !ro ? '<button class="btn btn-ghost" data-x="ai-rewrite">AI rewrite…</button>' : '') +
+      (S.me.ai_ready && can('ai') && !ro && kind !== 'email' ? '<button class="btn btn-ghost" data-x="ai-rewrite">AI rewrite…</button>' : '') +
       (kind === 'email' && !ro ? '<button class="btn btn-ghost" data-x="email-dup">Duplicate</button>' + (m.status === 'skipped' ? '<button class="btn btn-ghost" data-x="email-unskip">Unskip</button>' : '<button class="btn btn-ghost" data-x="email-skip">Skip</button>') : '') +
       (kind === 'email' && m.status === 'held' ? '<label class="cb"><input type="checkbox" id="eConfirm"> I checked the amounts against our real terms</label>' : '') +
       '</div>' +
@@ -835,6 +854,7 @@ table.t tr.best td { background: var(--green-soft); }
         : b.type === 'heading' ? '<input class="inp" data-b="' + i + '" data-k="text" value="' + esc(b.text) + '"' + dis + '>'
         : '<textarea class="inp" data-b="' + i + '" data-k="text"' + dis + ' rows="' + (b.type === 'text' ? 4 : 2) + '">' + esc(b.text) + '</textarea>';
       return '<div class="blk"><div class="bh"><span style="flex:1">' + esc(b.type) + '</span>' + (E.ro ? '' : '<button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="-1" aria-label="Move up">↑</button><button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="1" aria-label="Move down">↓</button><button class="btn btn-ghost btn-sm" data-rm="' + i + '" aria-label="Remove">✕</button>') + '</div>' + body + '</div>'; }).join('');
+    if ($('livePv') && S._edDirty) livePv(300);
     $('eBlocks').querySelectorAll('[data-b]').forEach(function (el) {
       el.addEventListener('input', function () { var b = E.blocks[+el.dataset.b]; b[el.dataset.k] = el.dataset.k === 'items' ? el.value.split('\n') : el.value; });
     });
@@ -938,11 +958,56 @@ table.t tr.best td { background: var(--green-soft); }
         (v === 'calendar' ? calendar(E) : v === 'list' ? emailList(E, c) : emailCards(E, c, gen ? job.total : 0));
     }
     var auto = c.kind === 'sequence' ? autoBox(r) : '';
-    var side = S.emailId ? '<div id="emailEd"></div>' : chatPanel(r);
-    $('app').innerHTML = head + stage + meta + genBox + auto + '<div class="ws"><div class="ws-main">' + body + '</div><aside class="ws-side">' + side + '</aside></div>';
-    if (S.emailId) { var e = E.find(function (x) { return x.id === S.emailId; }); if (e) editor($('emailEd'), e, 'email'); else { S.emailId = null; drawCampaign(); return; } }
-    else wireChat();
+    if (S.emailId) {
+      var e = E.find(function (x) { return x.id === S.emailId; });
+      if (!e) { S.emailId = null; drawCampaign(); return; }
+      var i = E.indexOf(e), ro = ['sent', 'sending', 'cancelled'].indexOf(e.status) >= 0;
+      $('app').innerHTML = head + meta + genBox + '<div class="edv"><div class="edv-bar"><button class="btn btn-ghost btn-sm" data-x="ed-close">\u2190 All emails</button>' +
+        '<span class="edv-nav"><button class="btn btn-ghost btn-sm" data-ednav="-1"' + (i ? '' : ' disabled') + ' aria-label="Previous email">\u2039</button><b>Email ' + e.seq + '</b><span class="muted small">of ' + E.length + '</span><button class="btn btn-ghost btn-sm" data-ednav="1"' + (i < E.length - 1 ? '' : ' disabled') + ' aria-label="Next email">\u203a</button></span>' + st(e.status) +
+        '<span class="sp"></span><span id="edState" class="small muted"></span>' + (ro ? '' : '<button class="btn btn-ghost btn-sm" data-x="ed-discard" id="edDiscard" hidden>Discard changes</button><button class="btn btn-primary" data-x="email-save">Save</button>') + '</div>' +
+        '<div class="edv-grid"><div id="emailEd"></div><div class="edv-pv"><div class="card pvcard"><div class="pvbar"><div class="chips"><button class="chip' + (S.pvMode !== 'phone' ? ' on' : '') + '" data-pvmode="desktop">Desktop</button><button class="chip' + (S.pvMode === 'phone' ? ' on' : '') + '" data-pvmode="phone">Phone</button></div><span class="sp"></span><span class="small muted" id="pvState">Live preview</span></div>' +
+        '<div class="inboxrow"><span class="av">V</span><div><b id="pvFrom">' + esc((S.me.senders.find(function (x) { return x.scope === c.scope; }) || {}).name || 'Vanmates') + '</b><b id="pvSubj" style="font-weight:600"></b><span id="pvPre"></span></div></div><div class="pvwrap' + (S.pvMode === 'phone' ? ' phone' : '') + '"><iframe id="livePv" sandbox="" title="Email preview"></iframe></div><div id="pvProblems"></div>' +
+        (S.me.ai_ready && can('ai') && !ro ? '<div class="composer sm aiinline"><textarea id="edAiQ" rows="1" placeholder="\u2728 Ask AI to change this email\u2026 e.g. shorter, warmer, stronger button"></textarea><button class="send" data-x="ed-ai" aria-label="Apply">\u2191</button></div>' : '') +
+        '</div></div></div></div>';
+      editor($('emailEd'), e, 'email');
+      wireEditorView();
+      return;
+    }
+    $('app').innerHTML = head + stage + meta + genBox + auto + '<div class="ws"><div class="ws-main">' + body + '</div><aside class="ws-side">' + chatPanel(r) + '</aside></div>';
+    wireChat();
     loadCardPreviews(E);
+  }
+  // Editor view: live preview (debounced emails.preview with the unsaved values), unsaved state, prev/next.
+  function wireEditorView() {
+    var host = $('emailEd');
+    S._edDirty = false;
+    host.addEventListener('input', edDirty);
+    host.addEventListener('change', edDirty);
+    var q = $('edAiQ');
+    if (q) q.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.querySelector('[data-x=ed-ai]').click(); } });
+    livePv(0);
+  }
+  function edDirty() {
+    S._edDirty = true;
+    if ($('edState')) $('edState').textContent = 'Unsaved changes';
+    if ($('edDiscard')) $('edDiscard').hidden = false;
+    livePv(500);
+  }
+  function livePv(wait) {
+    clearTimeout(S._pvT);
+    S._pvT = setTimeout(async function () {
+      if (!$('livePv') || !S._ed) return;
+      if ($('pvState')) $('pvState').textContent = 'Updating\u2026';
+      var seq = (S._pvSeq = (S._pvSeq || 0) + 1);
+      var r = await api('emails.preview', Object.assign({ id: S._ed.m.id }, edValues())).catch(function () { return null; });
+      if (seq !== S._pvSeq || !$('livePv')) return;
+      if ($('pvState')) $('pvState').textContent = r ? 'Live preview' : 'Preview unavailable';
+      if (!r) return;
+      $('livePv').srcdoc = r.html;
+      var ev = edValues(); var fb = function (x) { return String(x || '').replace(/\{\{\s*(\w+)\s*(?:\|([^}]*))?\}\}/g, function (m0, k, f) { return k === 'first_name' ? 'Alex' : k === 'city' ? 'Vancouver' : (f || ''); }); };
+      if ($('pvSubj')) { $('pvSubj').textContent = fb(ev.subject) || '(no subject)'; $('pvPre').textContent = fb(ev.preheader); }
+      $('pvProblems').innerHTML = r.problems.length ? '<div class="warnbox" style="margin:10px 12px 0"><ul>' + r.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></div>' : '';
+    }, wait);
   }
   function stages(list) {
     var cur = list.findIndex(function (x) { return !x[1]; });
@@ -1220,13 +1285,20 @@ table.t tr.best td { background: var(--green-soft); }
     if (d.list !== undefined) { S.listId = d.list ? +d.list : null; return loadContacts(); }
     if (d.contact) return contactDrawer(+d.contact);
     if (d.tpl) { S.tpl = null; return openTemplate(+d.tpl); }
-    if (d.add) { S._ed.blocks.push(MK.newBlock(d.add)); return drawBlocks(); }
-    if (d.mv) { S._ed.blocks = MK.moveBlock(S._ed.blocks, +d.mv, +d.d); return drawBlocks(); }
-    if (d.rm) { S._ed.blocks.splice(+d.rm, 1); return drawBlocks(); }
+    if (d.add) { S._ed.blocks.push(MK.newBlock(d.add)); S._edDirty = true; edDirty(); return drawBlocks(); }
+    if (d.mv) { S._ed.blocks = MK.moveBlock(S._ed.blocks, +d.mv, +d.d); if ($('livePv')) edDirty(); return drawBlocks(); }
+    if (d.rm) { S._ed.blocks.splice(+d.rm, 1); if ($('livePv')) edDirty(); return drawBlocks(); }
     if (d.sug !== undefined) { var sg = S.ai.sugs[+d.sug]; S.ai.prompt = sg.prompt; var qq = $('aiQ'); if (qq) qq.value = sg.prompt; return aiPlan(); }
     if (d.ailist) { var al = S.ai.listIds, id1 = +d.ailist, at1 = al.indexOf(id1); if (at1 >= 0) al.splice(at1, 1); else al.push(id1); return drawAi(); }
     if (d.view) { S.view = d.view; return drawCampaign(); }
     if (d.chip) return chatSend(d.chip);
+    if (d.pvmode) { S.pvMode = d.pvmode; document.querySelectorAll('[data-pvmode]').forEach(function (b) { b.classList.toggle('on', b.dataset.pvmode === d.pvmode); }); var pw = document.querySelector('.pvwrap'); if (pw) pw.classList.toggle('phone', d.pvmode === 'phone'); return; }
+    if (d.ednav) {
+      if (S._edDirty) { if ($('edState')) $('edState').innerHTML = '<b style="color:var(--red)">Save or discard first</b>'; return; }
+      var EE = S.camp.emails, k2 = EE.findIndex(function (x) { return x.id === S.emailId; }) + (+d.ednav);
+      if (EE[k2]) { S.emailId = EE[k2].id; drawCampaign(); }
+      return;
+    }
     if (d.rvOpen) { S.emailId = +d.rvOpen; return openCampaign(S.campId); }
     if (d.rvTest) { var rt = await act(function () { return api('emails.test', { id: +d.rvTest }); }); if (rt) toast('Test sent to ' + rt.to + '.'); return; }
     if (d.month) { S.month = MK.addMonth(S.month, +d.month); return drawCampaign(); }
@@ -1252,7 +1324,8 @@ table.t tr.best td { background: var(--green-soft); }
       case 'ins-ai': S._insAi = S.reportCamp; return reports();
       case 'followup': { var rfu = await act(function () { return api('campaigns.followup', { id: S.reportCamp }); }, 'Follow-up drafted: the AI is writing it.'); if (rfu) { S.tab = 'automations'; document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('on', x.dataset.tab === 'automations'); }); try { history.replaceState(null, '', '#automations'); } catch (e) {} openCampaign(rfu.id); } return; }
       case 'camp-results': S.reportCamp = S.campId; S.campId = null; S.camp = null; S.emailId = null; return go('reports');
-      case 'ed-close': S.emailId = null; return drawCampaign();
+      case 'ed-close': if (S._edDirty) { if ($('edState')) $('edState').innerHTML = '<b style="color:var(--red)">Save or discard first</b>'; return; } S.emailId = null; return drawCampaign();
+      case 'ed-discard': S._edDirty = false; return drawCampaign();
       case 'ai-refine': { var rf = $('aiRefine').value.trim(); if (rf) aiPlan(rf); return; }
       case 'ai-reset': S.ai = aiNew(); S.ai.sugs = null; return overview();
       case 'ai-build': return aiBuild(t);
@@ -1344,15 +1417,19 @@ table.t tr.best td { background: var(--green-soft); }
       }
       case 'preview': return preview(d.mode);
       case 'ai-rewrite':
-        modal('<h2>AI rewrite</h2><p class="note">Tell the AI what to change. You\'ll see the new draft in the editor before anything is saved. It only uses approved facts.</p><textarea class="inp" id="aiIns" rows="3" placeholder="Shorter, friendlier, mention the winter intake"></textarea><div class="actions"><button class="btn btn-primary" data-x="ai-go">Rewrite</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+        modal('<h2>AI rewrite</h2><p class="note">Tell the AI what to change. You\'ll see the new draft in the editor before anything is saved. It only uses approved facts.</p><textarea class="inp" id="aiIns" rows="3" placeholder="Shorter, friendlier, mention the winter intake"></textarea><div class="actions"><button class="btn btn-primary" data-x="ai-rw-go">Rewrite</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
         return;
-      case 'ai-go': {
-        t.disabled = true; t.textContent = 'Writing…';
+      case 'ai-rw-go':
+      case 'ed-ai': {
+        var ins = d.x === 'ed-ai' ? ($('edAiQ') && $('edAiQ').value.trim()) : $('aiIns').value;
+        if (!ins) return;
+        t.disabled = true; var tl = t.textContent; t.textContent = 'Writing…';
         var v2 = edValues();
-        var r4 = await act(function () { return api('templates.ai', Object.assign({ scope: S.scope, instruction: $('aiIns').value }, v2)); });
-        closeModal();
+        var r4 = await act(function () { return api('templates.ai', Object.assign({ scope: S.scope, instruction: ins }, v2)); });
+        closeModal(); t.disabled = false; t.textContent = tl;
         if (!r4) return;
-        $('eSubj').value = r4.draft.subject; $('ePre').value = r4.draft.preheader; S._ed.blocks = r4.draft.blocks; drawBlocks();
+        if ($('edAiQ')) $('edAiQ').value = '';
+        $('eSubj').value = r4.draft.subject; $('ePre').value = r4.draft.preheader; S._ed.blocks = r4.draft.blocks; drawBlocks(); edDirty();
         if (r4.draft.blockers.length) showProblems('Check before saving', r4.draft.blockers); else toast('Draft ready. Review it, then save.');
         return;
       }
@@ -1416,7 +1493,7 @@ table.t tr.best td { background: var(--green-soft); }
         if ($('eConfirm') && $('eConfirm').checked) body3.confirm_facts = true;
         if ($('eSubjB')) body3.subject_b = $('eSubjB').value;
         var r8 = await act(function () { return api('emails.save', body3); });
-        if (r8) { toast(r8.blockers.length ? 'Saved, with ' + r8.blockers.length + ' thing(s) to fix.' : 'Saved.'); openCampaign(S.campId); }
+        if (r8) { S._edDirty = false; toast(r8.blockers.length ? 'Saved, with ' + r8.blockers.length + ' thing(s) to fix.' : 'Saved.'); await openCampaign(S.campId); if ($('edState')) $('edState').textContent = 'Saved \u2713'; }
         return;
       }
       case 'email-tpl': {
