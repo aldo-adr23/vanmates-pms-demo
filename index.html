@@ -1652,7 +1652,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-15-mkai6"></script>
+<script src="pms-supabase.js?v=2026-10-15-mkai7"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -9299,7 +9299,24 @@ async function mkAccessLoad(member){
   const level = levels.length === 1 ? levels[0] : (levels.length ? "custom" : "full");
   _mkAccess = { scopes: r.scopes, mine, level, userId };
   const isAdmin = member.role === "admin";
+  // An "Email marketing" tile in the page grid (where people look for it) switches this section on and off.
+  const grid = document.getElementById("edit-member-pages");
+  const old = document.getElementById("mk-page-tile"); if(old) old.remove();
+  if(!isAdmin){
+    grid.insertAdjacentHTML("beforeend", `<label class="role-option ${mine.length ? "selected" : ""}" id="mk-page-tile" style="padding:9px 12px;font-size:12.5px">
+      <input type="checkbox" id="mk-page-toggle" ${mine.length ? "checked" : ""} />
+      <div class="meta"><div class="nm" style="font-size:12.5px">Email marketing</div></div></label>`);
+    const tog = document.getElementById("mk-page-toggle");
+    tog.addEventListener("change", () => {
+      tog.closest(".role-option").classList.toggle("selected", tog.checked);
+      document.getElementById("mk-areas").hidden = !tog.checked;
+      document.getElementById("mk-off").hidden = tog.checked;
+      if(tog.checked) document.getElementById("edit-member-mk").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
   body.innerHTML = isAdmin ? '<div style="color:var(--ink)">Admins always have full access to every business area.</div>' :
+    '<div id="mk-off"' + (mine.length ? ' hidden' : '') + '>No access. Tick <b>Email marketing</b> in the pages above to give access.</div>' +
+    '<div id="mk-areas"' + (mine.length ? '' : ' hidden') + '>' +
     '<div style="margin-bottom:6px">Business areas this person can email:</div>' +
     '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">' + r.scopes.map(sc =>
       `<label class="role-option"><input type="checkbox" name="mkScope" value="${esc(sc.id)}" ${mine.some(g => g.scope === sc.id) ? "checked" : ""}/><div class="meta"><div class="nm" style="font-size:12.5px">${esc(sc.name)}</div></div></label>`).join("") + '</div>' +
@@ -9307,11 +9324,13 @@ async function mkAccessLoad(member){
       Object.keys(MK_LEVELS).map(k => `<option value="${k}" ${level === k ? "selected" : ""}>${esc(MK_LEVELS[k].label)}</option>`).join("") +
       (level === "custom" ? '<option value="custom" selected>Custom (keep what Email marketing › Access says)</option>' : "") +
     '</select>' +
-    '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Unticked areas are invisible to them: lists, contacts, campaigns and reports.</div>';
+    '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Unticked areas are invisible to them: lists, contacts, campaigns and reports.</div></div>';
 }
 async function mkAccessSave(){
   if(!_mkAccess || !document.getElementById("edit-member-mk-level")) return null;
-  const want = [...document.querySelectorAll('#edit-member-mk-body input[name="mkScope"]:checked')].map(i => i.value);
+  const on = document.getElementById("mk-page-toggle") ? document.getElementById("mk-page-toggle").checked : true;
+  const want = on ? [...document.querySelectorAll('#edit-member-mk-body input[name="mkScope"]:checked')].map(i => i.value) : [];
+  if(on && !want.length) return "Email marketing: pick at least one business area (or untick Email marketing).";
   const level = document.getElementById("edit-member-mk-level").value;
   const ops = [];
   for(const sc of _mkAccess.scopes){
@@ -43055,8 +43074,8 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-15-mkai6"></script>
-<script src="extensions.js?v=2026-10-15-mkai6"></script>
-<script src="ap.js?v=2026-10-15-mkai6"></script>
+<script src="room-changes.js?v=2026-10-15-mkai7"></script>
+<script src="extensions.js?v=2026-10-15-mkai7"></script>
+<script src="ap.js?v=2026-10-15-mkai7"></script>
 </body>
 </html>
