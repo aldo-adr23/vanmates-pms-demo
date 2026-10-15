@@ -388,6 +388,10 @@ details.ab { grid-column: 1 / -1; }
 .addopt .ai-ic { width: 30px; height: 30px; border-radius: 9px; background: var(--red-soft); color: var(--red); display: grid; place-items: center; font-weight: 800; flex: none; }
 .addopt b { display: block; font-size: 13px; } .addopt small { display: block; color: var(--muted); font-size: 11.5px; }
 .aud-foot { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); } .aud-foot .btn.wide { margin-top: 0; } .aud-foot .note { margin: 8px 0 0; text-align: center; }
+.rvpick { margin-top: 12px; } .rvpick.need { padding: 10px; border: 1.5px solid var(--red); border-radius: 14px; background: var(--red-soft); }
+.rvpick .lrows { max-height: 220px; }
+.blocked { margin: 6px 0 10px; padding: 8px 10px; border-radius: 10px; background: var(--amber-soft); color: var(--b-amber); font-size: 12.5px; font-weight: 700; }
+#audModal .lrows { max-height: 320px; }
 .stop-on { background: var(--red); color: var(--on-red); padding: 8px 14px; border-radius: 10px; font-weight: 700; margin: 0 0 10px; }
 </style>
 </head>
@@ -415,7 +419,7 @@ details.ab { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-15-mkai4"></script>
+<script src="marketing-core.js?v=2026-10-15-mkai5"></script>
 <script>
 (function () {
   'use strict';
@@ -552,12 +556,8 @@ details.ab { grid-column: 1 / -1; }
       return '<button class="lrow' + (on ? ' on' : '') + '" data-ailist="' + l.id + '" aria-pressed="' + on + '"><span class="ck">' + (on ? '✓' : '') + '</span><span class="lm"><b>' + esc(l.name) + '</b><small>' + (l.type === 'dynamic' ? 'Updates itself' : 'Fixed list') + '</small></span><span class="lc">' + MK.num(l.members) + '</span></button>'; }).join('');
     var people = S.lists.filter(function (l) { return A.listIds.indexOf(l.id) >= 0; }).reduce(function (a, l) { return a + (l.members || 0); }, 0);
     var tpls = Object.fromEntries((S._ovTpls || []).map(function (t) { return [t.id, t.name + ' (' + t.folder + ')']; }));
-    var add = '<div class="addopts">' +
-      '<button class="addopt" data-x="ai-csv"><span class="ai-ic">⬆</span><span><b>Import a CSV</b><small>Upload a spreadsheet of contacts</small></span></button>' +
-      '<button class="addopt" data-x="ai-paste"><span class="ai-ic">✎</span><span><b>Paste addresses</b><small>Type or paste a few emails</small></span></button>' +
-      '<button class="addopt" data-x="w-newlist"><span class="ai-ic">≡</span><span><b>Build from rules</b><small>e.g. active agencies in Japan</small></span></button></div>';
     var aud = '<div class="card aud"><div class="aud-h"><b>Who gets it</b>' + (A.listIds.length ? '<span class="aud-n">' + MK.num(people) + ' people</span>' : '') + '</div>' +
-      (S.lists.length ? '<div class="lrows">' + lists + '</div><div class="aud-sub">Or add people</div>' : '<p class="aud-empty">No lists in ' + esc(scopeName(S.scope)) + ' yet. Add the people who should get this campaign:</p>') + add +
+      audPicker(A.listIds, 'ailist') +
       '<div class="aud-foot"><button class="btn btn-primary btn-lg wide" data-x="ai-build" id="aiBuild"' + (A.busy ? ' disabled' : '') + '>✨ Write all ' + total + ' emails</button>' +
       '<p class="note">' + (A.listIds.length ? 'Unsubscribed, bounced and no-consent contacts are skipped automatically. ' : 'You can also choose the audience later, before launch. ') + 'You review every email before anything is sent.</p></div></div>';
     host.innerHTML = head + '<div class="pv-grid"><div class="card pad plan-main' + (A.busy ? ' busy' : '') + '">' +
@@ -643,7 +643,34 @@ details.ab { grid-column: 1 / -1; }
     toast(r.created + ' added, ' + r.updated + ' already known' + (r.errors ? ', ' + r.errors + ' skipped' : '') + '.');
     await aiReturnWithList(l.id);
   }
+  // Who gets it: list rows (tick to include) + ways to add people. attr = data attribute for the row toggle.
+  function audPicker(selected, attr) {
+    var rows = S.lists.map(function (l) {
+      var on = selected.indexOf(l.id) >= 0;
+      return '<button class="lrow' + (on ? ' on' : '') + '" data-' + attr + '="' + l.id + '" aria-pressed="' + on + '"><span class="ck">' + (on ? '\u2713' : '') + '</span><span class="lm"><b>' + esc(l.name) + '</b><small>' + (l.type === 'dynamic' ? 'Updates itself' : 'Fixed list') + '</small></span><span class="lc">' + MK.num(l.members) + '</span></button>'; }).join('');
+    var add = '<div class="addopts">' +
+      '<button class="addopt" data-x="ai-csv"><span class="ai-ic">\u2b06</span><span><b>Import a CSV</b><small>Upload a spreadsheet of contacts</small></span></button>' +
+      '<button class="addopt" data-x="ai-paste"><span class="ai-ic">\u270e</span><span><b>Paste addresses</b><small>Type or paste a few emails</small></span></button>' +
+      '<button class="addopt" data-x="w-newlist"><span class="ai-ic">\u2261</span><span><b>Build from rules</b><small>e.g. everyone with consent in one city</small></span></button></div>';
+    return (S.lists.length ? '<div class="aud-sub" style="margin-top:0">Tick the lists to send to</div><div class="lrows">' + rows + '</div><div class="aud-sub">Or add new people</div>' : '<p class="aud-empty">No lists in ' + esc(scopeName(S.scope)) + ' yet. Add the people who should get this campaign:</p>') + add;
+  }
+  // A list made from the review page or the campaign's Audience step goes straight onto that campaign.
+  async function setCampLists(ids) {
+    var c = S.camp.campaign;
+    if (!(await act(function () { return api('campaigns.save', { id: c.id, expected_revision: c.revision, list_ids: ids }); }))) return;
+    var lr = await api('lists.list', { scope: S.scope }).catch(function () { return null; }); if (lr) S.lists = lr.lists;
+    var r = await api('campaigns.get', { id: c.id }).catch(function () { return null; }); if (r) S.camp = r;
+    if (S._inReview) return drawReview();
+    if ($('audModal')) return audModal();
+    drawCampaign();
+  }
+  function audModal() {
+    var c = S.camp.campaign;
+    modal('<div id="audModal"><h2>Who gets \u201c' + esc(c.name) + '\u201d</h2>' + audPicker(c.list_ids, 'cplist') +
+      '<div class="actions"><button class="btn btn-primary" data-x="aud-done">Done</button></div></div>');
+  }
   async function aiReturnWithList(id) {
+    if (S._audTarget === 'camp' && S.camp) { S._audTarget = null; return setCampLists(S.camp.campaign.list_ids.concat([id])); }
     var lr = await act(function () { return api('lists.list', { scope: S.scope }); });
     if (lr) S.lists = lr.lists;
     if (S.ai && S.ai.plan && S.ai.listIds.indexOf(id) < 0) S.ai.listIds.push(id);
@@ -985,10 +1012,10 @@ details.ab { grid-column: 1 / -1; }
       (can('edit') ? '<button class="btn btn-ghost" data-x="camp-dup">Duplicate</button>' : '') + '</div>';
     var stage = c.kind === 'broadcast' ? stages([
       ['Strategy', true, ''], ['Emails', E.length && !gen, gen ? 'writing…' : E.length + ' drafted'],
-      ['Audience', r.lists.length > 0, r.lists.length ? r.lists.map(function (l) { return l.name; }).join(', ') : 'not chosen', 'camp-settings'],
+      ['Audience', r.lists.length > 0, r.lists.length ? r.lists.map(function (l) { return l.name; }).join(', ') : 'choose who gets it', 'camp-audience'],
       ['Review & launch', c.status !== 'draft', c.status === 'draft' ? 'not launched' : MK.statusLabel(c.status), c.status === 'draft' ? 'camp-preflight' : ''],
       ['Results', false, c.status === 'draft' ? 'after launch' : 'open', c.status !== 'draft' ? 'camp-results' : '']]) : '';
-    var meta = '<p class="note">' + esc(c.kind === 'sequence' ? 'Automation' : 'Campaign') + ' · ' + esc(scopeName(c.scope)) + (c.kind === 'sequence' ? '' : ' · ' + (r.lists.length ? 'Lists: ' + r.lists.map(function (l) { return esc(l.name); }).join(', ') : '<b>no list yet</b>')) +
+    var meta = '<p class="note">' + esc(c.kind === 'sequence' ? 'Automation' : 'Campaign') + ' · ' + esc(scopeName(c.scope)) + (c.kind === 'sequence' ? '' : ' · ' + (r.lists.length ? 'Lists: ' + r.lists.map(function (l) { return esc(l.name); }).join(', ') : '<button class="linkbtn" data-x="camp-audience">+ Choose who gets it</button>')) +
       ' · Topic: ' + esc(c.topic || '—') + ' · ' + esc(c.timezone) + ' · ' + esc(LANGS[c.language] || c.language) + (c.status === 'draft' && can('edit') ? ' · <button class="linkbtn" data-x="camp-settings">Change</button>' : '') + '</p>';
     var genBox = '';
     if (gen) {
@@ -1208,16 +1235,18 @@ details.ab { grid-column: 1 / -1; }
             '<div class="rvx">' + st(e.status) + '<button class="btn btn-ghost btn-sm" data-rv-open="' + e.id + '">Open</button><button class="btn btn-ghost btn-sm" data-rv-test="' + e.id + '">Test</button></div></div>'; }).join('') + '</div>' +
       '</div>' +
       '<aside class="rv-side"><div class="card pad sticky">' +
-        '<h3 class="h" style="margin-top:0">Audience</h3><div class="rvaud"><b>' + MK.num(pf.eligible) + '</b> people will receive it<small>of ' + MK.num(pf.total) + ' in ' + (r.lists.map(function (l) { return esc(l.name); }).join(', ') || 'no list') + '</small></div>' +
+        '<h3 class="h" style="margin-top:0">1 \u00b7 Who gets it</h3><div class="rvaud"><b>' + MK.num(pf.eligible) + '</b> ' + (pf.eligible === 1 ? 'person' : 'people') + ' will receive it<small>' + (r.lists.length ? 'of ' + MK.num(pf.total) + ' in ' + r.lists.map(function (l) { return esc(l.name); }).join(', ') : 'No audience chosen yet') + '</small></div>' +
         (Object.keys(pf.excluded || {}).length ? '<ul class="small muted" style="margin:6px 0 0;padding-left:18px">' + Object.keys(pf.excluded).map(function (k) { return '<li>' + pf.excluded[k] + ' ' + esc(k) + '</li>'; }).join('') + '</ul>' : '') +
-        (can('edit') ? '<button class="linkbtn" data-x="camp-settings" style="margin-top:6px">Change lists</button>' : '') +
+        (can('edit') && c.status === 'draft' ? '<div class="rvpick' + (r.lists.length ? '' : ' need') + '">' + audPicker(c.list_ids, 'cplist') + '</div>' : '') +
         (pf.problems.length ? '<div class="warnbox" style="margin-top:12px"><b>Fix these first</b><ul>' + pf.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></div>' : '<div class="okbox" style="margin-top:12px">Ready: every check passed.</div>') +
-        '<h3 class="h">How to send</h3>' +
+        '<h3 class="h">2 \u00b7 How to send</h3>' +
         (c.kind === 'broadcast' ? '<label class="radio"><input type="radio" name="launch" value="schedule" checked> <span><b>Activate the full schedule</b><small>Each email goes out on its date.</small></span></label>' +
           '<label class="radio"><input type="radio" name="launch" value="now"> <span><b>Send the first email now</b><small>The rest keep their dates.</small></span></label>'
           : '<p class="note">Each person starts at step 1 when the trigger happens.</p>') +
         '<p class="note">Lists are re-checked before every send. Every email carries an unsubscribe link and our postal address; one person never gets the same email twice.</p>' +
-        '<label class="cb approve"><input type="checkbox" id="rvOk"' + (ok ? '' : ' disabled') + '> I approve sending ' + pf.emails + ' email' + (pf.emails === 1 ? '' : 's') + ' to ' + MK.num(pf.eligible) + ' people</label>' +
+        '<h3 class="h">3 \u00b7 Approve</h3>' +
+        (ok ? '<label class="cb approve"><input type="checkbox" id="rvOk"> I approve sending ' + pf.emails + ' email' + (pf.emails === 1 ? '' : 's') + ' to ' + MK.num(pf.eligible) + ' ' + (pf.eligible === 1 ? 'person' : 'people') + '</label>'
+          : '<p class="blocked">' + (pf.eligible ? 'Fix the items listed above to launch.' : 'Choose who gets it (step 1) to launch.') + '</p>') +
         '<button class="btn btn-primary btn-lg wide" data-x="camp-activate" id="rvGo" disabled>Launch campaign</button>' +
       '</div></aside></div>';
     var cb = $('rvOk'); if (cb) cb.addEventListener('change', function () { $('rvGo').disabled = !cb.checked; });
@@ -1346,6 +1375,7 @@ details.ab { grid-column: 1 / -1; }
     if (d.view) { S.view = d.view; return drawCampaign(); }
     if (d.chip) return chatSend(d.chip);
     if (d.refine) return aiPlan(d.refine);
+    if (d.cplist) { var cl = S.camp.campaign.list_ids.slice(), ci = cl.indexOf(+d.cplist); if (ci >= 0) cl.splice(ci, 1); else cl.push(+d.cplist); return setCampLists(cl); }
     if (d.edai) { $('edAiQ').value = d.edai; return document.querySelector('[data-x=ed-ai]').click(); }
     if (d.pvmode) { S.pvMode = d.pvmode; document.querySelectorAll('[data-pvmode]').forEach(function (b) { b.classList.toggle('on', b.dataset.pvmode === d.pvmode); }); var pw = document.querySelector('.pvwrap'); if (pw) pw.classList.toggle('phone', d.pvmode === 'phone'); return; }
     if (d.ednav) {
@@ -1384,11 +1414,13 @@ details.ab { grid-column: 1 / -1; }
       case 'ai-refine': { var rf = $('aiRefine').value.trim(); if (rf) aiPlan(rf); return; }
       case 'ai-reset': S.ai = aiNew(); S.ai.sugs = null; return overview();
       case 'ai-build': return aiBuild(t);
-      case 'ai-paste': return pasteDialog();
+      case 'ai-paste': S._audTarget = S.tab === 'overview' ? 'plan' : 'camp'; return pasteDialog();
       case 'ai-paste-go': return pasteGo();
-      case 'ai-csv': return csvDialog();
+      case 'camp-audience': return audModal();
+      case 'aud-done': closeModal(); return S._inReview ? drawReview() : drawCampaign();
+      case 'ai-csv': S._audTarget = S.tab === 'overview' ? 'plan' : 'camp'; return csvDialog();
       case 'ai-csv-go': return csvGo();
-      case 'w-newlist': S._wizList = true; return listForm(null);
+      case 'w-newlist': S._wizList = true; S._audTarget = S.tab === 'overview' ? 'plan' : 'camp'; return listForm(null);
       case 'new-list': return listForm(null);
       case 'edit-list': return listForm(S.lists.find(function (x) { return x.id === S.listId; }));
       case 'rule-add': S._rules.push({ field: 'city', op: 'is', value: '' }); return drawRules();
@@ -1404,7 +1436,7 @@ details.ab { grid-column: 1 / -1; }
         var body = { id: +d.id || undefined, scope: S.scope, name: $('lName').value, description: $('lDesc').value, city: $('lCity').value, type: type, public_form: $('lPub').checked,
           rule: type === 'dynamic' ? MK.ruleFromRows($('rMatch').value, S._rules) : undefined };
         var r = await act(function () { return api('lists.save', body); }, 'List saved.');
-        if (r) { closeModal(); if (S._wizList && S.tab === 'overview' && S.ai) { S._wizList = false; return aiReturnWithList(r.id); } S.listId = r.id; lists(); }
+        if (r) { closeModal(); if (S._wizList && ((S.tab === 'overview' && S.ai) || S._audTarget === 'camp')) { S._wizList = false; return aiReturnWithList(r.id); } S.listId = r.id; lists(); }
         return;
       }
       case 'archive-list': {
@@ -1449,7 +1481,7 @@ details.ab { grid-column: 1 / -1; }
         toast('Imported: ' + c1.created + ' new, ' + c1.updated + ' updated' + (c1.errors ? ', ' + c1.errors + ' row(s) skipped' : '') + '.');
         if (c1.errors_csv) S._impErr = c1.errors_csv;
         closeModal();
-        if (S._aiImport && S.tab === 'overview') { var li = S._aiImport; S._aiImport = null; return aiReturnWithList(li); }
+        if (S._aiImport && (S.tab === 'overview' || S._audTarget === 'camp')) { var li = S._aiImport; S._aiImport = null; return aiReturnWithList(li); }
         lists();
         return;
       }
