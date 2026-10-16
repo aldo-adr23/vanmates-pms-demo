@@ -1146,6 +1146,8 @@
 .hb-panel .hb-panel-link .hb-link-out{flex:1;min-width:0;font-size:12.5px}
   .hb-panel .hb-kv{display:grid;grid-template-columns:130px minmax(0,1fr);gap:10px;padding:6px 0;border-top:1px solid var(--cream-2);font-size:13.5px}
   .hb-panel .hb-kv:first-of-type{border-top:0}
+  .tn-note{padding:8px 0;border-top:1px solid var(--cream-2);font-size:13.5px}
+  .tn-note-text{white-space:pre-wrap;word-break:break-word;margin-bottom:2px}
   .hb-panel .hb-kv > span:first-child{color:var(--muted)}
   .hb-panel .hb-panel-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   .hb-panel .hb-inline-form{margin-top:12px;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
@@ -1727,7 +1729,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-15-proprooms1"></script>
+<script src="pms-supabase.js?v=2026-10-16-tnnotes1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -7234,6 +7236,22 @@ function tnRenewSuggest(t, today) {
   const y = le ? tnAddDays(le, 365) : null;
   return tnIso(y && y > today ? y : tnAddDays(today, 180));
 }
+// Team notes on a tenant (staffNotes, newest first). `by` is the signed-in teammate's name;
+// `at` an ISO timestamp. Notes are free text, so they are escaped where they are shown.
+const TN_NOTE_MAX = 2000;
+function tnNotes(t) { return Array.isArray(t && t.staffNotes) ? t.staffNotes.filter(n => n && n.text) : []; }
+function tnNoteAddPatch(t, text, by, nowIso) {
+  const body = String(text || "").trim();
+  if (!body) return { ok: false, error: "Write the note first." };
+  if (body.length > TN_NOTE_MAX) return { ok: false, error: `Keep notes under ${TN_NOTE_MAX} characters.` };
+  const note = { id: "n" + nowIso.replace(/\D/g, "") + Math.random().toString(36).slice(2, 6), text: body, by: String(by || "").trim() || "Team", at: nowIso };
+  return { ok: true, patch: { staffNotes: [note].concat(tnNotes(t)) } };
+}
+function tnNoteDeletePatch(t, id) {
+  const list = tnNotes(t);
+  const next = list.filter(n => n.id !== id);
+  return next.length === list.length ? { ok: false, error: "That note is already gone." } : { ok: true, patch: { staffNotes: next } };
+}
 /* TENANTS-VIEW-CORE-END */
 
 
@@ -7600,6 +7618,22 @@ function tnWirePanel(t0) {
       box.querySelector("#tn-add-save").onclick = save;
       input.onkeydown = ev => { if (ev.key === "Enter") save(); };
       box.querySelector("#tn-inline-cancel").onclick = () => tnInline("");
+      return;
+    }
+    if (e.target.closest("#tn-note-add")) {
+      const btn = e.target.closest("#tn-note-add");
+      const r = tnNoteAddPatch(t, document.getElementById("tn-note-text").value, (CURRENT_USER && (CURRENT_USER.name || CURRENT_USER.email)) || "", new Date().toISOString());
+      if (!r.ok) { showToast(r.error); return; }
+      btn.disabled = true;
+      if (await tnSave(t, r.patch, "Note added.")) tnReopen(t); else btn.disabled = false;
+      return;
+    }
+    const del = e.target.closest("[data-tn-note-del]");
+    if (del) {
+      if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "Delete?"; setTimeout(() => { if (del.isConnected) { del.dataset.armed = ""; del.textContent = "Delete"; } }, 3000); return; }
+      const r = tnNoteDeletePatch(t, del.dataset.tnNoteDel);
+      if (!r.ok) { showToast(r.error); return; }
+      if (await tnSave(t, r.patch, "Note deleted.")) tnReopen(t);
       return;
     }
     if (e.target.closest("#tn-asana-save")) {
@@ -10698,6 +10732,15 @@ function openTenant(emailOrId){
         ${kv("Lease type", ltype ? esc(TN_TYPE_LABEL[ltype]) : `<span class="tn-missing">Not set</span>${tnLegacyType(t) ? ` <span class="hb-sub">was “${esc(tnLegacyType(t))}”</span>` : ""}`)}
         ${kv("Rent", Number(t.rent) ? `${t.city === "Guadalajara" ? "MX$" : "$"}${Number(t.rent).toLocaleString()} / month` : "—")}
         ${t.movedOutAt ? kv("Moved out", esc(tnFmt(t.movedOutAt))) : ""}
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-section-title"><span><em>Notes</em></span><span class="ct">${tnNotes(t).length || ""}</span></div>
+      <div class="card card-pad">
+        <textarea class="form-input" id="tn-note-text" rows="2" maxlength="${TN_NOTE_MAX}" placeholder="Add a note for the team" style="width:100%;resize:vertical;font:inherit;font-size:13.5px"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin:8px 0 ${tnNotes(t).length ? "12px" : "0"}"><button type="button" class="btn btn-primary tn-mini" id="tn-note-add">Add note</button></div>
+        ${tnNotes(t).map(n => `<div class="tn-note"><div class="tn-note-text">${esc(n.text)}</div><div class="hb-sub">${esc(n.by || "Team")} · ${esc(tnFmt(String(n.at || "").slice(0, 10)))} · <button type="button" class="hb-link" data-tn-note-del="${esc(n.id)}">Delete</button></div></div>`).join("")}
       </div>
     </div>
 
@@ -43170,9 +43213,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-15-proprooms1"></script>
-<script src="extensions.js?v=2026-10-15-proprooms1"></script>
-<script src="ap.js?v=2026-10-15-proprooms1"></script>
-<script src="properties.js?v=2026-10-15-proprooms1"></script>
+<script src="room-changes.js?v=2026-10-16-tnnotes1"></script>
+<script src="extensions.js?v=2026-10-16-tnnotes1"></script>
+<script src="ap.js?v=2026-10-16-tnnotes1"></script>
+<script src="properties.js?v=2026-10-16-tnnotes1"></script>
 </body>
 </html>
