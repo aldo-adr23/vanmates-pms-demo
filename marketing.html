@@ -419,14 +419,16 @@ details.ab { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-16-tnnotes1"></script>
+<script src="marketing-core.js?v=2026-10-16-mkfix1"></script>
 <script>
 (function () {
   'use strict';
   var HM = 'https://vanmates-homestay-matching.talatcan.workers.dev';
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
     { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
-  var TZS = ['America/Vancouver', 'America/Edmonton', 'America/Winnipeg', 'America/Toronto', 'America/Halifax', 'America/Mexico_City', 'UTC'];
+  var TZS = ['America/Vancouver', 'America/Edmonton', 'America/Winnipeg', 'America/Toronto', 'America/Halifax', 'America/Mexico_City', 'America/Bogota', 'America/Sao_Paulo', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Shanghai', 'UTC'];
+  var TZ_NAMES = { 'America/Vancouver': 'Vancouver', 'America/Edmonton': 'Edmonton', 'America/Winnipeg': 'Winnipeg', 'America/Toronto': 'Toronto', 'America/Halifax': 'Halifax',
+    'America/Mexico_City': 'Mexico City', 'America/Bogota': 'Colombia', 'America/Sao_Paulo': 'Brazil (São Paulo)', 'Asia/Tokyo': 'Japan', 'Asia/Seoul': 'Korea', 'Asia/Shanghai': 'China', 'UTC': 'UTC' };
   var LANGS = { en: 'English', fr: 'French', es: 'Spanish', ja: 'Japanese', ko: 'Korean', pt: 'Portuguese', zh: 'Chinese' };
   var CONSENT = { express: 'Express', implied: 'Implied (2 years)', unknown: 'Unknown', withdrawn: 'Withdrawn' };
   var S = { me: null, scope: null, tab: 'overview', lists: [], listId: null, contacts: [], ctTotal: 0, q: '', consent: '', templates: [], tplId: null, tpl: null,
@@ -569,6 +571,7 @@ details.ab { grid-column: 1 / -1; }
             '<div class="pst big"><span>Total</span><b>' + total + ' email' + (total === 1 ? '' : 's') + '</b></div>' +
             '<label class="pst"><span>First send</span><input class="inp" type="date" data-pf="start" value="' + esc(A.start || (A.slots[0] && A.slots[0].local_date) || '') + '"></label>' +
             '<label class="pst"><span>Time</span><input class="inp" type="time" data-pf="send_time" value="' + esc(p.send_time) + '"></label>' +
+            '<label class="pst"><span>Readers\u2019 time zone</span><select class="sel" data-pf="timezone">' + opts(Object.fromEntries(TZS.concat(TZS.indexOf(p.timezone || 'America/Vancouver') < 0 ? [p.timezone] : []).map(function (z) { return [z, TZ_NAMES[z] || z]; })), p.timezone || 'America/Vancouver') + '</select></label>' +
             '<label class="pst"><span>Language</span><select class="sel" data-pf="language">' + opts(LANGS, p.language) + '</select></label>' +
           '</div>' +
           (p.strategy.length ? '<h3 class="h">Strategy</h3><ul class="strat">' + p.strategy.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
@@ -709,9 +712,11 @@ details.ab { grid-column: 1 / -1; }
     var anySent = (s.weeks || []).some(function (w) { return w.sent; });
     var max = Math.max.apply(null, (s.weeks || []).map(function (w) { return w.sent; }).concat([1]));
     var stat = function (v, l, sub, tone) { return '<div class="stat"><div class="sv' + (tone ? ' ' + tone : '') + '">' + esc(v) + '</div><div class="sl2">' + esc(l) + '</div><div class="ss">' + esc(sub) + '</div></div>'; };
-    var camps = s.campaigns || [];
+    // Cancelled campaigns (tests, abandoned drafts) stay under Campaigns; the dashboard shows what is live or being built.
+    var camps = (s.campaigns || []).filter(function (c) { return c.status !== 'cancelled'; });
     return '<div class="dash-hd"><h2>Dashboard</h2><span class="muted small">' + esc(scopeName(S.scope)) + ' · last 90 days</span><span class="sp"></span>' +
         '<span class="hint" title="Opens are tracked opens: privacy features open images without a person, and blocked images hide real opens.">About open rates</span></div>' +
+      (s.no_evidence ? '<div class="warnbox">' + MK.num(s.no_evidence) + ' contact' + (s.no_evidence === 1 ? ' is' : 's are') + ' marked as having agreed to marketing, but nobody recorded where that consent came from, so they won\u2019t be emailed. Canada\u2019s anti-spam law (CASL) needs proof. Re-import them with a \u201cconsent evidence\u201d column (e.g. \u201csigned up on our website\u201d), or as <b>unknown</b> if they never agreed (a bought or shared list is not consent). <button class="btn btn-warn btn-sm" data-go="lists">Open contacts</button></div>' : '') +
       (s.failures ? '<div class="warnbox">' + s.failures + ' send(s) failed or have an unknown outcome. <button class="btn btn-warn btn-sm" data-go="reports">Review</button></div>' : '') +
       '<div class="card stats">' +
         stat(MK.num(s.contacts), 'Contacts', MK.num(s.eligible) + ' can receive marketing') +
@@ -856,7 +861,8 @@ details.ab { grid-column: 1 / -1; }
     $('impMap').innerHTML = '<p class="small"><b>' + S._imp.rows.length + '</b> rows. Match your columns:</p><div class="grid3">' + fields.map(function (f) {
       return '<label class="f">' + esc(f[1]) + '<select class="sel" data-map="' + f[0] + '">' + opts(h, S._map[f[0]], '— none —') + '</select></label>'; }).join('') + '</div>' +
       '<h3 class="h">When a column is empty</h3><div class="grid3"><label class="f">Source<input class="inp" id="impSrc" placeholder="e.g. host fair 2026"></label>' +
-      '<label class="f">Consent<select class="sel" id="impCons">' + opts(CONSENT, '', 'required in file') + '</select></label><label class="f">Evidence<input class="inp" id="impEv" placeholder="e.g. signed up at the fair"></label></div>' +
+      '<label class="f">Consent<select class="sel" id="impCons">' + opts(CONSENT, '', 'required in file') + '</select></label><label class="f">Where the consent comes from<input class="inp" id="impEv" placeholder="e.g. signed up at our fair stand"></label></div>' +
+      '<p class="note">Express or implied consent needs a reason (here or as a column), or the rows are refused. A bought, scraped or shared list (e.g. a school\u2019s agency list) is not consent: import it as <b>unknown</b>, then ask permission with one email.</p>' +
       '<h3 class="h">Add to list</h3><select class="sel" id="impList">' + opts(Object.fromEntries(S.lists.filter(function (l) { return l.type === 'static'; }).map(function (l) { return [l.id, l.name]; })), S.listId, '— no list —') + '</select>' +
       '<div class="actions"><button class="btn btn-ghost" data-x="imp-preview">Check the file</button><button class="btn btn-primary" data-x="imp-commit" disabled id="impGo">Import</button></div><div id="impOut"></div>';
     $('impMap').querySelectorAll('[data-map]').forEach(function (el) { el.addEventListener('change', function () { S._map[el.dataset.map] = el.value || undefined; $('impGo').disabled = true; }); });
@@ -1245,11 +1251,15 @@ details.ab { grid-column: 1 / -1; }
           : '<p class="note">Each person starts at step 1 when the trigger happens.</p>') +
         '<p class="note">Lists are re-checked before every send. Every email carries an unsubscribe link and our postal address; one person never gets the same email twice.</p>' +
         '<h3 class="h">3 \u00b7 Approve</h3>' +
+        (ok && pf.language_check ? '<label class="cb approve"><input type="checkbox" id="rvLang"> <span>' + esc(pf.language_check) + ' checked by a native speaker<small class="muted" style="display:block;font-weight:400;margin-top:2px">The AI writes good ' + esc(pf.language_check) + ', but have someone who reads it natively check every email for tone and names first.</small></span></label>' : '') +
         (ok ? '<label class="cb approve"><input type="checkbox" id="rvOk"> I approve sending ' + pf.emails + ' email' + (pf.emails === 1 ? '' : 's') + ' to ' + MK.num(pf.eligible) + ' ' + (pf.eligible === 1 ? 'person' : 'people') + '</label>'
           : '<p class="blocked">' + (pf.eligible ? 'Fix the items listed above to launch.' : 'Choose who gets it (step 1) to launch.') + '</p>') +
         '<button class="btn btn-primary btn-lg wide" data-x="camp-activate" id="rvGo" disabled>Launch campaign</button>' +
       '</div></aside></div>';
-    var cb = $('rvOk'); if (cb) cb.addEventListener('change', function () { $('rvGo').disabled = !cb.checked; });
+    var cb = $('rvOk'), lc = $('rvLang');
+    var gate = function () { $('rvGo').disabled = !(cb && cb.checked && (!lc || lc.checked)); };
+    if (cb) cb.addEventListener('change', gate);
+    if (lc) lc.addEventListener('change', gate);
   }
 
   // ---------- automations ----------
@@ -1603,7 +1613,7 @@ details.ab { grid-column: 1 / -1; }
       case 'camp-activate': {
         var now1 = !!document.querySelector('input[name=launch][value=now]:checked');
         t.disabled = true;
-        var ra = await act(function () { return api('campaigns.activate', { id: S.campId, expected_revision: S.camp.campaign.revision, send_first_now: now1 }); }, now1 ? 'Launched: the first email goes out within 2 minutes.' : 'Launched: emails are scheduled.');
+        var ra = await act(function () { return api('campaigns.activate', { id: S.campId, expected_revision: S.camp.campaign.revision, send_first_now: now1, language_checked: !!($('rvLang') && $('rvLang').checked) }); }, now1 ? 'Launched: the first email goes out within 2 minutes.' : 'Launched: emails are scheduled.');
         if (!ra) { t.disabled = false; return; }
         closeModal(); S.reportCamp = S.campId; S.campId = null; S.camp = null; S.emailId = null; return go('reports');
       }
