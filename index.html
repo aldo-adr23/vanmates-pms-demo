@@ -1729,7 +1729,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-16-tnnotes1"></script>
+<script src="pms-supabase.js?v=2026-10-16-jldraft1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -32883,6 +32883,9 @@ const LEAD_MAIL_LANGS = { en: 'English', es: 'Español', ja: '日本語' };
 // The lead's language for emails and follow-ups, from what the intake recorded:
 // language / raw.language ("Japanese", "es"…), else LINE leads are Japanese and
 // the /es/ site's leads Spanish. Everything else is English.
+// Vanmates Mexico leads are drafted by Jorge Luis (Mexican knowledge base + Guadalajara rooms), in Spanish.
+function leadMailIsMx(l){ return typeof vmcRecordCountry === 'function' && vmcRecordCountry('leads', l) === 'MX'; }
+function leadMailAgent(l){ return leadMailIsMx(l) ? 'Jorge Luis' : 'Taylor'; }
 function leadMailLang(lead){
   const l = lead || {};
   const v = String(l.language || (l.raw && l.raw.language) || l.lang || '').trim().toLowerCase();
@@ -32890,6 +32893,7 @@ function leadMailLang(lead){
   if(/^(es|spanish|español|espanol)/.test(v)) return 'es';
   if(v) return 'en';
   if(l.source === 'line-maya') return 'ja';
+  if(leadMailIsMx(l)) return 'es';
   if(/vanmates\.com\/es(\/|$)/.test(String(l.source_page || '') + String(l.landing_page || ''))) return 'es';
   return 'en';
 }
@@ -33257,10 +33261,10 @@ function leadMailComposerHtml(l, me){
     ${LEAD_MAIL.taylorOpen ? `<div class="lm-taylor">
       <span class="lm-taylor-mark">${LM_ICON.spark}</span>
       <input class="form-input" id="lm-taylor-ask" maxlength="500" placeholder="Anything to include? e.g. offer a video call Thursday (optional)" value="${esc(LEAD_MAIL.taylorAsk || '')}" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>
-      <button class="btn btn-primary btn-mini" type="button" id="lm-taylor-go" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>${LEAD_MAIL.taylorBusy ? 'Taylor is writing…' : 'Write draft'}</button>
+      <button class="btn btn-primary btn-mini" type="button" id="lm-taylor-go" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>${LEAD_MAIL.taylorBusy ? esc(leadMailAgent(l)) + ' is writing…' : 'Write draft'}</button>
       <button class="lm-link" type="button" id="lm-taylor-close" ${LEAD_MAIL.taylorBusy ? 'disabled' : ''}>Close</button>
     </div>` : ''}
-    ${LEAD_MAIL.prevDraft != null ? `<div class="lm-dim" style="font-size:12px">Taylor wrote this draft${LEAD_MAIL.taylorRooms ? ' (with a room search)' : ''}: read it and edit before sending. <button class="lm-link" type="button" id="lm-taylor-undo">Undo</button></div>` : ''}
+    ${LEAD_MAIL.prevDraft != null ? `<div class="lm-dim" style="font-size:12px">${esc(leadMailAgent(l))} wrote this draft${LEAD_MAIL.taylorRooms ? ' (with a room search)' : ''}: read it and edit before sending. <button class="lm-link" type="button" id="lm-taylor-undo">Undo</button></div>` : ''}
     <textarea class="form-input lm-input" id="lead-mail-body" rows="3" maxlength="10000" placeholder="${reply ? 'Write a reply…' : 'Write your message…'}">${esc(LEAD_MAIL.draftBody || '')}</textarea>
     ${LEAD_MAIL.trUndo != null && LEAD_MAIL.trJa === LEAD_MAIL.draftBody ? `<div class="lm-dim" style="font-size:12px">Means: ${esc(LEAD_MAIL.trBack || '')} <button class="lm-link" type="button" id="lm-tr-undo">Back to my English</button></div>` : ''}
     ${files ? `<div class="lm-files">${files}</div>` : ''}
@@ -33269,7 +33273,7 @@ function leadMailComposerHtml(l, me){
     <div class="lm-toolbar">
       <select class="lm-lang" id="lm-lang" title="Language of the greeting and of the automatic follow-ups" aria-label="Email language">${Object.entries(LEAD_MAIL_LANGS).map(([k, v]) => `<option value="${k}" ${k === LEAD_MAIL.lang ? 'selected' : ''}>${v}</option>`).join('')}</select>
       ${leadMailEnglishOn() && leadMailHasJapanese(l) ? `<button type="button" class="lm-tool" id="lm-tr-ja" title="Turns your English draft into polite Japanese in the box. Check the meaning shown under it before sending." ${LEAD_MAIL.trBusy ? 'disabled' : ''}><span>${LEAD_MAIL.trBusy ? 'Translating…' : 'Translate to 日本語'}</span></button>` : ''}
-      <button type="button" class="lm-tool lm-tool-taylor" id="lm-taylor" title="Taylor writes a draft from the lead's details and the conversation, with matching rooms. Nothing is sent until you press Send.">${LM_ICON.spark}<span>Draft with Taylor</span></button>
+      <button type="button" class="lm-tool lm-tool-taylor" id="lm-taylor" title="${esc(leadMailAgent(l))} writes a draft from the lead's details and the conversation, with matching rooms. Nothing is sent until you press Send.">${LM_ICON.spark}<span>Draft with ${esc(leadMailAgent(l))}</span></button>
       <label class="lm-tool" title="Attach photos or documents (10 MB total)">${LM_ICON.clip}<span>Attach</span><input type="file" id="lm-file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
       ${fu && reply ? `<span class="lm-dim" style="font-size:12px">Follow-ups re-time after your reply</span>`
         : `<label class="lm-tool" title="Up to 3 short follow-ups in this conversation, weekdays 9:00-16:45 Vancouver. Choose when they start and how often below. They stop when the lead replies."><input type="checkbox" id="lm-auto" ${LEAD_MAIL.autoFollow ? 'checked' : ''}><span>Follow up automatically if no reply</span></label>`}
@@ -33587,7 +33591,7 @@ function leadMailKeepDraft(){
   if(b) LEAD_MAIL.draftBody = b.value;
   if(s) LEAD_MAIL.draftSubject = s.value;
 }
-// "Draft with Taylor": Taylor writes the email into the composer; the rep reads,
+// "Draft with Taylor" ("Draft with Jorge Luis" on Mexican leads): the agent writes the email into the composer; the rep reads,
 // edits and sends it. The previous text is kept for Undo.
 async function leadMailTaylor(l){
   if(LEAD_MAIL.taylorBusy) return;
@@ -33600,7 +33604,7 @@ async function leadMailTaylor(l){
   LEAD_MAIL.taylorBusy = false;
   if(String(_editingLeadId) !== String(l.id)) return;
   if(!r.ok || !r.body.body){
-    showToast(r.body && r.body.error === 'drafts_unavailable' ? 'Taylor drafts are not switched on yet.' : 'Taylor could not write a draft. Try again in a minute.');
+    showToast(r.body && r.body.error === 'drafts_unavailable' ? leadMailAgent(l) + ' drafts are not switched on yet.' : leadMailAgent(l) + ' could not write a draft. Try again in a minute.');
     leadMailRender(l);
     return;
   }
@@ -43213,9 +43217,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-16-tnnotes1"></script>
-<script src="extensions.js?v=2026-10-16-tnnotes1"></script>
-<script src="ap.js?v=2026-10-16-tnnotes1"></script>
-<script src="properties.js?v=2026-10-16-tnnotes1"></script>
+<script src="room-changes.js?v=2026-10-16-jldraft1"></script>
+<script src="extensions.js?v=2026-10-16-jldraft1"></script>
+<script src="ap.js?v=2026-10-16-jldraft1"></script>
+<script src="properties.js?v=2026-10-16-jldraft1"></script>
 </body>
 </html>
