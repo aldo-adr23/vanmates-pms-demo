@@ -1729,7 +1729,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-16-mxcko1"></script>
+<script src="pms-supabase.js?v=2026-10-17-mxes1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11425,6 +11425,10 @@ document.getElementById("pf-bottom").innerHTML = attention.map(p => {
 }).join("");
 
 /* ============ NAVIGATION ============ */
+const titlesMX = {
+  checkouts: ["<em>Salidas</em>", "Avisos de salida de vanmates.com.mx/residentes/salida: aviso, inspección, cargos y reembolso del depósito por SPEI"],
+  contracts: ["<em>Contratos</em>", "Contratos de arrendamiento de Vanmates México: quién ya firmó y qué espera a Vanmates"],
+};
 const titles = {
   dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
@@ -11470,8 +11474,10 @@ function goToView(v, savedView){
 
   // Update page title
   if(titles[v]){
-    document.getElementById("page-title").innerHTML = titles[v][0];
-    document.getElementById("page-sub").innerHTML = titles[v][1];
+    // Mexico view: the Spanish pages get Spanish headings.
+    const mxT = (window.vmCountry && typeof window.vmCountry.current === "function" && window.vmCountry.current() === "MX") ? titlesMX[v] : null;
+    document.getElementById("page-title").innerHTML = (mxT || titles[v])[0];
+    document.getElementById("page-sub").innerHTML = (mxT || titles[v])[1];
   }
 
   // Fetch Stripe payout readiness the first time the Hosts page is opened.
@@ -26412,7 +26418,7 @@ const CKO_ES = {
   'Refund change requested': 'Cambio de reembolso solicitado', 'Email unconfirmed': 'Correo sin confirmar', 'Review approved': 'Revisión aprobada',
   'Review: partly waived': 'Revisión: condonado en parte', 'Review denied': 'Revisión rechazada', 'Refund details missing': 'Faltan datos de reembolso',
   'Keys missing': 'Faltan llaves', 'Damage review': 'Revisión de daños', 'Resident dispute': 'Disputa del residente', 'Move-out date changed': 'Cambió la fecha de salida',
-  'Finance overdue': 'Finanzas atrasado', 'Reminders off': 'Recordatorios apagados', 'Resident not responding': 'El residente no responde',
+  'Finance overdue': 'Finanzas atrasado', 'Reminders off': 'Recordatorios apagados', 'Room not released': 'Habitación sin liberar', 'Resident not responding': 'El residente no responde',
   'imported': 'importado', 'no email': 'sin correo',
   'Resolve the resident dispute': 'Resolver la disputa del residente', 'Decide the short-notice review': 'Decidir la revisión del aviso tardío',
   'Move-out date passed: chase the resident': 'Pasó la fecha de salida: contactar al residente', 'Move-out date passed: use Already moved out': 'Pasó la fecha de salida: usar «Ya salió»',
@@ -26449,7 +26455,159 @@ const CKO_ES = {
 };
 function ckoTr(text, lang){ return lang === 'es' && Object.prototype.hasOwnProperty.call(CKO_ES, text) ? CKO_ES[text] : text; }
 function ckoT(text){ return ckoTr(text, CKO_COUNTRY === 'MX' ? 'es' : 'en'); }
-function ckoFlagLabel(f){ return CKO_FLAG_LABELS[f] || String(f || '').replace(/_/g, ' '); }
+// Mexico view (2026-10-17): ckoL(en, es) picks the wording of a sentence built from parts;
+// ckoDayEs('2026-10-16') = '16 oct 2026'. Canada's words are unchanged.
+function ckoL(en, es){ return CKO_COUNTRY === 'MX' ? es : en; }
+const CKO_MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function ckoDayEs(s){ const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? Number(m[3]) + ' ' + CKO_MONTHS_ES[Number(m[2]) - 1] + ' ' + m[1] : ''; }
+// Field names in Spanish (the "Falta: …" refusals and the timeline's step details).
+const CKO_FIELD_ES = {
+  inspection_at: 'fecha y hora de la inspección', inspector_email: 'inspector(a)', keys: 'llaves', count: 'número de llaves',
+  result: 'resultado de la inspección', notes: 'notas', deposit: 'depósito', cleaning: 'limpieza', extra: 'otros cargos',
+  total_refund: 'total del reembolso', expected_payment_date: 'fecha de pago prevista', sent_on: 'fecha de envío', reference: 'referencia',
+  reason: 'motivo', text: 'nota', email: 'correo', outcome: 'decisión', to: 'estado', move_out_date: 'fecha de salida',
+  notice_received_at: 'fecha del aviso', channel: 'canal', city: 'ciudad', charges: 'los montos de reembolso aprobados', evidence: 'evidencia',
+  name: 'nombre', phone: 'teléfono', house: 'casa', room: 'habitación', resident_note: 'nota para el residente', deposit_held: 'depósito retenido',
+  lines_version: 'los cargos en pantalla', amount: 'monto', description: 'descripción', type: 'tipo de cargo', override_reason: 'motivo del cambio',
+  note: 'nota', method: 'método de pago', kind: 'tipo de pago', shareable: 'compartir la referencia', id: 'cargo', lines: 'cargos', days: 'días', by: 'por',
+};
+Object.assign(CKO_ES, {
+  // timeline events
+  'Resubmitted': 'Reenviado', 'Confirmation emailed': 'Confirmación enviada por correo', 'Email sent, not recorded': 'Correo enviado, sin registrar',
+  'Owner changed': 'Cambió el responsable', 'Status changed': 'Cambió el estado', 'Status overridden': 'Estado forzado', 'Checkout cancelled': 'Salida cancelada',
+  'Short-notice review decided': 'Revisión de aviso tardío decidida', 'Flag set': 'Alerta activada', 'Flag cleared': 'Alerta quitada',
+  'Opened by staff': 'Abierta por el equipo', 'Resident completed the form': 'El residente completó el formulario',
+  'Asana / email update failed': 'Falló la actualización (correo)', 'Resident link reset': 'Enlace del residente renovado',
+  'Charge added': 'Cargo agregado', 'Charge changed': 'Cargo cambiado', 'Charge removed': 'Cargo quitado', 'Deposit held recorded': 'Depósito retenido registrado',
+  'Charges submitted for approval': 'Cargos enviados para aprobación', 'Charges sent back': 'Cargos devueltos', 'Refund approved': 'Reembolso aprobado',
+  'Refund re-approved': 'Reembolso aprobado de nuevo', 'Refund sent': 'Reembolso enviado', 'Top-up sent': 'Complemento enviado',
+  '7-day reminder to the resident': 'Recordatorio de 7 días al residente', 'Day-before reminder to the resident': 'Recordatorio del día anterior al residente',
+  'Inspection-done email to the resident': 'Correo de inspección hecha al residente', 'Missing-info request to the resident': 'Solicitud de datos faltantes al residente',
+  'Missing-info request (no email)': 'Solicitud de datos faltantes (sin correo)',
+  // refusals (CKO_ERROR_TEXT)
+  'You are not on the team list, or your role cannot do this.': 'No estás en la lista del equipo, o tu rol no puede hacer esto.',
+  'This checkout no longer exists.': 'Esta salida ya no existe.', 'This checkout is closed.': 'Esta salida está cerrada.',
+  'Take or assign the case first.': 'Primero toma o asigna el caso.', 'Someone else took this case first.': 'Alguien más tomó este caso primero.',
+  'Someone else moved this case on. It has been reloaded.': 'Alguien más avanzó este caso. Se volvió a cargar.',
+  'That step does not apply to this case any more.': 'Ese paso ya no aplica a este caso.', 'That flag cannot be changed here.': 'Esa alerta no se puede cambiar aquí.',
+  'That is not a valid status.': 'Ese no es un estado válido.', 'This case has no short-notice review to decide.': 'Este caso no tiene una revisión de aviso tardío por decidir.',
+  'Decide the short-notice review first.': 'Primero decide la revisión del aviso tardío.',
+  'The resident has not given refund details yet.': 'El residente todavía no da sus datos de reembolso.',
+  'This resident already has an open checkout.': 'Este residente ya tiene una salida abierta.', 'Unknown step.': 'Paso desconocido.',
+  'Price every charge first (some have no amount).': 'Primero ponle monto a cada cargo (algunos no tienen).',
+  'Give a reason for changing this amount.': 'Escribe un motivo para cambiar este monto.',
+  'The charges have not been submitted for approval yet.': 'Los cargos todavía no se envían para aprobación.',
+  'A top-up is still due. Mark it sent before closing.': 'Todavía falta enviar un complemento. Márcalo como enviado antes de cerrar.',
+  'The charges are locked at this stage (flag a dispute to change them).': 'Los cargos están bloqueados en esta etapa (marca una disputa para cambiarlos).',
+  'That charge is no longer there. The case has been reloaded.': 'Ese cargo ya no existe. Se volvió a cargar el caso.',
+  'That room is not in this city\'s inventory any more. Reopen the case and choose again.': 'Esa habitación ya no está en el inventario de esta ciudad. Vuelve a abrir el caso y elige otra vez.',
+  'This case has no move-out date yet, so the room cannot be released.': 'Este caso todavía no tiene fecha de salida, así que no se puede liberar la habitación.',
+  'This refund was already marked sent.': 'Este reembolso ya se marcó como enviado.',
+  'Add the carried-over charges as lines before re-approving.': 'Agrega los cargos anteriores como líneas antes de volver a aprobar.',
+  'Give a reason for removing this charge.': 'Escribe un motivo para quitar este cargo.', 'Give a reason for the re-approval.': 'Escribe un motivo para la nueva aprobación.',
+  'Pick a period of 3 years or less, with the start before the end.': 'Elige un periodo de 3 años o menos, con el inicio antes del fin.',
+  'That city is not one of ours.': 'Esa ciudad no es de las nuestras.', 'Reload the case and try again.': 'Vuelve a cargar el caso e inténtalo de nuevo.',
+  'A case can have at most 50 charges.': 'Un caso puede tener como máximo 50 cargos.', 'Something went wrong. Try again.': 'Algo salió mal. Inténtalo de nuevo.',
+  'The notice cannot be received in the future.': 'El aviso no puede tener fecha futura.', 'The move-out date is before the notice date.': 'La fecha de salida es anterior a la fecha del aviso.',
+  'No case selected.': 'No hay un caso seleccionado.',
+  // the next step and why it is not allowed
+  'Waiting for the resident': 'Esperando al residente', 'The resident has not completed the checkout form yet.': 'El residente todavía no completa el formulario de salida.',
+  'Only an admin, an accountant or a refund approver can do this.': 'Solo un administrador, un contador o quien aprueba reembolsos puede hacer esto.',
+  'Only the owner or an admin can do this.': 'Solo el responsable o un administrador puede hacer esto.',
+  'Record the move-out and inspection now and go straight to the charges': 'Registrar la salida y la inspección ahora e ir directo a los cargos',
+  'Choose room': 'Elegir habitación', 'Room sorted': 'Habitación resuelta',
+  // options
+  'Approve (charges waived)': 'Aprobar (sin cargos)', 'Partially waive': 'Condonar en parte', 'Deny (charges apply)': 'Rechazar (aplican cargos)',
+  'In person': 'En persona', 'Top-up': 'Complemento', 'Standard fee': 'Cuota estándar', 'From the cleaning report': 'Del reporte de limpieza',
+  'Added by staff': 'Agregado por el equipo', 'estimate — confirm': 'estimado — confirmar', 'from the resident form': 'del formulario del residente',
+  // the Charges block
+  'Add charge': 'Agregar cargo', 'Change deposit held': 'Cambiar depósito retenido', 'Set deposit held': 'Registrar depósito retenido',
+  'Submit for approval': 'Enviar para aprobación', 'Send back': 'Devolver', 'Re-approve': 'Volver a aprobar', 'Mark refund sent': 'Marcar reembolso enviado',
+  'Mark top-up sent': 'Marcar complemento enviado',
+  // finance
+  'Review · submitted': 'Revisión · enviada', 'Review · draft': 'Revisión · borrador', 'Payment': 'Pago', 'Top-up due': 'Complemento pendiente',
+  // reports
+  'Automatic intake': 'Ingreso automático', "Gave 30+ days' notice": 'Avisó con 30+ días', 'Complete first time': 'Completo a la primera',
+  'Accepted the deposit terms': 'Aceptó las condiciones del depósito', 'Days from move-out to refund': 'Días de la salida al reembolso',
+  'Over the deposit deadline': 'Fuera del plazo del depósito', 'Disputes': 'Disputas', 'Short-notice reviews': 'Revisiones de aviso tardío',
+  'Exceptional deductions': 'Deducciones excepcionales', 'Completion': 'Cierre', 'Requests received': 'Solicitudes recibidas', 'Cancelled': 'Canceladas',
+  'Still open': 'Aún abiertas', 'Deposits refunded': 'Depósitos reembolsados', 'Average days to refund': 'Promedio de días al reembolso',
+  'Group': 'Grupo', 'Cases': 'Casos', "30+ days' notice": 'Aviso de 30+ días', 'Avg days to refund': 'Días prom. al reembolso', 'Over deadline': 'Fuera de plazo',
+  'This month': 'Este mes', 'Last month': 'Mes pasado', 'Last 3 months': 'Últimos 3 meses', 'Last 12 months': 'Últimos 12 meses', 'Custom dates': 'Otras fechas',
+  'Pick a start and an end date.': 'Elige una fecha de inicio y una de fin.', 'The start date is after the end date.': 'La fecha de inicio es posterior a la de fin.',
+  'Pick a period of 3 years or less.': 'Elige un periodo de 3 años o menos.', 'Pick a period.': 'Elige un periodo.',
+  'Intake errors left out (city or house filter)': 'Errores de ingreso excluidos (filtro de ciudad o casa)',
+  'Missing': 'Falta', 'Not valid': 'No es válido',
+});
+// The page's own words (drawer, dialogs, toasts) in the Mexico view.
+Object.assign(CKO_ES, {
+  'Download CSV': 'Descargar CSV', 'All houses': 'Todas las casas', 'Loading the report…': 'Cargando el reporte…', 'Retry': 'Reintentar',
+  'This house': 'Esta casa', 'By house': 'Por casa', 'By city': 'Por ciudad', 'No cases in this period.': 'No hay casos en este periodo.',
+  'Nothing to export': 'Nada que exportar', 'No cases to show': 'No hay casos que mostrar', 'Not connected to the database.': 'Sin conexión a la base de datos.',
+  'Not connected to the database': 'Sin conexión a la base de datos', 'Could not load checkouts': 'No se pudieron cargar las salidas', 'Checkout not found': 'No se encontró la salida',
+  'Stage · due': 'Etapa · vence', 'Since move-out': 'Desde la salida', 'At stage': 'En la etapa', 'Approved by': 'Aprobado por',
+  'Open': 'Abiertos', 'Overdue': 'Atrasados', 'Median move-out → sent (30 days)': 'Mediana salida → envío (30 días)',
+  // New checkout dialog
+  'A resident gave notice by message, phone or in person. They get an email to finish the form.': 'Un residente avisó por mensaje, teléfono o en persona. Recibirá un correo para completar el formulario.',
+  'Resident email': 'Correo del residente', 'Name': 'Nombre', "Include the surname: it is used to match the resident's form.": 'Incluye el apellido: se usa para relacionar el formulario del residente.',
+  'City': 'Ciudad', 'House': 'Casa', 'Room': 'Habitación', 'Notice received at (': 'Aviso recibido el (', 'Channel': 'Canal', 'Evidence': 'Evidencia', 'Cancel': 'Cancelar',
+  'Create checkout': 'Crear salida', 'Creating…': 'Creando…', 'Full name (first and last)': 'Nombre completo (nombre y apellidos)',
+  'WhatsApp message, 9 Oct 21:40': 'Mensaje de WhatsApp, 9 oct 21:40', 'Blood Alley': 'Ciudadela', 'R1': 'Hermes',
+  'Not in the tenant list — check the spelling; the resident will be emailed at this address.': 'No está en la lista de arrendatarios — revisa cómo está escrito; el residente recibirá el correo en esta dirección.',
+  'Check the email, then press Create checkout again to use it.': 'Revisa el correo y vuelve a presionar «Crear salida» para usarlo.',
+  'The server did not return a checkout ID.': 'El servidor no devolvió el folio de la salida.',
+  // drawer
+  'Resident link': 'Enlace del residente', 'Copy resident link': 'Copiar enlace del residente', 'Reset link': 'Renovar enlace', 'No link yet': 'Todavía no hay enlace',
+  'Copy the private status page link to send to the resident': 'Copia el enlace privado de la página de estado para mandárselo al residente',
+  'Make a new link; the old one stops working': 'Crea un enlace nuevo; el anterior deja de funcionar',
+  'This case has no resident link yet': 'Este caso todavía no tiene enlace del residente', 'Copy the resident link:': 'Copia el enlace del residente:',
+  'Resident link copied': 'Enlace del residente copiado',
+  'Reset the resident link? The link in the emails already sent stops working at once. Copy the new link afterwards to send it to the resident.':
+    '¿Renovar el enlace del residente? El enlace de los correos ya enviados deja de funcionar de inmediato. Después copia el enlace nuevo para mandárselo al residente.',
+  'Unassign this case? It goes back to Unassigned for anyone to take.': '¿Soltar este caso? Regresa a «Sin asignar» para que cualquiera lo tome.',
+  'Submit these charges for approval? Finance can then approve or send them back.': '¿Enviar estos cargos para aprobación? Finanzas podrá aprobarlos o devolverlos.',
+  'Cancel this checkout? It will be closed as cancelled.': '¿Cancelar esta salida? Se cerrará como cancelada.',
+  'Deposit': 'Depósito', 'Review': 'Revisión', 'Standard fees': 'Cuotas estándar', 'No events.': 'Sin eventos.', 'Not needed': 'No hacía falta', 'No': 'No', 'Yes': 'Sí',
+  'Deposit carried over (room change)': 'Depósito transferido (cambio de habitación)', 'Still saving the last change…': 'Todavía se está guardando el último cambio…',
+  // forms
+  'Internal reason (never emailed)': 'Motivo interno (nunca se envía por correo)', 'Note to the resident (optional, added to the email)': 'Nota para el residente (opcional, se agrega al correo)',
+  'Add a charge': 'Agregar un cargo', 'Type': 'Tipo', 'Amount ($)': 'Monto (MX$)', 'Description (blank = standard wording for cleaning, keys or unpaid balance)': 'Descripción (en blanco = texto estándar para limpieza, llaves o saldo pendiente)',
+  'Evidence links, one per line (Drive or other https links)': 'Enlaces de evidencia, uno por línea (Drive u otros enlaces https)', 'Or attach photos / PDFs': 'O adjunta fotos / PDF',
+  'Change this charge': 'Cambiar este cargo', 'Save charge': 'Guardar cargo', 'Description': 'Descripción', 'Evidence links, one per line': 'Enlaces de evidencia, uno por línea',
+  'Attach more photos / PDFs': 'Adjuntar más fotos / PDF',
+  'Reason for the change (needed when the amount differs from the standard fee, or after submission)': 'Motivo del cambio (necesario si el monto difiere de la cuota estándar, o después de enviar)',
+  'Remove this charge': 'Quitar este cargo', 'Remove charge': 'Quitar cargo', 'Charge': 'Cargo', 'Reason for removing it': 'Motivo para quitarlo',
+  'Save deposit held': 'Guardar depósito retenido', 'Deposit held ($)': 'Depósito retenido (MX$)', 'Where the figure comes from': 'De dónde sale la cifra',
+  'Send the charges back to the owner': 'Devolver los cargos al responsable', 'What needs changing': 'Qué hay que cambiar', 'Approve the refund': 'Aprobar el reembolso',
+  'Refund to send': 'Reembolso a enviar', 'Expected payment date': 'Fecha de pago prevista', 'Re-approve after the dispute': 'Volver a aprobar después de la disputa',
+  'New refund': 'Nuevo reembolso', 'What changed and why (the resident is emailed this)': 'Qué cambió y por qué (se le envía al residente)',
+  'Mark the refund sent': 'Marcar el reembolso como enviado', 'Amount': 'Monto', 'Sent on': 'Enviado el', 'Payment reference': 'Referencia de pago',
+  'Show the reference to the resident': 'Mostrar la referencia al residente', 'Mark the top-up sent': 'Marcar el complemento como enviado',
+  'Already moved out → Charges Review (you take the case)': 'Ya salió → Revisión de cargos (tomas el caso)', 'Record and go to charges': 'Registrar e ir a los cargos',
+  // toasts and banners
+  'Saved': 'Guardado', 'New link created — the old one no longer works': 'Enlace nuevo creado — el anterior ya no funciona',
+  'Reminders on': 'Recordatorios encendidos', 'Reminders off — no automatic emails for this case': 'Recordatorios apagados — sin correos automáticos para este caso',
+  'Not-responding flag cleared': 'Alerta de «no responde» quitada', 'Room flag cleared': 'Alerta de habitación quitada', 'The case is yours': 'El caso es tuyo',
+  'Dispute flagged': 'Disputa marcada', 'Dispute cleared': 'Disputa quitada', 'Keys flag cleared': 'Alerta de llaves quitada', 'Date-change flag cleared': 'Alerta de cambio de fecha quitada',
+  'Submitted for approval': 'Enviado para aprobación', 'Decision saved; the resident will be emailed': 'Decisión guardada; el residente recibirá un correo',
+  'Note added': 'Nota agregada', 'Charge saved': 'Cargo guardado', 'Deposit held saved': 'Depósito retenido guardado', 'Sent back to the owner': 'Devuelto al responsable',
+  'Refund approved; the resident will be emailed': 'Reembolso aprobado; el residente recibirá un correo', 'Refund re-approved; the resident will be emailed': 'Reembolso aprobado de nuevo; el residente recibirá un correo',
+  'Refund marked sent; the resident will be emailed': 'Reembolso marcado como enviado; el residente recibirá un correo', 'Top-up marked sent; the resident will be emailed': 'Complemento marcado como enviado; el residente recibirá un correo',
+  'Move-out recorded': 'Salida registrada', 'Moved to Charges Review': 'Pasó a Revisión de cargos',
+  '✓ Move-out recorded. Next: Inspection done (or a Limpio cleaning report fills it in).': '✓ Salida registrada. Siguiente: Inspección hecha.',
+  '✓ Moved to Charges Review. Next: check the deposit held and the charges below (add any that are missing), then Submit for approval so finance can approve the refund.':
+    '✓ Pasó a Revisión de cargos. Siguiente: revisa el depósito retenido y los cargos de abajo (agrega los que falten) y luego «Enviar para aprobación», para que finanzas apruebe el reembolso.',
+  'Uploads are not available. Add a link instead.': 'No se pueden subir archivos. Agrega un enlace.',
+  'Upload finished but the form was closed; the charge was not saved.': 'La carga terminó pero el formulario se cerró; el cargo no se guardó.',
+  'A file did not upload. Try again, or add a link instead.': 'Un archivo no se subió. Inténtalo de nuevo o agrega un enlace.',
+  'Opening…': 'Abriendo…', 'Open PDF': 'Abrir PDF', 'Could not open the file. Try again in a moment.': 'No se pudo abrir el archivo. Inténtalo en un momento.',
+  'Could not open the PDF. Try again in a moment.': 'No se pudo abrir el PDF. Inténtalo en un momento.',
+  // the Charges block
+  'Not priced': 'Sin monto', 'Change': 'Cambiar', 'No charges.': 'Sin cargos.', 'Sent back': 'Devuelto', 'Edit': 'Editar', 'Remove': 'Quitar', 'Not set': 'Sin registrar',
+  'Draft: add the charges, set the deposit held, then submit for approval.': 'Borrador: agrega los cargos, registra el depósito retenido y luego envía para aprobación.',
+  'Charges not loaded.': 'No se cargaron los cargos.',
+});
+function ckoFlagLabel(f){ return ckoT(CKO_FLAG_LABELS[f] || String(f || '').replace(/_/g, ' ')); }
 function ckoFromRow(r){
   const d = (r && r.data) || {};
   return {
@@ -26736,11 +26894,11 @@ function ckoStatusCounts(cases, now){
 function ckoErrorCode(msg){ const m = String(msg || '').match(/checkout:([a-z_]+(?::[a-z_]+)?)/); return m ? m[1] : ''; }
 function ckoErrorText(code){
   code = String(code || '');
-  if (!code) return 'Something went wrong. Try again.';
-  if (CKO_ERROR_TEXT[code]) return CKO_ERROR_TEXT[code];
+  if (!code) return ckoT('Something went wrong. Try again.');
+  if (CKO_ERROR_TEXT[code]) return ckoT(CKO_ERROR_TEXT[code]);
   const [k, field] = code.split(':');
-  if (field && (k === 'missing' || k === 'invalid')) return CKO_ERROR_TEXT[k] + ': ' + (CKO_FIELD_LABELS[field] || field.replace(/_/g, ' ')) + '.';
-  return CKO_ERROR_TEXT[k] || 'Refused: ' + code.replace(/_/g, ' ') + '.';
+  if (field && (k === 'missing' || k === 'invalid')) return ckoT(CKO_ERROR_TEXT[k]) + ': ' + ((CKO_COUNTRY === 'MX' ? CKO_FIELD_ES[field] : '') || CKO_FIELD_LABELS[field] || field.replace(/_/g, ' ')) + '.';
+  return CKO_ERROR_TEXT[k] ? ckoT(CKO_ERROR_TEXT[k]) : ckoL('Refused: ', 'Rechazado: ') + code.replace(/_/g, ' ') + '.';
 }
 const ckoRound2 = (n) => Math.round((n + Math.sign(n) * Number.EPSILON) * 100) / 100;
 // Form values (strings, as read off the inputs) -> { ok, fields } for
@@ -26856,8 +27014,8 @@ function ckoStaffCreatePayload(v, now){
   const notice = ckoZonedIso(t('notice_received_at'), city);
   if (!notice) return bad('notice_received_at');
   const nowMs = ckoNowMs(now);
-  if (Date.parse(notice) > nowMs + 5 * 60000) return { ok: false, error: 'The notice cannot be received in the future.' };
-  if (mo < ckoLocal(notice, city).date) return { ok: false, error: 'The move-out date is before the notice date.' };
+  if (Date.parse(notice) > nowMs + 5 * 60000) return { ok: false, error: ckoT('The notice cannot be received in the future.') };
+  if (mo < ckoLocal(notice, city).date) return { ok: false, error: ckoT('The move-out date is before the notice date.') };
   if (mo > ckoAddDays(ckoToday(city, nowMs), 730)) return bad('move_out_date');
   const channel = t('channel');
   if (!channel) return { ok: false, error: ckoErrorText('missing:channel') };
@@ -26883,10 +27041,11 @@ function ckoRosterMatch(tenantList, email){
 function ckoLocalInputNow(city, now){ const l = ckoLocal(ckoNowMs(now), city); return l.date + 'T' + l.time; }
 function ckoNoticeText(c){
   if (c.noticeDays == null) return '—';
+  if (CKO_COUNTRY === 'MX') return c.noticeDays + (c.noticeDays === 1 ? ' día' : ' días') + (c.short ? ' · tardío' : '');
   return c.noticeDays + (c.noticeDays === 1 ? ' day' : ' days') + (c.short ? ' · short' : '');
 }
 function ckoAsanaUrl(gid){ return gid ? 'https://app.asana.com/0/1108699774415541/' + encodeURIComponent(gid) : ''; }
-function ckoOptionLabel(options, v){ const o = (options || []).find(x => x[0] === v); return o ? o[1] : String(v == null ? '' : v); }
+function ckoOptionLabel(options, v){ const o = (options || []).find(x => x[0] === v); return o ? ckoT(o[1]) : String(v == null ? '' : v); }
 // A status_changed event's fields as one line: "keys partial, count 1".
 // Timestamps (at, *_at, clock_in, clock_out) are shown in the case city's zone
 // (city optional: Pacific). source 'limpio' (a record made from the cleaning
@@ -26899,6 +27058,12 @@ function ckoFieldsText(fields, nameOf, city){
     if (k === 'source') return val === 'limpio' ? 'from the Limpio cleaning report' : 'source ' + val;
     if (/(^|_)at$/.test(k) || k === 'clock_in' || k === 'clock_out') { const t = ckoLocal(val, city); val = t.date ? t.date + ' ' + t.time + ' ' + ckoZoneLabel(city) : val; }
     else if (/_email$/.test(k) || (k === 'by' && String(val).indexOf('@') !== -1)) val = nameOf(val);
+    // Mexico: Spanish field names, and the keys / result codes as their option words.
+    if (CKO_COUNTRY === 'MX') {
+      if (k === 'keys') val = ckoOptionLabel(CKO_KEYS_OPTIONS, val).toLowerCase();
+      else if (k === 'result') val = ckoOptionLabel(CKO_RESULT_OPTIONS, val).toLowerCase();
+      return (CKO_FIELD_ES[k] || k.replace(/_/g, ' ')) + ' ' + val;
+    }
     return k.replace(/_/g, ' ') + ' ' + val;
   }).join(', ');
 }
@@ -27001,10 +27166,14 @@ function ckoCleaningReportText(after){
 function ckoTimeline(events, nameOf, city, snapshots){
   nameOf = typeof nameOf === 'function' ? nameOf : (e) => String(e || '');
   const q = (v) => (v == null ? '?' : v);
+  const es = CKO_COUNTRY === 'MX', st = (v) => (v == null ? '?' : ckoT(v));
   return (events || []).slice().sort((a, b) => String(a.at).localeCompare(String(b.at))).map(e => {
     const after = e.after || {}, before = e.before || {};
     let detail = '';
-    if (e.type === 'created') detail = `move-out ${q(after.move_out_date)}, notice ${q(after.notice_days)} days`;
+    // Mexico: the details of the events a Mexican case can have, in Spanish (no Asana, Limpio or room release there).
+    const esDetail = es ? ckoTimelineDetailEs(e, after, before, nameOf, city, snapshots, q, st) : null;
+    if (esDetail !== null) detail = esDetail;
+    else if (e.type === 'created') detail = `move-out ${q(after.move_out_date)}, notice ${q(after.notice_days)} days`;
     else if (e.type === 'resubmitted') detail = `move-out ${q(before.move_out_date)} → ${q(after.move_out_date)}, notice ${q(before.notice_days)} → ${q(after.notice_days)} days`;
     else if (e.type === 'owner_changed') detail = after.how === 'took' ? `${nameOf(after.to)} took it`
       : after.how === 'released' ? `${nameOf(after.from)} unassigned it`
@@ -27044,13 +27213,45 @@ function ckoTimeline(events, nameOf, city, snapshots){
     else if (after.step) detail = 'at ' + after.step;
     const actor = String(e.actor || '');
     // 'system' = the database's own jobs (sweeps, mirrors, cleaning reports).
-    const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor === 'system' ? 'Vanmates (automatic)' : actor.replace(/^resident:/, '');
+    const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor === 'system' ? ckoL('Vanmates (automatic)', 'Vanmates (automático)') : actor.replace(/^resident:/, '');
     const what = e.type === 'cleaning_report' && after.outcome === 'updated' ? 'Cleaning report updated'
-      : e.type === 'refund_sent' && after.kind === 'top_up' ? 'Top-up sent'
+      : e.type === 'refund_sent' && after.kind === 'top_up' ? ckoT('Top-up sent')
       : e.type === 'room_release' && after.match !== 'exact' ? 'Room not matched'
-      : CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' ');
+      : ckoT(CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' '));
     return { at: e.at, who, what, detail };
   });
+}
+// The Mexico view's timeline detail for one event, or null for the events only Canada has
+// (ckoTimeline then words them as before). q prints a missing value as '?', st a status in Spanish.
+function ckoTimelineDetailEs(e, after, before, nameOf, city, snapshots, q, st){
+  switch (e.type) {
+    case 'created': return `salida ${q(after.move_out_date)}, aviso de ${q(after.notice_days)} días`;
+    case 'resubmitted': return `salida ${q(before.move_out_date)} → ${q(after.move_out_date)}, aviso ${q(before.notice_days)} → ${q(after.notice_days)} días`;
+    case 'owner_changed': return after.how === 'took' ? `${nameOf(after.to)} lo tomó` : after.how === 'released' ? `${nameOf(after.from)} lo soltó`
+      : `${after.from ? nameOf(after.from) : 'nadie'} → ${nameOf(after.to)}`;
+    case 'status_changed': { const ft = ckoFieldsText(after.fields, nameOf, city); return `${st(after.from)} → ${st(after.to)}${ft ? ' · ' + ft : ''}`; }
+    case 'status_override': return `${st(after.from)} → ${st(after.to)} · ${after.reason || ''}`;
+    case 'cancelled': return `desde ${st(after.from)} · ${after.reason || ''}`;
+    case 'review_decided': return `${ckoOptionLabel(CKO_OUTCOME_OPTIONS, after.outcome)} · ${after.reason || ''}${after.resident_note ? ' · al residente: ' + after.resident_note : ''}`;
+    case 'flag_set': case 'flag_cleared': return ckoFlagLabel(after.flag);
+    case 'note': return String(after.text || '');
+    case 'staff_created': return `salida ${q(after.move_out_date)}, aviso de ${q(after.notice_days)} días, por ${ckoOptionLabel(CKO_CHANNEL_OPTIONS, after.channel)}`;
+    case 'date_changed': return `${q(after.from)} → ${q(after.to)}`;
+    case 'outbox_failed': return String(after.error || '');
+    case 'deduction_added': case 'deduction_changed': case 'deduction_removed': return ckoDeductionText(e.type, before, after);
+    case 'deposit_held_set': return ckoMoneyText(after.amount) + (before.amount != null ? ' (antes ' + ckoMoneyText(before.amount) + ')' : '') + (after.note ? ' · ' + after.note : '');
+    case 'charges_submitted': return [after.lines_version != null ? 'versión de cargos ' + after.lines_version : '', ckoAmt(after.refund) != null ? 'reembolso ' + ckoMoneyText(after.refund) : '',
+      ckoAmt(after.owed_by_resident) > 0 ? 'adeuda el residente ' + ckoMoneyText(after.owed_by_resident) : ''].filter(Boolean).join(' · ');
+    case 'charges_sent_back': return String(after.note || '');
+    case 'refund_approved': case 'refund_reapproved': return ckoApprovalText(after, snapshots);
+    case 'refund_sent': return ckoPaymentText(after);
+    case 'finance_overdue': return ckoOverdueText(after, city);
+    case 'reminder_week': case 'reminder_day': return `salida ${q(after.move_out_date)}`;
+    case 'info_request': case 'info_request_logged': return ckoInfoRequestText(after, e.type === 'info_request_logged');
+    case 'status_link_reset': case 'email_sent': case 'email_failed': case 'email_unconfirmed': case 'completed_by_resident': case 'refund_change_requested':
+      return after.message ? String(after.message) : after.step ? 'en ' + after.step : '';
+  }
+  return null;
 }
 // Timestamps are stored in UTC. They are shown (and datetime-local inputs are
 // read) in the property's zone, as the DB's _checkout_tz: America/Toronto for
@@ -27120,7 +27321,7 @@ const CKO_METHOD_OPTIONS = [['etransfer', 'e-Transfer'], ['wire', 'Wire'], ['eft
 const CKO_PAY_KINDS = [['refund', 'Refund'], ['top_up', 'Top-up']];
 // Line text cap (checkout_deductions.description) and evidence entries per line.
 const CKO_MAX_LINE = 500, CKO_MAX_EVIDENCE = 20;
-function ckoLineTypeLabel(t){ const o = CKO_LINE_TYPES.find(x => x[0] === t); return o ? o[1] : (String(t == null ? '' : t).replace(/_/g, ' ') || '—'); }
+function ckoLineTypeLabel(t){ const o = CKO_LINE_TYPES.find(x => x[0] === t); return o ? ckoT(o[1]) : (String(t == null ? '' : t).replace(/_/g, ' ') || '—'); }
 // A stored amount rounded to cents, or null (blank, junk or negative).
 function ckoAmt(v){ if (v == null || v === '' || typeof v === 'boolean') return null; const n = Number(v); return isFinite(n) && n >= 0 ? ckoRound2(n) : null; }
 function ckoMoneyText(v){ const n = ckoAmt(v); return n == null ? '—' : ckoMoneySym() + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -27150,7 +27351,7 @@ function ckoLine(l){
   return { id: String(l.id || ''), type: String(l.type || ''), typeLabel: ckoLineTypeLabel(l.type), amount,
     description: String(l.description == null ? '' : l.description).trim(), owner: String(l.owner_email || '').toLowerCase(),
     evidence: (Array.isArray(l.evidence) ? l.evidence : []).map(x => String(x == null ? '' : x).trim()).filter(Boolean),
-    source: String(l.source || ''), sourceLabel: CKO_LINE_SOURCES[l.source] || '', original,
+    source: String(l.source || ''), sourceLabel: CKO_LINE_SOURCES[l.source] ? ckoT(CKO_LINE_SOURCES[l.source]) : '', original,
     reason: String(l.override_reason == null ? '' : l.override_reason).trim(), updatedAt: String(l.updated_at || ''),
     changed: original != null && amount != null && Math.abs(amount - original) > 0.005 };
 }
@@ -27321,6 +27522,16 @@ function ckoSla(c, now){
 function ckoSlaParts(sla, city){
   const z = ckoZoneLabel(city), at = (iso) => { const t = ckoLocal(iso, city); return t.date + ' ' + t.time + ' ' + z; };
   const out = [];
+  if (CKO_COUNTRY === 'MX') {
+    const dz = (iso) => { const t = ckoLocal(iso, city); return ckoDayEs(t.date) + ' ' + t.time + ' ' + z; };
+    if (sla.review.due && !sla.review.done) out.push({ key: 'review', state: sla.review.state, text: 'Revisión antes del ' + dz(sla.review.due) + (sla.review.state === 'overdue' ? ' · atrasada' : '') });
+    if (sla.payment.due && !sla.payment.done) out.push({ key: 'payment', state: sla.payment.state,
+      text: sla.payment.paused ? 'Plazo de pago en pausa (disputa) · vencía el ' + dz(sla.payment.due) : 'Pago antes del ' + dz(sla.payment.due) + (sla.payment.state === 'overdue' ? ' · atrasado' : '') });
+    const d2 = sla.deadline;
+    if (d2.date && d2.state) out.push({ key: 'deadline', state: d2.state, text: 'Plazo final ' + ckoDayEs(d2.date) + ' · ' +
+      (d2.daysLeft === 0 ? 'hoy' : d2.daysLeft > 0 ? (d2.daysLeft === 1 ? 'queda 1 día' : 'quedan ' + d2.daysLeft + ' días') : -d2.daysLeft + (d2.daysLeft === -1 ? ' día de atraso' : ' días de atraso')) });
+    return out;
+  }
   if (sla.review.due && !sla.review.done) out.push({ key: 'review', state: sla.review.state, text: 'Review due ' + at(sla.review.due) + (sla.review.state === 'overdue' ? ' · overdue' : '') });
   if (sla.payment.due && !sla.payment.done) out.push({ key: 'payment', state: sla.payment.state,
     text: sla.payment.paused ? 'Payment clock paused (dispute) · was due ' + at(sla.payment.due) : 'Payment due ' + at(sla.payment.due) + (sla.payment.state === 'overdue' ? ' · overdue' : '') });
@@ -27405,7 +27616,7 @@ function ckoMoneyIn(v){
 function ckoVersionOk(v){ return Number.isInteger(v) && v >= 0; }
 const ckoRefuse = (code) => ({ ok: false, error: ckoErrorText(code) });
 // No lines_version: the Charges block has not loaded (never sent as 0 blindly).
-const ckoNoVersion = () => ({ ok: false, error: 'Reload the case and try again.' });
+const ckoNoVersion = () => ({ ok: false, error: ckoT('Reload the case and try again.') });
 function ckoLineDesc(v){
   const t = String(v == null ? '' : v).trim();
   if (!t) return { error: ckoErrorText('missing:description') };
@@ -27481,7 +27692,7 @@ function ckoRemoveNeedsReason(c){ return !!c && (c.status !== 'Charges Review' |
 // data.deposit_held.source: roster (an estimate from the roster, to confirm),
 // form (the resident's checkout form) or staff (typed in the drawer).
 const CKO_DEPOSIT_SOURCES = { roster: 'estimate — confirm', form: 'from the resident form', staff: '' };
-function ckoDepositSourceLabel(s){ return CKO_DEPOSIT_SOURCES[s] || ''; }
+function ckoDepositSourceLabel(s){ return CKO_DEPOSIT_SOURCES[s] ? ckoT(CKO_DEPOSIT_SOURCES[s]) : ''; }
 // note: where the figure came from (required).
 function ckoDepositHeldArgs(c, amount, note, version){
   if (!ckoVersionOk(version)) return ckoNoVersion();
@@ -27603,13 +27814,13 @@ function ckoFeeRuleRows(rows){
 function ckoDeductionText(type, before, after){
   const a = ckoObj(after) || {}, b = ckoObj(before) || {};
   const x = type === 'deduction_removed' && !a.type ? b : a, parts = [];
-  const t = x.type || b.type;
+  const t = x.type || b.type, np = ckoL('not priced', 'sin monto');
   if (t) parts.push(ckoLineTypeLabel(t));
   if (type === 'deduction_changed' && Object.prototype.hasOwnProperty.call(b, 'amount') && ckoAmt(b.amount) !== ckoAmt(a.amount)) {
-    parts.push((b.amount == null ? 'not priced' : ckoMoneyText(b.amount)) + ' → ' + (a.amount == null ? 'not priced' : ckoMoneyText(a.amount)));
-  } else if (Object.prototype.hasOwnProperty.call(x, 'amount')) parts.push(x.amount == null ? 'not priced' : ckoMoneyText(x.amount));
+    parts.push((b.amount == null ? np : ckoMoneyText(b.amount)) + ' → ' + (a.amount == null ? np : ckoMoneyText(a.amount)));
+  } else if (Object.prototype.hasOwnProperty.call(x, 'amount')) parts.push(x.amount == null ? np : ckoMoneyText(x.amount));
   if (x.description) parts.push(String(x.description));
-  if (a.override_reason) parts.push('reason: ' + a.override_reason);
+  if (a.override_reason) parts.push(ckoL('reason: ', 'motivo: ') + a.override_reason);
   return parts.join(' · ');
 }
 function ckoApprovalText(a, snapshots){
@@ -27619,22 +27830,23 @@ function ckoApprovalText(a, snapshots){
   const snap = (Array.isArray(snapshots) ? snapshots : []).find(x => x && x.version === Number(a.version));
   const src = snap || a;
   const refund = ckoAmt(src.refund), owed = ckoAmt(src.owed_by_resident);
-  if (refund != null) parts.push(refund === 0 && owed > 0 ? 'no refund, owed by resident ' + ckoMoneyText(owed) : 'refund ' + ckoMoneyText(refund));
-  if (src.expected_payment_date) parts.push('pay by ' + src.expected_payment_date);
-  if (ckoAmt(a.top_up_due) > 0) parts.push('top-up due ' + ckoMoneyText(a.top_up_due));
+  if (refund != null) parts.push(refund === 0 && owed > 0 ? ckoL('no refund, owed by resident ', 'sin reembolso, adeuda el residente ') + ckoMoneyText(owed) : ckoL('refund ', 'reembolso ') + ckoMoneyText(refund));
+  if (src.expected_payment_date) parts.push(ckoL('pay by ' + src.expected_payment_date, 'pagar antes del ' + ckoDayEs(src.expected_payment_date)));
+  if (ckoAmt(a.top_up_due) > 0) parts.push(ckoL('top-up due ', 'complemento pendiente ') + ckoMoneyText(a.top_up_due));
   if (a.reason) parts.push(String(a.reason));
   return parts.join(' · ');
 }
 function ckoPaymentText(a){
   a = a || {};
-  const parts = [(a.kind === 'top_up' ? 'top-up ' : 'refund ') + ckoMoneyText(a.amount)];
-  if (a.sent_on) parts.push('sent ' + a.sent_on);
+  const parts = [(a.kind === 'top_up' ? ckoL('top-up ', 'complemento ') : ckoL('refund ', 'reembolso ')) + ckoMoneyText(a.amount)];
+  if (a.sent_on) parts.push(ckoL('sent ' + a.sent_on, 'enviado el ' + ckoDayEs(a.sent_on)));
   if (a.method) parts.push(ckoPayMethodLabel(a.method));
   return parts.join(' · ');
 }
 function ckoOverdueText(a, city){
   a = a || {};
   const t = ckoLocal(a.due, city);
+  if (CKO_COUNTRY === 'MX') return (a.stage === 'payment' ? 'pago atrasado' : 'revisión atrasada') + (t.date ? ' (vencía el ' + ckoDayEs(t.date) + ' ' + t.time + ' ' + ckoZoneLabel(city) + ')' : '');
   return (a.stage === 'payment' ? 'payment' : 'review') + ' overdue' + (t.date ? ' (due ' + t.date + ' ' + t.time + ' ' + ckoZoneLabel(city) + ')' : '');
 }
 // ---- Phase 3b: the resident's private status page link ----
@@ -27651,7 +27863,7 @@ function ckoStatusUrl(c){
 function ckoCanResetLink(c, me){ return ckoCanManage(c, me); }
 function ckoRotateArgs(c){
   const id = String((c && c.id) || '');
-  return id ? { ok: true, args: { p_case: id } } : { ok: false, error: 'No case selected.' };
+  return id ? { ok: true, args: { p_case: id } } : { ok: false, error: ckoT('No case selected.') };
 }
 // The Case block's "Resident link" row: Copy for anyone on the team (when there is a
 // token), Reset for the owner or an admin.
@@ -27676,10 +27888,12 @@ const CKO_INFO_FIELD_LABELS = { refund_method: 'refund method', refund_details: 
 function ckoInfoRequestText(a, logged){
   a = a || {};
   const n = Number(a.attempt);
-  const parts = ['request ' + (n === 1 || n === 2 || n === 3 ? n : '?') + ' of 3'];
-  const fields = (Array.isArray(a.fields) ? a.fields : []).map(k => CKO_INFO_FIELD_LABELS[k] || String(k || '').replace(/_/g, ' ')).filter(Boolean);
-  if (fields.length) parts.push('missing: ' + fields.join(', '));
-  if (logged) parts.push('the "complete your request" email already asked');
+  const es = CKO_COUNTRY === 'MX';
+  const parts = [(es ? 'solicitud ' : 'request ') + (n === 1 || n === 2 || n === 3 ? n : '?') + (es ? ' de 3' : ' of 3')];
+  const fieldsEs = { refund_method: 'método de reembolso', refund_details: 'datos de reembolso', complete_form: 'el formulario de salida completo' };
+  const fields = (Array.isArray(a.fields) ? a.fields : []).map(k => (es && fieldsEs[k]) || CKO_INFO_FIELD_LABELS[k] || String(k || '').replace(/_/g, ' ')).filter(Boolean);
+  if (fields.length) parts.push((es ? 'falta: ' : 'missing: ') + fields.join(', '));
+  if (logged) parts.push(es ? 'el correo de «completa tu solicitud» ya lo pidió' : 'the "complete your request" email already asked');
   return parts.join(' · ');
 }
 // The Case block's "Reminders" row: open cases only; the toggle is the owner's or an
@@ -27776,7 +27990,7 @@ function ckoRptMoney(v){
   const r = Math.round(Math.abs(n));
   return (n < 0 && r ? '-' : '') + ckoMoneySym() + String(r).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-function ckoRptDays(v){ const n = ckoRptNum(v); if (n == null) return '—'; const r = Math.round(n * 10) / 10; return r + (r === 1 ? ' day' : ' days'); }
+function ckoRptDays(v){ const n = ckoRptNum(v); if (n == null) return '—'; const r = Math.round(n * 10) / 10; return r + (r === 1 ? ckoL(' day', ' día') : ckoL(' days', ' días')); }
 function ckoRptCount(v){ const n = ckoRptNum(v); return n == null ? '—' : String(Math.round(n)); }
 // betterWhen: 'up' (higher is better), 'down' (lower is better), '' (neutral).
 // format (optional): compare at the precision the card actually shows, so two
@@ -27807,9 +28021,9 @@ function ckoRptPeriod(key, today){
 }
 // A custom period, checked as checkout_report checks it (checkout:bad_period).
 function ckoRptRange(from, to){
-  if (!ckoIsDate(from) || !ckoIsDate(to)) return { ok: false, error: 'Pick a start and an end date.' };
-  if (from > to) return { ok: false, error: 'The start date is after the end date.' };
-  if (ckoDaysBetween(from, to) > CKO_RPT_MAX_DAYS) return { ok: false, error: 'Pick a period of 3 years or less.' };
+  if (!ckoIsDate(from) || !ckoIsDate(to)) return { ok: false, error: ckoT('Pick a start and an end date.') };
+  if (from > to) return { ok: false, error: ckoT('The start date is after the end date.') };
+  if (ckoDaysBetween(from, to) > CKO_RPT_MAX_DAYS) return { ok: false, error: ckoT('Pick a period of 3 years or less.') };
   return { ok: true, from, to };
 }
 // f = { period, from, to, city, house } -> { ok, args } for checkout_report, or { ok: false, error }.
@@ -27817,7 +28031,7 @@ function ckoRptRange(from, to){
 function ckoRptArgs(f, today){
   f = f || {};
   const p = f.period === 'custom' ? ckoRptRange(f.from, f.to) : ckoRptPeriod(f.period || 'last_3', today);
-  if (!p) return { ok: false, error: 'Pick a period.' };
+  if (!p) return { ok: false, error: ckoT('Pick a period.') };
   if (p.ok === false) return p;
   const cityIn = String(f.city || '').trim(), city = ckoCityOf(cityIn), house = String(f.house || '').trim();
   if (cityIn && !city) return { ok: false, error: ckoErrorText('bad_city') };
@@ -27882,7 +28096,7 @@ function ckoRptFormat(format, v){
   if (format === 'pct') return ckoRptPct(v);
   if (format === 'days') return ckoRptDays(v);
   if (format === 'money') return ckoRptMoney(v);
-  if (format === 'reviews') { const t = ckoRptPct(v); return t === '—' ? t : t + ' approved'; }
+  if (format === 'reviews') { const t = ckoRptPct(v); return t === '—' ? t : t + ckoL(' approved', ' aprobadas'); }
   return ckoRptCount(v);
 }
 // The value printed over a bar: short enough for 12 columns.
@@ -27891,25 +28105,25 @@ function ckoRptShort(format, v){
   if (n == null) return '—';
   if (format === 'pct') return Math.round(n) + '%';
   if (format === 'days') return (Math.round(n * 10) / 10) + 'd';
-  if (format === 'money') return n >= 1000 ? '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : '$' + Math.round(n);
+  if (format === 'money') return n >= 1000 ? ckoMoneySym() + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : ckoMoneySym() + Math.round(n);
   return String(Math.round(n));
 }
 // 'YYYY-MM' -> 'Sep'; January carries the year ('Jan 26') so the chart shows where it turns.
 function ckoRptMonthLabel(ym){
   const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
   if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return String(ym || '');
-  return CKO_RPT_MONTHS[Number(m[2]) - 1] + (m[2] === '01' ? ' ' + m[1].slice(2) : '');
+  return (CKO_COUNTRY === 'MX' ? CKO_MONTHS_ES : CKO_RPT_MONTHS)[Number(m[2]) - 1] + (m[2] === '01' ? ' ' + m[1].slice(2) : '');
 }
 // A card's second line, from the metric's extra fields.
 function ckoRptExtra(key, m){
   m = m || {};
   const n = ckoRptNum(m.n) || 0;
-  if (key === 'auto_intake') return m.errors_excluded ? 'Intake errors left out (city or house filter)' : '';
-  if (key === 'days_to_refund') return ckoRptNum(m.median) == null ? '' : 'median ' + ckoRptDays(m.median);
-  if (key === 'disputes') { const c = ckoRptNum(m.on_cleaning); return c == null ? '' : c + ' on cases with a cleaning charge'; }
-  if (key === 'review_outcomes') return n ? ckoRptPct(m.partial) + ' partly waived · ' + ckoRptPct(m.denied) + ' denied' : '';
-  if (key === 'exceptional') { const c = ckoRptNum(m.count); return c == null ? '' : c + (c === 1 ? ' deduction' : ' deductions'); }
-  if (key === 'completion') { const o = Array.isArray(m.open_ids) ? m.open_ids.length : 0; return o ? o + ' still open' : ''; }
+  if (key === 'auto_intake') return m.errors_excluded ? ckoT('Intake errors left out (city or house filter)') : '';
+  if (key === 'days_to_refund') return ckoRptNum(m.median) == null ? '' : ckoL('median ', 'mediana ') + ckoRptDays(m.median);
+  if (key === 'disputes') { const c = ckoRptNum(m.on_cleaning); return c == null ? '' : c + ckoL(' on cases with a cleaning charge', ' en casos con cargo de limpieza'); }
+  if (key === 'review_outcomes') return n ? ckoRptPct(m.partial) + ckoL(' partly waived · ', ' condonadas en parte · ') + ckoRptPct(m.denied) + ckoL(' denied', ' rechazadas') : '';
+  if (key === 'exceptional') { const c = ckoRptNum(m.count); return c == null ? '' : c + (c === 1 ? ckoL(' deduction', ' deducción') : ckoL(' deductions', ' deducciones')); }
+  if (key === 'completion') { const o = Array.isArray(m.open_ids) ? m.open_ids.length : 0; return o ? o + ckoL(' still open', ' aún abiertas') : ''; }
   return '';
 }
 const ckoRptIds = (a) => (Array.isArray(a) ? a.map(String).filter(Boolean) : []);
@@ -27922,25 +28136,25 @@ function ckoRptView(r){
   return {
     period: { from: String(p.from || ''), to: String(p.to || ''), prevFrom: String(p.prev_from || ''), prevTo: String(p.prev_to || '') },
     headline: [
-      { key: 'requests', label: 'Requests received', text: ckoRptCount(h.requests) },
-      { key: 'cancelled', label: 'Cancelled', text: ckoRptCount(h.cancelled) },
-      { key: 'open', label: 'Still open', text: ckoRptCount(h.open) },
-      { key: 'closed', label: 'Closed', text: ckoRptCount(h.closed) },
-      { key: 'refunded_amount', label: 'Deposits refunded', text: ckoRptMoney(h.refunded_amount) },
+      { key: 'requests', label: ckoT('Requests received'), text: ckoRptCount(h.requests) },
+      { key: 'cancelled', label: ckoT('Cancelled'), text: ckoRptCount(h.cancelled) },
+      { key: 'open', label: ckoT('Still open'), text: ckoRptCount(h.open) },
+      { key: 'closed', label: ckoL('Closed', 'Cerradas'), text: ckoRptCount(h.closed) },
+      { key: 'refunded_amount', label: ckoT('Deposits refunded'), text: ckoRptMoney(h.refunded_amount) },
     ],
     cards: CKO_RPT_CARDS.map(d => {
       const m = ckoObj(ms[d.key]) || {}, n = Math.max(0, Math.round(ckoRptNum(m.n) || 0)), thin = ckoRptThin(n), delta = ckoRptDelta(m.value, m.prev, d.betterWhen, d.format);
       return {
-        key: d.key, label: d.label, format: d.format, text: ckoRptFormat(d.format, m.value), prevText: ckoRptFormat(d.format, m.prev),
-        arrow: delta.arrow, cls: delta.cls, n, nText: 'based on ' + n + (n === 1 ? ' case' : ' cases'),
-        thin, thinText: thin ? 'too few cases to read much into' : '', extra: ckoRptExtra(d.key, m),
+        key: d.key, label: ckoT(d.label), format: d.format, text: ckoRptFormat(d.format, m.value), prevText: ckoRptFormat(d.format, m.prev),
+        arrow: delta.arrow, cls: delta.cls, n, nText: ckoL('based on ', 'con base en ') + n + (n === 1 ? ckoL(' case', ' caso') : ckoL(' cases', ' casos')),
+        thin, thinText: thin ? ckoL('too few cases to read much into', 'muy pocos casos para sacar conclusiones') : '', extra: ckoRptExtra(d.key, m),
         ids: ckoRptIds(m.ids), openIds: ckoRptIds(m.open_ids),
       };
     }),
     trend: CKO_RPT_TREND.map(t => {
       const vals = rows.map(x => ckoRptNum(x[t.key]));
       const max = Math.max(0, ...vals.filter(x => x != null));
-      return { key: t.key, label: t.label, bars: rows.map((x, i) => ({
+      return { key: t.key, label: ckoT(t.label), bars: rows.map((x, i) => ({
         month: String(x.month || ''), label: ckoRptMonthLabel(x.month), value: vals[i],
         text: ckoRptShort(t.format, vals[i]), title: ckoRptMonthLabel(x.month) + ': ' + ckoRptFormat(t.format, vals[i]),
         pct: vals[i] == null || max <= 0 ? 0 : Math.round(Math.max(0, vals[i]) / max * 100),
@@ -27992,9 +28206,9 @@ function ckoListCases(cases, state, me, now){
 // bare ckoDrillText(ids) still reads as it did before shown/missing existed.
 function ckoDrillText(ids, shown, missing){
   if (!Array.isArray(ids)) return '';
-  const total = ids.length, s = shown == null ? total : shown, word = total === 1 ? ' case' : ' cases';
-  let t = 'Showing ' + (s === total ? String(total) : s + ' of ' + total) + word + ' from Reports';
-  if (missing) t += ' (' + missing + ' not found)';
+  const total = ids.length, s = shown == null ? total : shown, word = total === 1 ? ckoL(' case', ' caso') : ckoL(' cases', ' casos');
+  let t = ckoL('Showing ', 'Mostrando ') + (s === total ? String(total) : s + ckoL(' of ', ' de ') + total) + word + ckoL(' from Reports', ' de Reportes');
+  if (missing) t += ' (' + missing + ckoL(' not found)', ' no encontrados)');
   return t;
 }
 // The by_group[].col_ids keys, one per drillable numeric column (the group
@@ -28066,12 +28280,38 @@ function ckoSyncCountry(){
     const v = cc === 'MX' ? ckoTr(el.dataset[k], 'es') : el.dataset[k];
     if (attr) { if (el.getAttribute(attr) !== v) el.setAttribute(attr, v); } else if (el.textContent !== v) el.textContent = v;
   };
-  sec.querySelectorAll('thead th, #cko-filter-bar option, #cko-rpt-city option[value=""], #cko-refresh, #cko-new, #cko-fin-empty').forEach(el => swap(el));
+  sec.querySelectorAll('thead th, #cko-filter-bar option, #cko-rpt-city option[value=""], #cko-refresh, #cko-new, #cko-fin-empty, #cko-rpt-csv').forEach(el => swap(el));
+  // Text nodes only, so labels keep their * marks and inner spans: the list's "N checkouts" and the New checkout dialog.
+  const swapText = (el) => el.childNodes.forEach(n => {
+    if (n.nodeType !== 3 || !n.nodeValue.trim()) return;
+    if (n.ckoEn == null) n.ckoEn = n.nodeValue;
+    const en = n.ckoEn, v = cc === 'MX' ? en.replace(en.trim(), ckoTr(en.trim(), 'es')) : en;
+    if (n.nodeValue !== v) n.nodeValue = v;
+  });
+  document.querySelectorAll('#cko-list-card .card-title, #cko-new-sub, #cko-new-backdrop label, #cko-new-name-hint, #cko-new-cancel').forEach(swapText);
+  const swapHtml = (el, es) => {
+    if (!el) return;
+    if (el.dataset.ckoEnHtml == null) el.dataset.ckoEnHtml = el.innerHTML;
+    const v = cc === 'MX' ? es : el.dataset.ckoEnHtml;
+    if (el.innerHTML !== v) el.innerHTML = v;
+  };
+  swapHtml(document.getElementById('cko-new-title'), 'Nueva <em>salida</em>');
+  swapHtml(document.querySelector('#cko-fin-card .card-title'), 'Cola de <em>finanzas</em>');
+  ['cko-new-name', 'cko-new-house', 'cko-new-room', 'cko-new-evidence'].forEach(id => { const el = document.getElementById(id); if (el) swap(el, 'placeholder'); });
+  // City lists show only this country's cities; Mexico has no room release, so that flag is hidden there.
+  document.querySelectorAll('#cko-filter-city option, #cko-rpt-city option, #cko-new-city option').forEach(o => {
+    const v = o.value || o.textContent;
+    if (!v || v === '—') return;
+    o.hidden = ckoCountryOf({ data: { city: v } }) !== cc;
+  });
+  document.querySelectorAll('#cko-filter-flag option[value="room_not_released"]').forEach(o => { o.hidden = cc === 'MX'; });
   const s = document.getElementById('cko-search'); if (s) swap(s, 'placeholder');
   const sub = document.getElementById('cko-list-sub');
   if (sub) { if (sub.dataset.ckoEn == null) sub.dataset.ckoEn = sub.textContent; sub.textContent = cc === 'MX' ? ckoTr('Worked here · residents get Spanish e-mails', 'es') : sub.dataset.ckoEn; }
   return cc;
 }
+// A date as the drawer and list print it: Spanish ('16 oct 2026') in the Mexico view, fmtDate's English otherwise.
+function ckoFmtDate(s){ return ckoCountryNow() === 'MX' ? (ckoDayEs(s) || '—') : fmtDate(s); }
 // Drawer token: every open (and every close) bumps it, so a response that
 // arrives after the user moved on is dropped instead of overwriting the panel.
 let ckoOpenSeq = 0;
@@ -28099,8 +28339,8 @@ async function loadCheckouts(force){
   if (ckoCases && !force) { renderCheckouts(); return; }
   const sb = window.vmDb && window.vmDb.sb;
   const body = document.getElementById('cko-body');
-  if (!sb) { if (body) body.innerHTML = `<tr><td colspan="${CKO_COLS}" class="name-sub">Not connected to the database.</td></tr>`; return; }
-  if (body && !ckoCases) body.innerHTML = `<tr><td colspan="${CKO_COLS}" class="name-sub">Loading…</td></tr>`;
+  if (!sb) { if (body) body.innerHTML = `<tr><td colspan="${CKO_COLS}" class="name-sub">${esc(ckoT('Not connected to the database.'))}</td></tr>`; return; }
+  if (body && !ckoCases) body.innerHTML = `<tr><td colspan="${CKO_COLS}" class="name-sub">${esc(ckoT('Loading…'))}</td></tr>`;
   ckoLoading = (async () => {
     try {
       const rows = [], PAGE = 1000;
@@ -28126,7 +28366,7 @@ async function loadCheckouts(force){
       renderCheckouts();
     } catch (e) {
       console.error('[checkouts] load failed', e);
-      if (body) body.innerHTML = `<tr><td colspan="${CKO_COLS}" class="name-sub">Could not load checkouts: ${esc(e.message || e)}</td></tr>`;
+      if (body) body.innerHTML = `<tr><td colspan="${CKO_COLS}" class="name-sub">${esc(ckoL('Could not load checkouts: ', 'No se pudieron cargar las salidas: '))}${esc(e.message || e)}</td></tr>`;
     } finally { ckoLoading = null; }
   })();
   return ckoLoading;
@@ -28235,16 +28475,16 @@ function renderCheckouts(){
     // with closed ones) each row decides for itself.
     const cl = closed || !ckoIsOpen(c);
     const ago = cl ? ckoClosedDaysAgo(c, now) : null, days = cl ? null : ckoDaysWaiting(c, now);
-    const wait = cl ? (ago == null ? '—' : `closed ${esc(ago)} d ago`) : (days == null ? '—' : esc(days));
+    const wait = cl ? (ago == null ? '—' : ckoL(`closed ${esc(ago)} d ago`, `cerrada hace ${esc(ago)} d`)) : (days == null ? '—' : esc(days));
     const stg = ckoStageOf(c), next = ckoNextText(c, now);
     const dots = stg ? `<span aria-hidden="true" style="letter-spacing:1px"><span style="color:var(--red)">${'●'.repeat(stg.n)}</span><span style="color:var(--line)">${'●'.repeat(CKO_STAGES.length - stg.n)}</span></span>` : '';
     return `<tr data-cko-id="${esc(c.id)}" style="cursor:pointer">
-      <td>${act ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Needs action">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
+      <td>${act ? `<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="${esc(ckoT('Needs action'))}">!</span>` : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
       <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
       <td>${cl ? `${esc(ckoT('Closed'))}${c.outcome === 'cancelled' ? `<div class="name-sub">${esc(ckoCountryNow() === 'MX' ? 'cancelada' : 'cancelled')}</div>` : ''}` : `${dots}<div style="font-size:13px">${stg ? esc(ckoT(stg.label)) : esc(ckoT(c.status))}</div><div class="name-sub">${esc(ckoT(c.status))}</div>`}</td>
       <td>${next ? `<b style="font-weight:600">${esc(ckoT(next))}</b>` : '<span class="name-sub">—</span>'}</td>
       <td>${c.owner ? esc(ckoName(c.owner)) : `<span class="tag-pill red" style="font-size:11px">${esc(ckoT('Unassigned'))}</span>`}</td>
-      <td>${esc(fmtDate(c.moveOut))}<div class="name-sub">${esc(ckoNoticeText(c))}</div></td>
+      <td>${esc(ckoFmtDate(c.moveOut))}<div class="name-sub">${esc(ckoNoticeText(c))}</div></td>
       <td>${wait}</td>
       <td>${c.flags.map(ckoChip).join(' ')}</td>
     </tr>`;
@@ -28260,7 +28500,7 @@ const CKO_RPT = { period: 'last_3', from: '', to: '', city: '', house: '', view:
 function ckoRptToday(){ return ckoToday(CKO_RPT.city || 'Vancouver', Date.now()); }
 function ckoRptFill(){
   const per = document.getElementById('cko-rpt-period');
-  if (per && !per.options.length) per.innerHTML = CKO_RPT_PERIODS.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join('');
+  if (per && (!per.options.length || per.dataset.cc !== ckoCountryNow())) { per.innerHTML = CKO_RPT_PERIODS.map(([k, l]) => `<option value="${esc(k)}">${esc(ckoT(l))}</option>`).join(''); per.dataset.cc = ckoCountryNow(); }
   if (per) per.value = CKO_RPT.period;
   const custom = CKO_RPT.period === 'custom';
   [['cko-rpt-from', 'from'], ['cko-rpt-to', 'to']].forEach(([id, k]) => { const el = document.getElementById(id); if (el) { el.hidden = !custom; el.value = CKO_RPT[k]; } });
@@ -28268,12 +28508,12 @@ function ckoRptFill(){
   if (city) city.value = CKO_RPT.city;
   const hs = document.getElementById('cko-rpt-house');
   if (hs) {
-    const list = ckoRptHouses(ckoCases || [], CKO_RPT.city), key = JSON.stringify(list);
+    const list = ckoRptHouses(ckoCases || [], CKO_RPT.city), key = JSON.stringify(list) + ckoCountryNow();
     // Rebuild the options only when the house list actually changed, so an
     // open dropdown is not disturbed on every re-render.
     if (key !== CKO_RPT._houseKey) {
       CKO_RPT._houseKey = key;
-      hs.innerHTML = '<option value="">All houses</option>' + list.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('');
+      hs.innerHTML = `<option value="">${esc(ckoT('All houses'))}</option>` + list.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('');
     }
     if (CKO_RPT.house && list.indexOf(CKO_RPT.house) === -1) {
       // The chosen house is gone (e.g. the city changed under it) - fall
@@ -28298,7 +28538,7 @@ async function ckoLoadReport(){
   const a = ckoRptArgs(CKO_RPT, ckoRptToday());
   const seq = ++CKO_RPT.seq;
   if (!a.ok) { Object.assign(CKO_RPT, { loading: false, view: null, key: '', failed: { text: a.error, retry: false } }); ckoPaintReport(); return; }
-  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { Object.assign(CKO_RPT, { loading: false, failed: { text: 'Not connected to the database.', retry: true } }); ckoPaintReport(); return; }
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { Object.assign(CKO_RPT, { loading: false, failed: { text: ckoT('Not connected to the database.'), retry: true } }); ckoPaintReport(); return; }
   Object.assign(CKO_RPT, { loading: true, failed: null });
   ckoPaintReport();
   const r = await window.vmDb.checkoutRpc('checkout_report', a.args);
@@ -28317,43 +28557,43 @@ function ckoPaintReport(){
   if (!body) return;
   const csv = document.getElementById('cko-rpt-csv'), v = CKO_RPT.view;
   if (csv) csv.disabled = CKO_RPT.loading || !v || !v.groups.length;
-  if (CKO_RPT.loading) { body.innerHTML = '<p class="name-sub" style="padding:18px 0">Loading the report…</p>'; return; }
+  if (CKO_RPT.loading) { body.innerHTML = `<p class="name-sub" style="padding:18px 0">${esc(ckoT('Loading the report…'))}</p>`; return; }
   const f = CKO_RPT.failed;
   if (f) {
     body.innerHTML = f.retry
-      ? `<div class="card card-pad" role="alert" id="cko-rpt-error"><b>Couldn't load the report</b>${f.text ? `<div class="name-sub" style="margin-top:4px">${esc(f.text)}</div>` : ''}<div style="margin-top:10px"><button type="button" class="btn btn-ghost" data-cko-rpt-retry>Retry</button></div></div>`
+      ? `<div class="card card-pad" role="alert" id="cko-rpt-error"><b>${esc(ckoL("Couldn't load the report", 'No se pudo cargar el reporte'))}</b>${f.text ? `<div class="name-sub" style="margin-top:4px">${esc(f.text)}</div>` : ''}<div style="margin-top:10px"><button type="button" class="btn btn-ghost" data-cko-rpt-retry>${esc(ckoT('Retry'))}</button></div></div>`
       : `<div class="card card-pad" role="alert" id="cko-rpt-error"><b>${esc(f.text)}</b></div>`;
     return;
   }
   if (!v) { body.innerHTML = ''; return; }
   const p = v.period;
-  const period = `<div class="name-sub cko-rpt-period">${esc(fmtDate(p.from))} – ${esc(fmtDate(p.to))}${p.prevFrom ? ` · compared with ${esc(fmtDate(p.prevFrom))} – ${esc(fmtDate(p.prevTo))}` : ''}</div>`;
+  const period = `<div class="name-sub cko-rpt-period">${esc(ckoFmtDate(p.from))} – ${esc(ckoFmtDate(p.to))}${p.prevFrom ? ` · ${esc(ckoL('compared with', 'comparado con'))} ${esc(ckoFmtDate(p.prevFrom))} – ${esc(ckoFmtDate(p.prevTo))}` : ''}</div>`;
   const head = `<div class="cko-rpt-head">${v.headline.map(h => `<div class="kpi" data-cko-rpt-head="${esc(h.key)}"><div class="kpi-label">${esc(h.label)}</div><div class="kpi-value">${esc(h.text)}</div></div>`).join('')}</div>`;
   const cards = `<div class="cko-rpt-cards">${v.cards.map(c => {
     const val = c.ids.length
-      ? `<button type="button" class="cko-rpt-val" data-cko-rpt-drill="card:${esc(c.key)}" title="Show ${c.ids.length === 1 ? 'this case' : 'these ' + c.ids.length + ' cases'} in the list">${esc(c.text)}</button>`
+      ? `<button type="button" class="cko-rpt-val" data-cko-rpt-drill="card:${esc(c.key)}" title="${esc(ckoL(`Show ${c.ids.length === 1 ? 'this case' : 'these ' + c.ids.length + ' cases'} in the list`, `Ver ${c.ids.length === 1 ? 'este caso' : 'estos ' + c.ids.length + ' casos'} en la lista`))}">${esc(c.text)}</button>`
       : `<span class="cko-rpt-val">${esc(c.text)}</span>`;
     const extra = !c.extra ? '' : c.openIds.length
       ? `<div class="name-sub"><button type="button" class="cko-rpt-link" data-cko-rpt-drill="open:${esc(c.key)}">${esc(c.extra)}</button></div>`
       : `<div class="name-sub">${esc(c.extra)}</div>`;
-    const pctTitle = c.format === 'pct' ? ` title="All ${c.n} cases this figure is based on"` : '';
+    const pctTitle = c.format === 'pct' ? ` title="${esc(ckoL(`All ${c.n} cases this figure is based on`, `Los ${c.n} casos en los que se basa esta cifra`))}"` : '';
     return `<div class="card card-pad cko-rpt-card${c.thin ? ' thin' : ''}" data-cko-rpt-card="${esc(c.key)}"${pctTitle}>
       <div class="kpi-label">${esc(c.label)}</div>
       <div class="cko-rpt-main">${val}${c.arrow ? `<span class="cko-rpt-delta ${esc(c.cls)}" aria-label="${c.arrow === '▲' ? 'up' : 'down'} on the previous period">${c.arrow}</span>` : ''}</div>
-      <div class="name-sub">Previous period: ${esc(c.prevText)}</div>
+      <div class="name-sub">${esc(ckoL('Previous period: ', 'Periodo anterior: '))}${esc(c.prevText)}</div>
       ${extra}
       <div class="name-sub">${esc(c.nText)}${c.thin ? ' · ' + esc(c.thinText) : ''}</div>
     </div>`;
   }).join('')}</div>`;
   const trend = `<div class="cko-rpt-trend">${v.trend.map(t => `<div class="card card-pad">
-      <div class="card-head"><div><div class="card-title">${esc(t.label)}</div><div class="card-sub">Last 12 months</div></div></div>
+      <div class="card-head"><div><div class="card-title">${esc(t.label)}</div><div class="card-sub">${esc(ckoT('Last 12 months'))}</div></div></div>
       <div class="bar-chart cko-rpt-chart" data-cko-rpt-chart="${esc(t.key)}">${t.bars.map(b => `<div class="bar-col"><span class="bar-val">${esc(b.text)}</span><div class="bar-pair"><div class="bar${b.value == null ? ' faint' : ''}" style="height:${b.pct}%" title="${esc(b.title)}"></div></div><span class="bar-label">${esc(b.label)}</span></div>`).join('')}</div>
     </div>`).join('')}</div>`;
   const s = CKO_RPT.sort, rows = ckoRptSortGroups(v.groups, s.key, s.dir);
-  const by = CKO_RPT.house ? 'This house' : CKO_RPT.city ? 'By house' : 'By city';
+  const by = ckoT(CKO_RPT.house ? 'This house' : CKO_RPT.city || ckoCountryNow() === 'MX' ? 'By house' : 'By city');
   const th = CKO_RPT_COLS.map(([k, l]) => {
     const on = s.key === k;
-    return `<th scope="col" aria-sort="${on ? (s.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="cko-rpt-sort" data-cko-rpt-sort="${esc(k)}">${esc(l)}${on ? (s.dir === 'asc' ? ' ▲' : ' ▼') : ''}</button></th>`;
+    return `<th scope="col" aria-sort="${on ? (s.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="cko-rpt-sort" data-cko-rpt-sort="${esc(k)}">${esc(ckoT(l))}${on ? (s.dir === 'asc' ? ' ▲' : ' ▼') : ''}</button></th>`;
   }).join('');
   const tb = rows.length ? rows.map(g => `<tr data-cko-rpt-group="${g.i}">${g.cells.map((cell, n) => {
     // The group name and its Cases cell open the whole group; the other numeric
@@ -28362,15 +28602,15 @@ function ckoPaintReport(){
     const ids = n <= 1 ? g.ids : (key && g.colIds ? g.colIds[key] : []) || [];
     const ref = n <= 1 ? `group:${g.i}` : `cell:${g.i}:${key}`;
     const inner = ids.length ? `<button type="button" class="cko-rpt-link" data-cko-rpt-drill="${esc(ref)}">${esc(cell)}</button>` : esc(cell);
-    const pctTitle = CKO_RPT_COLS[n][2] === 'pct' ? ` title="All ${g.cases} cases this figure is based on"` : '';
+    const pctTitle = CKO_RPT_COLS[n][2] === 'pct' ? ` title="${esc(ckoL(`All ${g.cases} cases this figure is based on`, `Los ${g.cases} casos en los que se basa esta cifra`))}"` : '';
     return n === 0 ? `<th scope="row" style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">${inner}</th>` : `<td class="num"${pctTitle}>${inner}</td>`;
-  }).join('')}</tr>`).join('') : `<tr><td colspan="${CKO_RPT_COLS.length}" class="name-sub">No cases in this period.</td></tr>`;
+  }).join('')}</tr>`).join('') : `<tr><td colspan="${CKO_RPT_COLS.length}" class="name-sub">${esc(ckoT('No cases in this period.'))}</td></tr>`;
   const table = `<div class="card" data-cko-rpt-table><div class="card-head" style="padding:14px 18px"><div class="card-title">${esc(by)}</div></div><div style="overflow-x:auto"><table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div></div>`;
   body.innerHTML = period + head + cards + trend + table;
 }
 function ckoRptDownload(){
   const v = CKO_RPT.view;
-  if (!v || !v.groups.length) { showToast('Nothing to export'); return; }
+  if (!v || !v.groups.length) { showToast(ckoT('Nothing to export')); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['\uFEFF' + ckoRptCsv(ckoRptSortGroups(v.groups, CKO_RPT.sort.key, CKO_RPT.sort.dir))], { type: 'text/csv;charset=utf-8' }));
   a.download = 'vanmates-checkout-report-' + (CKO_RPT.city || 'all').toLowerCase() + '-' + v.period.from + '-to-' + v.period.to + '.csv';
@@ -28379,7 +28619,7 @@ function ckoRptDownload(){
 }
 // Open the Checkouts list on exactly these cases (from a report card or table cell).
 function ckoRptDrill(ids){
-  if (!ids || !ids.length) { showToast('No cases to show'); return; }
+  if (!ids || !ids.length) { showToast(ckoT('No cases to show')); return; }
   Object.assign(CKO_STATE, { ids: ids.slice(), tab: 'drill', q: '', status: '', stage: '', owner: '', flag: '', city: '' });
   ['cko-search', 'cko-filter-status', 'cko-filter-owner', 'cko-filter-flag', 'cko-filter-city'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   // The report can name a case the list hasn't loaded yet (or that changed
@@ -28492,8 +28732,8 @@ const CKO_CHARGE_FORMS = {
 CKO_CHARGE_FORMS.mark_top_up = Object.assign({}, CKO_CHARGE_FORMS.mark_sent, { title: 'Mark the top-up sent', submit: 'Mark top-up sent' });
 // "refund $X" or "$0.00 · owed by resident $Y" from a totals / snapshot shape.
 function ckoRefundLine(t){
-  if (!t || t.deposit == null) return 'not known yet (set the deposit held)';
-  return t.owed_by_resident > 0 ? ckoMoneyText(0) + ' · owed by resident ' + ckoMoneyText(t.owed_by_resident) : ckoMoneyText(t.refund);
+  if (!t || t.deposit == null) return ckoL('not known yet (set the deposit held)', 'aún no se sabe (registra el depósito retenido)');
+  return t.owed_by_resident > 0 ? ckoMoneyText(0) + ckoL(' · owed by resident ', ' · adeuda el residente ') + ckoMoneyText(t.owed_by_resident) : ckoMoneyText(t.refund);
 }
 // The drawer's Charges block (Phase 3a). b: ckoLinesBundle(...), { error }
 // when checkout_lines refused, or null (not read: closed, or before Charges
@@ -28508,8 +28748,8 @@ function ckoChargesHtml(c, b, kv, h){
   const legacy = ckoChargesModel(c) === 'legacy', dispute = (c.flags || []).indexOf('resident_dispute') !== -1;
   const live = ckoWantsLines(c);
   if (!live && !snaps.length && !pays.length) return '';
-  const me = ckoMe(), zone = ckoZoneLabel(c.city), m = (v) => esc(ckoMoneyText(v));
-  const when = (ts) => { const t = ckoLocal(ts, c.city); return t.date ? esc(fmtDate(t.date)) + ' ' + esc(t.time) + ' ' + esc(zone) : '—'; };
+  const me = ckoMe(), zone = ckoZoneLabel(c.city), m = (v) => esc(ckoMoneyText(v)), es = ckoCountryNow() === 'MX';
+  const when = (ts) => { const t = ckoLocal(ts, c.city); return t.date ? esc(ckoFmtDate(t.date)) + ' ' + esc(t.time) + ' ' + esc(zone) : '—'; };
   const who = (e) => esc(String(e || '').indexOf('@') !== -1 ? ckoName(e) : String(e || ''));
   const th = 'text-align:left;padding:6px 8px 6px 0;border-bottom:1px solid var(--line,#eee);font-size:12px';
   const td = 'padding:6px 8px 6px 0;border-bottom:1px solid var(--line,#eee);vertical-align:top;overflow-wrap:anywhere';
@@ -28517,66 +28757,72 @@ function ckoChargesHtml(c, b, kv, h){
     const items = ckoEvidence(list, c.id);
     if (!items.length) return '';
     return `<div data-cko-evidence style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${items.map((it, n) => it.url
-      ? `<a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer" title="Evidence ${n + 1}" data-cko-photo>${it.thumb
-        ? `<img src="${esc(it.thumb)}" alt="Evidence ${n + 1}" loading="lazy" referrerpolicy="no-referrer" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line,#eee)">`
-        : 'Photo ' + (n + 1)}</a>`
-      : `<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-pdf="${esc(it.path)}" data-cko-pdf-kind="file">File ${n + 1}</button>`).join('')}</div>`;
+      ? `<a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer" title="${es ? 'Evidencia' : 'Evidence'} ${n + 1}" data-cko-photo>${it.thumb
+        ? `<img src="${esc(it.thumb)}" alt="${es ? 'Evidencia' : 'Evidence'} ${n + 1}" loading="lazy" referrerpolicy="no-referrer" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line,#eee)">`
+        : (es ? 'Foto ' : 'Photo ') + (n + 1)}</a>`
+      : `<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-pdf="${esc(it.path)}" data-cko-pdf-kind="file">${es ? 'Archivo' : 'File'} ${n + 1}</button>`).join('')}</div>`;
   };
   const amount = (l) => {
-    if (l.amount == null) return '<b style="color:var(--red-dark)">Not priced</b>';
-    const orig = l.changed ? `<s class="name-sub" data-cko-original title="${esc('Standard fee ' + ckoMoneyText(l.original) + (l.reason ? ' · changed: ' + l.reason : ''))}">${m(l.original)}</s> ` : '';
+    if (l.amount == null) return `<b style="color:var(--red-dark)">${esc(ckoT('Not priced'))}</b>`;
+    const orig = l.changed ? `<s class="name-sub" data-cko-original title="${esc(ckoL('Standard fee ', 'Cuota estándar ') + ckoMoneyText(l.original) + (l.reason ? ckoL(' · changed: ', ' · cambio: ') + l.reason : ''))}">${m(l.original)}</s> ` : '';
     return orig + m(l.amount) + (l.reason ? `<div class="name-sub" style="font-size:11px">${esc(l.reason)}</div>` : '');
   };
   // A Phase 2a approval had deposit, cleaning and "other" charges only.
-  const totals = (t, old) => `<div data-cko-totals style="margin:8px 0;font-size:13px;overflow-wrap:anywhere">Deposit held ${m(t.deposit)} − cleaning ${m(t.cleaning)} − ${old
+  const totals = (t, old) => es
+    ? `<div data-cko-totals style="margin:8px 0;font-size:13px;overflow-wrap:anywhere">Depósito retenido ${m(t.deposit)} − limpieza ${m(t.cleaning)} − ${old
+      ? 'otros cargos ' + m(t.deductions) : 'deducciones ' + m(t.deductions) + ' − saldo pendiente ' + m(t.outstanding)} = <b>reembolso ${esc(ckoRefundLine(t))}</b></div>`
+    : `<div data-cko-totals style="margin:8px 0;font-size:13px;overflow-wrap:anywhere">Deposit held ${m(t.deposit)} − cleaning ${m(t.cleaning)} − ${old
     ? 'other charges ' + m(t.deductions) : 'deductions ' + m(t.deductions) + ' − unpaid balance ' + m(t.outstanding)} = <b>refund ${esc(ckoRefundLine(t))}</b></div>`;
   const table = (rows, edit) => `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:6px 0;table-layout:fixed">
-      <thead><tr><th scope="col" style="${th};width:24%">Type</th><th scope="col" style="${th}">Description</th><th scope="col" style="${th};width:24%;text-align:right">Amount</th>${edit ? `<th scope="col" style="${th};width:92px"><span class="name-sub">Change</span></th>` : ''}</tr></thead>
-      <tbody>${rows || `<tr><td colspan="${edit ? 4 : 3}" class="name-sub" style="${td}">No charges.</td></tr>`}</tbody></table></div>`;
+      <thead><tr><th scope="col" style="${th};width:24%">${esc(ckoT('Type'))}</th><th scope="col" style="${th}">${esc(ckoT('Description'))}</th><th scope="col" style="${th};width:24%;text-align:right">${esc(ckoT('Amount'))}</th>${edit ? `<th scope="col" style="${th};width:92px"><span class="name-sub">${esc(ckoT('Change'))}</span></th>` : ''}</tr></thead>
+      <tbody>${rows || `<tr><td colspan="${edit ? 4 : 3}" class="name-sub" style="${td}">${esc(ckoT('No charges.'))}</td></tr>`}</tbody></table></div>`;
+  const by = es ? 'por ' : 'by ';
   let out = `<div id="cko-charges" data-cko-charges tabindex="-1">` + h('Charges');
   if (live) {
     const cr = ckoObj(d.charges_review) || {};
     if (c.status === 'Charges Review') out += kv('Review', ckoChargesSubmitted(c)
-      ? `<b>Submitted for approval</b> <span class="name-sub">by ${who(cr.submitted_by)} · ${when(cr.submitted_at)}</span>`
-      : cr.sent_back_at ? `<b style="color:var(--red-dark)">Sent back</b> <span class="name-sub">by ${who(cr.sent_back_by)} · ${when(cr.sent_back_at)}</span>${cr.note ? `<div>${esc(cr.note)}</div>` : ''}`
-      : '<span class="name-sub">Draft: add the charges, set the deposit held, then submit for approval.</span>');
-    if (!b) out += '<div class="name-sub">Charges not loaded.</div>';
-    else if (b.error) out += `<div class="card-sub" role="alert" data-cko-lines-error style="color:var(--red-dark)">Could not load the charges: ${esc(b.error.code ? ckoErrorText(b.error.code) : b.error.message || 'unknown error')}</div>`;
+      ? `<b>${esc(ckoT('Submitted for approval'))}</b> <span class="name-sub">${by}${who(cr.submitted_by)} · ${when(cr.submitted_at)}</span>`
+      : cr.sent_back_at ? `<b style="color:var(--red-dark)">${esc(ckoT('Sent back'))}</b> <span class="name-sub">${by}${who(cr.sent_back_by)} · ${when(cr.sent_back_at)}</span>${cr.note ? `<div>${esc(cr.note)}</div>` : ''}`
+      : `<span class="name-sub">${esc(ckoT('Draft: add the charges, set the deposit held, then submit for approval.'))}</span>`);
+    if (!b) out += `<div class="name-sub">${esc(ckoT('Charges not loaded.'))}</div>`;
+    else if (b.error) out += `<div class="card-sub" role="alert" data-cko-lines-error style="color:var(--red-dark)">${esc(ckoL('Could not load the charges: ', 'No se pudieron cargar los cargos: '))}${esc(b.error.code ? ckoErrorText(b.error.code) : b.error.message || ckoL('unknown error', 'error desconocido'))}</div>`;
     else {
       const dh = b.depositHeld, edit = ckoLinesEditable(c, me, b);
       // A legacy case's live lines only matter in a dispute (re-approval).
       if (!legacy || dispute) {
-        const src = dh && dh.source === 'roster' ? `from the tenant roster <b style="color:var(--red-dark)" data-cko-estimate>${esc(ckoDepositSourceLabel('roster'))}</b>`
-          : dh && ckoDepositSourceLabel(dh.source) ? esc(ckoDepositSourceLabel(dh.source)) : dh ? 'entered by ' + who(dh.by) : '';
+        const src = dh && dh.source === 'roster' ? `${es ? 'de la lista de arrendatarios' : 'from the tenant roster'} <b style="color:var(--red-dark)" data-cko-estimate>${esc(ckoDepositSourceLabel('roster'))}</b>`
+          : dh && ckoDepositSourceLabel(dh.source) ? esc(ckoDepositSourceLabel(dh.source)) : dh ? (es ? 'registrado por ' : 'entered by ') + who(dh.by) : '';
         out += kv('Deposit held', dh
           ? `${m(dh.amount)} <span class="name-sub">· ${src}${dh.note ? ' · ' + esc(dh.note) : ''}</span>`
-          : '<b style="color:var(--red-dark)">Not set</b>');
-        if (b.rule) out += kv('Standard fees', `cleaning ${b.rule.cleaning_fee == null ? 'none' : m(b.rule.cleaning_fee)} · per key ${b.rule.key_fee == null ? 'none' : m(b.rule.key_fee)} <span class="name-sub">(${esc(b.rule.city)}${b.rule.house ? ' · ' + esc(b.rule.house) : ' default'})</span>`);
+          : `<b style="color:var(--red-dark)">${esc(ckoT('Not set'))}</b>`);
+        if (b.rule) out += kv('Standard fees', es
+          ? `limpieza ${b.rule.cleaning_fee == null ? 'ninguna' : m(b.rule.cleaning_fee)} · por llave ${b.rule.key_fee == null ? 'ninguna' : m(b.rule.key_fee)} <span class="name-sub">(${esc(b.rule.city)}${b.rule.house ? ' · ' + esc(b.rule.house) : ' · general'})</span>`
+          : `cleaning ${b.rule.cleaning_fee == null ? 'none' : m(b.rule.cleaning_fee)} · per key ${b.rule.key_fee == null ? 'none' : m(b.rule.key_fee)} <span class="name-sub">(${esc(b.rule.city)}${b.rule.house ? ' · ' + esc(b.rule.house) : ' default'})</span>`);
         out += table(b.lines.map(l => `<tr data-cko-line-row="${esc(l.id)}"${l.amount == null ? ' data-unpriced="1"' : ''}>
         <td style="${td}">${esc(l.typeLabel)}${l.sourceLabel ? `<div class="name-sub" style="font-size:11px">${esc(l.sourceLabel)}</div>` : ''}</td>
         <td style="${td}">${esc(l.description)}${l.owner ? `<div class="name-sub" style="font-size:11px">${who(l.owner)}</div>` : ''}${evidence(l.evidence)}</td>
         <td style="${td};text-align:right">${amount(l)}</td>
-        ${edit ? `<td style="${td}"><button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="line_edit" data-cko-line="${esc(l.id)}" aria-label="${esc('Edit ' + l.typeLabel + ': ' + l.description)}">Edit</button> <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="line_remove" data-cko-line="${esc(l.id)}" aria-label="${esc('Remove ' + l.typeLabel + ': ' + l.description)}">Remove</button></td>` : ''}
+        ${edit ? `<td style="${td}"><button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="line_edit" data-cko-line="${esc(l.id)}" aria-label="${esc(ckoT('Edit') + ' ' + l.typeLabel + ': ' + l.description)}">${esc(ckoT('Edit'))}</button> <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="line_remove" data-cko-line="${esc(l.id)}" aria-label="${esc(ckoT('Remove') + ' ' + l.typeLabel + ': ' + l.description)}">${esc(ckoT('Remove'))}</button></td>` : ''}
       </tr>`).join(''), edit);
         out += totals(b.totals);
       }
       const acts = ckoChargesActions(c, me, b), why = acts.filter(a => a.disabled && a.title);
       out += `<div id="cko-charges-actions" role="group" aria-label="Charges actions" style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 0 4px">${acts.map(a =>
-        `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`).join('')}</div>`
-        + (why.length ? `<div class="name-sub" data-cko-charges-why style="font-size:12px">${why.map(a => esc(a.label + ': ' + a.title)).join('<br>')}</div>` : '')
-        + (legacy && !b.lines.length && acts.some(a => a.act === 'reapprove') ? `<div class="name-sub" data-cko-legacy-hint style="font-size:12px">${esc(CKO_ERROR_TEXT.legacy_lines_required)}</div>` : '')
+        `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.title ? ` title="${esc(ckoT(a.title))}"` : ''}>${esc(ckoT(a.label))}</button>`).join('')}</div>`
+        + (why.length ? `<div class="name-sub" data-cko-charges-why style="font-size:12px">${why.map(a => esc(ckoT(a.label) + ': ' + ckoT(a.title))).join('<br>')}</div>` : '')
+        + (legacy && !b.lines.length && acts.some(a => a.act === 'reapprove') ? `<div class="name-sub" data-cko-legacy-hint style="font-size:12px">${esc(ckoT(CKO_ERROR_TEXT.legacy_lines_required))}</div>` : '')
         + '<div id="cko-charges-form"></div>';
     }
   }
-  if (snaps.length) out += `<div data-cko-snapshots style="margin-top:10px"><div class="name-sub" style="font-size:12px">Approved (${snaps.length})</div>${snaps.slice().reverse().map((s, i) => `<details data-cko-snapshot="${esc(s.version)}"${i === 0 ? ' open' : ''} style="margin:6px 0;border:1px solid var(--line,#eee);border-radius:8px;padding:6px 10px">
-      <summary style="cursor:pointer"><b>v${esc(s.version)}</b> · refund ${esc(ckoRefundLine(s))}${s.legacy ? ' <span class="name-sub">(Phase 2a approval)</span>' : ''} <span class="name-sub">${s.approved_by ? '· ' + who(s.approved_by) + ' ' : ''}${s.approved_at ? '· ' + when(s.approved_at) + ' ' : ''}${s.expected_payment_date ? '· pay by ' + esc(fmtDate(s.expected_payment_date)) : ''}${s.paid > 0 ? ' · ' + m(s.paid) + ' already paid' : ''}</span></summary>
-      ${s.reason ? `<div style="margin-top:4px">Reason: ${esc(s.reason)}</div>` : ''}
+  if (snaps.length) out += `<div data-cko-snapshots style="margin-top:10px"><div class="name-sub" style="font-size:12px">${es ? 'Aprobados' : 'Approved'} (${snaps.length})</div>${snaps.slice().reverse().map((s, i) => `<details data-cko-snapshot="${esc(s.version)}"${i === 0 ? ' open' : ''} style="margin:6px 0;border:1px solid var(--line,#eee);border-radius:8px;padding:6px 10px">
+      <summary style="cursor:pointer"><b>v${esc(s.version)}</b> · ${es ? 'reembolso' : 'refund'} ${esc(ckoRefundLine(s))}${s.legacy ? ' <span class="name-sub">(Phase 2a approval)</span>' : ''} <span class="name-sub">${s.approved_by ? '· ' + who(s.approved_by) + ' ' : ''}${s.approved_at ? '· ' + when(s.approved_at) + ' ' : ''}${s.expected_payment_date ? (es ? '· pagar antes del ' : '· pay by ') + esc(ckoFmtDate(s.expected_payment_date)) : ''}${s.paid > 0 ? ' · ' + m(s.paid) + (es ? ' ya pagado' : ' already paid') : ''}</span></summary>
+      ${s.reason ? `<div style="margin-top:4px">${es ? 'Motivo' : 'Reason'}: ${esc(s.reason)}</div>` : ''}
       ${s.lines.length ? table(s.lines.map(l => `<tr><td style="${td}">${esc(l.typeLabel)}</td><td style="${td}">${esc(l.description)}${evidence(l.evidence)}</td><td style="${td};text-align:right">${l.amount == null ? '—' : m(l.amount)}</td></tr>`).join(''), false) : ''}
       ${totals(s, s.legacy)}
     </details>`).join('')}</div>`;
   if (pays.length || due > 0) out += `<div data-cko-payments style="margin-top:10px">${pays.map(p => kv(p.kind === 'top_up' ? 'Top-up sent' : 'Refund sent',
-      `${m(p.amount)} · ${esc(fmtDate(p.sent_on))}${p.method ? ' · ' + esc(ckoPayMethodLabel(p.method)) : ''}${p.reference ? ' · ' + esc(p.reference) : ''} <span class="name-sub">(${p.shareable ? 'reference shown to the resident' : 'reference kept internal'})</span>`)).join('')}${due > 0
-      ? kv('Top-up due', `<b style="color:var(--red-dark)" data-cko-top-up>${m(due)}</b> <span class="name-sub">· mark it sent before closing</span>`) : ''}</div>`;
+      `${m(p.amount)} · ${esc(ckoFmtDate(p.sent_on))}${p.method ? ' · ' + esc(ckoPayMethodLabel(p.method)) : ''}${p.reference ? ' · ' + esc(p.reference) : ''} <span class="name-sub">(${p.shareable ? (es ? 'referencia visible para el residente' : 'reference shown to the resident') : (es ? 'referencia solo interna' : 'reference kept internal')})</span>`)).join('')}${due > 0
+      ? kv('Top-up due', `<b style="color:var(--red-dark)" data-cko-top-up>${m(due)}</b> <span class="name-sub">${es ? '· márcalo como enviado antes de cerrar' : '· mark it sent before closing'}</span>`) : ''}</div>`;
   return out + '</div>';
 }
 // banner: a refusal to show above the action bar once the case is re-read.
@@ -28584,8 +28830,8 @@ function ckoChargesHtml(c, b, kv, h){
 // Phase 3b: the Case block's "Resident link" row (ckoResidentLink decides what shows).
 function ckoResidentLinkRow(c, kv){
   const r = ckoResidentLink(c, ckoMe());
-  const btn = (act, label, title) => `<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="${act}" title="${esc(title)}">${esc(label)}</button>`;
-  const parts = [r.canCopy ? btn('copy_link', 'Copy resident link', 'Copy the private status page link to send to the resident') : '<span class="name-sub">No link yet</span>'];
+  const btn = (act, label, title) => `<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" data-cko-act="${act}" title="${esc(ckoT(title))}">${esc(ckoT(label))}</button>`;
+  const parts = [r.canCopy ? btn('copy_link', 'Copy resident link', 'Copy the private status page link to send to the resident') : `<span class="name-sub">${esc(ckoT('No link yet'))}</span>`];
   if (r.canReset) parts.push(btn('reset_link', 'Reset link', 'Make a new link; the old one stops working'));
   return kv('Resident link', `<span id="cko-link" style="display:inline-flex;flex-wrap:wrap;gap:6px">${parts.join('')}</span>`);
 }
@@ -28609,16 +28855,16 @@ async function openCheckout(id, banner, refocus, ok){
   CKO_FORM = null;
   if (!ckoCases) await loadCheckouts();
   if (tok !== ckoOpenSeq) return false;
-  if (!ckoCases) { if (typeof showToast === 'function') showToast('Could not load checkouts'); return false; }
+  if (!ckoCases) { if (typeof showToast === 'function') showToast(ckoT('Could not load checkouts')); return false; }
   const c = ckoCases.find(x => x.id === id);
-  if (!c) { if (typeof showToast === 'function') showToast('Checkout not found'); return false; }
+  if (!c) { if (typeof showToast === 'function') showToast(ckoT('Checkout not found')); return false; }
   // Open straight away with the header and a loading body, so a slow events
   // read never looks like a dead click; the body is filled in below.
   document.getElementById('panel-hero').textContent = (c.name || '?').slice(0, 1).toUpperCase();
   document.getElementById('panel-title').innerHTML = esc(c.name);
   document.getElementById('panel-sub').textContent = `${c.id} · ${c.house} · ${c.room}${c.city ? ' · ' + c.city : ''}`;
   document.getElementById('panel-meta').innerHTML = c.flags.map(ckoChip).join(' ');
-  document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}" class="name-sub" style="padding:18px 0">Loading…</div>`;
+  document.getElementById('panel-body').innerHTML = `<div data-cko-panel="${esc(c.id)}" data-cko-tok="${tok}" class="name-sub" style="padding:18px 0">${esc(ckoT('Loading…'))}</div>`;
   document.getElementById('detail-panel').classList.add('open');
   document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
   document.getElementById('panel-backdrop').classList.add('open');
@@ -28655,8 +28901,10 @@ async function openCheckout(id, banner, refocus, ok){
   const money = (v) => (v == null ? '—' : esc(ckoMoneySym()) + esc(v));
   // Every time in the drawer is the property's zone (ET or PT), not the browser's.
   const zone = ckoZoneLabel(c.city);
-  const day = (ts) => fmtDate(ckoLocal(ts, c.city).date);
-  const when = (ts) => { const t = ckoLocal(ts, c.city); return t.date ? esc(fmtDate(t.date)) + ' ' + esc(t.time) + ` <span class="name-sub">${esc(zone)}</span>` : '—'; };
+  const day = (ts) => ckoFmtDate(ckoLocal(ts, c.city).date);
+  const when = (ts) => { const t = ckoLocal(ts, c.city); return t.date ? esc(ckoFmtDate(t.date)) + ' ' + esc(t.time) + ` <span class="name-sub">${esc(zone)}</span>` : '—'; };
+  // Mexico: the few words built into the values below.
+  const L = (en, es) => (mx ? es : en);
   const waited = ckoDaysWaiting(c, Date.now());
   // The case as drawn: every action works from this, not from ckoCases, which
   // a list refresh may have moved on since (p_from must be what staff saw).
@@ -28668,10 +28916,10 @@ async function openCheckout(id, banner, refocus, ok){
   const stg = ckoStageOf(c), tl = ckoTimeline(events, ckoName, c.city, ckoChargesSnapshots(c));
   const fold = (title, body, open) => body.trim() ? `<details class="cko-fold"${open ? ' open' : ''} style="margin-top:10px;border:1px solid var(--line,#E4DBC9);border-radius:10px;padding:0 12px"><summary style="cursor:pointer;padding:10px 0;font-size:13px;font-weight:600;letter-spacing:.02em">${esc(ckoT(String(title).replace(/ \(.*$/, '')) + (String(title).match(/ \(.*$/) || [''])[0])}</summary><div style="padding-bottom:8px">${body}</div></details>` : '';
   const moveoutRows = `
-    ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
+    ${kv('Move-out date', esc(ckoFmtDate(c.moveOut)))}
     ${sch.inspection_at ? kv('Inspection booked', `${when(sch.inspection_at)} · ${esc(ckoName(sch.inspector_email))}`) : ''}
     ${hs ? '' : kv('Move-out clean', `<span data-cko-cleaning="${esc(cln.status)}">${esc(ckoCleaningLine(cln))}</span>${cln.status === 'booked' && cln.bookedAt ? ` <span class="name-sub">since ${esc(day(cln.bookedAt))}</span>` : ''}`)}
-    ${mo.keys ? kv('Moved out', `${esc(day(mo.at))} · keys ${esc(ckoOptionLabel(CKO_KEYS_OPTIONS, mo.keys).toLowerCase())} (${esc(mo.count)})${mo.source === 'limpio' ? ' <span class="name-sub">· from the cleaning report</span>' : ''}`) : ''}
+    ${mo.keys ? kv('Moved out', `${esc(day(mo.at))} · ${L('keys', 'llaves')} ${esc(ckoOptionLabel(CKO_KEYS_OPTIONS, mo.keys).toLowerCase())} (${esc(mo.count)})${mo.source === 'limpio' ? ' <span class="name-sub">· from the cleaning report</span>' : ''}`) : ''}
     ${ins.result ? kv('Inspection result', `${esc(ckoOptionLabel(CKO_RESULT_OPTIONS, ins.result))}${ins.source === 'limpio' ? ` <span class="name-sub">· by ${esc(ins.by || 'the cleaner')}, from the Limpio cleaning report</span>` : ''}${ins.notes && ins.source !== 'limpio' ? `<div class="name-sub">${esc(ins.notes)}</div>` : ''}`) : ''}
     ${cln.report && !hs ? h('Cleaning report') + ckoCleaningReportHtml(c, cln, kv) : ''}`;
   const reviewOpen = (c.flags || []).indexOf('short_notice_review_required') !== -1;
@@ -28685,31 +28933,31 @@ async function openCheckout(id, banner, refocus, ok){
     ${ckoStageTrackerHtml(c, stg, waited, slaParts)}
     ${ckoActionBarHtml(c)}
     ${ckoChargesHtml(c, lines, kv, h)}
-    ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">since ${esc(day(c.ownedAt))}</span>` : '') : '<span class="name-sub">Unassigned</span>')}
+    ${kv('Owner', c.owner ? esc(ckoName(c.owner)) + (c.ownedAt ? ` <span class="name-sub">${L('since', 'desde')} ${esc(day(c.ownedAt))}</span>` : '') : `<span class="name-sub">${esc(ckoT('Unassigned'))}</span>`)}
     ${fold('Move-out & inspection', moveoutRows, !!stg && (stg.key === 'book' || stg.key === 'moveout'))}
     ${fold('Resident', `
     ${kv('Email', esc(c.email))}
     ${kv('Phone', esc(d.phone || '—'))}
     ${kv('Forwarding address', esc(d.forwarding_address || '—'))}
-    ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + ' · will return')}
+    ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + L(' · will return', ' · las devolverá'))}
     ${kv('Reason', esc(d.reason || '—') + (d.reason_details ? `<div class="name-sub">${esc(d.reason_details)}</div>` : ''))}
-    ${kv('Refund method', d.refund_method === 'deposit_transfer' ? 'Deposit carried over (room change)' : mx ? esc(ckoPayMethodLabel(d.refund_method) || d.refund_method || '—') + ' <span class="name-sub">(la CLABE se guarda aparte, solo para administradores; no se muestra aquí)</span>' : esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
-    ${kv(hs ? 'Matched to homestay booking' : mx ? 'Matched to the tenant list' : 'Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
+    ${kv('Refund method', d.refund_method === 'deposit_transfer' ? esc(ckoT('Deposit carried over (room change)')) : mx ? esc(ckoPayMethodLabel(d.refund_method) || d.refund_method || '—') + ' <span class="name-sub">(la CLABE se guarda aparte, solo para administradores; no se muestra aquí)</span>' : esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
+    ${kv(hs ? 'Matched to homestay booking' : mx ? 'Matched to the tenant list' : 'Matched to roster', c.verified ? L('Yes', 'Sí') : L('No, staff to confirm', 'No, el equipo debe confirmarlo') + (d.roster_stale ? ` <span class="name-sub">${L('(roster was stale)', '(la lista estaba desactualizada)')}</span>` : ''))}
     ${kv('Submitted', when(c.createdAt))}`, false)}
     ${fold('Notice & acknowledgements', `
     ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
-    ${kv('Notice', esc(ckoNoticeText(c)) + (n.required ? ` <span class="name-sub">of ${esc(n.required)} required</span>` : ''))}
+    ${kv('Notice', esc(ckoNoticeText(c)) + (n.required ? ` <span class="name-sub">${L('of', 'de')} ${esc(n.required)} ${L('required', 'requeridos')}</span>` : ''))}
     ${sno ? kv('Notice taken by staff', `${esc(ckoOptionLabel(CKO_CHANNEL_OPTIONS, sno.channel))} · ${esc(ckoName(sno.by))}${sno.evidence ? `<div class="name-sub">${esc(sno.evidence)}</div>` : ''}`) : ''}
-    ${kv(hs ? 'Deposit' : 'Deposit & cleaning', dep.at ? `${esc(day(dep.at))} · deposit shown ${money(dep.deposit_shown)} · cleaning ${money(dep.cleaning_fee)}${dep.wire_fee ? ' · wire ' + money(dep.wire_fee) : ''}<div class="name-sub">"${esc(dep.text || '')}"</div>` : '—')}
-    ${kv('Short notice', sn ? `${esc(day(sn.at))}<div class="name-sub">"${esc(sn.text || '')}"</div>` : 'Not needed')}
+    ${kv(hs ? 'Deposit' : 'Deposit & cleaning', dep.at ? `${esc(day(dep.at))} · ${L('deposit shown', 'depósito mostrado')} ${money(dep.deposit_shown)} · ${L('cleaning', 'limpieza')} ${money(dep.cleaning_fee)}${dep.wire_fee ? ' · wire ' + money(dep.wire_fee) : ''}<div class="name-sub">"${esc(dep.text || '')}"</div>` : '—')}
+    ${kv('Short notice', sn ? `${esc(day(sn.at))}<div class="name-sub">"${esc(sn.text || '')}"</div>` : esc(ckoT('Not needed')))}
     ${x ? kv('Requested', `${esc(x.reason || '')} · ${esc(day(x.requested_at))}<div>${esc(x.explanation || '')}</div>`) : kv('Requested', 'No')}
-    ${dec ? kv('Decision', `<b>${esc(ckoOptionLabel(CKO_OUTCOME_OPTIONS, dec.outcome))}</b> · ${esc(ckoName(dec.by))} · ${esc(day(dec.at))}<div class="name-sub">Internal: ${esc(dec.reason || '')}</div>${dec.resident_note ? `<div class="name-sub">To resident: ${esc(dec.resident_note)}</div>` : ''}`) : ''}`, reviewOpen)}
+    ${dec ? kv('Decision', `<b>${esc(ckoOptionLabel(CKO_OUTCOME_OPTIONS, dec.outcome))}</b> · ${esc(ckoName(dec.by))} · ${esc(day(dec.at))}<div class="name-sub">${L('Internal', 'Interno')}: ${esc(dec.reason || '')}</div>${dec.resident_note ? `<div class="name-sub">${L('To resident', 'Al residente')}: ${esc(dec.resident_note)}</div>` : ''}`) : ''}`, reviewOpen)}
     ${fold('Resident link, reminders, room', `
     ${ckoResidentLinkRow(c, kv)}
     ${ckoRemindersRow(c, kv)}
     ${hs ? '' : ckoRoomRow(events, kv)}
     ${kv('Asana', c.asanaGid ? `<a href="${esc(ckoAsanaUrl(c.asanaGid))}" target="_blank" rel="noopener">Open task</a>` : '<span class="name-sub">Not mirrored yet</span>')}`, false)}
-    ${fold('Timeline (' + tl.length + ' · ' + zone + ')', tl.map(e => { const t = ckoLocal(e.at, c.city); return kv(fmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || '<div class="name-sub">No events.</div>', false)}
+    ${fold('Timeline (' + tl.length + ' · ' + zone + ')', tl.map(e => { const t = ckoLocal(e.at, c.city); return kv(ckoFmtDate(t.date) + (t.time ? ' ' + t.time + ' ' + zone : ''), `<b>${esc(e.what)}</b> <span class="name-sub">${esc(e.who)}</span>${e.detail ? `<div class="name-sub">${esc(e.detail)}</div>` : ''}`); }).join('') || `<div class="name-sub">${esc(ckoT('No events.'))}</div>`, false)}
   </div>`;
   if (banner || refocus) {
     const raf = window.requestAnimationFrame ? (f) => window.requestAnimationFrame(f) : (f) => setTimeout(f, 16);
@@ -28737,7 +28985,7 @@ let CKO_FORM = null; // { act, caseId, from, step? } while a form is open
 let ckoBusy = false;
 let CKO_SHOWN = null; // snapshot of the case the drawer last drew
 let CKO_LINES = null; // { caseId, bundle } the Charges block last drew (bundle.version = lines_version)
-function ckoBusyToast(){ showToast('Still saving the last change…'); }
+function ckoBusyToast(){ showToast(ckoT('Still saving the last change…')); }
 // 2026-10-06: the stage at the top of the drawer — five steps, the current one
 // marked, then status, days here, deadlines and the one Next thing to do.
 function ckoStageTrackerHtml(c, stg, waited, slaParts){
@@ -28748,17 +28996,21 @@ function ckoStageTrackerHtml(c, stg, waited, slaParts){
     return `<li style="flex:1 1 0;min-width:0;text-align:center;position:relative"${cur ? ' aria-current="step"' : ''}>
       ${i ? `<span aria-hidden="true" style="position:absolute;top:7px;right:50%;width:100%;height:2px;background:${done || cur ? 'var(--red)' : 'var(--line,#D8CDB8)'}"></span>` : ''}
       <span aria-hidden="true" style="position:relative;display:inline-block;width:16px;height:16px;border-radius:50%;${dot}"></span>
-      <div style="font-size:11px;line-height:1.25;margin-top:6px;${cur ? 'font-weight:700;color:var(--ink)' : 'color:var(--muted)'}">${esc(s.label)}</div>
+      <div style="font-size:11px;line-height:1.25;margin-top:6px;${cur ? 'font-weight:700;color:var(--ink)' : 'color:var(--muted)'}">${esc(ckoT(s.label))}</div>
     </li>`;
   }).join('');
-  const head = closed ? `Closed${c.outcome ? ' · ' + esc(c.outcome) : ''}` : stg ? `Stage ${stg.n} of ${CKO_STAGES.length} · ${esc(stg.label)}` : esc(c.status);
+  // Mexico: Spanish words (the outcome is a code: cancelled, …).
+  const es = ckoCountryNow() === 'MX', outEs = { cancelled: 'cancelada', completed: 'completada', closed: 'cerrada' };
+  const head = es
+    ? (closed ? `Cerrada${c.outcome ? ' · ' + esc(outEs[c.outcome] || c.outcome) : ''}` : stg ? `Etapa ${stg.n} de ${CKO_STAGES.length} · ${esc(ckoT(stg.label))}` : esc(ckoT(c.status)))
+    : closed ? `Closed${c.outcome ? ' · ' + esc(c.outcome) : ''}` : stg ? `Stage ${stg.n} of ${CKO_STAGES.length} · ${esc(stg.label)}` : esc(c.status);
   const next = ckoNextText(c, Date.now());
   return `<section id="cko-stage" aria-label="Stage" style="margin:6px 0 4px;padding:14px 14px 12px;border:1px solid var(--line,#E4DBC9);border-radius:12px;background:var(--surface,#fff)">
     <ol style="display:flex;list-style:none;margin:0 0 12px;padding:0">${steps}</ol>
     <div style="font-weight:700">${head}</div>
-    <div class="name-sub" style="margin-top:2px">${esc(c.status)}${!closed && waited != null ? ` · ${esc(waited)} ${waited === 1 ? 'day' : 'days'} here` : ''}</div>
+    <div class="name-sub" style="margin-top:2px">${esc(ckoT(c.status))}${!closed && waited != null ? (es ? ` · ${esc(waited)} ${waited === 1 ? 'día' : 'días'} aquí` : ` · ${esc(waited)} ${waited === 1 ? 'day' : 'days'} here`) : ''}</div>
     ${slaParts.length ? `<div data-cko-sla style="margin-top:6px">${slaParts.map(p => `<span class="tag-pill ${p.state === 'overdue' ? 'red' : p.state === 'soon' ? 'amber' : p.state === 'paused' ? 'blue' : 'green'}" data-cko-sla-part="${esc(p.key)}" data-state="${esc(p.state)}" style="font-size:11px;margin:1px 4px 1px 0;white-space:normal;display:inline-block">${esc(p.text)}</span>`).join('')}</div>` : ''}
-    ${next ? `<div style="margin-top:10px;font-size:15px"><span class="name-sub">Next:</span> <b>${esc(next)}</b></div>` : ''}
+    ${next ? `<div style="margin-top:10px;font-size:15px"><span class="name-sub">${es ? 'Siguiente:' : 'Next:'}</span> <b>${esc(ckoT(next))}</b></div>` : ''}
   </section>`;
 }
 // Actions used now and then go under "More" so the bar shows what moves the case on.
@@ -28767,11 +29019,11 @@ function ckoActionBarHtml(c){
   const next = ckoNextStep(c, ckoMe());
   const why = !!(next && next.step && !next.allowed && next.reason);
   const fast = ckoFastPlan(c, ckoMe());
-  const btn = (a, more) => `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px${more ? ';width:100%;justify-content:flex-start;border-radius:8px' : ''}" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(ckoT(a.label))}</button>`;
+  const btn = (a, more) => `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px${more ? ';width:100%;justify-content:flex-start;border-radius:8px' : ''}" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(ckoT(a.title))}"` : ''}>${esc(ckoT(a.label))}</button>`;
   const acts = ckoActions(c, ckoMe()), main = acts.filter(a => CKO_MORE_ACTS.indexOf(a.act) === -1), more = acts.filter(a => CKO_MORE_ACTS.indexOf(a.act) !== -1);
   return `<div id="cko-actions" role="group" aria-label="Checkout actions" tabindex="-1" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 4px;align-items:flex-start">${main.map(a => btn(a, false)).join('')}${more.length ? `<details id="cko-more" style="position:relative"><summary class="btn btn-ghost" style="padding:6px 12px;font-size:12px;list-style:none;cursor:pointer">${esc(ckoT('More ▾'))}</summary><div style="position:absolute;z-index:5;margin-top:4px;min-width:190px;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--surface,#fff);border:1px solid var(--line,#E4DBC9);border-radius:10px;box-shadow:var(--shadow-md)">${more.map(a => btn(a, true)).join('')}</div></details>` : ''}</div>
-    ${why ? `<div id="cko-next-why" class="name-sub" style="font-size:12px">${esc(next.label)}: ${esc(next.reason)}</div>` : ''}
-    ${fast && !fast.allowed ? `<div id="cko-fast-why" class="name-sub" style="font-size:12px">Already moved out: ${esc(fast.reason)}</div>` : ''}
+    ${why ? `<div id="cko-next-why" class="name-sub" style="font-size:12px">${esc(ckoT(next.label))}: ${esc(ckoT(next.reason))}</div>` : ''}
+    ${fast && !fast.allowed ? `<div id="cko-fast-why" class="name-sub" style="font-size:12px">${esc(ckoL('Already moved out', 'Ya salió'))}: ${esc(ckoT(fast.reason))}</div>` : ''}
     <div id="cko-banner" class="card-sub" role="alert" tabindex="-1" style="color:var(--red-dark)"></div>
     <div id="cko-form"></div>`;
 }
@@ -28785,8 +29037,8 @@ function ckoFieldHtml(fd, value){
   const req = fd.required ? '<span class="req" aria-hidden="true">*</span>' : '';
   const aria = fd.required ? ' aria-required="true"' : '';
   let input;
-  if (fd.type === 'files') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}">${esc(fd.label)}</label><input class="form-input" id="${id}" name="${esc(fd.name)}" type="file" multiple accept="image/*,application/pdf" /></div>`;
-  if (fd.type === 'checkbox') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="${id}" name="${esc(fd.name)}"${v === 'true' || v === 'on' ? ' checked' : ''} /> ${esc(fd.label)}</label></div>`;
+  if (fd.type === 'files') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}">${esc(ckoT(fd.label))}</label><input class="form-input" id="${id}" name="${esc(fd.name)}" type="file" multiple accept="image/*,application/pdf" /></div>`;
+  if (fd.type === 'checkbox') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="${id}" name="${esc(fd.name)}"${v === 'true' || v === 'on' ? ' checked' : ''} /> ${esc(ckoT(fd.label))}</label></div>`;
   // Mexico: SPEI / cash instead of Canada's methods (ckoMethodOptions).
   const opts = fd.options === CKO_METHOD_OPTIONS ? ckoMethodOptions() : fd.options;
   if (fd.type === 'select') input = `<select class="form-input" id="${id}" name="${esc(fd.name)}"${aria}><option value="">${esc(ckoT('Choose…'))}</option>${opts.map(o => `<option value="${esc(o[0])}"${o[0] === v ? ' selected' : ''}>${esc(ckoT(o[1]))}</option>`).join('')}</select>`;
@@ -28803,7 +29055,7 @@ function ckoFieldHtml(fd, value){
 // zone: the case's zone label, shown on datetime fields so staff know which
 // clock they are typing in.
 function ckoFormHtml(title, fields, values, submitLabel, zone){
-  const shown = fields.map(fd => fd.type === 'datetime' && zone ? Object.assign({}, fd, { label: `${fd.label} (${zone})` }) : fd);
+  const shown = fields.map(fd => fd.type === 'datetime' && zone ? Object.assign({}, fd, { label: `${ckoT(fd.label)} (${zone})` }) : fd);
   return `<form data-cko-form aria-label="${esc(title)}" style="margin:8px 0 4px;padding:12px 14px;border:1px solid var(--line,#E4DBC9);border-radius:10px;background:var(--cream-2)" novalidate>
     <div class="name-main" style="margin-bottom:10px">${esc(ckoT(title))}</div>
     ${shown.map(fd => ckoFieldHtml(fd, (values || {})[fd.name])).join('')}
@@ -28849,7 +29101,7 @@ function ckoPanelCase(){
 }
 // The open drawer still shows this case (it may have been closed or switched).
 function ckoShowing(id){ const p = document.getElementById('detail-panel'); return !!(p && p.classList.contains('open') && document.querySelector(`#panel-body [data-cko-panel="${String(id).replace(/["\\]/g, "\\$&")}"]`)); }
-function ckoRefusalText(err){ return err.code ? ckoErrorText(err.code) : 'Could not save: ' + (err.message || 'unknown error'); }
+function ckoRefusalText(err){ return err.code ? ckoErrorText(err.code) : ckoL('Could not save: ', 'No se pudo guardar: ') + (err.message || ckoL('unknown error', 'error desconocido')); }
 function ckoSetButtons(disabled){ document.querySelectorAll('#cko-actions button, #cko-form button, #cko-charges button, #cko-charges-form button, #cko-link button, #cko-reminders button').forEach(b => { b.disabled = disabled; }); }
 // Buttons back on after a refusal that keeps the form open, with the action
 // bar's and the Charges block's own rules (a disabled Submit stays disabled).
@@ -28865,7 +29117,7 @@ function ckoRestoreButtons(){
 // the case. Returns true when the server accepted it.
 async function ckoCall(id, name, args, done){
   if (ckoBusy) { ckoBusyToast(); return false; }
-  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { showToast('Not connected to the database'); return false; }
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { showToast(ckoT('Not connected to the database')); return false; }
   ckoBusy = true;
   ckoSetButtons(true);
   let r;
@@ -28890,7 +29142,7 @@ async function ckoCall(id, name, args, done){
   if (reopen) await openCheckout(id, r.error ? ckoRefusalText(r.error) : '', true);
   // The drawer moved on: whatever it shows now gets its buttons back.
   else ckoRestoreButtons();
-  if (!r.error) showToast(done || 'Saved');
+  if (!r.error) showToast(ckoT(done || 'Saved'));
   else if (!reopen) showToast(ckoRefusalText(r.error));
   return !r.error;
 }
@@ -28904,7 +29156,7 @@ const CKO_FAST_DONE = '✓ Moved to Charges Review. Next: check the deposit held
 // doneMsg: the green banner on success (default: the "Already moved out" one).
 async function ckoAdvanceChain(id, calls, doneMsg){
   if (ckoBusy) { ckoBusyToast(); return false; }
-  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { showToast('Not connected to the database'); return false; }
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') { showToast(ckoT('Not connected to the database')); return false; }
   ckoBusy = true;
   ckoSetButtons(true);
   let r = { error: null }, done = 0;
@@ -28923,12 +29175,12 @@ async function ckoAdvanceChain(id, calls, doneMsg){
     return false;
   }
   const failed = r.error ? calls[done] : null;
-  const msg = !failed ? '' : (done ? `Stopped at ${failed.from}. ` : '') + `${failed.step === 'take' ? 'Take' : CKO_STEPS[failed.step].label}: ${ckoRefusalText(r.error)}`;
+  const msg = !failed ? '' : (done ? ckoL(`Stopped at ${failed.from}. `, `Se detuvo en ${ckoT(failed.from)}. `) : '') + `${ckoT(failed.step === 'take' ? 'Take' : CKO_STEPS[failed.step].label)}: ${ckoRefusalText(r.error)}`;
   await ckoReload();
   const reopen = ckoShowing(id) && ckoCases && ckoCases.some(c => c.id === id);
-  if (reopen) await openCheckout(id, msg || doneMsg || CKO_FAST_DONE, true, !failed);
+  if (reopen) await openCheckout(id, msg || ckoT(doneMsg || CKO_FAST_DONE), true, !failed);
   else ckoRestoreButtons();
-  if (!failed) showToast(doneMsg ? 'Move-out recorded' : 'Moved to Charges Review');
+  if (!failed) showToast(ckoT(doneMsg ? 'Move-out recorded' : 'Moved to Charges Review'));
   else if (!reopen) showToast(msg);
   return !failed;
 }
@@ -28959,10 +29211,10 @@ function ckoAct(act, lineId){
     // ---- Phase 3b: the resident status link ----
     case 'copy_link': {
       const url = ckoStatusUrl(c);
-      if (!url) { showToast('This case has no resident link yet'); return; }
-      const fallback = () => { window.prompt('Copy the resident link:', url); };
+      if (!url) { showToast(ckoT('This case has no resident link yet')); return; }
+      const fallback = () => { window.prompt(ckoT('Copy the resident link:'), url); };
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(() => showToast('Resident link copied'), fallback);
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(() => showToast(ckoT('Resident link copied')), fallback);
         else fallback();
       } catch (e) { fallback(); }
       return;
@@ -28971,7 +29223,7 @@ function ckoAct(act, lineId){
       if (!ckoCanResetLink(c, ckoMe())) return;
       const b = ckoRotateArgs(c);
       if (!b.ok) { showToast(b.error); return; }
-      if (!confirm('Reset the resident link? The link in the emails already sent stops working at once. Copy the new link afterwards to send it to the resident.')) return;
+      if (!confirm(ckoT('Reset the resident link? The link in the emails already sent stops working at once. Copy the new link afterwards to send it to the resident.'))) return;
       return ckoCall(id, 'checkout_rotate_status_token', b.args, 'New link created — the old one no longer works');
     }
     // ---- Phase 4a: automatic reminders ----
@@ -29002,7 +29254,7 @@ function ckoAct(act, lineId){
     }
     case 'take': return ckoCall(id, 'checkout_take', { p_case: id }, 'The case is yours');
     case 'release':
-      if (!confirm('Unassign this case? It goes back to Unassigned for anyone to take.')) return;
+      if (!confirm(ckoT('Unassign this case? It goes back to Unassigned for anyone to take.'))) return;
       return ckoCall(id, 'checkout_release', { p_case: id }, 'Unassigned');
     case 'flag_dispute': return flag('resident_dispute', true, 'Dispute flagged');
     case 'clear_dispute': return flag('resident_dispute', false, 'Dispute cleared');
@@ -29021,18 +29273,18 @@ function ckoAct(act, lineId){
       }
       if (!n.allowed) return;
       if (!n.fields.length) {
-        if (!confirm(`${n.label}? The case moves to ${s.to}.`)) return;
+        if (!confirm(ckoL(`${n.label}? The case moves to ${s.to}.`, `¿${ckoT(n.label)}? El caso pasa a ${ckoT(s.to)}.`))) return;
         const p = ckoStepPayload(n.step, {}, { city: c.city, now: Date.now() });
         if (!p.ok) { showToast(p.error); return; }
-        return ckoCall(id, 'checkout_advance', { p_case: id, p_from: c.status, p_step: n.step, p_fields: p.fields }, `${n.label}: done`);
+        return ckoCall(id, 'checkout_advance', { p_case: id, p_from: c.status, p_step: n.step, p_fields: p.fields }, ckoL(`${n.label}: done`, `${ckoT(n.label)}: hecho`));
       }
       // Information Complete: "Resident moved out" runs schedule + moved_out (ckoNextStep).
       if (n.chain) {
         const k = (c.data || {}).keys || {};
-        return show({ title: `${n.label} → ${CKO_STEPS.moved_out.to}${n.take ? ' (you take the case)' : ''}`, fields: n.fields, submit: n.label },
+        return show({ title: `${ckoT(n.label)} → ${ckoT(CKO_STEPS.moved_out.to)}${n.take ? ckoL(' (you take the case)', ' (tomas el caso)') : ''}`, fields: n.fields, submit: n.label },
           { keys: 'returned', count: k.count == null ? '' : k.count }, { act: 'next_chain', steps: n.chain, take: n.take });
       }
-      return show({ title: `${n.label} → ${s.to}`, fields: n.fields, submit: n.label }, ckoStepDefaults(n.step, c), { act, step: n.step });
+      return show({ title: `${ckoT(n.label)} → ${ckoT(s.to)}`, fields: n.fields, submit: n.label }, ckoStepDefaults(n.step, c), { act, step: n.step });
     }
     case 'moved_out_fast': {
       const plan = ckoFastPlan(c, ckoMe());
@@ -29049,17 +29301,17 @@ function ckoAct(act, lineId){
     // ---- Phase 3a: the Charges block ----
     case 'line_add': return charges('line_add', { type: '', evidence: '' });
     case 'line_edit':
-      if (!line) { showToast(CKO_ERROR_TEXT.line_gone); return; }
+      if (!line) { showToast(ckoT(CKO_ERROR_TEXT.line_gone)); return; }
       // After submission or outside Charges Review a change needs a new
       // reason: the old one is not offered again.
       return charges('line_edit', { amount: line.amount == null ? '' : line.amount.toFixed(2), description: line.description, evidence: line.evidence.join('\n'), override_reason: ckoRemoveNeedsReason(c) ? '' : line.reason }, { lineId: line.id });
     case 'line_remove': {
-      if (!line) { showToast(CKO_ERROR_TEXT.line_gone); return; }
+      if (!line) { showToast(ckoT(CKO_ERROR_TEXT.line_gone)); return; }
       // After submission or in a dispute the removal needs a reason: a form.
       if (ckoRemoveNeedsReason(c)) return charges('line_remove', { charge: line.typeLabel + ': ' + line.description, reason: '' }, { lineId: line.id });
       const b = ckoLineRemoveArgs(c, line, bundle ? bundle.version : undefined);
       if (!b.ok) { showToast(b.error); return; }
-      if (!confirm(`Remove this charge? ${line.typeLabel}: ${line.description}`)) return;
+      if (!confirm(ckoL(`Remove this charge? ${line.typeLabel}: ${line.description}`, `¿Quitar este cargo? ${line.typeLabel}: ${line.description}`))) return;
       return ckoCall(id, 'checkout_deduction_remove', b.args, 'Charge removed');
     }
     case 'deposit_held': {
@@ -29070,7 +29322,7 @@ function ckoAct(act, lineId){
     case 'submit_charges': {
       const b = ckoSubmitChargesArgs(c, bundle ? bundle.version : undefined);
       if (!b.ok) { showToast(b.error); return; }
-      if (!confirm('Submit these charges for approval? Finance can then approve or send them back.')) return;
+      if (!confirm(ckoT('Submit these charges for approval? Finance can then approve or send them back.'))) return;
       return ckoCall(id, 'checkout_advance', b.args, 'Submitted for approval');
     }
     case 'send_back': return charges('send_back', {});
@@ -29085,7 +29337,7 @@ function ckoAct(act, lineId){
       const amount = act === 'mark_top_up' ? ckoTopUpDue(c) : last ? last.refund : null;
       const method = ckoMethodOptions().some(o => o[0] === (c.data || {}).refund_method) ? c.data.refund_method : '';
       // A zero refund still needs a reference (the SQL requires one).
-      return charges(act, { amount: ckoMoneyText(amount), sent_on: ckoToday(c.city, Date.now()), method, reference: amount === 0 ? 'no payment due' : '', shareable: '' });
+      return charges(act, { amount: ckoMoneyText(amount), sent_on: ckoToday(c.city, Date.now()), method, reference: amount === 0 ? ckoL('no payment due', 'sin pago pendiente') : '', shareable: '' });
     }
   }
 }
@@ -29110,7 +29362,7 @@ async function ckoSubmitForm(form){
     s.fields.forEach(fd => { v[fd.name] = val(fd.name); });
     const p = ckoStepPayload(st.step, v, { city: c.city, now: Date.now() });
     if (!p.ok) return err(p.error);
-    return ckoCall(id, 'checkout_advance', { p_case: id, p_from: st.from, p_step: st.step, p_fields: p.fields }, `${s.label}: done`);
+    return ckoCall(id, 'checkout_advance', { p_case: id, p_from: st.from, p_step: st.step, p_fields: p.fields }, ckoL(`${s.label}: done`, `${ckoT(s.label)}: hecho`));
   }
   if (st.act === 'moved_out_fast' || st.act === 'next_chain') {
     const plan = { steps: st.steps, take: st.take }, v = {};
@@ -29118,13 +29370,14 @@ async function ckoSubmitForm(form){
     const p = ckoFastPayloads(c, plan, v, { city: c.city, now: Date.now(), me: ckoMe() });
     if (!p.ok) return err(p.error);
     if (st.act === 'next_chain') return ckoAdvanceChain(id, p.calls, CKO_MOVED_OUT_DONE);
-    if (!confirm(`${st.take ? 'Take this case and record' : 'Record'} the move-out and inspection and send it to Charges Review? Each step is logged and mirrored to Asana.`)) return;
+    if (!confirm(ckoL(`${st.take ? 'Take this case and record' : 'Record'} the move-out and inspection and send it to Charges Review? Each step is logged and mirrored to Asana.`,
+      `¿${st.take ? 'Tomar este caso y registrar' : 'Registrar'} la salida y la inspección y pasarlo a Revisión de cargos? Cada paso queda en el historial.`))) return;
     return ckoAdvanceChain(id, p.calls);
   }
   if (st.act === 'assign') {
     const email = val('email').toLowerCase();
     if (!email) return err(ckoErrorText('missing:email'));
-    return ckoCall(id, 'checkout_assign', { p_case: id, p_email: email }, 'Assigned to ' + ckoName(email));
+    return ckoCall(id, 'checkout_assign', { p_case: id, p_email: email }, ckoL('Assigned to ', 'Asignado a ') + ckoName(email));
   }
   if (st.act === 'decide') return send(ckoDecideArgs(c, val('outcome'), val('reason'), val('resident_note')), 'checkout_decide_exception', 'Decision saved; the resident will be emailed');
   if (st.act === 'note') return send(ckoNoteArgs(c, val('text')), 'checkout_note', 'Note added');
@@ -29135,12 +29388,12 @@ async function ckoSubmitForm(form){
   if (st.act === 'cancel') {
     const b = ckoCancelArgs(c, val('reason'));
     if (!b.ok) return err(b.error);
-    if (!confirm('Cancel this checkout? It will be closed as cancelled.')) return;
+    if (!confirm(ckoT('Cancel this checkout? It will be closed as cancelled.'))) return;
     return ckoCall(id, 'checkout_cancel', b.args, 'Checkout cancelled');
   }
   if (st.act === 'override') {
     if (!val('to')) return err(ckoErrorText('missing:to'));
-    return send(ckoOverrideArgs(c, val('to'), val('reason')), 'checkout_override', 'Status changed to ' + val('to'));
+    return send(ckoOverrideArgs(c, val('to'), val('reason')), 'checkout_override', ckoL('Status changed to ', 'Estado cambiado a ') + ckoT(val('to')));
   }
   // ---- Phase 3a: the Charges block's forms. version: the lines_version the
   // block was drawn with (a change made elsewhere since comes back stale).
@@ -29159,8 +29412,8 @@ async function ckoSubmitForm(form){
       // An edit that left the links alone sends no evidence: start from the line's.
       const ev = (was || (line ? line.evidence : [])).slice();
       if (ev.length + files.length > CKO_MAX_EVIDENCE) return err(ckoErrorText('invalid:evidence'));
-      if (typeof window.vmDb.uploadFile !== 'function') return err('Uploads are not available. Add a link instead.');
-      ckoBusy = true; ckoSetButtons(true); err('Uploading ' + files.length + (files.length === 1 ? ' file…' : ' files…'));
+      if (typeof window.vmDb.uploadFile !== 'function') return err(ckoT('Uploads are not available. Add a link instead.'));
+      ckoBusy = true; ckoSetButtons(true); err(ckoL('Uploading ', 'Subiendo ') + files.length + (files.length === 1 ? ckoL(' file…', ' archivo…') : ckoL(' files…', ' archivos…')));
       let failed = false;
       try {
         for (const f of files) {
@@ -29172,8 +29425,8 @@ async function ckoSubmitForm(form){
       finally { ckoBusy = false; }
       // The drawer moved to another case (or the form closed) while the files
       // uploaded: never save the charge onto whatever is shown now.
-      if (CKO_FORM !== st || !ckoShowing(id)) { showToast('Upload finished but the form was closed; the charge was not saved.'); return; }
-      if (failed) { ckoRestoreButtons(); return err('A file did not upload. Try again, or add a link instead.'); }
+      if (CKO_FORM !== st || !ckoShowing(id)) { showToast(ckoT('Upload finished but the form was closed; the charge was not saved.')); return; }
+      if (failed) { ckoRestoreButtons(); return err(ckoT('A file did not upload. Try again, or add a link instead.')); }
       err('');
       if (b.args.p_line) b.args.p_line.evidence = ev; else b.args.p_fields.evidence = ev;
     }
@@ -29189,7 +29442,8 @@ async function ckoSubmitForm(form){
     const v = { reason: val('reason'), expected_payment_date: val('expected_payment_date') };
     const b = st.act === 'approve' ? ckoApproveArgs(c, v, ver, Date.now()) : ckoReapproveArgs(c, v, ver, Date.now());
     if (!b.ok) return err(b.error);
-    if (!confirm(`${st.act === 'approve' ? 'Approve' : 'Re-approve'} a refund of ${ckoRefundLine(bundle && bundle.totals)}? The resident is emailed the breakdown.`)) return;
+    if (!confirm(ckoL(`${st.act === 'approve' ? 'Approve' : 'Re-approve'} a refund of ${ckoRefundLine(bundle && bundle.totals)}? The resident is emailed the breakdown.`,
+      `¿${st.act === 'approve' ? 'Aprobar' : 'Volver a aprobar'} un reembolso de ${ckoRefundLine(bundle && bundle.totals)}? El residente recibe el desglose por correo.`))) return;
     return ckoCall(id, 'checkout_advance', b.args, (st.act === 'approve' ? 'Refund approved' : 'Refund re-approved') + '; the resident will be emailed');
   }
   if (st.act === 'mark_sent' || st.act === 'mark_top_up') {
@@ -29280,7 +29534,7 @@ window.openCheckout = openCheckout;
     try { tab = window.open('', '_blank'); } catch (err) { tab = null; }
     if (tab) { try { tab.opener = null; } catch (err) { /* cross-origin: ignore */ } }
     const label = b.textContent;
-    b.disabled = true; b.textContent = 'Opening…'; b.setAttribute('aria-busy', 'true');
+    b.disabled = true; b.textContent = ckoT('Opening…'); b.setAttribute('aria-busy', 'true');
     let url = null;
     try { url = window.vmDb && typeof window.vmDb.fileUrl === 'function' ? await window.vmDb.fileUrl(b.dataset.ckoPdf, 3600) : null; }
     catch (err) { console.error('[checkouts] report pdf', err); }
@@ -29288,12 +29542,12 @@ window.openCheckout = openCheckout;
     url = /^https:\/\//i.test(String(url || '')) ? String(url) : null;
     if (url && tab) { tab.location = url; return; }
     if (tab) { try { tab.close(); } catch (err) { /* already gone */ } }
-    if (!url) { if (typeof showToast === 'function') showToast(b.dataset.ckoPdfKind === 'file' ? 'Could not open the file. Try again in a moment.' : 'Could not open the PDF. Try again in a moment.'); return; }
+    if (!url) { if (typeof showToast === 'function') showToast(ckoT(b.dataset.ckoPdfKind === 'file' ? 'Could not open the file. Try again in a moment.' : 'Could not open the PDF. Try again in a moment.')); return; }
     if (!b.isConnected || !wrap) return;
     const a = document.createElement('a');
     a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.setAttribute('data-cko-pdf-link', ''); a.style.marginLeft = '8px';
-    a.textContent = b.dataset.ckoPdfKind === 'file' ? 'Open ' + label : 'Open PDF';
+    a.textContent = b.dataset.ckoPdfKind === 'file' ? ckoL('Open ', 'Abrir ') + label : ckoT('Open PDF');
     b.after(a);
   });
   // The shared drawer's close paths (button, backdrop, Escape): invalidate any
@@ -29316,23 +29570,23 @@ function ckoRenderFinance(me, now){
   if (stats) stats.innerHTML = [
     ['open', 'Open', String(st.open), 'blue'],
     ['overdue', 'Overdue', String(st.overdue), st.overdue ? 'red' : 'green'],
-    ['median', 'Median move-out → sent (30 days)', st.medianDaysToSent == null ? '—' : st.medianDaysToSent + (st.medianDaysToSent === 1 ? ' day' : ' days'), 'blue'],
-  ].map(([k, label, v, cls]) => `<span class="tag-pill ${cls}" data-cko-fin-stat="${k}" style="font-size:12px">${esc(label)}: <b>${esc(v)}</b></span>`).join('');
+    ['median', 'Median move-out → sent (30 days)', st.medianDaysToSent == null ? '—' : st.medianDaysToSent + (st.medianDaysToSent === 1 ? ckoL(' day', ' día') : ckoL(' days', ' días')), 'blue'],
+  ].map(([k, label, v, cls]) => `<span class="tag-pill ${cls}" data-cko-fin-stat="${k}" style="font-size:12px">${esc(ckoT(label))}: <b>${esc(v)}</b></span>`).join('');
   const empty = document.getElementById('cko-fin-empty');
   if (empty) empty.style.display = rows.length ? 'none' : '';
   body.innerHTML = rows.map(r => {
     const c = r.c, t = ckoLocal(r.due, c.city);
     const pill = r.overdue ? 'red' : r.dueState === 'soon' ? 'amber' : r.dueState === 'paused' ? 'blue' : 'green';
-    const due = r.stage === 'top_up' ? esc(ckoMoneyText(r.topUpDue)) + ' to send'
-      : t.date ? `<span class="tag-pill ${pill}" style="font-size:11px">due ${esc(fmtDate(t.date))} ${esc(t.time)} ${esc(ckoZoneLabel(c.city))}${r.dueState === 'paused' ? ' · paused' : ''}</span>` : 'no due date yet';
+    const due = r.stage === 'top_up' ? esc(ckoMoneyText(r.topUpDue)) + ckoL(' to send', ' por enviar')
+      : t.date ? `<span class="tag-pill ${pill}" style="font-size:11px">${ckoL('due', 'vence')} ${esc(ckoFmtDate(t.date))} ${esc(t.time)} ${esc(ckoZoneLabel(c.city))}${r.dueState === 'paused' ? ckoL(' · paused', ' · en pausa') : ''}</span>` : ckoL('no due date yet', 'todavía sin fecha límite');
     return `<tr data-cko-id="${esc(c.id)}" data-cko-fin-row="${esc(r.stage)}" style="cursor:pointer">
-      <td>${r.overdue ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Overdue">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
+      <td>${r.overdue ? `<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="${esc(ckoT('Overdue'))}">!</span>` : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
       <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
-      <td>${esc(r.stageLabel)}<div class="name-sub">${due}</div></td>
+      <td>${esc(ckoT(r.stageLabel))}<div class="name-sub">${due}</div></td>
       <td>${r.daysSinceMoveOut == null ? '—' : esc(r.daysSinceMoveOut) + ' d'}</td>
       <td>${r.stageDays == null ? '—' : esc(r.stageDays) + ' d'}</td>
-      <td>${r.refund == null ? '<span class="name-sub">not approved</span>' : esc(ckoMoneyText(r.refund))}${r.owedByResident > 0 ? `<div class="name-sub">owed by resident ${esc(ckoMoneyText(r.owedByResident))}</div>` : ''}</td>
-      <td>${c.owner ? esc(ckoName(c.owner)) : '<span class="tag-pill red" style="font-size:11px">Unassigned</span>'}</td>
+      <td>${r.refund == null ? `<span class="name-sub">${ckoL('not approved', 'sin aprobar')}</span>` : esc(ckoMoneyText(r.refund))}${r.owedByResident > 0 ? `<div class="name-sub">${ckoL('owed by resident', 'adeuda el residente')} ${esc(ckoMoneyText(r.owedByResident))}</div>` : ''}</td>
+      <td>${c.owner ? esc(ckoName(c.owner)) : `<span class="tag-pill red" style="font-size:11px">${esc(ckoT('Unassigned'))}</span>`}</td>
       <td>${r.approver ? esc(ckoName(r.approver)) : '—'}</td>
     </tr>`;
   }).join('');
@@ -29553,25 +29807,25 @@ function ckoRosterHint(){
   ckoSetAutofill(m);
   if (!m) {
     el.style.color = 'var(--red-dark)';
-    el.textContent = 'Not in the tenant list — check the spelling; the resident will be emailed at this address.';
+    el.textContent = ckoT('Not in the tenant list — check the spelling; the resident will be emailed at this address.');
     ckoRosterAck = email;
     return null;
   }
   el.style.color = '';
-  el.textContent = 'Found in the tenant list: ' + [m.name || email, m.house, m.room].filter(Boolean).join(', ') + (m.status && m.status.toLowerCase() !== 'active' ? ' (' + m.status + ')' : '');
+  el.textContent = ckoL('Found in the tenant list: ', 'Está en la lista de arrendatarios: ') + [m.name || email, m.house, m.room].filter(Boolean).join(', ') + (m.status && m.status.toLowerCase() !== 'active' ? ' (' + m.status + ')' : '');
   return m;
 }
 function ckoOpenCreate(){
   const $ = (id) => document.getElementById(id);
   $('cko-new-form').reset();
-  $('cko-new-channel').innerHTML = '<option value="">Choose…</option>' + CKO_CHANNEL_OPTIONS.map(o => `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join('');
+  $('cko-new-channel').innerHTML = `<option value="">${esc(ckoT('Choose…'))}</option>` + CKO_CHANNEL_OPTIONS.map(o => `<option value="${esc(o[0])}">${esc(ckoT(o[1]))}</option>`).join('');
   ckoNoticeTouched = false; ckoNoticeCity = ''; ckoRosterAck = ''; ckoAutofilled.clear();
   clearTimeout(ckoRosterTimer);
   ckoCreateZone();
   $('cko-new-error').textContent = '';
   $('cko-new-roster').textContent = '';
   $('cko-new-save').disabled = ckoCreating;
-  $('cko-new-save').textContent = ckoCreating ? 'Creating…' : 'Create checkout';
+  $('cko-new-save').textContent = ckoT(ckoCreating ? 'Creating…' : 'Create checkout');
   $('cko-new-backdrop').classList.add('open');
   $('cko-new-backdrop').setAttribute('aria-hidden', 'false');
   $('cko-new-email').focus();
@@ -29602,25 +29856,25 @@ async function ckoCreateSubmit(){
   if (!ckoRosterMatch(typeof window.tenants !== 'undefined' ? window.tenants : [], p.payload.email) && ckoRosterAck !== p.payload.email) {
     clearTimeout(ckoRosterTimer);
     ckoRosterHint();
-    err('Check the email, then press Create checkout again to use it.');
+    err(ckoT('Check the email, then press Create checkout again to use it.'));
     $('cko-new-email').focus();
     return;
   }
-  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') return err('Not connected to the database.');
+  if (!window.vmDb || typeof window.vmDb.checkoutRpc !== 'function') return err(ckoT('Not connected to the database.'));
   err('');
   const btn = $('cko-new-save');
   ckoCreating = true;
-  btn.disabled = true; btn.textContent = 'Creating…';
+  btn.disabled = true; btn.textContent = ckoT('Creating…');
   let r;
   try { r = await window.vmDb.checkoutRpc('checkout_staff_create', { p: p.payload }); }
   catch (e) { r = { data: null, error: { code: '', message: (e && e.message) || String(e) } }; }
-  finally { ckoCreating = false; btn.disabled = false; btn.textContent = 'Create checkout'; }
+  finally { ckoCreating = false; btn.disabled = false; btn.textContent = ckoT('Create checkout'); }
   const out = (r && r.data) || {};
-  const fail = r.error ? ckoRefusalText(r.error) : !out.case_id ? 'The server did not return a checkout ID.' : '';
+  const fail = r.error ? ckoRefusalText(r.error) : !out.case_id ? ckoT('The server did not return a checkout ID.') : '';
   if (fail) { if (ckoCreateOpen()) err(fail); else showToast(fail); return; }
   ckoCloseCreate(false);
   showToast(out.outcome === 'exists'
-    ? `This resident already has an open checkout (${out.case_id}); opening it`
+    ? ckoL(`This resident already has an open checkout (${out.case_id}); opening it`, `Este residente ya tiene una salida abierta (${out.case_id}); abriéndola`)
     : ckoCountryNow() === 'MX' ? `Salida ${out.case_id} creada; el residente recibirá un correo en español para completarla`
     : `Checkout ${out.case_id} created; the resident will be emailed within 5 minutes (07:00–21:00 Pacific)`);
   await ckoReload();
@@ -34281,6 +34535,14 @@ window.vmCountry = (function(){
     for (const fn of fns) { try { if (typeof window[fn] === 'function') window[fn](); } catch (e) { console.warn('[vmCountry] ' + fn, e.message); } }
     try { if (typeof loadVacancies === 'function') loadVacancies(true); } catch (e) { console.warn('[vmCountry] vacancies', e.message); }
     try { if (typeof window.asOnCountry === 'function') window.asOnCountry(); } catch (e) { console.warn('[vmCountry] assistants', e.message); }
+    // Page heading follows the country (Mexico has Spanish headings for some pages).
+    try {
+      const nav = document.querySelector('.nav-item.active[data-view]'), v = nav && nav.dataset.view;
+      if (v && typeof titles !== 'undefined' && titles[v]) {
+        const t = (cur === 'MX' && typeof titlesMX !== 'undefined' && titlesMX[v]) || titles[v];
+        document.getElementById('page-title').innerHTML = t[0]; document.getElementById('page-sub').innerHTML = t[1];
+      }
+    } catch (e) { console.warn('[vmCountry] title', e.message); }
     setTimeout(sweep, 60);
   }
   function set(c){
@@ -40554,6 +40816,9 @@ const CT_STATUS_WORDS = {
   waiting: 'Waiting for Vanmates', sent: 'Sent to tenant', draft: 'Draft',
   completed: 'Completed', void: 'Void',
 };
+// One contract's status in Spanish (the tab names are plural: Completados, Anulados).
+const CT_STATUS_ES = { waiting: 'Esperando a Vanmates', sent: 'Enviado al arrendatario', draft: 'Borrador', completed: 'Completado', void: 'Anulado' };
+function ctStatusEs(status) { return CT_STATUS_ES[ctBucket({ status })] || ctStr(status).replace(/_/g, ' '); }
 const CT_PROVINCES = { bc: 'British Columbia', on: 'Ontario', qc: 'Quebec', jal: 'Jalisco' };
 // The third contract type: Vanmates México's room lease (Contrato de
 // arrendamiento, Guadalajara). Same kind and lifecycle; booking.form === 'mx',
@@ -40566,6 +40831,25 @@ const CT_MX = {
 // Mexico staff read Spanish: the Contracts page in the Mexico view and the Mexican
 // lease form say these instead. Anything missing here stays in English.
 const CT_ES = {
+  'Choose…': 'Elegir…',
+  // 2026-10-16 Spanish gaps (Mexico view): send/void panels, run labels, results, Worker refusals
+  'e.g. tenant moved to another room': 'p. ej., el arrendatario se cambió de habitación',
+  'Nothing was sent yet, so no email goes out.': 'Todavía no se envió nada, así que no sale ningún correo.',
+  'The tenant gets an email saying the earlier link no longer works.': 'El arrendatario recibe un correo que le avisa que el enlace anterior ya no sirve.',
+  'Fill in what Hugo did not have, then send.': 'Completa lo que falta y luego envía.',
+  'Say why it is being voided.': 'Escribe por qué se anula.',
+  'Sending': 'Enviando', 'Voiding': 'Anulando', 'Signing for Vanmates': 'Firmando por Vanmates', 'Re-sending the signing link': 'Reenviando el enlace de firma',
+  'Contract voided.': 'Contrato anulado.', 'Sent for signature': 'Enviado para firma',
+  'Your session has expired. Reload the page and sign in again.': 'Tu sesión expiró. Recarga la página e inicia sesión de nuevo.',
+  'You do not have access to Contracts. Ask an admin to add the Contracts page to your account.': 'No tienes acceso a Contratos. Pide a un administrador que agregue la página de Contratos a tu cuenta.',
+  'This contract no longer exists. Reload the page.': 'Este contrato ya no existe. Recarga la página.',
+  'Someone else changed this contract at the same time. It has been reloaded; try again.': 'Alguien más cambió este contrato al mismo tiempo. Se recargó; inténtalo de nuevo.',
+  'This person already has a contract for this booking. To correct it, use Fix & resend on that contract.': 'Esta persona ya tiene un contrato para esta reserva. Para corregirlo, usa «Corregir y reenviar» en ese contrato.',
+  'Type your name before signing.': 'Escribe tu nombre antes de firmar.',
+  'The signature did not come through. Draw it again and retry.': 'La firma no llegó. Dibújala de nuevo y vuelve a intentar.',
+  'The signature image is too large. Clear the pad and sign once more, a little smaller.': 'La imagen de la firma es muy grande. Borra y firma otra vez, un poco más pequeña.',
+  'A Mexican lease cannot be an extension or a room change yet. Send a new contract instead.': 'Un contrato de México todavía no puede ser una extensión ni un cambio de habitación. Envía un contrato nuevo.',
+
   'Waiting for Vanmates': 'Esperando a Vanmates', 'Sent': 'Enviados', 'Drafts': 'Borradores', 'Completed': 'Completados', 'Void': 'Anulados',
   'Sent to tenant': 'Enviado al arrendatario', 'Draft': 'Borrador',
   'Tenant': 'Arrendatario', 'Tenant 1': 'Arrendatario', 'Room': 'Habitación', 'Dates': 'Fechas', 'Rent': 'Renta', 'Deposit': 'Depósito',
@@ -40608,9 +40892,32 @@ const CT_ES = {
   'End date must be after the start date.': 'La fecha de término debe ser posterior a la de inicio.',
   'End date is not a valid date.': 'La fecha de término no es válida.', 'End date is missing (or choose an open lease).': 'Falta la fecha de término.',
   'Say why the contract is being replaced.': 'Escribe por qué se reemplaza el contrato.',
+  // 2026-10-17 (mxes1): drawer, sign pad, toasts and the rest of the page
+  'You are signed out. Reload the page and sign in again.': 'Cerraste sesión. Recarga la página e inicia sesión de nuevo.',
+  'Could not reach the contracts service. Check your connection and try again.': 'No se pudo contactar el servicio de contratos. Revisa tu conexión e inténtalo de nuevo.',
+  'Correct a mistake: void this contract and send a fixed one': 'Corregir un error: anula este contrato y envía uno corregido',
+  'Tenants': 'Arrendatarios', 'Tenant-signed copy': 'Copia firmada por el arrendatario', 'Open contract (tenant signed)': 'Abrir contrato (firmado por el arrendatario)',
+  'Only admins and people with the Contracts page can sign, send or void.': 'Solo los administradores y quienes tienen la página de Contratos pueden firmar, enviar o anular.',
+  'Only admins and people with the Contracts page can create contracts.': 'Solo los administradores y quienes tienen la página de Contratos pueden crear contratos.',
+  'That contract is not loaded. Try Refresh.': 'Ese contrato no está cargado. Prueba con Actualizar.',
+  'That contract is not loaded. Reload the page.': 'Ese contrato no está cargado. Recarga la página.',
+  'Opening…': 'Abriendo…', 'Open the PDF': 'Abrir el PDF', 'Could not open the PDF. Try again in a moment.': 'No se pudo abrir el PDF. Inténtalo en un momento.',
+  'Refreshing…': 'Actualizando…', 'Up to date.': 'Al día.', 'Open': 'Abrir', 'Contracts': 'Contratos', 'Extend…': 'Extender…', 'Unit': 'Unidad', 'Type': 'Tipo',
+  'Saving…': 'Guardando…', 'Sending… (making the PDF)': 'Enviando… (generando el PDF)', 'Signing… (making the PDF)': 'Firmando… (generando el PDF)',
+  'Sign and complete': 'Firmar y completar', 'Your name': 'Tu nombre', 'Title': 'Cargo', 'Signature': 'Firma', 'Clear': 'Borrar',
+  'e.g. Operations Manager': 'p. ej., Gerente de operaciones', 'Sign here with your mouse or finger': 'Firma aquí con el mouse o con el dedo',
+  'Your last signature from this browser. Clear to draw a new one.': 'Tu última firma en este navegador. Borra para dibujar una nueva.',
+  'Signing completes the contract: the executed PDF is made with every signature and emailed to the tenant.': 'Al firmar se completa el contrato: se genera el PDF con todas las firmas y se envía por correo al arrendatario.',
+  'Signed. The contract is complete and the executed PDF is filed': 'Firmado. El contrato está completo y el PDF firmado quedó archivado',
+  'Fix & resend that contract with these details': 'Corregir y reenviar ese contrato con estos datos',
 };
 function ctTr(text, lang) { return lang === 'es' && Object.prototype.hasOwnProperty.call(CT_ES, text) ? CT_ES[text] : text; }
 const CT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const CT_MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+// 'Oct 4, 2026' (Canada) or '4 oct 2026' (the Mexico view).
+function ctDayParts(y, m0, d) { return ctCoreMx() ? d + ' ' + CT_MONTHS_ES[m0] + ' ' + y : CT_MONTHS[m0] + ' ' + d + ', ' + y; }
+// The Mexico view's wording when it differs (core-safe: English when the page is not loaded, as in tests).
+function ctL(en, es) { return ctCoreMx() ? es : en; }
 // The second contract type: BC's Residential Tenancy Agreement (RTB-1), sent
 // rarely (a whole unit). Same kind and lifecycle; booking.form === 'rta'.
 // RTB-1 3 b), in the form's order. Mirrors the Worker's rta-bc.js INCLUDES.
@@ -40670,11 +40977,11 @@ function ctDay(s) {
   const v = ctStr(s);
   if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
     const d = new Date(v);
-    return isNaN(d.getTime()) ? '' : CT_MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+    return isNaN(d.getTime()) ? '' : ctDayParts(d.getFullYear(), d.getMonth(), d.getDate());
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (!m) return '';
-  return CT_MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]) + ', ' + m[1];
+  return ctDayParts(m[1], Number(m[2]) - 1, Number(m[3]));
 }
 // ISO timestamp → 'Oct 4, 2026 · 14:05' in the viewer's time zone.
 function ctWhen(ts) {
@@ -40682,7 +40989,7 @@ function ctWhen(ts) {
   if (!v) return '';
   const d = new Date(v);
   if (isNaN(d.getTime())) return '';
-  return CT_MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear() + ' · ' +
+  return ctDayParts(d.getFullYear(), d.getMonth(), d.getDate()) + ' · ' +
     String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 // Whole days from a timestamp to `now` (never negative); null without a timestamp.
@@ -40693,9 +41000,9 @@ function ctDaysSince(ts, now) {
 }
 function ctAgeWords(days) {
   if (days == null) return '';
-  if (days === 0) return 'today';
-  if (days === 1) return '1 day ago';
-  return days + ' days ago';
+  if (days === 0) return ctL('today', 'hoy');
+  if (days === 1) return ctL('1 day ago', 'hace 1 día');
+  return ctL(days + ' days ago', 'hace ' + days + ' días');
 }
 function ctMoney(n, ccy) {
   if (n == null || n === '' || isNaN(Number(n))) return '';
@@ -40704,7 +41011,7 @@ function ctMoney(n, ccy) {
 }
 function ctNames(list) {
   const n = list.filter(Boolean);
-  return n.length <= 1 ? (n[0] || '') : n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1];
+  return n.length <= 1 ? (n[0] || '') : n.slice(0, -1).join(', ') + ctL(' and ', ' y ') + n[n.length - 1];
 }
 
 // The Worker's `missing` field names → what staff read.
@@ -40787,23 +41094,27 @@ function ctSummary(row, now) {
   const start = ctStr(b.start), end = ctStr(b.end);
   const place = [ctStr(b.house), ctStr(b.room)].filter(Boolean).join(' · ');
   const signedCount = tenants.filter((t) => t.signed_at).length;
-  const signedWords = tenants.map((t) => (t.name || t.email || 'Tenant') +
-    (t.signed_at ? ' signed ' + ctWhen(t.signed_at) : ' has not signed'));
+  const es = ctCoreMx();   // the Mexico view: Spanish words
+  const signedWords = tenants.map((t) => (t.name || t.email || ctL('Tenant', 'Arrendatario')) +
+    (t.signed_at ? ctL(' signed ', ' firmó el ') + ctWhen(t.signed_at) : ctL(' has not signed', ' no ha firmado')));
   const cs = r.countersigner || null;
   const missing = (Array.isArray(r.missing) ? r.missing : (r.data && Array.isArray(r.data.missing) ? r.data.missing : []))
-    .map((f) => ({ field: f, label: ctMissingLabel(f) }));
+    .map((f) => ({ field: f, label: ctCoreT(ctMissingLabel(f)) }));
   let statusLine = '';
   if (bucket === 'waiting') {
     const d = ctDaysSince(r.customer_signed_at, now);
-    statusLine = 'Tenant signed ' + ctDay(r.customer_signed_at) + (d != null ? ' · waiting ' + (d === 0 ? 'since today' : d + (d === 1 ? ' day' : ' days')) : '');
+    statusLine = es
+      ? 'Firmó el arrendatario ' + ctDay(r.customer_signed_at) + (d != null ? ' · esperando ' + (d === 0 ? 'desde hoy' : d + (d === 1 ? ' día' : ' días')) : '')
+      : 'Tenant signed ' + ctDay(r.customer_signed_at) + (d != null ? ' · waiting ' + (d === 0 ? 'since today' : d + (d === 1 ? ' day' : ' days')) : '');
   } else if (bucket === 'sent') {
-    statusLine = 'Sent ' + ctAgeWords(ctDaysSince(r.sent_at, now)) + (tenants.length > 1 ? ' · ' + signedCount + ' of ' + tenants.length + ' signed' : '');
+    statusLine = es ? 'Enviado ' + ctAgeWords(ctDaysSince(r.sent_at, now)) + (tenants.length > 1 ? ' · ' + signedCount + ' de ' + tenants.length + ' firmaron' : '')
+      : 'Sent ' + ctAgeWords(ctDaysSince(r.sent_at, now)) + (tenants.length > 1 ? ' · ' + signedCount + ' of ' + tenants.length + ' signed' : '');
   } else if (bucket === 'draft') {
-    statusLine = missing.length ? 'Missing: ' + missing.map((m) => m.label).join(', ') : 'Ready to send';
+    statusLine = missing.length ? ctL('Missing: ', 'Falta: ') + missing.map((m) => m.label).join(', ') : ctL('Ready to send', 'Listo para enviar');
   } else if (bucket === 'completed') {
-    statusLine = 'Signed by ' + ((cs && cs.name) || 'Vanmates') + ' · ' + ctDay(r.countersigned_at);
+    statusLine = ctL('Signed by ', 'Firmado por ') + ((cs && cs.name) || 'Vanmates') + ' · ' + ctDay(r.countersigned_at);
   } else if (bucket === 'void') {
-    statusLine = 'Voided ' + ctDay(r.voided_at) + (r.void_reason ? ' · ' + r.void_reason : '');
+    statusLine = ctL('Voided ', 'Anulado el ') + ctDay(r.voided_at) + (r.void_reason ? ' · ' + r.void_reason : '');
   }
   const rta = ctIsRta(r);
   const mx = !rta && ctIsMx(r);
@@ -40839,7 +41150,7 @@ function ctSummary(row, now) {
     id: ctStr(r.id),
     status: ctStr(r.status),
     bucket,
-    statusText: CT_STATUS_WORDS[bucket] || ctStr(r.status),
+    statusText: (ctCoreMx() ? CT_STATUS_ES[bucket] : CT_STATUS_WORDS[bucket]) || ctStr(r.status),
     statusLine,
     tenants,
     tenantNames: ctNames(tenants.map((t) => t.name || t.email)) || ctStr(r.client_name) || ctStr(r.client_email) || '—',
@@ -40851,18 +41162,18 @@ function ctSummary(row, now) {
     rentShort: b.rent ? ctMoney(b.rent, ccy) : '',
     start,
     end: open ? '' : end,
-    datesText: (ctDay(start) || '—') + ' → ' + (open ? 'Open' : (ctDay(end) || '—')),
+    datesText: (ctDay(start) || '—') + ' → ' + (open ? ctL('Open', 'Abierto') : (ctDay(end) || '—')),
     months: open ? 0 : Number(b.months) || 0,
     province,
     provinceName: CT_PROVINCES[province] || (province ? province.toUpperCase() : ''),
     leaseType: lease,
-    leaseTypeText: lease === 'fixed' ? 'Fixed term' : (open ? 'Month to month' : ''),
+    leaseTypeText: lease === 'fixed' ? ctL('Fixed term', 'Plazo fijo') : (open ? ctL('Month to month', 'Mes a mes') : ''),
     deposit: b.deposit == null ? null : Number(b.deposit),
     depositText: b.deposit == null || b.deposit === '' ? '' : ctMoney(b.deposit, ccy),
     depositDueText: ctDay(b.deposit_due),
     utilities: ctStr(b.utilities),
     isExtension: !!b.extension,
-    extensionText: b.extension ? 'Extension' + (ctDay(b.extension.original_start) ? ' · tenancy since ' + ctDay(b.extension.original_start) : '') : '',
+    extensionText: b.extension ? ctL('Extension', 'Extensión') + (ctDay(b.extension.original_start) ? ctL(' · tenancy since ', ' · arrendamiento desde el ') + ctDay(b.extension.original_start) : '') : '',
     signedCount,
     signedWords,
     countersignedText: cs && cs.signed_at ? (cs.name || cs.email || 'Vanmates') + (cs.title ? ', ' + cs.title : '') + ' · ' + ctWhen(cs.signed_at) : '',
@@ -40940,6 +41251,21 @@ function ctEventText(e, row) {
   const ev = e || {};
   const by = ctStr(ev.by);
   const tenants = ctTenants(row);
+  if (ctCoreMx()) {
+    const por = by ? ' por ' + by : '', what = ctStr(ev.event || 'notice').replace(/_/g, ' ');
+    switch (ev.type) {
+      case 'created': return 'Creado' + por;
+      case 'updated': return 'Condiciones actualizadas' + por;
+      case 'sent': return 'Enviado ' + (tenants.length > 1 ? 'a los arrendatarios' : 'al arrendatario') + por;
+      case 'resent': return 'Enlace de firma reenviado' + por;
+      case 'tenant_signed': { const t = tenants[Number(ev.n)] || {}; return (t.name || by || 'El arrendatario') + ' firmó'; }
+      case 'countersigned': return 'Firmado por Vanmates' + por;
+      case 'void': return 'Anulado' + por + (ev.reason ? ' — ' + ev.reason : '');
+      case 'email': return 'Correo enviado (' + what + ')';
+      case 'email_failed': return 'Correo NO enviado (' + what + ')' + (ev.error ? ': ' + ev.error : '');
+      default: return ctStr(ev.type) || 'Evento';
+    }
+  }
   switch (ev.type) {
     case 'created': return 'Created' + (by ? ' by ' + by : '');
     case 'updated': return 'Terms updated' + (by ? ' by ' + by : '');
@@ -40973,7 +41299,7 @@ function ctEmailProblem(row) {
   for (let i = list.length - 1; i >= 0; i--) {
     const e = list[i] || {};
     if (e.type === 'email') return null;
-    if (e.type === 'email_failed') return 'The last email (' + ctStr(e.event || 'notice').replace(/_/g, ' ') + ') did not go out' + (e.error ? ': ' + e.error : '') + '.';
+    if (e.type === 'email_failed') return ctL('The last email (', 'El último correo (') + ctStr(e.event || 'notice').replace(/_/g, ' ') + ctL(') did not go out', ') no salió') + (e.error ? ': ' + e.error : '') + '.';
   }
   return null;
 }
@@ -40995,35 +41321,44 @@ function ctForPerson(rows, who) {
   }).sort((a, b) => ctStr(b.created_at).localeCompare(ctStr(a.created_at)));
 }
 
+// The Mexico view's Spanish, when the page has it (the core also runs alone, in tests).
+function ctCoreMx() { return typeof ctMxView === 'function' && ctMxView(); }
+function ctCoreT(t) { return typeof ctT === 'function' ? ctT(t) : t; }
 // A Worker refusal in plain language. `status` is the HTTP status, `body` its JSON.
 function ctErrorText(status, body) {
   const d = body || {};
   const code = ctStr(d.error);
-  if (code === 'missing') return 'Still missing: ' + (d.fields || []).map(ctMissingLabel).join(', ') + '.';
+  if (code === 'missing') return (ctCoreMx() ? 'Falta: ' : 'Still missing: ') + (d.fields || []).map((f) => ctCoreT(ctMissingLabel(f))).join(', ') + '.';
   if (code === 'mx_not_configured' && Array.isArray(d.fields) && d.fields.length) {
-    return 'Mexican contracts cannot be sent yet: the contracts service is missing its Mexico settings (' + d.fields.join(', ') + '). Save a draft and tell Aldo.';
+    return ctCoreMx()
+      ? 'Todavía no se pueden enviar contratos de México: al servicio de contratos le faltan sus datos de México (' + d.fields.join(', ') + '). Guarda un borrador y avísale a Aldo.'
+      : 'Mexican contracts cannot be sent yet: the contracts service is missing its Mexico settings (' + d.fields.join(', ') + '). Save a draft and tell Aldo.';
   }
   const words = {
     unauthorized: 'Your session has expired. Reload the page and sign in again.',
     forbidden: 'You do not have access to Contracts. Ask an admin to add the Contracts page to your account.',
     not_found: 'This contract no longer exists. Reload the page.',
     conflict: 'Someone else changed this contract at the same time. It has been reloaded; try again.',
-    not_ready: 'This contract is not waiting for Vanmates any more' + (d.status ? ' (it is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '. Reload the page.',
-    cannot_void: 'This contract is already ' + (ctStr(d.status) || 'closed') + ' and cannot be voided.',
+    not_ready: ctCoreMx() ? 'Este contrato ya no está esperando a Vanmates' + (d.status ? ' (está: ' + ctStatusEs(d.status).toLowerCase() + ')' : '') + '. Recarga la página.'
+      : 'This contract is not waiting for Vanmates any more' + (d.status ? ' (it is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '. Reload the page.',
+    cannot_void: ctCoreMx() ? 'Este contrato ya está ' + (d.status ? ctStatusEs(d.status).toLowerCase() : 'cerrado') + ' y no se puede anular.'
+      : 'This contract is already ' + (ctStr(d.status) || 'closed') + ' and cannot be voided.',
     already_signed: 'This person already has a contract for this booking. To correct it, use Fix & resend on that contract.',
-    not_sendable: 'Only drafts and sent contracts can be sent' + (d.status ? ' (this one is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '.',
+    not_sendable: ctCoreMx() ? 'Solo se pueden enviar borradores y contratos ya enviados' + (d.status ? ' (este está: ' + ctStatusEs(d.status).toLowerCase() + ')' : '') + '.'
+      : 'Only drafts and sent contracts can be sent' + (d.status ? ' (this one is ' + ctStr(d.status).replace(/_/g, ' ') + ')' : '') + '.',
     name_required: 'Type your name before signing.',
     signature_invalid: 'The signature did not come through. Draw it again and retry.',
     signature_too_large: 'The signature image is too large. Clear the pad and sign once more, a little smaller.',
     mx_unsupported: 'A Mexican lease cannot be an extension or a room change yet. Send a new contract instead.',
     mx_not_configured: 'Mexican contracts cannot be sent yet: the contracts service is missing its Mexico settings (notice email, privacy link, WhatsApp, bank details). Save a draft and tell Aldo.',
   };
-  if (words[code]) return d.message && code === 'conflict' ? d.message : words[code];
+  if (words[code]) return d.message && code === 'conflict' ? d.message : ctCoreT(words[code]);
   if (d.message) return String(d.message);
-  if (status === 401) return words.unauthorized;
-  if (status === 403) return words.forbidden;
-  if (status >= 500) return 'The contracts service had a problem (' + status + '). Reload the page to see whether it went through before trying again.';
-  return 'The contracts service refused this' + (code ? ' (' + code + ')' : status ? ' (' + status + ')' : '') + '.';
+  if (status === 401) return ctCoreT(words.unauthorized);
+  if (status === 403) return ctCoreT(words.forbidden);
+  if (status >= 500) return ctL('The contracts service had a problem (' + status + '). Reload the page to see whether it went through before trying again.',
+    'El servicio de contratos tuvo un problema (' + status + '). Recarga la página para ver si se hizo antes de intentarlo otra vez.');
+  return ctL('The contracts service refused this', 'El servicio de contratos rechazó esto') + (code ? ' (' + code + ')' : status ? ' (' + status + ')' : '') + '.';
 }
 
 /* ---- New / Replace / Extend form ----
@@ -41391,12 +41726,12 @@ async function ctToken(refresh) {
 async function ctCall(path, body) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await ctToken(attempt > 0);
-    if (!token) throw new Error('You are signed out. Reload the page and sign in again.');
+    if (!token) throw new Error(ctT('You are signed out. Reload the page and sign in again.'));
     let res, data = null;
     try {
       res = await fetch(CT_WORKER + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
     } catch (e) {
-      throw new Error('Could not reach the contracts service. Check your connection and try again.');
+      throw new Error(ctT('Could not reach the contracts service. Check your connection and try again.'));
     }
     try { data = await res.json(); } catch (_) { data = null; }
     if (res.status === 401 && attempt === 0) continue;   // stale token: refresh once
@@ -41484,7 +41819,7 @@ function renderContracts() {
         '<td style="white-space:nowrap">' + esc(s.rentShort || '—') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.depositText || '—') + '</td>' +
         '<td>' + (need ? '<span class="ct-need-dot">' + esc(s.statusLine) + '</span>' : esc(s.statusLine)) +
-          (ctCanFix(r, me) ? '<div><button type="button" class="btn btn-ghost btn-mini ct-fix-btn" data-ct-fix="' + esc(s.id) + '" title="Correct a mistake: void this contract and send a fixed one">' + esc(ctT('Fix & resend')) + '</button></div>' : '') + '</td></tr>';
+          (ctCanFix(r, me) ? '<div><button type="button" class="btn btn-ghost btn-mini ct-fix-btn" data-ct-fix="' + esc(s.id) + '" title="' + esc(ctT('Correct a mistake: void this contract and send a fixed one')) + '">' + esc(ctT('Fix & resend')) + '</button></div>' : '') + '</td></tr>';
     }).join('');
   }
   const empty = document.getElementById('ct-empty');
@@ -41519,19 +41854,20 @@ function ctRenderPanel(row) {
     (s.isRta ? ' <span class="ct-meta">Residential Tenancy Agreement</span>' : '') + (s.isMx ? ' <span class="ct-meta">' + esc(CT_MX.title) + '</span>' : '');
 
   const emailProblem = ctEmailProblem(row);
+  const mxv = ctMxView(), L = (en, es) => (mxv ? es : en);
   const tenantsHtml = s.tenants.map((t, n) =>
-    ctKv('Tenant ' + (n + 1), esc(t.name || '—') + '<div class="ct-sub">' + esc(t.email || 'no email') + ' · ' +
-      (t.signed_at ? 'signed ' + esc(ctWhen(t.signed_at)) : (s.bucket === 'draft' ? 'not sent yet' : 'not signed')) + '</div>')).join('') || ctKv('Tenants', dash);
+    ctKv('Tenant ' + (n + 1), esc(t.name || '—') + '<div class="ct-sub">' + esc(t.email || L('no email', 'sin correo')) + ' · ' +
+      (t.signed_at ? L('signed ', 'firmó el ') + esc(ctWhen(t.signed_at)) : (s.bucket === 'draft' ? L('not sent yet', 'aún no se envía') : L('not signed', 'sin firmar'))) + '</div>')).join('') || ctKv('Tenants', dash);
   const pdfs = [];
-  if (s.executedPdf) pdfs.push('<button class="btn btn-primary btn-mini" type="button" data-ct-pdf="' + esc(s.executedPdf) + '">Open signed contract</button>');
-  if (s.customerPdf) pdfs.push('<button class="btn btn-ghost btn-mini" type="button" data-ct-pdf="' + esc(s.customerPdf) + '">' + (s.executedPdf ? 'Tenant-signed copy' : 'Open contract (tenant signed)') + '</button>');
+  if (s.executedPdf) pdfs.push('<button class="btn btn-primary btn-mini" type="button" data-ct-pdf="' + esc(s.executedPdf) + '">' + esc(ctT('Open signed contract')) + '</button>');
+  if (s.customerPdf) pdfs.push('<button class="btn btn-ghost btn-mini" type="button" data-ct-pdf="' + esc(s.customerPdf) + '">' + esc(ctT(s.executedPdf ? 'Tenant-signed copy' : 'Open contract (tenant signed)')) + '</button>');
   const acts = ctActions(row, me);
   const btn = (k, label, primary) => acts.includes(k) ? '<button class="btn ' + (primary ? 'btn-primary' : 'btn-ghost') + ' btn-mini" type="button" data-ct-act="' + k + '">' + esc(ctT(label)) + '</button>' : '';
   const actionsHtml = acts.length
     ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('replace', 'Fix & resend…', true) + btn('extend', 'Extend…', false) + btn('void', 'Void…', false) + '</div>'
-    : (ctCanAct(me) ? '' : '<div class="ct-sub">Only admins and people with the Contracts page can sign, send or void.</div>');
+    : (ctCanAct(me) ? '' : '<div class="ct-sub">' + esc(ctT('Only admins and people with the Contracts page can sign, send or void.')) + '</div>');
   const signerNote = ctStr(row.status) === 'customer_signed' && !ctIsCountersigner(me)
-    ? '<div class="ct-sub">' + esc(CT_COUNTERSIGNER.name) + ' (' + esc(CT_COUNTERSIGNER.title) + ') signs for Vanmates.</div>' : '';
+    ? '<div class="ct-sub">' + esc(CT_COUNTERSIGNER.name) + ' (' + esc(CT_COUNTERSIGNER.title) + ')' + L(' signs for Vanmates.', ' firma por Vanmates.') + '</div>' : '';
   const timeline = ctTimeline(row);
 
   // A redraw keeps whatever was typed into an open Void/Send form.
@@ -41541,17 +41877,17 @@ function ctRenderPanel(row) {
   body.innerHTML = '<div class="ct-panel" data-ct-id="' + esc(s.id) + '">' +
     '<div class="ct-panel-status' + (CT_STATE.bad ? ' ct-bad' : '') + '" id="ct-panel-status" role="status" aria-live="polite">' + esc(CT_STATE.msg) + '</div>' +
     (emailProblem ? '<div class="ct-note ct-need">' + esc(emailProblem) + '</div>' : '') +
-    (s.bucket === 'draft' && s.missing.length ? ctSection('Needs <em>you</em>', '<div class="ct-need-dot">Missing: ' + esc(s.missing.map((m) => m.label).join(', ')) + '</div>') : '') +
+    (s.bucket === 'draft' && s.missing.length ? ctSection(L('Needs <em>you</em>', 'Falta <em>completar</em>'), '<div class="ct-need-dot">' + L('Missing: ', 'Falta: ') + esc(s.missing.map((m) => m.label).join(', ')) + '</div>') : '') +
     (acts.length || !ctCanAct(me) || signerNote ? ctSection(esc(ctT('Actions')), actionsHtml + signerNote + '<div id="ct-form"></div>') : '') +
     ctSection(esc(ctT('Booking')),
       (s.isExtension ? ctKv('Type', esc(s.extensionText) + '<div class="ct-sub">Continues a current tenancy; no new deposit</div>') : '') +
       ctKv('Contract', esc(s.docTitle) + (s.isRta ? '<div class="ct-sub">BC form RTB-1 · Vanmates is the landlord</div>' : '')) +
       ctKv(s.isRta ? 'Unit' : 'Room', esc(s.place) + (s.address ? '<div class="ct-sub">' + esc(s.address) + '</div>' : '')) +
-      ctKv('Dates', esc(s.datesText) + (s.months ? '<div class="ct-sub">' + s.months + (s.months === 1 ? ' month' : ' months') + '</div>' : '') +
+      ctKv('Dates', esc(s.datesText) + (s.months ? '<div class="ct-sub">' + s.months + (s.months === 1 ? L(' month', ' mes') : L(' months', ' meses')) + '</div>' : '') +
         (s.fixedEndText ? '<div class="ct-sub">At the end: ' + esc(s.fixedEndText) + '</div>' : '')) +
       ctKv('Lease', esc(s.isMx ? ctT(s.leaseTypeText || '—') : (s.leaseTypeText || '—')) + (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + (s.isMx ? ' · Vanmates México' : s.isRta ? ' tenancy' : ' sublease') + '</div>' : '')) +
       ctKv('Rent', s.rentText ? esc(s.rentText) + (s.rentDueText ? '<div class="ct-sub">' + esc(s.rentDueText) + '</div>' : '') : dash) +
-      ctKv('Deposit', s.depositText ? esc(s.depositText) + (s.depositDueText ? '<div class="ct-sub">due ' + esc(s.depositDueText) + '</div>' : '') : dash) +
+      ctKv('Deposit', s.depositText ? esc(s.depositText) + (s.depositDueText ? '<div class="ct-sub">' + L('due ', 'vence el ') + esc(s.depositDueText) + '</div>' : '') : dash) +
       (s.isRta
         ? ctKv('Pet damage deposit', esc(s.petDepositText) + (s.petDepositDueText ? '<div class="ct-sub">due ' + esc(s.petDepositDueText) + '</div>' : '')) +
           ctKv('Included in rent', s.includesText ? esc(s.includesText) : dash) +
@@ -41563,12 +41899,12 @@ function ctRenderPanel(row) {
             ctKv('Payment', esc(s.paymentText)) + ctKv('Occupants', esc(s.occupantsText))
           : ctKv('Utilities included', s.utilities ? esc(s.utilities) : dash))) +
     ctSection(esc(ctT('Signatures')), tenantsHtml +
-      ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash : '<span class="ct-sub">not signed yet</span>')) +
+      ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash : '<span class="ct-sub">' + esc(ctT('not signed yet')) + '</span>')) +
       (s.voidReason ? ctKv('Void reason', esc(s.voidReason)) : '') +
       (pdfs.length ? '<div class="ct-actions">' + pdfs.join('') + '</div>' : '')) +
     ctSection(esc(ctT('History')), timeline.length
       ? '<ol class="ct-timeline">' + timeline.map((e) => '<li' + (e.bad ? ' class="ct-need"' : '') + '><span>' + esc(e.when || '—') + '</span><span>' + esc(e.text) + '</span></li>').join('') + '</ol>'
-      : '<div class="ct-sub">No events yet.</div>') +
+      : '<div class="ct-sub">' + esc(ctT('No events yet.')) + '</div>') +
     '</div>';
   if (CT_STATE.form) {
     ctShowForm(CT_STATE.form.kind, row, CT_STATE.form.fields);
@@ -41583,7 +41919,7 @@ function ctRenderPanel(row) {
 
 function ctOpenPanel(id) {
   const row = ctFind(id);
-  if (!row) { if (typeof showToast === 'function') showToast('That contract is not loaded. Try Refresh.'); return; }
+  if (!row) { if (typeof showToast === 'function') showToast(ctT('That contract is not loaded. Try Refresh.')); return; }
   document.querySelectorAll('.panel-head .header-edit-btn').forEach((x) => x.remove());
   document.getElementById('ll-more-menu')?.remove();
   if (String(id) !== String(CT_STATE.openId) || !ctPanelShowing()) { CT_STATE.msg = ''; CT_STATE.bad = false; CT_STATE.form = null; }
@@ -41621,8 +41957,8 @@ function ctShowForm(kind, row, fields) {
     CT_STATE.form = { kind };
     host.innerHTML = '<form class="ct-inline-form" data-ct-form="void">' +
       '<div class="form-field"><label for="ct-void-reason">' + esc(ctT('Why void this contract?')) + '</label>' +
-      '<textarea class="form-input" id="ct-void-reason" rows="2" maxlength="300" required placeholder="e.g. tenant moved to another room"></textarea></div>' +
-      '<div class="ct-sub" style="margin:6px 0 10px">' + (row.status === 'draft' ? 'Nothing was sent yet, so no email goes out.' : 'The tenant gets an email saying the earlier link no longer works.') + '</div>' +
+      '<textarea class="form-input" id="ct-void-reason" rows="2" maxlength="300" required placeholder="' + esc(ctT('e.g. tenant moved to another room')) + '"></textarea></div>' +
+      '<div class="ct-sub" style="margin:6px 0 10px">' + ctT(row.status === 'draft' ? 'Nothing was sent yet, so no email goes out.' : 'The tenant gets an email saying the earlier link no longer works.') + '</div>' +
       '<div class="ct-form-err" role="alert"></div>' +
       '<div class="ct-actions"><button class="btn btn-primary btn-mini" type="submit">' + esc(ctT('Void contract')) + '</button><button class="btn btn-ghost btn-mini" type="button" data-ct-act="cancel">' + esc(ctT('Cancel')) + '</button></div></form>';
     return;
@@ -41637,7 +41973,7 @@ function ctShowForm(kind, row, fields) {
       const type = ctFieldInput(f), val = ctFieldValue(b, f);
       let ctl;
       if (type === 'select') {
-        ctl = '<select class="form-input" id="' + id + '" data-ct-field="' + esc(f) + '"><option value="">Choose…</option>' +
+        ctl = '<select class="form-input" id="' + id + '" data-ct-field="' + esc(f) + '"><option value="">' + esc(ctT('Choose…')) + '</option>' +
           ctFieldOptions(f).map(([v, l]) => '<option value="' + v + '"' + (v === val ? ' selected' : '') + '>' + esc(ctT(l)) + '</option>').join('') + '</select>';
       } else {
         ctl = '<input class="form-input" id="' + id + '" data-ct-field="' + esc(f) + '" type="' + type + '"' + (type === 'number' ? ' min="0" step="0.01"' : '') + ' value="' + esc(val) + '">';
@@ -41645,17 +41981,17 @@ function ctShowForm(kind, row, fields) {
       return '<div class="form-field"><label for="' + id + '">' + esc(ctT(ctMissingLabel(f))) + '</label>' + ctl + '</div>';
     };
     host.innerHTML = '<form class="ct-inline-form" data-ct-form="send">' +
-      (list.length ? '<div class="ct-sub" style="margin-bottom:8px">Fill in what Hugo did not have, then send.</div>' + '<div class="ct-form-grid">' + list.map(input).join('') + '</div>'
-        : '<div class="ct-sub" style="margin-bottom:8px">Everything is filled in. Send the signing link to ' + esc(s.emails.join(' and ') || 'the tenant') + '?</div>') +
+      (list.length ? '<div class="ct-sub" style="margin-bottom:8px">' + esc(ctT('Fill in what Hugo did not have, then send.')) + '</div>' + '<div class="ct-form-grid">' + list.map(input).join('') + '</div>'
+        : '<div class="ct-sub" style="margin-bottom:8px">' + (ctMxView() ? 'Todo está completo. ¿Enviar el enlace de firma a ' + esc(s.emails.join(' y ') || 'el arrendatario') + '?' : 'Everything is filled in. Send the signing link to ' + esc(s.emails.join(' and ') || 'the tenant') + '?') + '</div>') +
       '<div class="ct-form-err" role="alert"></div>' +
-      '<div class="ct-actions" style="margin-top:10px"><button class="btn btn-primary btn-mini" type="submit">Send to tenant</button><button class="btn btn-ghost btn-mini" type="button" data-ct-act="cancel">Cancel</button></div></form>';
+      '<div class="ct-actions" style="margin-top:10px"><button class="btn btn-primary btn-mini" type="submit">' + esc(ctT('Send to tenant')) + '</button><button class="btn btn-ghost btn-mini" type="button" data-ct-act="cancel">' + esc(ctT('Cancel')) + '</button></div></form>';
   }
 }
 
 async function ctRun(id, label, fn) {
   if (CT_STATE.busy) return;
   CT_STATE.busy = true;
-  ctStatus(label + '…', false);
+  ctStatus(ctT(label) + '…', false);
   document.querySelectorAll('#panel-body .ct-panel button').forEach((b) => { b.disabled = true; });
   let ok = false, msg = '', bad = false;
   try { msg = await fn(); ok = true; }
@@ -41668,13 +42004,18 @@ async function ctRun(id, label, fn) {
   await ctReloadRow(id);
   CT_STATE.busy = false;
   if (ok) CT_STATE.form = null;
+  msg = ctT(msg);
   CT_STATE.msg = msg; CT_STATE.bad = bad;
   renderContracts();
   if (CT_STATE.openId === String(id) && ctPanelShowing()) ctRenderPanel(ctFind(id) || {});
   if (ok && typeof showToast === 'function') showToast(msg);
   return ok;
 }
-function ctEmailWords(sent, ok) { return sent === false ? ok + ' — but the email did not go out. Check History and tell the tenant.' : ok + '.'; }
+function ctEmailWords(sent, ok) {
+  ok = ctT(ok);
+  if (ctMxView()) return sent === false ? ok + ', pero el correo no salió. Revisa el historial y avísale al arrendatario.' : ok + '.';
+  return sent === false ? ok + ' — but the email did not go out. Check History and tell the tenant.' : ok + '.';
+}
 
 async function ctAction(kind) {
   const row = ctFind(CT_STATE.openId); if (!row) return;
@@ -41685,7 +42026,8 @@ async function ctAction(kind) {
   if (kind === 'resend') {
     await ctRun(row.id, 'Re-sending the signing link', async () => {
       const d = await ctCall('/coliving/send', { id: row.id });
-      return ctEmailWords(d.email_sent, 'Signing link re-sent to ' + (ctSummary(row).emails.join(' and ') || 'the tenant'));
+      return ctEmailWords(d.email_sent, ctMxView() ? 'Enlace de firma reenviado a ' + (ctSummary(row).emails.join(' y ') || 'el arrendatario')
+        : 'Signing link re-sent to ' + (ctSummary(row).emails.join(' and ') || 'the tenant'));
     });
   }
 }
@@ -41694,7 +42036,7 @@ async function ctSubmitForm(form) {
   const row = ctFind(CT_STATE.openId); if (!row) return;
   if (form.dataset.ctForm === 'void') {
     const reason = String(document.getElementById('ct-void-reason').value || '').trim();
-    if (!reason) { ctStatus('Say why it is being voided.', true); return; }
+    if (!reason) { ctStatus(ctT('Say why it is being voided.'), true); return; }
     await ctRun(row.id, 'Voiding', async () => { await ctCall('/coliving/void', { id: row.id, reason }); return 'Contract voided.'; });
   } else if (form.dataset.ctForm === 'send') {
     const values = {};
@@ -41720,19 +42062,19 @@ function ctEnsureSignModal() {
   wrap.innerHTML =
     '<div class="modal-dialog" role="dialog" aria-labelledby="ct-sign-title">' +
       '<div class="modal-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21c3-1 5-4 7-7l7-7a2.1 2.1 0 0 1 3 3l-7 7c-3 2-6 4-7 7z"/><path d="M14 7l3 3"/></svg></div>' +
-        '<div><div class="modal-title" id="ct-sign-title">Sign as <em>Vanmates</em></div><div class="modal-sub" id="ct-sign-sub"></div></div>' +
+        '<div><div class="modal-title" id="ct-sign-title" data-ct-es="Firmar por <em>Vanmates</em>">Sign as <em>Vanmates</em></div><div class="modal-sub" id="ct-sign-sub"></div></div>' +
         '<button class="modal-close" type="button" data-ct-sign="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
       '<div class="modal-body">' +
-        '<div class="ct-sub" style="margin-bottom:12px">Signing completes the contract: the executed PDF is made with every signature and emailed to the tenant.</div>' +
-        '<div class="form-row"><div class="form-field"><label for="ct-sign-name">Your name</label><input class="form-input" id="ct-sign-name" autocomplete="name"></div>' +
-        '<div class="form-field"><label for="ct-sign-title-in">Title</label><input class="form-input" id="ct-sign-title-in" placeholder="e.g. Operations Manager"></div></div>' +
-        '<div class="form-field"><label>Signature</label><div class="ct-padwrap"><canvas id="ct-pad" width="920" height="280"></canvas>' +
-          '<span class="ct-padhint" id="ct-pad-hint">Sign here with your mouse or finger</span>' +
-          '<button type="button" class="btn btn-ghost btn-mini ct-padclear" data-ct-sign="clear">Clear</button></div>' +
-          '<div class="ct-sub" id="ct-pad-saved" hidden>Your last signature from this browser. Clear to draw a new one.</div></div>' +
+        '<div class="ct-sub" style="margin-bottom:12px" data-ct-tr>Signing completes the contract: the executed PDF is made with every signature and emailed to the tenant.</div>' +
+        '<div class="form-row"><div class="form-field"><label for="ct-sign-name" data-ct-tr>Your name</label><input class="form-input" id="ct-sign-name" autocomplete="name"></div>' +
+        '<div class="form-field"><label for="ct-sign-title-in" data-ct-tr>Title</label><input class="form-input" id="ct-sign-title-in" placeholder="e.g. Operations Manager"></div></div>' +
+        '<div class="form-field"><label data-ct-tr>Signature</label><div class="ct-padwrap"><canvas id="ct-pad" width="920" height="280"></canvas>' +
+          '<span class="ct-padhint" id="ct-pad-hint" data-ct-tr>Sign here with your mouse or finger</span>' +
+          '<button type="button" class="btn btn-ghost btn-mini ct-padclear" data-ct-sign="clear" data-ct-tr>Clear</button></div>' +
+          '<div class="ct-sub" id="ct-pad-saved" hidden data-ct-tr>Your last signature from this browser. Clear to draw a new one.</div></div>' +
         '<div class="form-error" id="ct-sign-err"></div>' +
       '</div>' +
-      '<div class="modal-foot"><button class="btn btn-ghost" type="button" data-ct-sign="close">Cancel</button><button class="btn btn-primary" type="button" id="ct-sign-go" data-ct-sign="go" disabled>Sign and complete</button></div>' +
+      '<div class="modal-foot"><button class="btn btn-ghost" type="button" data-ct-sign="close" data-ct-tr>Cancel</button><button class="btn btn-primary" type="button" id="ct-sign-go" data-ct-sign="go" disabled data-ct-tr>Sign and complete</button></div>' +
     '</div>';
   document.body.appendChild(wrap);
   const c = document.getElementById('ct-pad');
@@ -41771,8 +42113,17 @@ function ctSignReady() {
   const ok = String(document.getElementById('ct-sign-name').value || '').trim().length > 1 && CT_PAD.strokes > 0;
   document.getElementById('ct-sign-go').disabled = !ok || CT_STATE.busy;
 }
+// The sign modal's fixed words follow the view (Spanish in the Mexico view); the English is kept in data-en.
+function ctSignWords() {
+  const bk = document.getElementById('ct-sign-backdrop'); if (!bk) return;
+  bk.querySelectorAll('[data-ct-tr]').forEach((el) => { if (el.dataset.en == null) el.dataset.en = el.textContent; el.textContent = ctT(el.dataset.en); });
+  const t = document.getElementById('ct-sign-title');
+  if (t) { if (t.dataset.enHtml == null) t.dataset.enHtml = t.innerHTML; t.innerHTML = ctMxView() ? t.dataset.ctEs : t.dataset.enHtml; }
+  const ti = document.getElementById('ct-sign-title-in'); if (ti) ti.placeholder = ctT('e.g. Operations Manager');
+}
 function ctOpenSignModal(row) {
   ctEnsureSignModal();
+  ctSignWords();
   const me = ctMe(), s = ctSummary(row);
   CT_PAD.rowId = row.id;
   document.getElementById('ct-sign-sub').textContent = s.tenantNames + ' · ' + s.place;
@@ -41808,13 +42159,13 @@ async function ctSignGo() {
   const png = document.getElementById('ct-pad').toDataURL('image/png');
   const err = document.getElementById('ct-sign-err');
   const go = document.getElementById('ct-sign-go');
-  err.classList.remove('show'); go.disabled = true; go.textContent = 'Signing… (making the PDF)';
+  err.classList.remove('show'); go.disabled = true; go.textContent = ctT('Signing… (making the PDF)');
   const ok = await ctRun(id, 'Signing for Vanmates', async () => {
     const d = await ctCall('/coliving/countersign', { id, name, title, signature_png: png });
     try { localStorage.setItem(ctSigKey(), png); } catch (_) {}
     return ctEmailWords(d.email_sent, 'Signed. The contract is complete and the executed PDF is filed');
   });
-  go.textContent = 'Sign and complete';
+  go.textContent = ctT('Sign and complete');
   if (ok) { ctCloseSignModal(); return; }
   err.textContent = CT_STATE.msg; err.classList.add('show'); ctSignReady();
 }
@@ -41947,7 +42298,7 @@ function ctPreviewContractForm() {
 }
 // mode 'new' | 'replace' | 'extend'; src as ctFormDefaults takes it.
 function ctOpenContractForm(mode, src) {
-  if (!ctCanAct(ctMe())) { if (typeof showToast === 'function') showToast('Only admins and people with the Contracts page can create contracts.'); return; }
+  if (!ctCanAct(ctMe())) { if (typeof showToast === 'function') showToast(ctT('Only admins and people with the Contracts page can create contracts.')); return; }
   ctEnsureContractModal();
   // The Mexico view makes only Mexican leases; the Canada view never offers one.
   const x = Object.assign({}, src || {}, mode === 'new' && ctMxView() ? { country: 'MX' } : {});
@@ -42053,7 +42404,7 @@ window.ctOpenContractForm = ctOpenContractForm;
 // blocked New becomes a Replace of the person's existing contract.
 function ctFix(id, typed) {
   const row = ctFind(id);
-  if (!row) { if (typeof showToast === 'function') showToast('That contract is not loaded. Reload the page.'); return; }
+  if (!row) { if (typeof showToast === 'function') showToast(ctT('That contract is not loaded. Reload the page.')); return; }
   ctOpenContractForm('replace', { contract: row });
   if (!typed) return;
   const f = document.getElementById('ct-new-form');
@@ -42100,7 +42451,7 @@ async function ctSubmitContractForm(k) {
   buttons.forEach((b) => { b.disabled = true; });
   const label = document.querySelector('#ct-new-backdrop [data-ct-new-act="' + k + '"]');
   const was = label ? label.textContent : '';
-  if (label) label.textContent = k === 'draft' ? 'Saving…' : 'Sending… (making the PDF)';
+  if (label) label.textContent = (CT_NEW.mx ? (t) => ctTr(t, 'es') : (t) => t)(k === 'draft' ? 'Saving…' : 'Sending… (making the PDF)');
   let d = null, failure = '', fixId = '';
   try { d = await ctCall('/coliving', body); }
   catch (e) {
@@ -42128,12 +42479,13 @@ async function ctSubmitContractForm(k) {
     ctContractFormError(failure);
     if (fixId) {
       const el = document.getElementById('ct-new-err');
-      if (el) el.insertAdjacentHTML('beforeend', '<div style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-ct-fix-typed="' + esc(fixId) + '">Fix &amp; resend that contract with these details</button></div>');
+      if (el) el.insertAdjacentHTML('beforeend', '<div style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-ct-fix-typed="' + esc(fixId) + '">' + esc(CT_NEW.mx ? ctTr('Fix & resend that contract with these details', 'es') : 'Fix & resend that contract with these details') + '</button></div>');
     }
     return;
   }
   const id = ctStr(d.contract_id);
-  const to = (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' and ') || 'the tenant';
+  const to = CT_NEW.mx ? (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' y ') || 'el arrendatario'
+    : (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' and ') || 'the tenant';
   const missing = Array.isArray(d.missing) ? d.missing : [];
   let msg;
   if (d.status === 'sent' && CT_NEW.mx) msg = (k === 'replace' ? 'Reemplazado. El contrato nuevo se envió a ' : 'Enviado para firma a ') + to +
@@ -42142,7 +42494,7 @@ async function ctSubmitContractForm(k) {
   else if (send && missing.length) msg = CT_NEW.mx ? 'Guardado como borrador; falta: ' + missing.map((f) => ctTr(ctMissingLabel(f), 'es')).join(', ') + '.'
     : 'Saved as draft — still missing: ' + missing.map(ctMissingLabel).join(', ') + '.';
   else msg = CT_NEW.mx ? 'Guardado como borrador.' : 'Saved as draft.';
-  if (d.existing) msg = 'This booking already had a contract; opened it. ' + msg;
+  if (d.existing) msg = (CT_NEW.mx ? 'Esta reserva ya tenía un contrato; se abrió. ' : 'This booking already had a contract; opened it. ') + msg;
   ctCloseContractForm();
   if (typeof showToast === 'function') showToast(msg);
   try { await ctReloadAll(); } catch (e) { console.warn('[contracts] reload after create', e); }
@@ -42156,7 +42508,7 @@ async function ctOpenPdf(btn) {
   try { tab = window.open('', '_blank'); } catch (_) { tab = null; }
   if (tab) { try { tab.opener = null; } catch (_) {} }
   const label = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Opening…';
+  btn.disabled = true; btn.textContent = ctT('Opening…');
   let url = null;
   try { url = window.vmDb && typeof window.vmDb.fileUrl === 'function' ? await window.vmDb.fileUrl(btn.dataset.ctPdf, 3600) : null; }
   catch (e) { console.error('[contracts] pdf', e); }
@@ -42164,10 +42516,10 @@ async function ctOpenPdf(btn) {
   url = /^https:\/\//i.test(String(url || '')) ? String(url) : null;
   if (url && tab) { tab.location = url; return; }
   if (tab) { try { tab.close(); } catch (_) {} }
-  if (!url) { if (typeof showToast === 'function') showToast('Could not open the PDF. Try again in a moment.'); return; }
+  if (!url) { if (typeof showToast === 'function') showToast(ctT('Could not open the PDF. Try again in a moment.')); return; }
   const old = btn.parentNode && btn.parentNode.querySelector('[data-ct-pdf-link]'); if (old) old.remove();
   const a = document.createElement('a');
-  a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = 'Open the PDF';
+  a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = ctT('Open the PDF');
   a.setAttribute('data-ct-pdf-link', ''); a.style.marginLeft = '8px';
   btn.insertAdjacentElement('afterend', a);
 }
@@ -42185,7 +42537,7 @@ function ctPersonListHtml(list) {
       '<div class="ct-sub">' + esc(ctT(s.statusText)) + (s.statusLine ? ' · ' + esc(s.statusLine) : '') + '</div></div>' +
       '<div style="display:flex;gap:6px;flex-shrink:0">' +
       (ctCanFix(r, me) ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-fix="' + esc(s.id) + '">' + esc(ctT('Fix & resend')) + '</button>' : '') +
-      (canOpen ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-goto="' + esc(s.id) + '">Open</button>' : '') + '</div></div>';
+      (canOpen ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-goto="' + esc(s.id) + '">' + esc(ctT('Open')) + '</button>' : '') + '</div></div>';
   }).join('');
 }
 // Tenant drawer section (inline in openTenant's template).
@@ -42216,7 +42568,7 @@ function ctRenderLeadContracts(l) {
   const canNew = ctCanAct(ctMe()) && !!x.id;
   if (!list.length && !canNew) { el.style.display = 'none'; el.innerHTML = ''; return; }
   el.style.display = '';
-  el.innerHTML = '<div class="form-field"><label>Contracts</label><div class="ct-person">' + ctPersonListHtml(list) + '</div>' +
+  el.innerHTML = '<div class="form-field"><label>' + esc(ctT('Contracts')) + '</label><div class="ct-person">' + ctPersonListHtml(list) + '</div>' +
     (canNew ? '<div class="ct-actions" style="margin-top:4px">' + ctNewForBtn('lead') + '</div>' : '') + '</div>';
 }
 window.ctRenderLeadContracts = ctRenderLeadContracts;
@@ -42257,9 +42609,9 @@ function ctNewFor(who) {
     const refresh = document.getElementById('ct-refresh');
     if (refresh) refresh.addEventListener('click', async () => {
       const st = document.getElementById('ct-list-status');
-      if (st) st.textContent = 'Refreshing…';
-      try { await ctReloadAll(); if (st) st.textContent = 'Up to date.'; }
-      catch (e) { if (st) st.textContent = 'Could not refresh: ' + (e.message || e); }
+      if (st) st.textContent = ctT('Refreshing…');
+      try { await ctReloadAll(); if (st) st.textContent = ctT('Up to date.'); }
+      catch (e) { if (st) st.textContent = (ctMxView() ? 'No se pudo actualizar: ' : 'Could not refresh: ') + (e.message || e); }
       renderContracts();
     });
     renderContracts();
@@ -43638,9 +43990,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-16-mxcko1"></script>
-<script src="extensions.js?v=2026-10-16-mxcko1"></script>
-<script src="ap.js?v=2026-10-16-mxcko1"></script>
-<script src="properties.js?v=2026-10-16-mxcko1"></script>
+<script src="room-changes.js?v=2026-10-17-mxes1"></script>
+<script src="extensions.js?v=2026-10-17-mxes1"></script>
+<script src="ap.js?v=2026-10-17-mxes1"></script>
+<script src="properties.js?v=2026-10-17-mxes1"></script>
 </body>
 </html>
