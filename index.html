@@ -1729,7 +1729,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-16-mxct1"></script>
+<script src="pms-supabase.js?v=2026-10-16-mxcko1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3080,7 +3080,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <input id="cko-rpt-from" type="date" class="form-input" style="max-width:170px" aria-label="From" hidden />
           <input id="cko-rpt-to" type="date" class="form-input" style="max-width:170px" aria-label="To" hidden />
           <select id="cko-rpt-city" class="form-input" style="max-width:170px" aria-label="City">
-            <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
+            <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option><option>Guadalajara</option>
           </select>
           <select id="cko-rpt-house" class="form-input" style="max-width:230px" aria-label="House"><option value="">All houses</option></select>
           <button class="btn btn-ghost" id="cko-rpt-csv" type="button">Download CSV</button>
@@ -3119,7 +3119,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <option value="room_not_released">Room not released</option>
         </select>
         <select id="cko-filter-city" class="form-input" style="max-width:170px">
-          <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option>
+          <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option><option>Guadalajara</option>
         </select>
         <button class="btn btn-ghost" id="cko-refresh" type="button">Refresh</button>
         <button class="btn btn-primary" id="cko-new" type="button">New checkout</button>
@@ -3141,7 +3141,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       <div class="card" id="cko-list-card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
           <div class="card-title"><b id="cko-count">0</b> checkouts</div>
-          <div class="name-sub">Worked here · Asana follows within a few minutes</div>
+          <div class="name-sub" id="cko-list-sub">Worked here · Asana follows within a few minutes</div>
         </div>
         <div style="overflow-x:auto">
         <table>
@@ -4641,7 +4641,7 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
       <div class="card-sub" id="cko-new-roster" aria-live="polite" style="min-height:18px;margin:-4px 0 6px"></div>
       <div class="form-row">
         <div class="form-field"><label for="cko-new-phone">Phone</label><input class="form-input" id="cko-new-phone" type="tel" maxlength="200" /></div>
-        <div class="form-field"><label for="cko-new-city">City<span class="req">*</span></label><select class="form-input" id="cko-new-city" required><option value="">—</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option></select></div>
+        <div class="form-field"><label for="cko-new-city">City<span class="req">*</span></label><select class="form-input" id="cko-new-city" required><option value="">—</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option><option>Guadalajara</option></select></div>
       </div>
       <div class="form-row">
         <div class="form-field"><label for="cko-new-house">House</label><input class="form-input" id="cko-new-house" placeholder="Blood Alley" maxlength="200" /></div>
@@ -26373,6 +26373,82 @@ const CKO_FIELD_LABELS = {
 // Length caps the migration enforces (characters, after trimming).
 const CKO_MAX_TEXT = 4000, CKO_MAX_SHORT = 200;
 const CKO_CITIES = ['Vancouver', 'Toronto', 'Montreal'];
+/* ---- Vanmates Mexico (checkout-mx-2026-10-16.sql) ------------------------
+   checkout_cases.country 'CA' | 'MX'. The page shows ONE country (the portal's
+   country switch): ckoForCountry filters, ckoSetCountry switches the few core
+   answers that differ (money MX$, SPEI/cash methods, Spanish labels through
+   ckoT, the Guadalajara report). Canada's answers are unchanged while the
+   country is 'CA' (the default). */
+const CKO_MX_CITY_KEYS = ['guadalajara', 'gdl', 'zapopan', 'tlaquepaque', 'sanpedrotlaquepaque', 'tonala', 'tlajomulco', 'tlajomulcodezuniga'];
+const CKO_METHOD_OPTIONS_MX = [['spei', 'SPEI'], ['cash', 'Efectivo']];
+let CKO_COUNTRY = 'CA';
+function ckoSetCountry(c){ CKO_COUNTRY = c === 'MX' ? 'MX' : 'CA'; return CKO_COUNTRY; }
+function ckoCountryNow(){ return CKO_COUNTRY; }
+// A checkout_cases row or a shaped case → 'CA' | 'MX': the column, else data.country, else the city.
+function ckoCountryOf(r){
+  if (!r) return 'CA';
+  if (r.country === 'MX' || r.country === 'CA') return r.country;
+  const d = r.data || {};
+  if (d.country === 'MX' || d.country === 'CA') return d.country;
+  return CKO_MX_CITY_KEYS.indexOf(ckoCityKey(d.city || r.city)) !== -1 ? 'MX' : 'CA';
+}
+function ckoForCountry(cases, country){ const k = country === 'MX' ? 'MX' : 'CA'; return (cases || []).filter(c => ckoCountryOf(c) === k); }
+function ckoMethodOptions(){ return CKO_COUNTRY === 'MX' ? CKO_METHOD_OPTIONS_MX : CKO_METHOD_OPTIONS; }
+function ckoMoneySym(){ return CKO_COUNTRY === 'MX' ? 'MX$' : '$'; }
+function ckoCitiesNow(){ return CKO_COUNTRY === 'MX' ? ['Guadalajara'] : CKO_CITIES; }
+// The inspector / owner pickers: Mexico shows the Mexico team (countries has MX); Canada everyone, as before.
+function ckoTeamFor(team, country){ return country === 'MX' ? (team || []).filter(m => m && Array.isArray(m.countries) && m.countries.indexOf('MX') !== -1) : (team || []); }
+// Mexico has no homestay move-outs.
+function ckoTabsForCountry(tabs, country){ return country === 'MX' ? (tabs || []).filter(x => x[0] !== 'homestay') : (tabs || []); }
+// Mexico staff read Spanish (the contracts' CT_ES pattern). Anything missing stays English.
+const CKO_ES = {
+  'For me': 'Para mí', 'Everyone': 'Todos', 'Closed': 'Cerrados', 'Finance': 'Finanzas', 'Reports': 'Reportes',
+  'Waiting for resident': 'Esperando al residente', 'Waiting for move-out': 'Esperando la salida', 'Move-out & inspection': 'Salida e inspección',
+  'Charges': 'Cargos', 'Refund': 'Reembolso',
+  'Information Incomplete': 'Información incompleta', 'Information Complete': 'Información completa', 'Move-Out Scheduled': 'Salida agendada',
+  'Inspection Pending': 'Inspección pendiente', 'Inspection Completed': 'Inspección realizada', 'Charges Review': 'Revisión de cargos',
+  'Deposit Processing': 'Depósito en proceso', 'Deposit Sent': 'Depósito enviado',
+  'Short notice': 'Aviso tardío', 'Review requested': 'Revisión solicitada', 'Unverified': 'Sin verificar', 'Email failed': 'Falló el correo',
+  'Refund change requested': 'Cambio de reembolso solicitado', 'Email unconfirmed': 'Correo sin confirmar', 'Review approved': 'Revisión aprobada',
+  'Review: partly waived': 'Revisión: condonado en parte', 'Review denied': 'Revisión rechazada', 'Refund details missing': 'Faltan datos de reembolso',
+  'Keys missing': 'Faltan llaves', 'Damage review': 'Revisión de daños', 'Resident dispute': 'Disputa del residente', 'Move-out date changed': 'Cambió la fecha de salida',
+  'Finance overdue': 'Finanzas atrasado', 'Reminders off': 'Recordatorios apagados', 'Resident not responding': 'El residente no responde',
+  'imported': 'importado', 'no email': 'sin correo',
+  'Resolve the resident dispute': 'Resolver la disputa del residente', 'Decide the short-notice review': 'Decidir la revisión del aviso tardío',
+  'Move-out date passed: chase the resident': 'Pasó la fecha de salida: contactar al residente', 'Move-out date passed: use Already moved out': 'Pasó la fecha de salida: usar «Ya salió»',
+  'Resident: finish the checkout form': 'Residente: completar el formulario de salida', 'Record the move-out on the day': 'Registrar la salida ese día',
+  'Take the case; record the move-out on the day': 'Tomar el caso; registrar la salida ese día', 'Record the move-out': 'Registrar la salida',
+  'Record the inspection': 'Registrar la inspección', 'Send to charges review': 'Enviar a revisión de cargos', 'Resident: refund details': 'Residente: datos de reembolso',
+  'Finance: approve the refund': 'Finanzas: aprobar el reembolso', 'Check the charges, then submit': 'Revisar los cargos y enviar',
+  'Finance: send the refund': 'Finanzas: enviar el reembolso', 'Finance: send the top-up': 'Finanzas: enviar el complemento', 'Finance: close the case': 'Finanzas: cerrar el caso',
+  'Schedule move-out': 'Agendar la salida', 'Resident moved out': 'El residente salió', 'Inspection done': 'Inspección hecha', 'Approve refund': 'Aprobar reembolso',
+  'Mark sent': 'Marcar enviado', 'Close': 'Cerrar', 'Go to the charges': 'Ir a los cargos', 'Already moved out → Charges Review': 'Ya salió → Revisión de cargos',
+  'Take': 'Tomar', 'Assign': 'Asignar', 'Reassign': 'Reasignar', 'Unassign': 'Soltar', 'Decide review': 'Decidir revisión', 'Flag dispute': 'Marcar disputa',
+  'Clear dispute': 'Quitar disputa', 'Keys sorted': 'Llaves resueltas', 'Clear not responding': 'Quitar «no responde»', 'Date change seen': 'Cambio de fecha visto',
+  'Add note': 'Agregar nota', 'Cancel checkout': 'Cancelar salida', 'Override status': 'Forzar estado', 'More ▾': 'Más ▾', 'Back': 'Atrás',
+  'Inspection date and time': 'Fecha y hora de la inspección', 'Inspector': 'Inspector(a)', 'Keys and fobs': 'Llaves', 'How many were returned': '¿Cuántas devolvió?',
+  'Result': 'Resultado', 'Notes (required unless Good)': 'Notas (obligatorias salvo «Bien»)', 'All returned': 'Todas devueltas', 'Some returned': 'Algunas devueltas',
+  'None returned': 'Ninguna devuelta', 'Good': 'Bien', 'Cleaning required': 'Requiere limpieza', 'Damage': 'Daño',
+  'Assign this case': 'Asignar este caso', 'Owner': 'Responsable', 'Add a note': 'Agregar una nota', 'Note': 'Nota', 'Cancel this checkout': 'Cancelar esta salida',
+  'Why is it cancelled?': '¿Por qué se cancela?', 'Reason': 'Motivo', 'Move to': 'Mover a', 'Override the status (admin)': 'Forzar el estado (admin)', 'Override': 'Forzar',
+  'Decide the short-notice review': 'Decidir la revisión del aviso tardío', 'Decision': 'Decisión', 'Save decision': 'Guardar decisión',
+  'Method': 'Método', 'Refund method': 'Método de reembolso', 'Choose…': 'Elegir…',
+  'Resident': 'Residente', 'House / room': 'Casa / habitación', 'Stage': 'Etapa', 'Next': 'Siguiente', 'Move-out': 'Salida', 'Days at stage': 'Días en la etapa', 'Flags': 'Alertas',
+  'Unassigned': 'Sin asignar', 'No checkouts match.': 'Ninguna salida coincide.', 'Clear filters': 'Quitar filtros', 'checkouts': 'salidas',
+  'Worked here · residents get Spanish e-mails': 'Se trabaja aquí · los residentes reciben correos en español',
+  'Search by resident, email, house, room or checkout ID…': 'Buscar por residente, correo, casa, habitación o folio…',
+  'All statuses': 'Todos los estados', 'All owners': 'Todos los responsables', 'All flags': 'Todas las alertas', 'All cities': 'Todas las ciudades',
+  'Needs action': 'Requiere acción', 'Refresh': 'Actualizar', 'New checkout': 'Nueva salida',
+  'Move-out date': 'Fecha de salida', 'Inspection booked': 'Inspección agendada', 'Moved out': 'Salió', 'Inspection result': 'Resultado de la inspección',
+  'Email': 'Correo', 'Phone': 'Teléfono', 'Forwarding address': 'Dirección nueva', 'Keys / fobs': 'Llaves', 'Submitted': 'Enviado', 'Notice received': 'Aviso recibido',
+  'Notice': 'Aviso', 'Notice taken by staff': 'Aviso tomado por el equipo', 'Deposit & cleaning': 'Depósito y limpieza', 'Requested': 'Solicitado',
+  'Matched to the tenant list': 'Coincide con la lista de arrendatarios', 'Resident link, reminders': 'Enlace del residente, recordatorios',
+  'Notice & acknowledgements': 'Aviso y confirmaciones', 'Resident link, reminders, room': 'Enlace del residente', 'Timeline': 'Historial', 'Deposit held': 'Depósito retenido', 'Cleaning': 'Limpieza',
+  'Keys / fobs not returned': 'Llaves no devueltas', 'Unpaid balance': 'Saldo pendiente', 'Other': 'Otro', 'Move-out cleaning fee': 'Limpieza de salida',
+  'Nothing is waiting for finance.': 'Nada espera a finanzas.', 'Loading…': 'Cargando…',
+};
+function ckoTr(text, lang){ return lang === 'es' && Object.prototype.hasOwnProperty.call(CKO_ES, text) ? CKO_ES[text] : text; }
+function ckoT(text){ return ckoTr(text, CKO_COUNTRY === 'MX' ? 'es' : 'en'); }
 function ckoFlagLabel(f){ return CKO_FLAG_LABELS[f] || String(f || '').replace(/_/g, ' '); }
 function ckoFromRow(r){
   const d = (r && r.data) || {};
@@ -26385,6 +26461,8 @@ function ckoFromRow(r){
     statusChangedAt: r.status_changed_at || r.created_at || '', outcome: r.outcome || '', closedAt: r.closed_at || '',
     // Homestay move-outs (checkout-homestay-2026-10-12.sql): the site writes data.service_type, the DB copies it to a column.
     serviceType: (r.service_type || d.service_type) === 'homestay' ? 'homestay' : 'coliving',
+    // Mexico (checkout-mx-2026-10-16.sql): the country column, else data.country / the city.
+    country: ckoCountryOf(r),
   };
 }
 function ckoIsHomestay(c){ return !!c && c.serviceType === 'homestay'; }
@@ -26978,9 +27056,9 @@ function ckoTimeline(events, nameOf, city, snapshots){
 // read) in the property's zone, as the DB's _checkout_tz: America/Toronto for
 // Toronto and Montreal, America/Vancouver otherwise (and when no city is given).
 function ckoCityKey(city){ return String(city || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
-function ckoCityOf(city){ const k = ckoCityKey(city); return CKO_CITIES.find(c => c.toLowerCase() === k) || ''; }
-function ckoZoneOf(city){ const k = ckoCityKey(city); return k === 'toronto' || k === 'montreal' ? 'America/Toronto' : 'America/Vancouver'; }
-function ckoZoneLabel(city){ return ckoZoneOf(city) === 'America/Toronto' ? 'ET' : 'PT'; }
+function ckoCityOf(city){ const k = ckoCityKey(city); return CKO_CITIES.find(c => c.toLowerCase() === k) || (CKO_MX_CITY_KEYS.indexOf(k) !== -1 ? 'Guadalajara' : ''); }
+function ckoZoneOf(city){ const k = ckoCityKey(city); return k === 'toronto' || k === 'montreal' ? 'America/Toronto' : CKO_MX_CITY_KEYS.indexOf(k) !== -1 ? 'America/Mexico_City' : 'America/Vancouver'; }
+function ckoZoneLabel(city){ const z = ckoZoneOf(city); return z === 'America/Toronto' ? 'ET' : z === 'America/Mexico_City' ? 'GDL' : 'PT'; }
 const CKO_TZ_FMTS = {};
 function ckoParts(ms, zone){
   const f = CKO_TZ_FMTS[zone] || (CKO_TZ_FMTS[zone] = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }));
@@ -27045,7 +27123,7 @@ const CKO_MAX_LINE = 500, CKO_MAX_EVIDENCE = 20;
 function ckoLineTypeLabel(t){ const o = CKO_LINE_TYPES.find(x => x[0] === t); return o ? o[1] : (String(t == null ? '' : t).replace(/_/g, ' ') || '—'); }
 // A stored amount rounded to cents, or null (blank, junk or negative).
 function ckoAmt(v){ if (v == null || v === '' || typeof v === 'boolean') return null; const n = Number(v); return isFinite(n) && n >= 0 ? ckoRound2(n) : null; }
-function ckoMoneyText(v){ const n = ckoAmt(v); return n == null ? '—' : '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function ckoMoneyText(v){ const n = ckoAmt(v); return n == null ? '—' : ckoMoneySym() + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 // Display-only mirror of _checkout_totals: cleaning sums cleaning lines,
 // outstanding sums unpaid_balance, deductions sums keys + damage + other.
 // depositHeld is data.deposit_held ({amount}) or a number; unknown -> refund
@@ -27155,7 +27233,7 @@ function ckoPayments(c){
 function ckoRefundSent(c){ return ckoPayments(c).find(p => p.kind === 'refund') || null; }
 function ckoTopUpDue(c){ const n = ckoAmt(((c && c.data) || {}).top_up_due); return n && n > 0 ? n : 0; }
 function ckoChargesSubmitted(c){ const r = ckoObj(((c && c.data) || {}).charges_review); return !!(r && r.submitted_at); }
-function ckoPayMethodLabel(m){ return m ? ckoOptionLabel(CKO_METHOD_OPTIONS, m) : ''; }
+function ckoPayMethodLabel(m){ return m ? ckoOptionLabel(CKO_METHOD_OPTIONS.concat(CKO_METHOD_OPTIONS_MX), m) : ''; }
 // Who may change lines now, as _checkout_lines_editable: at Charges Review
 // the owner (or an admin) and finance until the charges are submitted, then
 // finance only; at Deposit Processing / Deposit Sent finance only, and only
@@ -27467,7 +27545,7 @@ function ckoMarkSentArgs(c, fields, now){
   if (ref.error) return { ok: false, error: ref.error };
   const method = String(v.method == null ? '' : v.method).trim();
   if (!method) return ckoRefuse('missing:method');
-  if (!CKO_METHOD_OPTIONS.some(o => o[0] === method)) return ckoRefuse('invalid:method');
+  if (!ckoMethodOptions().some(o => o[0] === method)) return ckoRefuse('invalid:method');
   const shareable = v.shareable === true || v.shareable === 'on' || v.shareable === 'true';
   return { ok: true, args: ckoAdvanceArgs(c, 'mark_sent', { kind, sent_on: d, reference: ref.text, method, shareable }) };
 }
@@ -27566,7 +27644,8 @@ function ckoOverdueText(a, city){
 function ckoStatusUrl(c){
   const t = String((c && (c.statusToken || c.status_token)) || '');
   if (!/^[A-Za-z0-9_-]{43}$/.test(t)) return null;
-  return 'https://vanmates.com/checkout/status?t=' + t + (((c && c.data) || {}).lang === 'ja' ? '&lang=ja' : '');
+  const lang = ((c && c.data) || {}).lang;
+  return 'https://vanmates.com/checkout/status?t=' + t + (lang === 'ja' ? '&lang=ja' : lang === 'es' && ckoCountryOf(c) === 'MX' ? '&lang=es' : '');
 }
 // Reset link = checkout_rotate_status_token: the case owner or an admin (the RPC refuses anyone else).
 function ckoCanResetLink(c, me){ return ckoCanManage(c, me); }
@@ -27695,7 +27774,7 @@ function ckoRptMoney(v){
   const n = ckoRptNum(v);
   if (n == null) return '—';
   const r = Math.round(Math.abs(n));
-  return (n < 0 && r ? '-' : '') + '$' + String(r).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (n < 0 && r ? '-' : '') + ckoMoneySym() + String(r).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 function ckoRptDays(v){ const n = ckoRptNum(v); if (n == null) return '—'; const r = Math.round(n * 10) / 10; return r + (r === 1 ? ' day' : ' days'); }
 function ckoRptCount(v){ const n = ckoRptNum(v); return n == null ? '—' : String(Math.round(n)); }
@@ -27742,7 +27821,7 @@ function ckoRptArgs(f, today){
   if (p.ok === false) return p;
   const cityIn = String(f.city || '').trim(), city = ckoCityOf(cityIn), house = String(f.house || '').trim();
   if (cityIn && !city) return { ok: false, error: ckoErrorText('bad_city') };
-  return { ok: true, args: { p_from: p.from, p_to: p.to, p_city: city || null, p_house: house || null } };
+  return { ok: true, args: { p_from: p.from, p_to: p.to, p_city: city || (CKO_COUNTRY === 'MX' ? 'Guadalajara' : null), p_house: house || null } };
 }
 const CKO_RPT_CSV_HEAD = ['Group', 'Cases', '30+ days notice %', 'Avg days to refund', 'Over deadline %', 'Disputes', 'Exceptional deductions $'];
 function ckoRptCsvCell(v){
@@ -27950,6 +28029,49 @@ const CKO_STATE = { q: '', flag: '', city: '', status: '', stage: '', owner: '',
 const CKO_TABS = [['forme', 'For me'], ['open', 'Everyone'], ['homestay', 'Homestay'], ['closed', 'Closed']];
 const CKO_COLS = 8;
 let ckoCases = null, ckoLoading = null;
+// Mexico (checkout-mx-2026-10-16.sql): every case the database gave us (RLS already limits it to the
+// teammate's countries); ckoCases is the selected country's share (ckoSyncCountry).
+let ckoCasesAll = null, ckoNoCountryColumn = false;
+// Drawer rows a Mexican case never has (Limpio clean, Asana task, room release, Canada's English reminders).
+const CKO_MX_HIDDEN_ROWS = ['Move-out clean', 'Limpio task', 'Asana', 'Room', 'Reminders'];
+// One page read with the country column; before checkout-mx-2026-10-16.sql the column is missing, so
+// read without it once and remember (country then comes from data.country / the city, see ckoCountryOf).
+async function ckoSelectWithCountry(sel, cols){
+  let r = await sel(cols + (ckoNoCountryColumn ? '' : ',country'));
+  if (r && r.error && !ckoNoCountryColumn && /country/.test(String(r.error.message || '')) && (r.error.code === '42703' || /does not exist/.test(String(r.error.message || '')))) {
+    ckoNoCountryColumn = true;
+    console.warn('[checkouts] country column missing; reading without it');
+    r = await sel(cols);
+  }
+  return r;
+}
+function ckoViewCountry(){ return window.vmCountry && typeof window.vmCountry.current === 'function' && window.vmCountry.current() === 'MX' ? 'MX' : 'CA'; }
+// Picks up the portal's country: the core's country (money, methods, labels), the list, and the page's fixed English.
+function ckoSyncCountry(){
+  const cc = ckoSetCountry(ckoViewCountry());
+  if (ckoCasesAll) ckoCases = ckoForCountry(ckoCasesAll, cc);
+  if (cc === 'MX' && CKO_STATE.tab === 'homestay') CKO_STATE.tab = 'open';
+  if (CKO_STATE.city && ckoCityOf(CKO_STATE.city) && ckoCountryOf({ data: { city: CKO_STATE.city } }) !== cc) {
+    CKO_STATE.city = ''; const sel = document.getElementById('cko-filter-city'); if (sel) sel.value = '';
+  }
+  if (CKO_RPT.city && ckoCountryOf({ data: { city: CKO_RPT.city } }) !== cc) {
+    CKO_RPT.city = ''; CKO_RPT.view = null; const sel = document.getElementById('cko-rpt-city'); if (sel) sel.value = '';
+  }
+  // The page's fixed English: swapped in place, the English kept in data-cko-en.
+  const sec = document.querySelector('section.view[data-view="checkouts"]');
+  if (!sec) return cc;
+  const swap = (el, attr) => {
+    const k = attr ? 'ckoEn' + attr : 'ckoEn';
+    if (el.dataset[k] == null) el.dataset[k] = attr ? (el.getAttribute(attr) || '') : el.textContent;
+    const v = cc === 'MX' ? ckoTr(el.dataset[k], 'es') : el.dataset[k];
+    if (attr) { if (el.getAttribute(attr) !== v) el.setAttribute(attr, v); } else if (el.textContent !== v) el.textContent = v;
+  };
+  sec.querySelectorAll('thead th, #cko-filter-bar option, #cko-rpt-city option[value=""], #cko-refresh, #cko-new, #cko-fin-empty').forEach(el => swap(el));
+  const s = document.getElementById('cko-search'); if (s) swap(s, 'placeholder');
+  const sub = document.getElementById('cko-list-sub');
+  if (sub) { if (sub.dataset.ckoEn == null) sub.dataset.ckoEn = sub.textContent; sub.textContent = cc === 'MX' ? ckoTr('Worked here · residents get Spanish e-mails', 'es') : sub.dataset.ckoEn; }
+  return cc;
+}
 // Drawer token: every open (and every close) bumps it, so a response that
 // arrives after the user moved on is dropped instead of overwriting the panel.
 let ckoOpenSeq = 0;
@@ -27968,7 +28090,7 @@ function ckoName(email){
 }
 function ckoChip(f){
   const cls = CKO_RED_FLAGS.indexOf(f) !== -1 ? 'red' : 'blue';
-  return `<span class="tag-pill ${cls}" style="font-size:11px;margin:1px">${esc(ckoFlagLabel(f))}</span>`;
+  return `<span class="tag-pill ${cls}" style="font-size:11px;margin:1px">${esc(ckoT(ckoFlagLabel(f)))}</span>`;
 }
 // Phase 3b: set once a read found no status_token column (portal live before the migration).
 let ckoNoTokenColumn = false;
@@ -27983,8 +28105,9 @@ async function loadCheckouts(force){
     try {
       const rows = [], PAGE = 1000;
       for (let from = 0; ; from += PAGE) {
-        const page = (cols) => sb.from('checkout_cases').select(cols)
+        const sel = (cols) => sb.from('checkout_cases').select(cols)
           .is('deleted_at', null).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, from + PAGE - 1);
+        const page = (c0) => ckoSelectWithCountry(sel, c0);
         let { data, error } = await page(ckoCaseSelect(!ckoNoTokenColumn));
         // Before the 3b migration there is no status_token column (42703): retry this page
         // once without it and remember that for the session ("No link yet" in the drawer).
@@ -27997,7 +28120,8 @@ async function loadCheckouts(force){
         rows.push(...(data || []));
         if (!data || data.length < PAGE) break;
       }
-      ckoCases = rows.map(ckoFromRow);
+      ckoCasesAll = rows.map(ckoFromRow);
+      ckoCases = ckoForCountry(ckoCasesAll, ckoSetCountry(ckoViewCountry()));
       ckoOwnerOptions();
       renderCheckouts();
     } catch (e) {
@@ -28017,11 +28141,11 @@ async function ckoReload(){
 function ckoOwnerOptions(){
   const sel = document.getElementById('cko-filter-owner');
   if (!sel) return;
-  const emails = new Set(ckoTeam().map(m => String(m.email || '').toLowerCase()).filter(Boolean));
+  const emails = new Set(ckoTeamFor(ckoTeam(), ckoCountryNow()).map(m => String(m.email || '').toLowerCase()).filter(Boolean));
   (ckoCases || []).forEach(c => { if (c.owner) emails.add(c.owner); });
   const list = [...emails].sort((a, b) => ckoName(a).localeCompare(ckoName(b)));
   if (CKO_STATE.owner && CKO_STATE.owner !== 'none' && list.indexOf(CKO_STATE.owner) === -1) list.push(CKO_STATE.owner);
-  sel.innerHTML = '<option value="">All owners</option><option value="none">Unassigned</option>' +
+  sel.innerHTML = `<option value="">${esc(ckoT('All owners'))}</option><option value="none">${esc(ckoT('Unassigned'))}</option>` +
     list.map(e => `<option value="${esc(e)}">${esc(ckoName(e))}</option>`).join('');
   sel.value = CKO_STATE.owner;
 }
@@ -28030,6 +28154,7 @@ function ckoFiltersActive(){ return !!(CKO_STATE.q || CKO_STATE.status || CKO_ST
 function renderCheckouts(){
   const body = document.getElementById('cko-body');
   if (!body || !ckoCases) return;
+  ckoSyncCountry();
   const me = ckoMe(), now = Date.now();
   if (!ckoStatusFitsTab(CKO_STATE.status, CKO_STATE.tab)) {
     CKO_STATE.status = '';
@@ -28046,6 +28171,8 @@ function renderCheckouts(){
   const newBtn = document.getElementById('cko-new'); if (newBtn) newBtn.style.display = me.homestay_only ? 'none' : '';
   const tabs = document.getElementById('cko-tabs');
   if (tabs) tabs.innerHTML = ckoTabsFor(CKO_TABS, me).map(([k, label]) => {
+    if (ckoTabsForCountry([[k]], ckoCountryNow()).length === 0) return '';   // Mexico: no Homestay tab
+    label = ckoT(label);
     const on = CKO_STATE.tab === k;
     const count = k === 'reports' ? '' : ` <span class="name-sub">${ckoTab(ckoCases, k, me, now).length}</span>`;
     return `<button type="button" class="tab${on ? ' active' : ''}" role="tab" aria-selected="${on}" data-cko-tab="${k}">${esc(label)}${count}</button>`;
@@ -28057,7 +28184,7 @@ function renderCheckouts(){
   if (strip) strip.innerHTML = ckoStageCounts(stageCases).map((s, i, all) => {
     const on = CKO_STATE.stage === s.key, r = i === 0 ? '10px 0 0 10px' : i === all.length - 1 ? '0 10px 10px 0' : '0';
     return `<button type="button" aria-pressed="${on}" data-cko-stage="${esc(s.key)}" style="flex:1 1 0;min-width:120px;padding:10px 12px;text-align:left;cursor:pointer;border:1px solid var(--line);border-radius:${r};margin-left:${i ? '-1px' : '0'};font:inherit;background:${on ? 'var(--red)' : 'var(--cream-2)'};color:${on ? '#fff' : 'var(--ink)'}">
-      <div style="font-size:11px;opacity:.85">${s.n} · ${esc(s.label)}</div>
+      <div style="font-size:11px;opacity:.85">${s.n} · ${esc(ckoT(s.label))}</div>
       <div style="font-size:20px;font-weight:700">${s.count}</div>
     </button>`;
   }).join('');
@@ -28094,7 +28221,7 @@ function renderCheckouts(){
   document.getElementById('cko-count').textContent = rows.length;
   const empty = document.getElementById('cko-empty');
   empty.style.display = rows.length ? 'none' : '';
-  empty.innerHTML = 'No checkouts match.' + (ckoFiltersActive() ? ' <button type="button" class="btn btn-ghost" data-cko-clear style="margin-left:8px">Clear filters</button>' : '');
+  empty.innerHTML = esc(ckoT('No checkouts match.')) + (ckoFiltersActive() ? ` <button type="button" class="btn btn-ghost" data-cko-clear style="margin-left:8px">${esc(ckoT('Clear filters'))}</button>` : '');
   const badge = document.querySelector('.nav-item[data-view="checkouts"] .nav-count');
   if (badge) badge.textContent = String(ckoTab(ckoCases, 'forme', me, now).length);
   // The Finance tab has its own table and header stats (Phase 3a).
@@ -28114,9 +28241,9 @@ function renderCheckouts(){
     return `<tr data-cko-id="${esc(c.id)}" style="cursor:pointer">
       <td>${act ? '<span class="tag-pill red" style="font-size:10px;margin-right:4px" title="Needs action">!</span>' : ''}<button type="button" class="cko-open">${esc(c.name)}</button><div class="name-sub">${esc(c.id)}</div></td>
       <td>${esc(c.house)}<div class="name-sub">${esc(c.room)}${c.city ? ' · ' + esc(c.city) : ''}</div></td>
-      <td>${cl ? `Closed${c.outcome === 'cancelled' ? '<div class="name-sub">cancelled</div>' : ''}` : `${dots}<div style="font-size:13px">${stg ? esc(stg.label) : esc(c.status)}</div><div class="name-sub">${esc(c.status)}</div>`}</td>
-      <td>${next ? `<b style="font-weight:600">${esc(next)}</b>` : '<span class="name-sub">—</span>'}</td>
-      <td>${c.owner ? esc(ckoName(c.owner)) : '<span class="tag-pill red" style="font-size:11px">Unassigned</span>'}</td>
+      <td>${cl ? `${esc(ckoT('Closed'))}${c.outcome === 'cancelled' ? `<div class="name-sub">${esc(ckoCountryNow() === 'MX' ? 'cancelada' : 'cancelled')}</div>` : ''}` : `${dots}<div style="font-size:13px">${stg ? esc(ckoT(stg.label)) : esc(ckoT(c.status))}</div><div class="name-sub">${esc(ckoT(c.status))}</div>`}</td>
+      <td>${next ? `<b style="font-weight:600">${esc(ckoT(next))}</b>` : '<span class="name-sub">—</span>'}</td>
+      <td>${c.owner ? esc(ckoName(c.owner)) : `<span class="tag-pill red" style="font-size:11px">${esc(ckoT('Unassigned'))}</span>`}</td>
       <td>${esc(fmtDate(c.moveOut))}<div class="name-sub">${esc(ckoNoticeText(c))}</div></td>
       <td>${wait}</td>
       <td>${c.flags.map(ckoChip).join(' ')}</td>
@@ -28520,9 +28647,12 @@ async function openCheckout(id, banner, refocus, ok){
   const cln = ckoCleaning(c);
   // Homestay move-out: the host family checks the room; no Vanmates clean, cleaning report or room release.
   const hs = ckoIsHomestay(c), bk = d.booking || {};
-  const kv = (label, value) => `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${esc(label)}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
-  const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${esc(t)}</h4>`;
-  const money = (v) => (v == null ? '—' : '$' + esc(v));
+  // Mexico (checkout-mx-2026-10-16.sql): no Limpio clean, cleaning report, room release, Asana or reminders;
+  // labels in Spanish (ckoT), money in MX$.
+  const mx = ckoCountryOf(c) === 'MX';
+  const kv = (label, value) => mx && CKO_MX_HIDDEN_ROWS.indexOf(label) !== -1 ? '' : `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid var(--line,#eee)"><div class="name-sub" style="flex:0 0 38%">${esc(ckoT(label))}</div><div style="flex:1;min-width:0;overflow-wrap:anywhere">${value}</div></div>`;
+  const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${esc(ckoT(t))}</h4>`;
+  const money = (v) => (v == null ? '—' : esc(ckoMoneySym()) + esc(v));
   // Every time in the drawer is the property's zone (ET or PT), not the browser's.
   const zone = ckoZoneLabel(c.city);
   const day = (ts) => fmtDate(ckoLocal(ts, c.city).date);
@@ -28536,7 +28666,7 @@ async function openCheckout(id, banner, refocus, ok){
   // the stage tracker and Next on top, then the current stage's block, then the
   // rest folded into sections that open on click (nothing removed).
   const stg = ckoStageOf(c), tl = ckoTimeline(events, ckoName, c.city, ckoChargesSnapshots(c));
-  const fold = (title, body, open) => body.trim() ? `<details class="cko-fold"${open ? ' open' : ''} style="margin-top:10px;border:1px solid var(--line,#E4DBC9);border-radius:10px;padding:0 12px"><summary style="cursor:pointer;padding:10px 0;font-size:13px;font-weight:600;letter-spacing:.02em">${esc(title)}</summary><div style="padding-bottom:8px">${body}</div></details>` : '';
+  const fold = (title, body, open) => body.trim() ? `<details class="cko-fold"${open ? ' open' : ''} style="margin-top:10px;border:1px solid var(--line,#E4DBC9);border-radius:10px;padding:0 12px"><summary style="cursor:pointer;padding:10px 0;font-size:13px;font-weight:600;letter-spacing:.02em">${esc(ckoT(String(title).replace(/ \(.*$/, '')) + (String(title).match(/ \(.*$/) || [''])[0])}</summary><div style="padding-bottom:8px">${body}</div></details>` : '';
   const moveoutRows = `
     ${kv('Move-out date', esc(fmtDate(c.moveOut)))}
     ${sch.inspection_at ? kv('Inspection booked', `${when(sch.inspection_at)} · ${esc(ckoName(sch.inspector_email))}`) : ''}
@@ -28563,8 +28693,8 @@ async function openCheckout(id, banner, refocus, ok){
     ${kv('Forwarding address', esc(d.forwarding_address || '—'))}
     ${kv('Keys / fobs', esc(k.count == null ? '—' : k.count) + (k.types ? ' · ' + esc(k.types) : '') + ' · will return')}
     ${kv('Reason', esc(d.reason || '—') + (d.reason_details ? `<div class="name-sub">${esc(d.reason_details)}</div>` : ''))}
-    ${kv('Refund method', d.refund_method === 'deposit_transfer' ? 'Deposit carried over (room change)' : esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
-    ${kv(hs ? 'Matched to homestay booking' : 'Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
+    ${kv('Refund method', d.refund_method === 'deposit_transfer' ? 'Deposit carried over (room change)' : mx ? esc(ckoPayMethodLabel(d.refund_method) || d.refund_method || '—') + ' <span class="name-sub">(la CLABE se guarda aparte, solo para administradores; no se muestra aquí)</span>' : esc(d.refund_method || '—') + ' <span class="name-sub">(bank details are on the Asana task, not here)</span>')}
+    ${kv(hs ? 'Matched to homestay booking' : mx ? 'Matched to the tenant list' : 'Matched to roster', c.verified ? 'Yes' : 'No, staff to confirm' + (d.roster_stale ? ' <span class="name-sub">(roster was stale)</span>' : ''))}
     ${kv('Submitted', when(c.createdAt))}`, false)}
     ${fold('Notice & acknowledgements', `
     ${kv('Notice received', esc(n.date || '—') + (n.tz ? ` <span class="name-sub">(${esc(n.tz)})</span>` : ''))}
@@ -28637,9 +28767,9 @@ function ckoActionBarHtml(c){
   const next = ckoNextStep(c, ckoMe());
   const why = !!(next && next.step && !next.allowed && next.reason);
   const fast = ckoFastPlan(c, ckoMe());
-  const btn = (a, more) => `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px${more ? ';width:100%;justify-content:flex-start;border-radius:8px' : ''}" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`;
+  const btn = (a, more) => `<button type="button" class="btn ${a.primary ? 'btn-primary' : 'btn-ghost'}" style="padding:6px 12px;font-size:12px${more ? ';width:100%;justify-content:flex-start;border-radius:8px' : ''}" data-cko-act="${esc(a.act)}"${a.disabled ? ' disabled' : ''}${a.act === 'next' && a.disabled && why ? ' aria-describedby="cko-next-why"' : ''}${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(ckoT(a.label))}</button>`;
   const acts = ckoActions(c, ckoMe()), main = acts.filter(a => CKO_MORE_ACTS.indexOf(a.act) === -1), more = acts.filter(a => CKO_MORE_ACTS.indexOf(a.act) !== -1);
-  return `<div id="cko-actions" role="group" aria-label="Checkout actions" tabindex="-1" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 4px;align-items:flex-start">${main.map(a => btn(a, false)).join('')}${more.length ? `<details id="cko-more" style="position:relative"><summary class="btn btn-ghost" style="padding:6px 12px;font-size:12px;list-style:none;cursor:pointer">More ▾</summary><div style="position:absolute;z-index:5;margin-top:4px;min-width:190px;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--surface,#fff);border:1px solid var(--line,#E4DBC9);border-radius:10px;box-shadow:var(--shadow-md)">${more.map(a => btn(a, true)).join('')}</div></details>` : ''}</div>
+  return `<div id="cko-actions" role="group" aria-label="Checkout actions" tabindex="-1" style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 4px;align-items:flex-start">${main.map(a => btn(a, false)).join('')}${more.length ? `<details id="cko-more" style="position:relative"><summary class="btn btn-ghost" style="padding:6px 12px;font-size:12px;list-style:none;cursor:pointer">${esc(ckoT('More ▾'))}</summary><div style="position:absolute;z-index:5;margin-top:4px;min-width:190px;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--surface,#fff);border:1px solid var(--line,#E4DBC9);border-radius:10px;box-shadow:var(--shadow-md)">${more.map(a => btn(a, true)).join('')}</div></details>` : ''}</div>
     ${why ? `<div id="cko-next-why" class="name-sub" style="font-size:12px">${esc(next.label)}: ${esc(next.reason)}</div>` : ''}
     ${fast && !fast.allowed ? `<div id="cko-fast-why" class="name-sub" style="font-size:12px">Already moved out: ${esc(fast.reason)}</div>` : ''}
     <div id="cko-banner" class="card-sub" role="alert" tabindex="-1" style="color:var(--red-dark)"></div>
@@ -28647,8 +28777,8 @@ function ckoActionBarHtml(c){
 }
 function ckoTeamOptions(selected){
   const sel = String(selected || '').toLowerCase();
-  const team = ckoTeam().filter(m => m.email).slice().sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
-  return '<option value="">Choose…</option>' + team.map(m => { const e = String(m.email).toLowerCase(); return `<option value="${esc(e)}"${e === sel ? ' selected' : ''}>${esc(m.name || m.email)}</option>`; }).join('');
+  const team = ckoTeamFor(ckoTeam(), ckoCountryNow()).filter(m => m.email).slice().sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
+  return `<option value="">${esc(ckoT('Choose…'))}</option>` + team.map(m => { const e = String(m.email).toLowerCase(); return `<option value="${esc(e)}"${e === sel ? ' selected' : ''}>${esc(m.name || m.email)}</option>`; }).join('');
 }
 function ckoFieldHtml(fd, value){
   const id = 'cko-f-' + fd.name, v = value == null ? '' : String(value);
@@ -28657,7 +28787,9 @@ function ckoFieldHtml(fd, value){
   let input;
   if (fd.type === 'files') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}">${esc(fd.label)}</label><input class="form-input" id="${id}" name="${esc(fd.name)}" type="file" multiple accept="image/*,application/pdf" /></div>`;
   if (fd.type === 'checkbox') return `<div class="form-field" style="margin-bottom:10px"><label for="${id}" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="${id}" name="${esc(fd.name)}"${v === 'true' || v === 'on' ? ' checked' : ''} /> ${esc(fd.label)}</label></div>`;
-  if (fd.type === 'select') input = `<select class="form-input" id="${id}" name="${esc(fd.name)}"${aria}><option value="">Choose…</option>${fd.options.map(o => `<option value="${esc(o[0])}"${o[0] === v ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
+  // Mexico: SPEI / cash instead of Canada's methods (ckoMethodOptions).
+  const opts = fd.options === CKO_METHOD_OPTIONS ? ckoMethodOptions() : fd.options;
+  if (fd.type === 'select') input = `<select class="form-input" id="${id}" name="${esc(fd.name)}"${aria}><option value="">${esc(ckoT('Choose…'))}</option>${opts.map(o => `<option value="${esc(o[0])}"${o[0] === v ? ' selected' : ''}>${esc(ckoT(o[1]))}</option>`).join('')}</select>`;
   else if (fd.type === 'team') input = `<select class="form-input" id="${id}" name="${esc(fd.name)}"${aria}>${ckoTeamOptions(v)}</select>`;
   else if (fd.type === 'textarea') input = `<textarea class="form-input" id="${id}" name="${esc(fd.name)}" rows="3"${aria}>${esc(v)}</textarea>`;
   else if (fd.type === 'computed') input = `<output class="form-input" id="${id}" aria-live="polite" style="font-weight:700">${esc(v || '—')}</output>`;
@@ -28666,19 +28798,19 @@ function ckoFieldHtml(fd, value){
     const extra = fd.type === 'money' ? ' min="0" step="0.01"' : fd.type === 'number' ? ' min="0" step="1"' : '';
     input = `<input class="form-input" id="${id}" name="${esc(fd.name)}" type="${type}"${extra}${aria} value="${esc(v)}" />`;
   }
-  return `<div class="form-field" style="margin-bottom:10px"><label for="${id}">${esc(fd.label)}${req}</label>${input}</div>`;
+  return `<div class="form-field" style="margin-bottom:10px"><label for="${id}">${esc(ckoT(fd.label))}${req}</label>${input}</div>`;
 }
 // zone: the case's zone label, shown on datetime fields so staff know which
 // clock they are typing in.
 function ckoFormHtml(title, fields, values, submitLabel, zone){
   const shown = fields.map(fd => fd.type === 'datetime' && zone ? Object.assign({}, fd, { label: `${fd.label} (${zone})` }) : fd);
   return `<form data-cko-form aria-label="${esc(title)}" style="margin:8px 0 4px;padding:12px 14px;border:1px solid var(--line,#E4DBC9);border-radius:10px;background:var(--cream-2)" novalidate>
-    <div class="name-main" style="margin-bottom:10px">${esc(title)}</div>
+    <div class="name-main" style="margin-bottom:10px">${esc(ckoT(title))}</div>
     ${shown.map(fd => ckoFieldHtml(fd, (values || {})[fd.name])).join('')}
     <div class="card-sub" id="cko-form-error" role="alert" style="color:var(--red-dark);min-height:18px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
-      <button type="button" class="btn btn-ghost" data-cko-act="form_back">Back</button>
-      <button type="submit" class="btn btn-primary">${esc(submitLabel)}</button>
+      <button type="button" class="btn btn-ghost" data-cko-act="form_back">${esc(ckoT('Back'))}</button>
+      <button type="submit" class="btn btn-primary">${esc(ckoT(submitLabel))}</button>
     </div>
   </form>`;
 }
@@ -28951,7 +29083,7 @@ function ckoAct(act, lineId){
     case 'mark_sent': case 'mark_top_up': {
       const snaps = ckoChargesSnapshots(c), last = snaps.length ? snaps[snaps.length - 1] : null;
       const amount = act === 'mark_top_up' ? ckoTopUpDue(c) : last ? last.refund : null;
-      const method = CKO_METHOD_OPTIONS.some(o => o[0] === (c.data || {}).refund_method) ? c.data.refund_method : '';
+      const method = ckoMethodOptions().some(o => o[0] === (c.data || {}).refund_method) ? c.data.refund_method : '';
       // A zero refund still needs a reference (the SQL requires one).
       return charges(act, { amount: ckoMoneyText(amount), sent_on: ckoToday(c.city, Date.now()), method, reference: amount === 0 ? 'no payment due' : '', shareable: '' });
     }
@@ -29489,6 +29621,7 @@ async function ckoCreateSubmit(){
   ckoCloseCreate(false);
   showToast(out.outcome === 'exists'
     ? `This resident already has an open checkout (${out.case_id}); opening it`
+    : ckoCountryNow() === 'MX' ? `Salida ${out.case_id} creada; el residente recibirá un correo en español para completarla`
     : `Checkout ${out.case_id} created; the resident will be emailed within 5 minutes (07:00–21:00 Pacific)`);
   await ckoReload();
   await openCheckout(out.case_id, '', true);
@@ -33968,7 +34101,7 @@ renderLeads();
    export works on one country without knowing countries exist. Vacancies are rebuilt per
    country (loadVacancies). The real gate is the database (restrictive RLS on country): a
    Mexico-only teammate never receives a Canadian row. This module is the view + the switcher. */
-const VMC_MX_PAGES = ['dashboard', 'leads', 'tenants', 'properties', 'vacancies', 'assistants', 'contracts'];
+const VMC_MX_PAGES = ['dashboard', 'leads', 'tenants', 'properties', 'vacancies', 'assistants', 'contracts', 'checkouts'];
 const VMC_INFO = {
   CA: { code: 'CA', flag: '🇨🇦', name: 'Canada', label: 'Vanmates Canada', ccy: 'CAD', sym: '$', cities: 'Vancouver, Toronto, Montréal', tz: 'America/Vancouver' },
   MX: { code: 'MX', flag: '🇲🇽', name: 'Mexico', label: 'Vanmates Mexico', ccy: 'MXN', sym: 'MX$', cities: 'Guadalajara', tz: 'America/Mexico_City' }
@@ -34143,7 +34276,7 @@ window.vmCountry = (function(){
     try { if (typeof PP_UI !== 'undefined') PP_UI.city = ''; } catch (_) {}
     try { if (typeof LL_UI !== 'undefined') LL_UI.city = ''; } catch (_) {}
     try { if (typeof VAC_STATE !== 'undefined') VAC_STATE.f.city = ''; } catch (_) {}
-    const fns = ['renderTenants', 'renderPropertiesGrid', 'renderLandlords', 'renderLeads', 'renderContracts',
+    const fns = ['renderTenants', 'renderPropertiesGrid', 'renderLandlords', 'renderLeads', 'renderContracts', 'renderCheckouts',
                  'updateSidebarCounts', 'refreshDashboard', 'refreshPortfolio'];
     for (const fn of fns) { try { if (typeof window[fn] === 'function') window[fn](); } catch (e) { console.warn('[vmCountry] ' + fn, e.message); } }
     try { if (typeof loadVacancies === 'function') loadVacancies(true); } catch (e) { console.warn('[vmCountry] vacancies', e.message); }
@@ -43505,9 +43638,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-16-mxct1"></script>
-<script src="extensions.js?v=2026-10-16-mxct1"></script>
-<script src="ap.js?v=2026-10-16-mxct1"></script>
-<script src="properties.js?v=2026-10-16-mxct1"></script>
+<script src="room-changes.js?v=2026-10-16-mxcko1"></script>
+<script src="extensions.js?v=2026-10-16-mxcko1"></script>
+<script src="ap.js?v=2026-10-16-mxcko1"></script>
+<script src="properties.js?v=2026-10-16-mxcko1"></script>
 </body>
 </html>
