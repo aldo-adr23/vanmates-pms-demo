@@ -401,7 +401,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       var cls = k.change > 0 ? 'up' : k.change < 0 ? 'down' : 'flat', arrow = k.change > 0 ? '▲' : k.change < 0 ? '▼' : '■';
       if (key === 'cost_per_lead') cls = k.change > 0 ? 'down' : k.change < 0 ? 'up' : 'flat';
       d = '<span class="k-d ' + cls + '">' + arrow + ' ' + esc(fmt(Math.abs(k.change), 1)) + '%</span> <span class="muted small">vs ' + (isMoney ? esc(money(k.prev, k.unit)) : esc(fmt(k.prev)) + unit) + '</span>';
-    } else if (k.available && k.prev === null) d = '<span class="muted small">no previous-period data</span>';
+    } else if (k.available && k.lowBase) d = '<span class="muted small"' + tip('Small base', ['The previous period was under 10, so a % change would mislead. Compare the values instead.']) + '>vs ' + (isMoney ? esc(money(k.prev, k.unit)) : esc(fmt(k.prev)) + unit) + ' (small base)</span>';
+    else if (k.available && k.prev === null) d = '<span class="muted small">no previous-period data</span>';
     var lines = [def[1], 'Source: ' + def[2], k.coverage ? 'Coverage: ' + k.coverage : '', k.unit && k.unit !== '%' ? 'Unit: ' + k.unit : '', k.note || ''];
     return '<div class="card kpi"><div class="k-l">' + esc(def[0]) + '<button type="button" class="info" aria-label="About ' + esc(def[0]) + '"' + tip(def[0], lines) + '>i</button></div>' + val + '<div>' + d + '</div>' + (extra || '') + (!k.available && k.note ? '<div class="k-s">' + esc(k.note) + '</div>' : k.coverage ? '<div class="k-s">' + esc(k.coverage) + '</div>' : '') + '</div>';
   }
@@ -596,7 +597,9 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       var cv = f.conversion.find(function (x) { return x.to === (f.stages[i + 1] || {}).key; });
       if (cv && i < 3) h += '<div class="fs" style="padding:0"><span></span><span class="conv">↓ ' + (cv.rate === null ? 'n/a' : esc(fmt(cv.rate, 1)) + '%') + ' ' + esc(cv.to === 'leads' ? 'session → lead (ratio of totals)' : cv.to === 'qualified' ? 'lead → qualified' : 'qualified → booking') + '</span></div>';
     });
-    h += '</div><p class="note" style="margin-top:10px">' + esc(f.note) + '</p></div>';
+    var co = f.cohort;
+    h += '</div><div class="banner info2" style="margin:10px 0 0"><span><b>Cohort:</b> of the ' + fmt(co.leads) + ' leads created in this period, ' + fmt(co.booked) + ' have booked so far (' + (co.leadToBooking === null ? 'n/a' : fmt(co.leadToBooking, 1) + '%') + '); ' + (co.qualifiedToBooking === null ? '' : fmt(co.qualifiedToBooking, 1) + '% of the qualified ones. ') + 'Recent leads may still convert.</span></div>';
+    h += '<p class="note" style="margin-top:10px">' + esc(f.note) + '</p></div>';
     var conf = f.confidence, tot = (conf.tracked + conf.referrer + conf.crm_source + conf.unknown) || 1;
     h += '<div class="card pad"><h3>Attribution confidence</h3><p class="note">How each lead’s source was decided (source hierarchy: tagged UTM/ad data → referrer → CRM source field → unknown).</p>' + bars([
       { label: 'Tracked (UTM / ad data)', value: conf.tracked, color: 'var(--ord1)' }, { label: 'Referrer only', value: conf.referrer, color: 'var(--ord2)' },
