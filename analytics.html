@@ -178,6 +178,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
 <div class="top">
   <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
   <span class="page-title">Marketing <em>analytics</em></span>
+  <span class="pill warn" id="stagingBadge" hidden title="Social numbers on this page are seeded demo data">STAGING · demo social data</span>
   <span class="sp"></span>
   <nav class="tabs" id="tabs" aria-label="Sections">
     <button type="button" class="tab on" data-tab="overview">Overview</button>
@@ -232,6 +233,9 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
 (function () {
   'use strict';
   var API = 'https://vanmates-analytics.talatcan.workers.dev/api';
+  // ?api=staging → the isolated staging Worker (seeded demo social data; CRM still read with your own login).
+  var STAGING = /[?&]api=staging\b/.test(location.search);
+  if (STAGING) API = 'https://vanmates-analytics-staging.talatcan.workers.dev/api';
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY, { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
   var PL = { instagram: 'Instagram', facebook: 'Facebook', threads: 'Threads', tiktok: 'TikTok', meta_ads: 'Meta Ads' };
   var PCOL = { instagram: 'var(--p-instagram)', facebook: 'var(--p-facebook)', threads: 'var(--p-threads)', tiktok: 'var(--p-tiktok)', meta_ads: 'var(--s2)' };
@@ -828,6 +832,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     if (!S.unit || (S.unit === 'ALL' ? S.me.units.length < 2 : S.me.units.indexOf(S.unit) < 0)) S.unit = S.me.units[0];
     if (!saved || !saved.basis) S.basis = S.me.settings.revenue_basis;
     syncFilters();
+    if (STAGING) $('stagingBadge').hidden = false;
     var h = (location.hash || '#overview').slice(1).split('?')[0];
     loadAlerts();
     setTab(['overview', 'instagram', 'facebook', 'threads', 'tiktok', 'campaigns', 'goals', 'ask', 'settings'].indexOf(h) >= 0 ? h : 'overview', false);
