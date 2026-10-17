@@ -419,7 +419,7 @@ details.ab { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-16-mxct1"></script>
+<script src="marketing-core.js?v=2026-10-16-mksign1"></script>
 <script>
 (function () {
   'use strict';
@@ -427,6 +427,10 @@ details.ab { grid-column: 1 / -1; }
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
     { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
   var TZS = ['America/Vancouver', 'America/Edmonton', 'America/Winnipeg', 'America/Toronto', 'America/Halifax', 'America/Mexico_City', 'America/Bogota', 'America/Sao_Paulo', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Shanghai', 'UTC'];
+  // The sender an area's email goes out from (first verified one, as the Worker picks) and a campaign's sign-off line:
+  // brief.sign_off is a name or '' (no name); campaigns made before the option sign with the sender's name.
+  function senderOf(scope) { var ss = (S.me.senders || []).filter(function (x) { return x.scope === scope; }); return ss.find(function (x) { return x.verified; }) || ss[0] || {}; }
+  function signOffOf(c) { return c && c.brief && typeof c.brief.sign_off === 'string' ? c.brief.sign_off : (senderOf(c.scope).name || 'Vanmates'); }
   var TZ_NAMES = { 'America/Vancouver': 'Vancouver', 'America/Edmonton': 'Edmonton', 'America/Winnipeg': 'Winnipeg', 'America/Toronto': 'Toronto', 'America/Halifax': 'Halifax',
     'America/Mexico_City': 'Mexico City', 'America/Bogota': 'Colombia', 'America/Sao_Paulo': 'Brazil (São Paulo)', 'Asia/Tokyo': 'Japan', 'Asia/Seoul': 'Korea', 'Asia/Shanghai': 'China', 'UTC': 'UTC' };
   var LANGS = { en: 'English', fr: 'French', es: 'Spanish', ja: 'Japanese', ko: 'Korean', pt: 'Portuguese', zh: 'Chinese' };
@@ -497,7 +501,7 @@ details.ab { grid-column: 1 / -1; }
   // ---------- overview: AI composer + dashboard ----------
   // "What would you like to promote today?" → ai.plan (strategy, calendar, suggested lists) → the person adjusts the plan
   // and picks who gets it (existing lists, a CSV, or pasted addresses) → campaigns.build writes every email. Nothing is sent.
-  function aiNew() { return { scope: S.scope, prompt: '', busy: false, plan: null, slots: [], reply: '', listIds: [], tplId: 0, start: '', tz: 'America/Vancouver', error: '', sugs: null }; }
+  function aiNew() { return { scope: S.scope, prompt: '', busy: false, plan: null, slots: [], reply: '', listIds: [], tplId: 0, start: '', tz: '', error: '', sugs: null }; }
   async function overview() {
     if (!S.ai || S.ai.scope !== S.scope) S.ai = aiNew();
     S.tplCache = S.tplCache || {};
@@ -577,6 +581,7 @@ details.ab { grid-column: 1 / -1; }
           (p.strategy.length ? '<h3 class="h">Strategy</h3><ul class="strat">' + p.strategy.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
           (p.calendar.length ? '<h3 class="h">Calendar</h3><div class="months">' + p.calendar.map(function (m) { return '<div class="mo"><b>Month ' + m.month + '</b><span>' + esc(m.focus) + '</span></div>'; }).join('') + '</div>' : '') +
           '<h3 class="h">Details</h3><div class="pmeta"><div><span>Audience</span>' + esc(p.audience) + '</div><div><span>Tone</span><input class="inp" data-pf="tone" value="' + esc(p.tone) + '"></div>' +
+            '<div><span>Sign-off</span><input class="inp" data-pf="sign_off" value="' + esc(A.signOff != null ? A.signOff : (senderOf(S.scope).name || '')) + '" placeholder="No name" maxlength="60"><small class="muted" style="display:block;margin-top:4px">Who the emails are from, e.g. a person\u2019s name. Leave it empty for no name.</small></div>' +
             '<div><span>Main button</span>' + esc(p.cta_label) + '<br><a class="small" href="' + esc(p.cta_url) + '" target="_blank" rel="noopener">' + esc(p.cta_url.replace(/^https:\/\//, '')) + '</a></div>' +
             '<div><span>Design</span>Vanmates brand: logo, colours and fonts on every email' + (Object.keys(tpls).length ? '<select class="sel" data-pf="tpl" style="margin-top:6px">' + opts(tpls, A.tplId || '', 'Layout: AI chooses') + '</select>' : '') + '</div></div>' +
         '</div><aside class="pv-side">' + chat + aud + '</aside></div>';
@@ -595,7 +600,7 @@ details.ab { grid-column: 1 / -1; }
     else { A.turns.push({ me: extra }); A.changes.push(extra); }
     A.busy = true; A.error = ''; drawAi();
     var r;
-    try { r = await api('ai.plan', { scope: S.scope, prompt: A.prompt + (A.changes.length ? '\nChanges requested (apply all, latest last): ' + A.changes.join('; ') : ''), start_date: A.start || undefined, timezone: A.tz }); }
+    try { r = await api('ai.plan', { scope: S.scope, prompt: A.prompt + (A.changes.length ? '\nChanges requested (apply all, latest last): ' + A.changes.join('; ') : ''), start_date: A.start || undefined, timezone: A.tz || undefined }); }
     catch (e) { A.busy = false; if (extra) { A.turns.push({ ai: 'Sorry, that didn\u2019t work: ' + e.message }); A.changes.pop(); } else { A.error = e.message; A.plan = null; } return drawAi(); }
     A.busy = false; A.plan = r.plan; A.slots = r.slots; A.reply = r.plan.reply || (r.ai ? 'Here\u2019s a plan.' : 'Here\u2019s a starting plan with simple defaults.');
     A.turns.push({ ai: A.reply });
@@ -608,7 +613,7 @@ details.ab { grid-column: 1 / -1; }
     p.name = ($('pName') && $('pName').value.trim()) || p.name;
     btn.disabled = true; btn.textContent = 'Starting…';
     if (A.tplId && !S.tplCache[A.tplId]) await loadTplPreviews();
-    var r = await act(function () { return api('campaigns.build', { scope: S.scope, plan: p, list_ids: A.listIds, start_date: A.start || undefined, timezone: A.tz, prompt: A.prompt, notes: A.tplId ? tplNotes(A.tplId) : undefined }); });
+    var r = await act(function () { return api('campaigns.build', { scope: S.scope, plan: p, list_ids: A.listIds, start_date: A.start || undefined, timezone: A.plan.timezone || undefined, prompt: A.prompt, notes: A.tplId ? tplNotes(A.tplId) : undefined, sign_off: (A.signOff != null ? A.signOff : (senderOf(S.scope).name || '')).trim() }); });
     if (!r) { btn.disabled = false; btn.textContent = 'Try again'; return; }
     toast((r.slots || []).length + ' emails planned. The AI is writing them now.');
     kick(r.id);
@@ -621,7 +626,7 @@ details.ab { grid-column: 1 / -1; }
     var A = S.ai, k = el.dataset.pf, v = el.value;
     if (!A || !A.plan) return;
     if (k === 'months' || k === 'per_month') { A.plan[k] = +v; while (A.plan.months * A.plan.per_month > 24) A.plan.per_month--; return drawAi(); }
-    if (k === 'start') A.start = v; else if (k === 'tpl') A.tplId = +v || 0; else A.plan[k] = v;
+    if (k === 'start') A.start = v; else if (k === 'sign_off') A.signOff = v; else if (k === 'timezone') A.tz = A.plan.timezone = v; else if (k === 'tpl') A.tplId = +v || 0; else A.plan[k] = v;
   }
   document.addEventListener('change', function (e) { if (e.target.dataset && e.target.dataset.pf) aiField(e.target); });
   document.addEventListener('input', function (e) { if (e.target.dataset && e.target.dataset.pf && e.target.tagName === 'INPUT' && e.target.type !== 'date') aiField(e.target); });
@@ -1053,7 +1058,7 @@ details.ab { grid-column: 1 / -1; }
           '<div class="qchips">' + ['Shorter', 'Warmer', 'Stronger button', 'More modern', 'More engaging opening', 'Fix spelling'].map(function (x) { return '<button class="idea" data-edai="' + esc(x) + '">' + esc(x) + '</button>'; }).join('') + '</div>' +
           '<div class="composer sm"><textarea id="edAiQ" rows="1" placeholder="Describe a change\u2026 e.g. mention the January intake"></textarea><button class="send" data-x="ed-ai" aria-label="Apply">\u2191</button></div></div>' : '') +
         '<div id="emailEd"></div></div><div class="edv-pv"><div class="card pvcard"><div class="pvbar"><div class="chips"><button class="chip' + (S.pvMode !== 'phone' ? ' on' : '') + '" data-pvmode="desktop">Desktop</button><button class="chip' + (S.pvMode === 'phone' ? ' on' : '') + '" data-pvmode="phone">Phone</button></div><span class="sp"></span><span class="small muted" id="pvState">Live preview</span></div>' +
-        '<div class="inboxrow"><span class="av">V</span><div><b id="pvFrom">' + esc((S.me.senders.find(function (x) { return x.scope === c.scope; }) || {}).name || 'Vanmates') + '</b><b id="pvSubj" style="font-weight:600"></b><span id="pvPre"></span></div></div><div class="pvwrap' + (S.pvMode === 'phone' ? ' phone' : '') + '"><iframe id="livePv" sandbox="" title="Email preview"></iframe></div><div id="pvProblems"></div>' +
+        '<div class="inboxrow"><span class="av">V</span><div><b id="pvFrom">' + esc(senderOf(c.scope).name || 'Vanmates') + '</b><b id="pvSubj" style="font-weight:600"></b><span id="pvPre"></span></div></div><div class="pvwrap' + (S.pvMode === 'phone' ? ' phone' : '') + '"><iframe id="livePv" sandbox="" title="Email preview"></iframe></div><div id="pvProblems"></div>' +
         '</div></div></div></div>';
       editor($('emailEd'), e, 'email');
       wireEditorView();
@@ -1233,7 +1238,7 @@ details.ab { grid-column: 1 / -1; }
       '<div class="rv">' +
       '<div class="rv-main">' +
         '<div class="card pad"><h2 class="h">' + esc(c.name) + '</h2><p class="note" style="margin:0">' + esc((c.brief && c.brief.objective) || '') + '</p>' +
-          '<div class="rvfacts"><div><span>Duration</span>' + esc(MK.when(pf.first_send, pf.timezone)) + ' → ' + esc(MK.when(pf.last_send, pf.timezone)) + '</div><div><span>Emails</span>' + pf.emails + '</div><div><span>Sender</span>' + esc(pf.sender || '—') + '</div><div><span>Area</span>' + esc(scopeName(c.scope)) + '</div></div></div>' +
+          '<div class="rvfacts"><div><span>Duration</span>' + esc(MK.when(pf.first_send, pf.timezone)) + ' → ' + esc(MK.when(pf.last_send, pf.timezone)) + '</div><div><span>Emails</span>' + pf.emails + '</div><div><span>Sender</span>' + esc(pf.sender || '—') + '</div><div><span>Signed</span>' + esc(pf.sign_off ? '\u2014 ' + pf.sign_off : 'No name') + ' <button class="btn btn-ghost btn-sm" data-x="camp-settings">Change</button></div><div><span>Area</span>' + esc(scopeName(c.scope)) + '</div></div></div>' +
         '<h3 class="h">Every email</h3><div class="card">' + E.map(function (e) {
           var ab = e.audience && e.audience.subject_b, ls = links(e);
           return '<div class="rvrow"><div class="rvd"><b>' + esc(e.local_date || '') + '</b><small>' + esc(e.local_time || '') + '</small></div><div class="rvb"><b>#' + e.seq + ' ' + esc(e.subject) + '</b>' + (ab ? '<small>B: ' + esc(ab) + '</small>' : '') + '<small class="muted">' + esc(e.preheader || '') + '</small>' +
@@ -1543,14 +1548,24 @@ details.ab { grid-column: 1 / -1; }
         var lists2 = Object.fromEntries(S.lists.map(function (l) { return [l.id, l.name]; }));
         modal('<h2>Campaign settings</h2><div class="grid2"><label class="f full">Name<input class="inp" id="sName" value="' + esc(c2.name) + '"></label>' + (c2.kind === 'broadcast' ? '<label class="f full">Lists<select class="sel" id="sLists" multiple size="5">' + Object.keys(lists2).map(function (k) { return '<option value="' + k + '"' + (c2.list_ids.indexOf(+k) >= 0 ? ' selected' : '') + '>' + esc(lists2[k]) + '</option>'; }).join('') + '</select></label>' : '') +
           '<label class="f">Topic<select class="sel" id="sTopic">' + opts(Object.fromEntries(S.me.topics.filter(function (x) { return x.scope === c2.scope; }).map(function (x) { return [x.id, x.name]; })), c2.topic, 'Choose…') + '</select></label>' +
-          '<label class="f">Timezone<select class="sel" id="sTz">' + opts(Object.fromEntries(TZS.map(function (z) { return [z, z]; })), c2.timezone) + '</select></label></div><div class="actions"><button class="btn btn-primary" data-x="camp-settings-go">Save</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
+          '<label class="f">Timezone<select class="sel" id="sTz">' + opts(Object.fromEntries(TZS.map(function (z) { return [z, z]; })), c2.timezone) + '</select></label>' +
+          '<label class="f full">Sign off as<input class="inp" id="sSign" maxlength="60" value="' + esc(signOffOf(c2)) + '" placeholder="No name"><small class="muted">The \u201c\u2014 name\u201d line at the end of every email. Leave it empty for no name; the footer always says who it\u2019s from.</small></label>' +
+          (S.camp.emails.length && c2.status === 'draft' && S.me.ai_ready && can('ai') ? '<label class="cb full"><input type="checkbox" id="sSignAi" checked> <span>Also have the AI update the emails\u2019 text to match (e.g. \u201cthis is \u2026 from Vanmates\u201d)</span></label>' : '') +
+          '</div><div class="actions"><button class="btn btn-primary" data-x="camp-settings-go">Save</button><button class="btn btn-ghost" data-x="close">Cancel</button></div>');
         return;
       }
       case 'camp-settings-go': {
         var c3 = S.camp.campaign;
         var body2 = { id: c3.id, expected_revision: c3.revision, name: $('sName').value, topic: $('sTopic').value, timezone: $('sTz').value };
         if ($('sLists')) body2.list_ids = Array.from($('sLists').selectedOptions).map(function (o) { return +o.value; });
-        if (await act(function () { return api('campaigns.save', body2); }, 'Saved.')) { closeModal(); var back3 = S._inReview; await openCampaign(c3.id); if (back3) drawReview(); }
+        var sign = $('sSign').value.trim(), signChanged = sign !== signOffOf(c3).trim(), signAi = signChanged && $('sSignAi') && $('sSignAi').checked;
+        if (signChanged) body2.sign_off = sign;
+        if (await act(function () { return api('campaigns.save', body2); }, 'Saved.')) {
+          closeModal(); var back3 = S._inReview; await openCampaign(c3.id);
+          if (signAi) return chatSend(sign ? 'The emails are written by ' + sign + ' from Vanmates. Wherever an email introduces the writer, use that name, and remove any other name given for the writer. Change nothing else.'
+            : 'The emails are from the Vanmates team, not a named person. Remove any personal name the writer gives for themselves (e.g. \u201cthis is \u2026 from Vanmates\u201d) and any closing signature. Change nothing else.');
+          if (back3) drawReview();
+        }
         return;
       }
       case 'camp-generate': {
