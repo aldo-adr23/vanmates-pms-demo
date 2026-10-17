@@ -35,14 +35,14 @@ try { document.documentElement.setAttribute('data-theme', localStorage.getItem('
   --scrim:rgba(43,33,26,.38); --toast:#2B211A; --toast-ink:#FAF5ED;
   /* chart roles (validated: dataviz validate_palette light) */
   --grid:#EFE8DA; --axis:#9A8B7B; --p-instagram:#e87ba4; --p-facebook:#2a78d6; --p-threads:#1baf7a; --p-tiktok:#eda100;
-  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --ord1:#1c5cab; --ord2:#2a78d6; --ord3:#5598e7; --ord4:#86b6ef;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --ord1:#1c5cab; --ord2:#2a78d6; --ord3:#5598e7; --ord4:#86b6ef;
 }
 :root[data-theme="dark"]{
   --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
   --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
   --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --scrim:rgba(0,0,0,.55); --toast:#F4ECDD; --toast-ink:#1F1A16;
   --grid:#342B25; --axis:#8C7B6B; --p-instagram:#d55181; --p-facebook:#3987e5; --p-threads:#199e70; --p-tiktok:#c98500;
-  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --ord1:#86b6ef; --ord2:#5598e7; --ord3:#2a78d6; --ord4:#1c5cab;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --ord1:#86b6ef; --ord2:#5598e7; --ord3:#2a78d6; --ord4:#1c5cab;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A; --surface:#26201B; }
@@ -238,6 +238,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   if (STAGING) API = 'https://vanmates-analytics-staging.talatcan.workers.dev/api';
   var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY, { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
   var PL = { instagram: 'Instagram', facebook: 'Facebook', threads: 'Threads', tiktok: 'TikTok', meta_ads: 'Meta Ads' };
+  // Fixed categorical order (validated palette, 5 slots); more series than that fall back to muted + legend.
+  var SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
   var PCOL = { instagram: 'var(--p-instagram)', facebook: 'var(--p-facebook)', threads: 'var(--p-threads)', tiktok: 'var(--p-tiktok)', meta_ads: 'var(--s2)' };
   var UNIT = { CA: 'Canada', MX: 'Mexico', ALL: 'All markets' };
   var ROLE = { super_admin: 'Super Admin', marketing_admin: 'Marketing Admin', analyst: 'Marketing Analyst', executive: 'Read-only Executive' };
@@ -250,6 +252,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   function fmt(n, d) { if (n === null || n === undefined || isNaN(n)) return '—'; var a = Math.abs(n); if (d === undefined) d = a >= 100 || Number.isInteger(n) ? 0 : 1; return Number(n).toLocaleString('en-CA', { maximumFractionDigits: d, minimumFractionDigits: 0 }); }
   function compact(n) { if (n === null || n === undefined) return '—'; var a = Math.abs(n); if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M'; if (a >= 1e4) return (n / 1e3).toFixed(0) + 'k'; if (a >= 1e3) return (n / 1e3).toFixed(1) + 'k'; return fmt(n); }
   function money(n, cur) { if (n === null || n === undefined) return '—'; var c = String(cur || 'CAD').slice(0, 3); return (c === 'MXN' ? 'MX$' : '$') + fmt(n, 0) + (c === 'MXN' ? '' : ''); }
+  // Ad spend is in the ad account's currency (as Ads Manager shows it): always 2 decimals.
+  function adMoney(n) { return n === null || n === undefined ? '—' : '$' + Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function ago(iso) { if (!iso) return 'never'; var m = (Date.now() - Date.parse(iso)) / 60000; if (m < 1) return 'just now'; if (m < 60) return Math.round(m) + ' min ago'; if (m < 48 * 60) return Math.round(m / 60) + ' h ago'; return Math.round(m / 1440) + ' days ago'; }
   function shortDay(d) { var x = new Date(d + 'T12:00:00Z'); return x.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' }); }
   function persist() { try { localStorage.setItem('vm-analytics', JSON.stringify({ unit: S.unit, days: S.days, from: S.from, to: S.to, basis: S.basis, model: S.model })); } catch (e) {} }
@@ -301,6 +305,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
 
   // ------------------------------------------------------------- charts (inline SVG, crosshair tooltip, direct labels, table view)
   var chartData = {};
+  // Direct labels sit in the 92px right gutter; long names are cut (the legend and tooltip carry the full name).
+  function clip(t, n) { t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
   function lineChart(id, o) {
     // o: { days:[], series:[{name, color, values:[]}], height, fmt }
     chartData[id] = o;
@@ -323,7 +329,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       s.values.forEach(function (v, i) { if (v === null || v === undefined) { on = false; return; } d += (on ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); on = true; });
       g += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
       var li = -1; for (var k = s.values.length - 1; k >= 0; k--) if (s.values[k] !== null && s.values[k] !== undefined) { li = k; break; }
-      if (li >= 0) { g += '<circle cx="' + x(li) + '" cy="' + y(s.values[li]) + '" r="4" fill="' + s.color + '" stroke="var(--surface)" stroke-width="2"/>'; labels.push({ y: y(s.values[li]), x: x(li), t: s.name + ' ' + f(s.values[li]) }); }
+      if (li >= 0) { g += '<circle cx="' + x(li) + '" cy="' + y(s.values[li]) + '" r="4" fill="' + s.color + '" stroke="var(--surface)" stroke-width="2"/>'; labels.push({ y: y(s.values[li]), x: x(li), t: clip(s.name, 9) + ' ' + f(s.values[li]) }); }
       // isolated points (single non-null between nulls) need a marker to be visible
       s.values.forEach(function (v, i) { if (v !== null && v !== undefined && (s.values[i - 1] === null || s.values[i - 1] === undefined) && (s.values[i + 1] === null || s.values[i + 1] === undefined) && i !== li) g += '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3" fill="' + s.color + '"/>'; });
     });
@@ -401,7 +407,11 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var isMoney = key === 'revenue' || key === 'cost_per_lead' || key === 'ad_spend';
     var val = !k.available ? '<div class="k-v na">Not available</div>' : '<div class="k-v">' + (isMoney ? esc(money(k.value, k.unit)) : esc(fmt(k.value)) + unit) + '</div>';
     var d = '';
-    if (k.available && k.change !== null && k.change !== undefined) {
+    if (k.available && k.changePts !== null && k.changePts !== undefined) {
+      // Rates: change in percentage points.
+      var cp = k.changePts, cl = cp > 0 ? 'up' : cp < 0 ? 'down' : 'flat';
+      d = '<span class="k-d ' + cl + '">' + (cp > 0 ? '▲' : cp < 0 ? '▼' : '■') + ' ' + esc(fmt(Math.abs(cp), 2)) + ' pts</span> <span class="muted small">vs ' + esc(fmt(k.prev)) + unit + '</span>';
+    } else if (k.available && k.change !== null && k.change !== undefined) {
       var cls = k.change > 0 ? 'up' : k.change < 0 ? 'down' : 'flat', arrow = k.change > 0 ? '▲' : k.change < 0 ? '▼' : '■';
       if (key === 'cost_per_lead') cls = k.change > 0 ? 'down' : k.change < 0 ? 'up' : 'flat';
       d = '<span class="k-d ' + cls + '">' + arrow + ' ' + esc(fmt(Math.abs(k.change), 1)) + '%</span> <span class="muted small">vs ' + (isMoney ? esc(money(k.prev, k.unit)) : esc(fmt(k.prev)) + unit) + '</span>';
@@ -452,7 +462,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     $('unitChips').innerHTML = units.map(function (u) { return '<button type="button" class="chip' + (u === S.unit ? ' on' : '') + '" data-unit="' + u + '">' + esc(UNIT[u]) + '</button>'; }).join('');
     $('exportBtn').hidden = !S.me.can.export;
   }
-  function periodLabel(f) { if (!f) return ''; $('periodLbl').textContent = shortDay(f.from) + ' – ' + shortDay(f.to) + ' vs ' + shortDay(f.prevFrom) + ' – ' + shortDay(f.prevTo) + ' · ' + f.timezone.replace('America/', '').replace('_', ' ') + ' time'; }
+  // A slower response for a market that is no longer selected must not overwrite the label.
+  function periodLabel(f) { if (!f || (f.units && f.units.join() !== (S.unit === 'ALL' ? 'CA,MX' : S.unit) && !(S.unit === 'ALL' && f.units.length > 1))) return ''; $('periodLbl').textContent = shortDay(f.from) + ' – ' + shortDay(f.to) + ' vs ' + shortDay(f.prevFrom) + ' – ' + shortDay(f.prevTo) + ' · ' + f.timezone.replace('America/', '').replace('_', ' ') + ' time'; }
 
   async function loadAlerts() {
     try {
@@ -561,11 +572,13 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       var x = m[code]; if (!x) return '';
       return kpiTile(code, x, '').replace('<div class="k-l">' + esc((KDEF[code] || [code])[0]), '<div class="k-l">' + esc(MLABEL[code]));
     }).join('') + '</div>';
-    var folS = d.accounts.length > 1 ? d.followers.map(function (f, i) { return { name: d.accounts[i].name || d.accounts[i].handle, color: ['var(--s1)', 'var(--s2)', 'var(--s3)'][i % 3], values: f.series }; }) : [{ name: 'Followers', color: PCOL[pl], values: d.followers[0].series }];
+    var folS = d.accounts.length > 1 ? d.followers.map(function (f, i) { return { name: d.accounts[i].handle || d.accounts[i].name, color: SERIES[i] || 'var(--muted)', values: f.series }; }) : [{ name: 'Followers', color: PCOL[pl], values: d.followers[0].series }];
     var avail = Object.keys(MLABEL).filter(function (c) { return m[c] && m[c].available && c !== 'posts_published'; });
     if (avail.indexOf(S.metric) < 0) S.metric = avail[0] || 'views';
     h += '<div class="cols2">';
-    h += '<div class="card pad"><h3>Follower trajectory</h3>' + lineChart('pFol', { days: d.days, series: folS, zero: false, label: 'Followers' }) + '</div>';
+    var folDays = d.days.filter(function (_, i) { return folS.some(function (s) { return s.values[i] !== null && s.values[i] !== undefined; }); });
+    var folNote = folDays.length < 2 ? '<p class="muted small">' + (pl === 'instagram' || pl === 'threads' ? 'This platform only reports the current follower count, so the line builds one point per day from when the account was connected' : 'Follower history starts when the account was connected') + (folDays.length ? ' (first snapshot ' + esc(shortDay(folDays[0])) + ').' : '.') + ' Use New follows / Unfollows for change before that.</p>' : '';
+    h += '<div class="card pad"><h3>Follower trajectory</h3>' + folNote + lineChart('pFol', { days: d.days, series: folS, zero: false, label: 'Followers' }) + '</div>';
     h += '<div class="card pad"><div class="chead"><h3>Daily trend</h3><select class="sel" id="metricSel" aria-label="Metric">' + avail.map(function (c) { return '<option value="' + c + '"' + (c === S.metric ? ' selected' : '') + '>' + esc(MLABEL[c]) + '</option>'; }).join('') + '</select></div>' +
       (m[S.metric] ? lineChart('pTrend', { days: d.days, series: [{ name: MLABEL[S.metric], color: PCOL[pl], values: m[S.metric].series }], label: MLABEL[S.metric] }) : '<p class="note">No daily metrics available.</p>') + '</div>';
     h += '</div>';
@@ -599,7 +612,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       if (s.key === 'revenue') { h += '<div class="fs"><b>' + esc(s.label) + '</b><span style="font-size:20px;font-weight:800">' + esc(money(s.value, f.currency)) + '</span><span class="muted small">' + esc(f.currency.slice(0, 3)) + '</span></div>'; return; }
       h += '<div class="fs"><span>' + esc(s.label) + '</span><span class="fb" style="width:' + (s.value === null ? 0 : Math.max(0.5, (s.value / maxV) * 100)).toFixed(1) + '%;background:' + colors[i] + '"></span><b style="text-align:right">' + (s.value === null ? '<span class="na">not tracked yet</span>' : fmt(s.value)) + '</b></div>';
       var cv = f.conversion.find(function (x) { return x.to === (f.stages[i + 1] || {}).key; });
-      if (cv && i < 3) h += '<div class="fs" style="padding:0"><span></span><span class="conv">↓ ' + (cv.rate === null ? 'n/a' : esc(fmt(cv.rate, 1)) + '%') + ' ' + esc(cv.to === 'leads' ? 'session → lead (ratio of totals)' : cv.to === 'qualified' ? 'lead → qualified' : 'qualified → booking') + '</span></div>';
+      if (cv && i < 3) h += '<div class="fs" style="padding:0"><span></span><span class="conv">↓ ' + (cv.rate === null ? 'n/a' : cv.rate > 100 ? '<span' + tip('Not a conversion rate', ['The next stage has more people than this one in the period: they are different groups (e.g. bookings from earlier leads, or website tracking that started recently). Use the cohort line below.']) + '>— (more in the next stage)</span>' : esc(fmt(cv.rate, 1)) + '%') + ' ' + esc(cv.to === 'leads' ? 'session → lead (ratio of totals)' : cv.to === 'qualified' ? 'lead → qualified' : 'qualified → booking') + '</span></div>';
     });
     var co = f.cohort;
     h += '</div><div class="banner info2" style="margin:10px 0 0"><span><b>Cohort:</b> of the ' + fmt(co.leads) + ' leads created in this period, ' + fmt(co.booked) + ' have booked so far (' + (co.leadToBooking === null ? 'n/a' : fmt(co.leadToBooking, 1) + '%') + '); ' + (co.qualifiedToBooking === null ? '' : fmt(co.qualifiedToBooking, 1) + '% of the qualified ones. ') + 'Recent leads may still convert.</span></div>';
@@ -613,9 +626,9 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     // Campaign registry
     h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Campaign registry</h3><div class="sub">Tag campaigns by UTM campaign id; leads and sessions carrying that id roll up here. Analytics only — nothing is created in the ad platforms.</div></div>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-primary btn-sm" data-camp="new">Add campaign</button>' : '') + '</div>';
     h += c.registered.length ? '<div class="tw"><table class="t"><thead><tr><th>Campaign</th><th>UTM id</th><th>Market</th><th>Objective</th><th>Dates</th><th class="n">Sessions</th><th class="n">Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th class="n">Spend</th><th class="n">CPL</th><th></th></tr></thead><tbody>' + c.registered.map(function (r) {
-      var s = r.stats; return '<tr><td><b>' + esc(r.name) + '</b>' + (r.owner ? '<br><span class="muted small">' + esc(r.owner) + '</span>' : '') + '</td><td><code>' + esc(r.utm_campaign) + '</code></td><td>' + esc(r.unit_id) + '</td><td>' + esc(r.objective) + '</td><td class="small">' + esc((r.start_at || '…') + ' → ' + (r.end_at || '…')) + '</td><td class="n">' + fmt(s.sessions) + '</td><td class="n">' + fmt(s.leads) + '</td><td class="n">' + fmt(s.qualified) + '</td><td class="n">' + fmt(s.bookings) + '</td><td class="n">' + esc(money(s.revenue, f.currency)) + '</td><td class="n">' + (s.spend === null ? '<span class="na">no spend data</span>' : fmt(s.spend, 2)) + '</td><td class="n">' + (s.cpl === null ? '<span class="na">—</span>' : fmt(s.cpl, 2)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp="' + r.id + '">Edit</button>' : '') + '</td></tr>';
+      var s = r.stats; return '<tr><td><b>' + esc(r.name) + '</b>' + (r.owner ? '<br><span class="muted small">' + esc(r.owner) + '</span>' : '') + '</td><td><code>' + esc(r.utm_campaign) + '</code></td><td>' + esc(r.unit_id) + '</td><td>' + esc(r.objective) + '</td><td class="small">' + esc((r.start_at || '…') + ' → ' + (r.end_at || '…')) + '</td><td class="n">' + fmt(s.sessions) + '</td><td class="n">' + fmt(s.leads) + '</td><td class="n">' + fmt(s.qualified) + '</td><td class="n">' + fmt(s.bookings) + '</td><td class="n">' + esc(money(s.revenue, f.currency)) + '</td><td class="n">' + (s.spend === null ? '<span class="na">no spend data</span>' : adMoney(s.spend)) + '</td><td class="n">' + (s.cpl === null ? '<span class="na">—</span>' : adMoney(s.cpl)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp="' + r.id + '">Edit</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>' : '<p class="note">No campaigns registered yet.</p>';
-    if (c.unregistered.length) h += '<h3 style="margin-top:14px">Campaign tags seen in your data but not registered</h3><div class="tw"><table class="t"><thead><tr><th>UTM / campaign</th><th class="n">Leads</th><th class="n">Sessions</th><th class="n">Spend</th><th></th></tr></thead><tbody>' + c.unregistered.map(function (u) { return '<tr><td><code>' + esc(u.utm) + '</code></td><td class="n">' + fmt(u.leads) + '</td><td class="n">' + fmt(u.sessions) + '</td><td class="n">' + (u.spend === null ? '—' : fmt(u.spend, 2)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp-new="' + esc(u.utm) + '">Register</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    if (c.unregistered.length) h += '<h3 style="margin-top:14px">Campaign tags seen in your data but not registered</h3><div class="tw"><table class="t"><thead><tr><th>UTM / campaign</th><th class="n">Leads</th><th class="n">Sessions</th><th class="n">Spend</th><th></th></tr></thead><tbody>' + c.unregistered.map(function (u) { return '<tr><td><code>' + esc(u.utm) + '</code></td><td class="n">' + fmt(u.leads) + '</td><td class="n">' + fmt(u.sessions) + '</td><td class="n">' + (u.spend === null ? '—' : adMoney(u.spend)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp-new="' + esc(u.utm) + '">Register</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
     h += '</div>';
     S.cache.campaigns = c.registered;
     // Lead drill-down
@@ -747,7 +760,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       var n = h0.accounts.filter(function (a) { return a.status !== 'disconnected' && (p[0] === 'meta' ? /facebook|instagram|meta_ads/.test(a.platform) : a.platform === p[0]); }).length;
       var state = !p[3] ? (p[0] === 'tiktok' ? '<span class="pill warn">Awaiting TikTok approval</span>' : '<span class="pill warn">Setup pending</span>') : n ? '<span class="pill ok">✓ ' + n + ' connected</span>' : '<span class="pill">Not connected</span>';
       return '<div class="card pad" style="box-shadow:none"><div class="chead"><b><span class="pdot" style="background:' + p[4] + '"></span> ' + esc(p[1]) + '</b>' + state + '</div><p class="note">' + esc(p[2]) + '</p>' +
-        (mine ? '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select class="sel" data-cunit="' + p[0] + '" aria-label="Default market">' + S.me.units.map(function (u) { return '<option value="' + u + '">' + UNIT[u] + '</option>'; }).join('') + '</select><button type="button" class="btn btn-primary btn-sm" data-connect="' + p[0] + '"' + (p[3] ? '' : ' disabled title="Not configured yet"') + '>' + (n ? 'Reconnect' : 'Connect') + '</button></div>' : '') + '</div>';
+        (mine ? '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select class="sel" data-cunit="' + p[0] + '" aria-label="Default market">' + S.me.units.map(function (u) { return '<option value="' + u + '">' + UNIT[u] + '</option>'; }).join('') + '</select><button type="button" class="btn btn-primary btn-sm" data-connect="' + p[0] + '"' + (p[3] ? '' : ' disabled title="Not configured yet"') + '>' + (n ? 'Reconnect' : 'Connect') + '</button>' + (p[0] === 'meta' && n ? '<button type="button" class="btn btn-sm" data-rediscover="1"' + tip('Refresh accounts', ['Looks for Pages, Instagram accounts and ad accounts added in Meta since the last connection, without signing in again.']) + '>Refresh accounts</button>' : '') + '</div>' : '') + '</div>';
     }).join('') + '</div></div>';
     // Accounts
     h += '<div class="card pad" style="margin-top:12px"><h3>Connected accounts</h3>' + (h0.accounts.length ? '<div class="tw"><table class="t"><thead><tr><th>Account</th><th>Market</th><th>Status</th><th>Last sync</th><th>Token</th><th>Granted scopes</th><th></th></tr></thead><tbody>' + h0.accounts.map(function (a) {
@@ -792,8 +805,9 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     return h;
   }
   document.addEventListener('click', async function (e) {
-    var t = e.target.closest && e.target.closest('[data-connect],[data-sync],[data-backfill],[data-disc],[data-ungrant]'); if (!t) return;
+    var t = e.target.closest && e.target.closest('[data-connect],[data-rediscover],[data-sync],[data-backfill],[data-disc],[data-ungrant]'); if (!t) return;
     try {
+      if (t.dataset.rediscover) { var sel2 = document.querySelector('[data-cunit="meta"]'); t.disabled = true; t.textContent = 'Looking…'; var rd = await api('/accounts/rediscover', { method: 'POST', body: { unit_id: sel2 ? sel2.value : S.me.units[0] } }); toast(rd.added.length ? 'Added ' + rd.added.length + ' account(s); their history fills in within ~15 min.' : 'No new accounts found (' + rd.found + ' checked).'); S.cache = {}; render(); return; }
       if (t.dataset.connect) { var sel = document.querySelector('[data-cunit="' + t.dataset.connect + '"]'); var r = await api('/connect', { method: 'POST', body: { platform: t.dataset.connect, unit_id: sel ? sel.value : S.me.units[0] } }); location.href = r.url; return; }
       if (t.dataset.sync || t.dataset.backfill) { t.disabled = true; t.textContent = 'Syncing…'; var s = await api('/accounts/sync', { method: 'POST', body: { id: t.dataset.sync || t.dataset.backfill, backfillDays: t.dataset.backfill ? 90 : 0 } }); toast(s.status === 'error' ? 'Sync failed: ' + s.error : 'Synced ' + s.rows + ' rows'); render(); return; }
       if (t.dataset.disc) {
