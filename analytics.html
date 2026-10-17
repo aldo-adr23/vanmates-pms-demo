@@ -149,7 +149,10 @@ table.t td.n, table.t th.n { text-align: right; }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; opacity: 0; transition: .2s; pointer-events: none; z-index: 70; max-width: calc(100% - 32px); }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .ask { display: flex; gap: 8px; } .ask textarea { min-height: 44px; }
-.answer { white-space: pre-wrap; font-size: 13.5px; line-height: 1.55; }
+.answer { font-size: 13.5px; line-height: 1.55; } .answer p { margin: 0 0 8px; } .answer ul { margin: 0 0 8px; padding-left: 20px; }
+.answer table { border-collapse: collapse; margin: 6px 0 10px; font-size: 12.5px; } .answer th, .answer td { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.answer h4 { margin: 10px 0 4px; font-size: 13px; }
+td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .sugs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
 .sug { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 10px; font-size: 12px; }
 .sug:hover { border-color: var(--red); }
@@ -413,6 +416,7 @@ table.t td.n, table.t th.n { text-align: right; }
     render();
   }
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) setTab(b.dataset.tab); });
+  window.addEventListener('hashchange', function () { var t = (location.hash || '#overview').slice(1).split('?')[0]; if (S.me && t !== S.tab && document.querySelector('.tab[data-tab="' + t + '"]')) setTab(t, false); });
   $('rangeChips').addEventListener('click', function (e) {
     var b = e.target.closest('.chip'); if (!b) return;
     S.days = b.dataset.days; syncFilters(); persist(); if (S.days !== 'custom' || (S.from && S.to)) render();
@@ -609,7 +613,7 @@ table.t td.n, table.t th.n { text-align: right; }
     S.cache.campaigns = c.registered;
     // Lead drill-down
     h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Attributed leads</h3><div class="sub">Every lead with the rule and evidence used (no contact details shown here)</div></div><select class="sel" id="leadCh" aria-label="Filter by source"><option value="">All sources</option>' + Object.keys(CH).map(function (k) { return '<option value="' + k + '"' + (k === S.leadCh ? ' selected' : '') + '>' + esc(CH[k]) + '</option>'; }).join('') + '</select></div>';
-    h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Source</th><th>Platform</th><th>Campaign</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td>' + esc(l.day) + '</td><td><code class="small">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc(l.platform || '—') + '</td><td>' + esc(l.campaign || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
+    h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Source</th><th>Platform</th><th>Campaign</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td class="nw">' + esc(l.day) + '</td><td><code class="small id" title="' + esc(l.id) + '">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc(l.platform || '—') + '</td><td>' + esc(l.campaign || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
     h += '</div>';
     return h;
   }
@@ -673,6 +677,29 @@ table.t td.n, table.t th.n { text-align: right; }
     if (id !== 'new') $('goalDel').addEventListener('click', async function () { try { await api('/goals/delete', { method: 'POST', body: { id: g.id } }); closeModal(); toast('Goal deleted'); render(); } catch (err) { toast(err.message); } });
   });
 
+  // Small, safe markdown subset for AI answers: text is escaped first; only **bold**, headings, bullets and pipe tables.
+  function md(src) {
+    var lines = esc(src).split(/\r?\n/), out = [], list = false, table = [];
+    var inline = function (t) { return t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'); };
+    var flushTable = function () {
+      if (!table.length) return;
+      var rows = table.filter(function (r) { return !/^\s*\|?\s*:?-{2,}/.test(r); }).map(function (r) { return r.replace(/^\s*\||\|\s*$/g, '').split('|').map(function (c) { return inline(c.trim()); }); });
+      out.push('<table><thead><tr>' + rows[0].map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.slice(1).map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>');
+      table = [];
+    };
+    lines.forEach(function (l) {
+      if (/^\s*\|.*\|\s*$/.test(l)) { if (list) { out.push('</ul>'); list = false; } table.push(l); return; }
+      flushTable();
+      var m;
+      if ((m = /^\s*[-*•]\s+(.*)/.exec(l))) { if (!list) { out.push('<ul>'); list = true; } out.push('<li>' + inline(m[1]) + '</li>'); return; }
+      if (list) { out.push('</ul>'); list = false; }
+      if ((m = /^\s*#{1,4}\s+(.*)/.exec(l))) { out.push('<h4>' + inline(m[1]) + '</h4>'); return; }
+      if (l.trim()) out.push('<p>' + inline(l) + '</p>');
+    });
+    flushTable(); if (list) out.push('</ul>');
+    return out.join('');
+  }
+
   // ------------------------------------------------------------- Ask AI
   var SUGS = ['Which channel contributed the most bookings in this period?', 'What changed in Instagram engagement versus the previous period?', 'Where are we losing leads in the funnel?', 'Which content format performs best and what should we post more of?', 'How much of our lead flow can we actually attribute?'];
   function viewAsk() {
@@ -689,7 +716,7 @@ table.t td.n, table.t th.n { text-align: right; }
       var f = { unit: S.unit, basis: S.basis, model: S.model };
       if (S.days === 'custom' && S.from && S.to) { f.from = S.from; f.to = S.to; } else f.days = S.days === 'custom' ? '30' : S.days;
       var r = await api('/ask', { method: 'POST', body: { question: q, filters: f } });
-      out.innerHTML = '<div class="card pad"><div class="chead"><b>' + esc(q) + '</b><span class="pill">' + esc(r.model) + '</span></div><div class="answer">' + esc(r.answer) + '</div>' +
+      out.innerHTML = '<div class="card pad"><div class="chead"><b>' + esc(q) + '</b><span class="pill">' + esc(r.model) + '</span></div><div class="answer">' + md(r.answer) + '</div>' +
         (r.unverifiedNumbers.length ? '<div class="banner warn" style="margin:12px 0 0"><b>Check these numbers:</b> ' + esc(r.unverifiedNumbers.join(', ')) + ' — they don’t match the underlying data exactly (may be derived or rounded).</div>' : '<p class="note" style="margin:12px 0 0">✓ Every number in this answer matches the underlying data.</p>') +
         '<dl class="kv" style="margin-top:10px"><dt>Filters</dt><dd>' + esc(r.filters.units.join(' + ')) + ' · ' + esc(r.filters.from) + ' – ' + esc(r.filters.to) + ' (vs ' + esc(r.filters.prevFrom) + ' – ' + esc(r.filters.prevTo) + ') · ' + esc(r.filters.model === 'first' ? 'first touch' : 'last non-direct touch') + '</dd><dt>Sources</dt><dd>' + esc(r.sources.join(' · ')) + '</dd></dl></div>' + out.innerHTML.replace(/<div class="card pad empty">Analysing the data…<\/div>/, '');
     } catch (e) { out.innerHTML = '<div class="card pad"><b>Couldn’t answer.</b><p class="note">' + esc(e.message) + '</p></div>'; }
