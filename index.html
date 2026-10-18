@@ -1814,7 +1814,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-18-mobile2"></script>
+<script src="pms-supabase.js?v=2026-10-18-payremind1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3955,6 +3955,7 @@ hello@vanmates.com · vanmates.com</textarea>
 
       <div class="hb-toolbar">
         <span id="hb-status" class="card-sub"></span>
+        <button type="button" class="btn btn-ghost btn-mini" id="hb-remind-all" style="margin-left:auto" hidden>Send payment reminders</button>
         <span class="hb-links"><button type="button" class="hb-link" id="hb-refresh">Refresh</button> · <button type="button" class="hb-link" id="hb-token-change">Change staff token</button></span>
       </div>
       <div id="hb-write-note" class="card-sub hb-note" hidden></div>
@@ -35066,6 +35067,63 @@ function ahsPayLinkMessage(status, body){
   if (d.error === 'not_found') return { ok: false, link: '', message: 'Booking not found: reload the list.' };
   return { ok: false, link: '', message: 'Could not get the payment link (' + (d.error || ('HTTP ' + status)) + ').' };
 }
+// Payment reminders (homestay-pay-link with send: true, 2026-10-18): the same link,
+// emailed to the student again from hello@ and stamped on the booking
+// (payment_reminded_at, payment_reminders). n8n refuses a second one within 10 minutes;
+// "Send payment reminders" on the Waiting tab skips anyone reminded in the last day.
+const AHS_REMIND_GAP_MS = 24 * 60 * 60 * 1000;
+function ahsAgo(iso, now){
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return '';
+  const min = Math.max(0, Math.round((now - t) / 60000));
+  if (min < 1) return 'just now';
+  if (min < 60) return min + ' min ago';
+  const h = Math.round(min / 60);
+  if (h < 24) return h + ' h ago';
+  const d = Math.round(h / 24);
+  return d === 1 ? 'yesterday' : d + ' days ago';
+}
+function ahsReminderWords(b, now){
+  const n = Number(b && b.payment_reminders) || 0;
+  const ago = ahsAgo(b && b.payment_reminded_at, now);
+  if (!n || !ago) return '';
+  return (n === 1 ? 'reminded ' : 'reminded ' + n + '×, last ') + ago;
+}
+function ahsRemindedRecently(b, now){
+  const t = Date.parse((b && b.payment_reminded_at) || '');
+  return Number.isFinite(t) && now - t < AHS_REMIND_GAP_MS;
+}
+// Who "Send payment reminders" emails: student-paid bookings still owing the first
+// payment whose move-in has not passed (stale ones are left for a person to judge),
+// one email per student (rows come newest first, so the newest booking wins), and
+// nobody reminded in the last day.
+function ahsRemindTargets(rows, today, now){
+  const targets = [], skipped = { stale: 0, dup: 0, recent: 0, noEmail: 0 }, seen = new Set();
+  (rows || []).forEach(b => {
+    if (!ahsCanPayLink(b)) return;
+    if (b.move_in_date && String(b.move_in_date) < today) { skipped.stale++; return; }
+    const email = String(b.student_email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { skipped.noEmail++; return; }
+    if (seen.has(email)) { skipped.dup++; return; }
+    seen.add(email);
+    if (ahsRemindedRecently(b, now)) { skipped.recent++; return; }
+    targets.push(b);
+  });
+  return { targets, skipped };
+}
+// The homestay-pay-link answer to send: true, as the line staff read.
+function ahsReminderMessage(status, body){
+  const d = body || {};
+  if (status >= 200 && status < 300 && d.sent === true) {
+    return { ok: true, message: 'Reminder emailed to ' + (d.sent_to || 'the student') + '.', reminded_at: String(d.payment_reminded_at || ''), reminders: Number(d.payment_reminders) || 0 };
+  }
+  // An n8n without the reminder branch ignores send and answers with the link alone.
+  if (status >= 200 && status < 300) return { ok: false, message: 'Reminder emails are not switched on in n8n yet, so nothing was sent. Tell Aldo.' };
+  if (d.error === 'recently_reminded') return { ok: false, message: 'A reminder went to this student less than 10 minutes ago.' };
+  if (d.error === 'no_email') return { ok: false, message: 'This booking has no student email to remind.' };
+  if (d.error === 'send_failed') return { ok: false, message: 'Gmail did not send the reminder' + (d.message ? ': ' + d.message : '') + '.' };
+  return { ok: false, message: ahsPayLinkMessage(status, d).message.replace('Could not get the payment link', 'Could not send the reminder') };
+}
 // Send signing link: any student (agency or student-paid) who has not signed the
 // Homestay Agreement on a booking still running — including one whose agreement was
 // voided (agreement_reopened_at, stamp cleared). `agreementState` is hbAgreementState's
@@ -35447,6 +35505,7 @@ function ahsArrivalText(row, city){
     needs: 'Nothing needs you.',
   };
   let hbTab = 'ongoing';
+  let hbRemindRunning = false; // "Send payment reminders" is mid-run
   let hbLoaded = false;
   let hbShowStale = false;
   try { const t = localStorage.getItem(HB_TAB_KEY); if (HB_TABS.indexOf(t) !== -1) hbTab = t; } catch (_) { /* storage blocked */ }
@@ -35512,8 +35571,9 @@ function ahsArrivalText(row, city){
     let cells;
     if (hbTab === 'waiting') {
       const s = hbStatusLine(b, today);
+      const sub = [s.sub, ahsReminderWords(b, Date.now())].filter(Boolean).join(' · ');
       cells = [who, host, hbCell(dates, hbStayLength(b.lease_days) === '—' ? '' : hbStayLength(b.lease_days)), weekly,
-        hbCell(hbFeesWords(b) || '—'), hbCell(s.text, s.sub, s.need)];
+        hbCell(hbFeesWords(b) || '—'), hbCell(s.text, sub, s.need)];
     } else if (hbTab === 'arriving') {
       const l = hbLetterWords(b), a = hbAgreementWords(b);
       cells = [who, host, hbCell(b.move_in_date || '—', hbStayProgress(b, today)), weekly,
@@ -35533,7 +35593,16 @@ function ahsArrivalText(row, city){
       cells.join('') + '</tr>';
   }
 
+  // "Send payment reminders (N)": Waiting tab only, and only when someone is due one.
+  function hbRenderRemindAll() {
+    const btn = $('hb-remind-all'); if (!btn) return;
+    const n = hbLoaded && hbTab === 'waiting' ? ahsRemindTargets(hbLastRows, hbToday(), Date.now()).targets.length : 0;
+    btn.hidden = !n;
+    if (!hbRemindRunning) btn.textContent = 'Send payment reminders (' + n + ')';
+  }
+
   function hbRenderList() {
+    hbRenderRemindAll();
     const box = $('hb-list'); if (!box || !HB_COLS[hbTab]) return;
     if (!hbLoaded) return;
     const today = hbToday();
@@ -35632,7 +35701,9 @@ function ahsArrivalText(row, city){
         hbKv('Fees', (feesText ? esc(feesText) : dash) + (placementSub ? '<div class="hb-sub">' + esc(placementSub) + '</div>' : '')) +
         hbKv('Billing', esc(String(b.status || '—')) + (b.billing_status ? '<div class="hb-sub">billing ' + esc(b.billing_status) + '</div>' : '')) +
         (ahsCanPayLink(b) ? hbKv('Payment link', '<button type="button" class="btn btn-ghost btn-mini hb-paylink" data-ref="' + esc(b.booking_ref) + '">Get payment link</button>' +
-          '<div class="hb-sub">The same link the student was emailed, to send again by WhatsApp or LINE.</div>') : '') +
+          '<div class="hb-sub">The same link the student was emailed, to send again by WhatsApp or LINE.</div>') +
+          hbKv('Reminder', '<button type="button" class="btn btn-ghost btn-mini hb-remind" data-ref="' + esc(b.booking_ref) + '">Email a payment reminder</button>' +
+          '<div class="hb-sub">' + esc((s => s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : 'No reminder sent yet.')(ahsReminderWords(b, Date.now()))) + ' Emails the link to ' + esc(b.student_email || 'the student') + ' from hello@.</div>') : '') +
         (tailWords ? hbKv('Final charge', tail === 'failed' ? '<span class="hb-need">failed</span>' : esc(tailWords)) : '')) +
       hbSection('Letter', hbKv('Status', hbWords(letter)) + hbLetterActions(b)) +
       hbSection('Agreement', hbKv('Status', hbWords({ text: agr.text, sub: agr.sub, need: false })) +
@@ -35996,6 +36067,82 @@ function ahsArrivalText(row, city){
     btn.disabled = false; btn.textContent = 'Get payment link';
     hbStatusFor(ref0, ref + ': ' + msg.message, !msg.ok, msg.link);
     if (msg.ok) { const el = $('hb-panel-link'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+  // One payment reminder (homestay-pay-link, send: true). Read-only token is
+  // enough, like the link itself. On success the row is stamped here from the
+  // answer, so the list says "reminded just now" without a reload.
+  async function hbRemindOne(ref) {
+    const who = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER && CURRENT_USER.email) || '';
+    let msg;
+    try {
+      const r = await hbPost('homestay-pay-link', { booking_ref: ref, send: true, requested_by: who }, { raw: true });
+      msg = ahsReminderMessage(r.status, r.data);
+    } catch (e) {
+      msg = { ok: false, message: e.message || 'Could not send the reminder' };
+    }
+    if (msg.ok) {
+      const b = hbLastRows.find((x) => x.booking_ref === ref);
+      if (b) { b.payment_reminded_at = msg.reminded_at || new Date().toISOString(); b.payment_reminders = msg.reminders || (Number(b.payment_reminders) || 0) + 1; }
+    }
+    return msg;
+  }
+  async function hbSendReminder(btn) {
+    const ref = btn && btn.getAttribute('data-ref');
+    if (!ref || btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const ref0 = hbPanelRef;
+    const msg = await hbRemindOne(ref);
+    hbStatusFor(ref0, ref + ': ' + msg.message, !msg.ok);
+    hbRenderList();
+    hbRefreshPanel(true);
+    const again = document.querySelector('#panel-body .hb-remind[data-ref="' + CSS.escape(ref) + '"]');
+    if (again) { again.disabled = false; again.textContent = 'Email a payment reminder'; }
+  }
+  // Waiting tab: email everyone due a reminder (ahsRemindTargets), one at a time.
+  function hbOpenRemindAll() {
+    if (hbRemindRunning || typeof rcvModalOpen !== 'function') return;
+    const { targets, skipped } = ahsRemindTargets(hbLastRows, hbToday(), Date.now());
+    if (!targets.length) return;
+    const skip = [
+      skipped.recent ? skipped.recent + ' reminded in the last day' : '',
+      skipped.dup ? skipped.dup + ' duplicate booking' + (skipped.dup === 1 ? '' : 's') + ' for the same student' : '',
+      skipped.stale ? skipped.stale + ' stale (move-in passed; remind those one by one from the booking)' : '',
+      skipped.noEmail ? skipped.noEmail + ' with no email' : '',
+    ].filter(Boolean);
+    const list = targets.map((b) => '<li style="margin:2px 0"><b>' + esc(b.student_name || b.student_email) + '</b> <span class="hb-sub" style="display:inline">' +
+      esc(b.student_email) + ' · ' + esc(b.booking_ref) + (b.move_in_date ? ' · moves in ' + esc(b.move_in_date) : '') + (b.status === 'payment_failed' ? ' · card declined' : '') +
+      (ahsReminderWords(b, Date.now()) ? ' · ' + esc(ahsReminderWords(b, Date.now())) : '') + '</span></li>').join('');
+    rcvModalOpen({
+      title: 'Send payment <em>reminders</em>',
+      sub: targets.length + (targets.length === 1 ? ' student who has' : ' students who have') + ' not paid yet',
+      body: '<p style="margin:0 0 10px;line-height:1.5">Each student gets an email from hello@ with their payment link, saying their host family is held but not confirmed until they pay. ' +
+        'Students whose card was declined get a "try again" version.</p>' +
+        '<ul style="margin:0 0 10px;padding-left:18px;max-height:260px;overflow:auto;font-size:13.5px">' + list + '</ul>' +
+        (skip.length ? '<div class="card-sub">Skipped: ' + esc(skip.join(' · ')) + '.</div>' : ''),
+      submit: 'Send ' + targets.length + (targets.length === 1 ? ' reminder' : ' reminders'),
+      onSubmit: async (form, err) => {
+        hbRemindRunning = true;
+        const btn = $('hb-remind-all');
+        const bad = [];
+        let sent = 0;
+        for (let i = 0; i < targets.length; i++) {
+          const b = targets[i];
+          err.style.color = ''; err.textContent = 'Sending ' + (i + 1) + ' of ' + targets.length + '…';
+          if (btn) btn.textContent = 'Sending ' + (i + 1) + ' of ' + targets.length + '…';
+          const msg = await hbRemindOne(b.booking_ref);
+          if (msg.ok) sent++; else bad.push((b.student_name || b.booking_ref) + ': ' + msg.message);
+          // The n8n branch is missing: every send would fail the same way, so stop.
+          if (!msg.ok && /not switched on/.test(msg.message)) break;
+        }
+        hbRemindRunning = false;
+        const summary = sent + (sent === 1 ? ' reminder' : ' reminders') + ' sent.' + (bad.length ? ' Not sent — ' + bad.join(' · ') : '');
+        rcvModalDone(summary);
+        hbStatus(summary, !!bad.length);
+        hbRenderList();
+        hbRefreshPanel(true);
+        return true;
+      },
+    });
   }
   // Keyed by booking: a panel redraw mid-request rebuilds the button, so the
   // guard cannot live on the element alone.
@@ -36860,6 +37007,7 @@ function ahsArrivalText(row, city){
         hbSetTab(k.getAttribute('data-hb-go'));
       }));
     const hbQ = $('hb-q'); if (hbQ) hbQ.addEventListener('input', hbRenderList);
+    const hbRemindAll = $('hb-remind-all'); if (hbRemindAll) hbRemindAll.addEventListener('click', hbOpenRemindAll);
     const hbList = $('hb-list');
     if (hbList) {
       hbList.addEventListener('click', (e) => {
@@ -36886,6 +37034,8 @@ function ahsArrivalText(row, city){
       if (agVoid) return hbOpenVoidAgreement(agVoid.getAttribute('data-ref'));
       const payLink = e.target.closest('.hb-paylink');
       if (payLink) return hbGetPayLink(payLink);
+      const remind = e.target.closest('.hb-remind');
+      if (remind) return hbSendReminder(remind);
       if (e.target.closest('.hb-need-token')) {
         if (typeof closeProperty === 'function') closeProperty();
         return hbAskForToken('This action needs the full staff token, not the view-only one.');
@@ -44225,9 +44375,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-18-mobile2"></script>
-<script src="extensions.js?v=2026-10-18-mobile2"></script>
-<script src="ap.js?v=2026-10-18-mobile2"></script>
-<script src="properties.js?v=2026-10-18-mobile2"></script>
+<script src="room-changes.js?v=2026-10-18-payremind1"></script>
+<script src="extensions.js?v=2026-10-18-payremind1"></script>
+<script src="ap.js?v=2026-10-18-payremind1"></script>
+<script src="properties.js?v=2026-10-18-payremind1"></script>
 </body>
 </html>
