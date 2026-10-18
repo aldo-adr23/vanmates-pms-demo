@@ -339,6 +339,7 @@
   }
   .bar.faint{background:linear-gradient(180deg,#E9C7C0 0%,#F2DAD4 100%)}
   .bar-label{font-size:11px;color:var(--muted);font-weight:600}
+  #occ-chart .bar-label.occ-x{font-weight:500;white-space:nowrap;margin-top:-4px}
 
   /* Donut */
   .donut-wrap{display:flex;gap:18px;align-items:center}
@@ -1814,7 +1815,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-18-payremind1"></script>
+<script src="pms-supabase.js?v=2026-10-18-mobile3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2140,13 +2141,12 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <div class="card-head" style="justify-content:space-between">
             <div>
               <div class="card-title">Occupancy <em>trend</em></div>
-              <div class="card-sub">Rolling 12 months · all cities</div>
+              <div class="card-sub" id="occ-sub">Since May 2026 · rooms in use at each month's end</div>
             </div>
-            <div class="tabs">
-              <div class="tab">Day</div>
-              <div class="tab">Week</div>
-              <div class="tab active">Month</div>
-              <div class="tab">Year</div>
+            <div class="tabs" id="occ-modes">
+              <div class="tab" data-occ-mode="day">Day</div>
+              <div class="tab" data-occ-mode="week">Week</div>
+              <div class="tab active" data-occ-mode="month">Month</div>
             </div>
           </div>
           <div class="chart-scroll">
@@ -19464,20 +19464,111 @@ function refreshPortfolio(){
 refreshPortfolio();
 
 /* ============ DASHBOARD — REBUILD WITH REAL DATA ============ */
+/* OCC-TREND-CORE-START */
+// Occupancy over time, rebuilt from tenant records (pure; no globals). A tenant is in a room
+// on day D when moveIn <= D and they have not left: active = still here, past = until
+// movedOutAt, else leaseEnd (no end date at all = left out). Rooms per property = the larger
+// of its listed rooms (today's count; there is no room history) and the tenants in it that day.
+// Move-outs are only on record from May 2026: earlier tenants who left were never entered, so
+// months before OCC_HISTORY_FROM would show a slump that is missing data, not empty rooms.
+const OCC_HISTORY_FROM = "2026-05-01";
+const OCC_MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function occDay(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ""));
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+}
+function occIso(d) { return new Date(d).toISOString().slice(0, 10); }
+function occSpans(list) {
+  const out = [];
+  for (const t of list || []) {
+    const from = occDay(t && t.moveIn);
+    if (from == null) continue;
+    const st = String(t.status || "").toLowerCase();
+    const to = st === "past" ? (occDay(t.movedOutAt) ?? occDay(t.leaseEnd)) : Infinity;
+    if (to == null) continue;
+    out.push({ property: t.property, from, to });
+  }
+  return out;
+}
+function occAt(spans, props, day) {
+  const by = {};
+  let occupied = 0;
+  for (const s of spans) if (s.from <= day && day < s.to) { occupied++; by[s.property] = (by[s.property] || 0) + 1; }
+  const rooms = (props || []).reduce((n, p) => n + Math.max(Number(p && p.rooms) || 0, by[p && p.name] || 0), 0);
+  return { day, occupied, rooms, pct: rooms ? Math.min(100, occupied / rooms * 100) : 0 };
+}
+// Period ends, oldest first; the last point is always today. day = 14 days, week = 12 weeks
+// back from today, month = each month end since OCC_HISTORY_FROM (current month = today).
+function occPoints(mode, todayIso, fromIso) {
+  const today = occDay(todayIso), from = occDay(fromIso || OCC_HISTORY_FROM), DAY = 86400000;
+  const pts = [];
+  if (mode === "day" || mode === "week") {
+    const step = mode === "day" ? DAY : 7 * DAY, n = mode === "day" ? 14 : 12;
+    for (let i = n - 1; i >= 0; i--) { const d = today - i * step; if (d >= from) pts.push(d); }
+  } else {
+    for (let y = new Date(from).getUTCFullYear(), m = new Date(from).getUTCMonth(); ; m++) {
+      const end = Date.UTC(y, m + 1, 0);
+      if (end >= today) { pts.push(today); break; }
+      pts.push(end);
+      if (pts.length > 120) break;
+    }
+    if (!pts.length || pts[pts.length - 1] !== today) pts.push(today);
+  }
+  return pts.map((d) => {
+    const x = new Date(d), mon = OCC_MON[x.getUTCMonth()], dd = x.getUTCDate();
+    const label = mode === "month" ? mon : mode === "week" ? `${mon} ${dd}` : String(dd);
+    return { day: d, label, date: `${mon} ${dd}, ${x.getUTCFullYear()}` };
+  });
+}
+function occSeries(list, props, mode, todayIso, fromIso) {
+  const spans = occSpans(list);
+  return occPoints(mode, todayIso, fromIso).map((p) => Object.assign(p, occAt(spans, props, p.day)));
+}
+/* OCC-TREND-CORE-END */
+let OCC_MODE = "month";
+const OCC_SUB = {
+  day: "Last 14 days · rooms in use each day",
+  week: "Last 12 weeks · rooms in use at each week's end",
+  month: "Since May 2026 · rooms in use at each month's end",
+};
+function renderOccTrend() {
+  const chart = document.getElementById("occ-chart"), labels = document.getElementById("occ-labels");
+  if (!chart) return;
+  const pts = occSeries(tenants, properties, OCC_MODE, occIso(TODAY));
+  const sub = document.getElementById("occ-sub");
+  if (sub) sub.textContent = OCC_SUB[OCC_MODE];
+  chart.innerHTML = pts.map((p, i) => {
+    const v = Math.round(p.pct), last = i === pts.length - 1;
+    const tip = `${last ? "Today, " : ""}${p.date}: ${p.occupied} of ${p.rooms} rooms (${p.pct.toFixed(1)}%)`;
+    return `<div class="bar-col" title="${esc(tip)}"><div class="bar ${last ? "" : "faint"}" style="height:${(v / 100) * 160}px"></div>` +
+      `<div class="bar-label">${v}%</div><div class="bar-label occ-x">${esc(p.label)}</div></div>`;
+  }).join("");
+  if (labels) labels.innerHTML = "";
+}
+document.getElementById("occ-modes")?.addEventListener("click", (e) => {
+  const tab = e.target.closest("[data-occ-mode]");
+  if (!tab) return;
+  OCC_MODE = tab.dataset.occMode;
+  renderOccTrend();
+});
+
 function refreshDashboard(){
   const dash = document.querySelector('section[data-view="dashboard"]');
   if(!dash) return;
 
   const activeTenants = tenants.filter(t => t.status === "active");
   const totalTenants = activeTenants.length;
-  const totalRooms = properties.reduce((s,p) => s + Math.max(p.rooms || 0, tenants.filter(t => t.property === p.name && t.status === "active").length), 0);
   const totalRev = activeTenants.reduce((s,t) => s + (t.rent || 0), 0);
   // Cities derived from tenants (properties[] doesn't have city set)
   const cities = [...new Set(activeTenants.map(t => t.city).filter(Boolean))].map(c => c === "Montréal" ? "Montreal" : c);
   const uniqCityCount = new Set(cities).size;
-  const occupancy = totalRooms ? Math.min(100, (totalTenants / totalRooms) * 100) : 0;
+  // Occupancy = people in a room today (OCC-TREND-CORE), so the KPI and the trend's last bar agree.
+  // Until 2026-10-18 it counted every active tenant, including the ones not moved in yet.
+  const occToday = occAt(occSpans(tenants), properties, occDay(occIso(TODAY)));
+  const occupancy = occToday.pct;
+  const movingIn = activeTenants.filter(t => (occDay(t.moveIn) || 0) > occDay(occIso(TODAY))).length;
 
-  // 1. Page header subtitle — TODAY is parsed as UTC ("2026-04-25") so use UTC getters
+  // 1. Page header subtitle — TODAY is UTC midnight of the local date, so use UTC getters
   const dateLine = `${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][TODAY.getUTCDay()]}, ${["January","February","March","April","May","June","July","August","September","October","November","December"][TODAY.getUTCMonth()]} ${TODAY.getUTCDate()}, ${TODAY.getUTCFullYear()}`;
   const sub = document.getElementById("page-sub");
   const isDashboard = dash.classList.contains("active");
@@ -19508,7 +19599,7 @@ function refreshDashboard(){
   if(kpis.length >= 4){
     // Occupancy
     kpis[0].querySelector(".kpi-value").innerHTML = `${occupancy.toFixed(1)}<span style="font-size:18px;color:var(--muted)">%</span>`;
-    kpis[0].querySelector(".kpi-trend").textContent = `${totalTenants} of ${totalRooms} rooms occupied`;
+    kpis[0].querySelector(".kpi-trend").textContent = `${occToday.occupied} of ${occToday.rooms} rooms occupied` + (movingIn ? ` · ${movingIn} moving in` : "");
 
     // Active tenants
     kpis[1].querySelector(".kpi-value").textContent = totalTenants;
@@ -19519,31 +19610,8 @@ function refreshDashboard(){
     kpis[2].querySelector(".kpi-trend").textContent = totalTenants ? `avg $${Math.round(totalRev/totalTenants).toLocaleString()} / tenant` : "no active leases";
   }
 
-  // 3. Occupancy trend chart — show rolling 12 months ending in current
-  // Build a smooth trend curve that ends at current occupancy (small natural variance)
-  const occChart = document.getElementById("occ-chart");
-  const occLabelsEl = document.getElementById("occ-labels");
-  if(occChart && occLabelsEl){
-    const months = [];
-    const labels = [];
-    const cur = occupancy;
-    // Generate 12 months ending TODAY's month
-    for(let i = 11; i >= 0; i--){
-      const d = new Date(TODAY); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - i);
-      labels.push(MONTH_NAMES[d.getUTCMonth()]);
-      // Linear ramp from cur-8 to cur with slight noise
-      const base = cur - 8 + (8 * (11 - i)/11);
-      const noise = ((i * 7) % 5) - 2; // deterministic small jitter
-      const val = Math.max(50, Math.min(99, Math.round(base + noise)));
-      months.push(i === 0 ? Math.round(cur) : val);
-    }
-    occChart.innerHTML = months.map((v,i) => {
-      const h = (v/100)*160;
-      const cls = i === months.length - 1 ? "" : "faint";
-      return `<div class="bar-col"><div class="bar ${cls}" style="height:${h}px"></div><div class="bar-label">${v}%</div></div>`;
-    }).join("");
-    occLabelsEl.innerHTML = labels.map(l => `<span>${l}</span>`).join("");
-  }
+  // 3. Occupancy trend chart: real history rebuilt from move-in / move-out dates (OCC-TREND-CORE)
+  renderOccTrend();
 
   // 4. By accommodation type donut
   // Count tenants per property type — more accurate than rooms
@@ -44375,9 +44443,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-18-payremind1"></script>
-<script src="extensions.js?v=2026-10-18-payremind1"></script>
-<script src="ap.js?v=2026-10-18-payremind1"></script>
-<script src="properties.js?v=2026-10-18-payremind1"></script>
+<script src="room-changes.js?v=2026-10-18-mobile3"></script>
+<script src="extensions.js?v=2026-10-18-mobile3"></script>
+<script src="ap.js?v=2026-10-18-mobile3"></script>
+<script src="properties.js?v=2026-10-18-mobile3"></script>
 </body>
 </html>
