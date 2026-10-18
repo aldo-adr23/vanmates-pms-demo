@@ -92,6 +92,8 @@ textarea.inp { width: 100%; resize: vertical; min-height: 70px; }
 .kpi .k-v.na { font-size: 14px; font-weight: 700; color: var(--muted); padding: 6px 0 4px; }
 .kpi .k-d { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kpi .k-s { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.kpi .k-p { display: inline-block; font-size: 11px; font-weight: 700; color: var(--b-amber); background: var(--amber-soft); padding: 2px 7px; border-radius: 7px; margin-top: 4px; }
+.kpi.partial .k-v { color: var(--muted); }
 .up { color: var(--b-green); } .down { color: var(--red); } .flat { color: var(--muted); }
 .info { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--line); background: var(--cream); color: var(--muted); font-size: 10px; font-weight: 800; display: inline-grid; place-items: center; padding: 0; flex: none; }
 .info:hover, .info:focus-visible { border-color: var(--red); color: var(--red); outline: 0; }
@@ -399,13 +401,14 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     bookings: ['Confirmed bookings', 'Closed deals (cancelled/refunded excluded) plus portal wins with no deal yet; each person-deal counted once.', 'Portal CRM (closed_deals + leads)'],
     revenue: ['Attributable revenue', 'Revenue of confirmed bookings in the period on the selected basis.', 'Portal CRM'],
     ad_spend: ['Ad spend', 'Spend reported by connected ad accounts.', 'Meta Marketing API'],
-    cost_per_lead: ['Cost per lead', 'Ad spend ÷ CRM leads attributed to paid social, same markets and period.', 'Computed'],
+    cost_per_lead: ['Cost per lead (blended)', 'All ad spend ÷ all CRM leads in the period, same markets (organic leads included). Below it: tagged campaigns only, and per Meta form lead.', 'Computed'],
   };
   function kpiTile(key, k, extra) {
     var def = KDEF[key] || [key, '', ''];
     var unit = k.unit === '%' ? '%' : '';
     var isMoney = key === 'revenue' || key === 'cost_per_lead' || key === 'ad_spend';
-    var val = !k.available ? '<div class="k-v na">Not available</div>' : '<div class="k-v">' + (isMoney ? esc(money(k.value, k.unit)) : esc(fmt(k.value)) + unit) + '</div>';
+    var mon = key === 'cost_per_lead' ? adMoney : function (n) { return money(n, k.unit); };
+    var val = !k.available ? '<div class="k-v na">Not available</div>' : '<div class="k-v">' + (isMoney ? esc(mon(k.value)) : esc(fmt(k.value)) + unit) + '</div>';
     var d = '';
     if (k.available && k.changePts !== null && k.changePts !== undefined) {
       // Rates: change in percentage points.
@@ -414,11 +417,13 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     } else if (k.available && k.change !== null && k.change !== undefined) {
       var cls = k.change > 0 ? 'up' : k.change < 0 ? 'down' : 'flat', arrow = k.change > 0 ? '▲' : k.change < 0 ? '▼' : '■';
       if (key === 'cost_per_lead') cls = k.change > 0 ? 'down' : k.change < 0 ? 'up' : 'flat';
-      d = '<span class="k-d ' + cls + '">' + arrow + ' ' + esc(fmt(Math.abs(k.change), 1)) + '%</span> <span class="muted small">vs ' + (isMoney ? esc(money(k.prev, k.unit)) : esc(fmt(k.prev)) + unit) + '</span>';
-    } else if (k.available && k.lowBase) d = '<span class="muted small"' + tip('Small base', ['The previous period was under 10, so a % change would mislead. Compare the values instead.']) + '>vs ' + (isMoney ? esc(money(k.prev, k.unit)) : esc(fmt(k.prev)) + unit) + ' (small base)</span>';
+      d = '<span class="k-d ' + cls + '">' + arrow + ' ' + esc(fmt(Math.abs(k.change), 1)) + '%</span> <span class="muted small">vs ' + (isMoney ? esc(mon(k.prev)) : esc(fmt(k.prev)) + unit) + '</span>';
+    } else if (k.available && k.lowBase) d = '<span class="muted small"' + tip('Not comparable', ['The previous period has only ' + fmt(k.prev) + ' in the portal (under 10), usually because history had not started yet. No comparison is shown.']) + '>previous period too small to compare</span>';
     else if (k.available && k.prev === null) d = '<span class="muted small">no previous-period data</span>';
-    var lines = [def[1], 'Source: ' + def[2], k.coverage ? 'Coverage: ' + k.coverage : '', k.unit && k.unit !== '%' ? 'Unit: ' + k.unit : '', k.note || ''];
-    return '<div class="card kpi"><div class="k-l">' + esc(def[0]) + '<button type="button" class="info" aria-label="About ' + esc(def[0]) + '"' + tip(def[0], lines) + '>i</button></div>' + val + '<div>' + d + '</div>' + (extra || '') + (!k.available && k.note ? '<div class="k-s">' + esc(k.note) + '</div>' : k.coverage ? '<div class="k-s">' + esc(k.coverage) + '</div>' : '') + '</div>';
+    var lines = [def[1], 'Source: ' + def[2], k.partial ? k.partial + ' — the value is not a full-period total.' : '', k.coverage ? 'Coverage: ' + k.coverage : '', k.unit && k.unit !== '%' ? 'Unit: ' + k.unit : '', k.note || ''];
+    if (k.available && k.sub && k.sub.length) extra = (extra || '') + k.sub.map(function (x) { return '<div class="k-s">' + esc(x.label) + ': <b>' + esc(mon(x.value)) + '</b> · ' + esc(x.detail) + '</div>'; }).join('');
+    if (k.available && k.partial) extra = '<div class="k-p">' + esc(k.partial) + '</div>' + (extra || '');
+    return '<div class="card kpi' + (k.available && k.partial ? ' partial' : '') + '"><div class="k-l">' + esc(def[0]) + '<button type="button" class="info" aria-label="About ' + esc(def[0]) + '"' + tip(def[0], lines) + '>i</button></div>' + val + '<div>' + d + '</div>' + (extra || '') + (!k.available && k.note ? '<div class="k-s">' + esc(k.note) + '</div>' : k.coverage ? '<div class="k-s">' + esc(k.coverage) + '</div>' : '') + '</div>';
   }
 
   // ------------------------------------------------------------- shell
