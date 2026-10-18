@@ -1691,6 +1691,91 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 .ml-bulk{position:sticky;bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--ink,#2b2620);color:#fff;border-radius:10px;padding:8px 12px;margin-top:14px}
 .ml-bulk select,.ml-bulk input{max-width:180px}
 .ml-grid td.num a{cursor:pointer;text-decoration:underline dotted}
+
+/* ---------- Mobile polish (2026-10-18) ----------
+   Phone layer only; nothing here applies above 880px. Three parts:
+   1. one sticky header row (menu · title · bell · avatar); country, currency and theme
+      move into the slide-out menu (JS: mobileTools),
+   2. table rows become cards at ≤640px (JS: mobileCards stamps data-label from <th>),
+   3. filters fold behind a "Filters" button (JS: mobileFilters), compact KPIs, 16px inputs
+      so iOS doesn't zoom on focus, bigger tap targets. */
+.m-tools,.m-filter-toggle{display:none}
+@media (max-width:880px){
+  .main{padding-top:0}
+  .topbar{position:sticky;top:0;z-index:45;display:flex;flex-wrap:nowrap;align-items:center;gap:8px;
+    margin:0 -16px 14px;padding:10px 16px;background:var(--cream);border-bottom:1px solid var(--line)}
+  .topbar > div:first-child{flex:1 1 auto;min-width:0;order:1}
+  .topbar .mobile-menu-btn{order:0;flex:none}
+  .topbar #notif-btn{order:2;flex:none;width:36px;height:36px;padding:0;display:grid;place-items:center}
+  .topbar #notif-btn .notif-badge{top:6px !important;right:7px !important}
+  .topbar .role-pill{order:3;flex:none;padding:3px;gap:0}
+  .topbar .role-pill .caret{display:none}
+  .topbar .role-pill .pill-avatar{width:28px;height:28px}
+  .topbar .role-pill #pill-name{display:none}
+  .topbar .topbar-spacer,.topbar .vmc-switch,.topbar .currency-pill,.topbar .theme-toggle{display:none}
+  .page-title{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .page-sub{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .m-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+  .m-tools .vmc-switch{display:inline-flex}
+  .m-tools .vmc-menu{left:0;right:auto}
+  .m-tools .vmc-btn .vmc-name{display:inline}
+  .sidebar{width:min(300px,86vw)}
+  .sidebar .nav-item{min-height:40px}
+  /* KPI tiles: a compact 2×2 strip instead of a screenful */
+  .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:8px;margin-bottom:14px}
+  .kpi{padding:10px 12px}
+  .kpi .kpi-deco,.kpi .kpi-arrow{display:none}
+  .kpi-label{font-size:10.5px;letter-spacing:.3px}
+  .kpi-value{font-size:22px !important;margin-top:2px}
+  .kpi-trend{font-size:11.5px;margin-top:2px;line-height:1.3}
+  /* long words (emails, links) wrap instead of pushing panels sideways */
+  .detail-panel .panel-body,.hb-panel{overflow-wrap:anywhere}
+  .detail-panel .panel-body{overflow-x:hidden}
+}
+@media (pointer:coarse){
+  ::-webkit-scrollbar{width:0;height:0}
+}
+@media (max-width:640px){
+  /* iOS zooms into any focused field under 16px */
+  .main input:not([type=checkbox]):not([type=radio]),.main select,.main textarea,
+  .detail-panel input:not([type=checkbox]):not([type=radio]),.detail-panel select,.detail-panel textarea,
+  .modal-dialog input:not([type=checkbox]):not([type=radio]),.modal-dialog select,.modal-dialog textarea{font-size:16px}
+  .main .btn{min-height:36px}
+  .card-head{flex-wrap:wrap}
+  .main input[type=checkbox]{width:20px;height:20px}
+
+  /* Table rows as cards */
+  .main table.m-cards{display:block !important;min-width:0 !important;width:100% !important;white-space:normal !important;border:0}
+  .main table.m-cards thead{display:none !important}
+  .main table.m-cards tbody,.main table.m-cards tfoot{display:block !important}
+  .main table.m-cards tr{display:block;position:relative;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .main table.m-cards tr:last-child{border-bottom:0}
+  .main table.m-cards td{display:block;padding:3px 0 !important;border:0 !important;text-align:right !important;
+    white-space:normal !important;min-width:0 !important;max-width:none !important;width:auto !important;font-size:13.5px;overflow:hidden}
+  .main table.m-cards td::before{content:attr(data-label);float:left;margin-right:12px;max-width:45%;text-align:left;
+    color:var(--muted);font-size:12px;font-weight:600}
+  .main table.m-cards td[data-label=""]::before{display:none}
+  .main table.m-cards td.m-primary{text-align:left !important;font-size:15px;font-weight:600;padding:0 0 6px !important}
+  .main table.m-cards td.m-primary::before{display:none}
+  .main table.m-cards tr.m-has-check td.m-primary{padding-right:34px !important}
+  .main table.m-cards td.m-check{position:absolute;top:12px;right:12px;padding:0 !important}
+  .main table.m-cards td.m-blank{display:none}
+  .main table.m-cards td.m-full{text-align:left !important}
+  .main table.m-cards td.m-full::before{display:none}
+  .main table.m-cards td.m-acts{padding-top:8px !important}
+  .main table.m-cards td.m-acts > *{margin-left:4px}
+  .main table.m-cards td.m-acts > div{display:flex !important;flex-direction:row !important;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+
+  /* Filters fold away; search (and the main buttons) stay */
+  .m-filter-toggle{display:inline-flex;align-items:center;gap:6px}
+  .m-filter-toggle[aria-expanded="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+  .m-filter-toggle .m-n{background:var(--red);color:#fff;border-radius:99px;font-size:11px;padding:0 6px;line-height:17px}
+  .m-folds:not(.m-open) > select,.m-folds:not(.m-open) > input[type=date],
+  .m-folds:not(.m-open) > .m-fold{display:none !important}
+  .m-folds{display:flex !important;flex-wrap:wrap;gap:8px}
+  .m-folds > input[type=search],.m-folds > input[type=text],.m-folds > .filter-search,.m-folds > .tn-search{flex:1 1 100% !important;max-width:none !important;min-width:0 !important}
+  .m-folds.m-open > select{flex:1 1 calc(50% - 4px) !important;min-width:0 !important;max-width:none !important;width:auto !important}
+}
 </style>
 <!-- ============ Auth gate — runs before body renders ============
      Redirects unauthenticated visitors to signin.html. -->
@@ -1729,7 +1814,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-17-mana1"></script>
+<script src="pms-supabase.js?v=2026-10-18-mobile1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -3725,10 +3810,10 @@ hello@vanmates.com · vanmates.com</textarea>
 
       <div id="hh-hosts-pane">
       <div class="kpi-grid">
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Total hosts</div><div class="kpi-value">6</div><div class="kpi-trend up">▲ 2 added in Q1</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Total capacity</div><div class="kpi-value" id="hh-kpi-capacity">14<span style="font-size:18px;color:var(--muted)"> guests</span></div><div class="kpi-trend up" id="hh-kpi-occupancy">11/14 currently filled · 79%</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Cities covered</div><div class="kpi-value">4</div><div class="kpi-trend up">Toronto · Montréal · Vancouver · Québec</div></div>
-        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Avg. host rating</div><div class="kpi-value">4.78<span style="font-size:18px;color:var(--muted)"> ★</span></div><div class="kpi-trend up">across 224 reviews</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Total hosts</div><div class="kpi-value" id="hh-kpi-hosts">—</div><div class="kpi-trend up" id="hh-kpi-hosting">&nbsp;</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Total capacity</div><div class="kpi-value" id="hh-kpi-capacity">—</div><div class="kpi-trend up" id="hh-kpi-occupancy">&nbsp;</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Cities covered</div><div class="kpi-value" id="hh-kpi-cities">—</div><div class="kpi-trend up" id="hh-kpi-citylist">&nbsp;</div></div>
+        <div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">Free beds now</div><div class="kpi-value" id="hh-kpi-free">—</div><div class="kpi-trend up" id="hh-kpi-freehosts">&nbsp;</div></div>
       </div>
 
       <!-- Filter bar -->
@@ -6902,11 +6987,13 @@ function lc(v){ return v==null ? "" : String(v).toLowerCase(); }
 function safeHref(u){ const s = String(u==null?"":u).trim(); return /^(https?:|mailto:|tel:|\/|#|\.)/i.test(s) ? s : "#"; }
 
 /* ============ TENANTS FILTERING ENGINE ============ */
-const TODAY = new Date("2026-04-25");
-/* Homestay pages run on the REAL clock, not the portal's frozen TODAY.
-   TODAY is a demo constant driving 46 call sites across tenants, landlords,
-   vacancies and deposits, and moving all of them is a separate decision.
-   Homestay is different: it is joined to live Stripe data, where a booking
+/* TODAY was a frozen demo date ("2026-04-25") until 2026-10-18; the Dashboard (date line,
+   12-month trend, expiring leases) and lease-end notifications still read it and were
+   six months stale. Now the real local date, kept at UTC midnight like the old constant
+   so the getUTC* readers and daysBetween() behave as before. */
+const TODAY = (() => { const n = new Date(); return new Date(Date.UTC(n.getFullYear(), n.getMonth(), n.getDate())); })();
+/* Homestay pages run on the REAL clock via homestayToday() (local midnight).
+   Homestay is joined to live Stripe data, where a booking
    dated 2026-08-07 is real money that a page pinned to April cannot see.
    Local midnight, matching parseLocalDate() — TODAY is UTC midnight and the
    mismatch costs a day at the edges. */
@@ -14293,6 +14380,30 @@ function hostPhotoSvg(h){
   `;
 }
 
+/* Hosts KPI row: was hard-coded demo text (6 hosts, 14 guests, 4.78★ "across 224 reviews")
+   until 2026-10-18. Ratings are a 4.7 default on almost every host, so the fourth tile is
+   free beds instead. "Staying now" = an active client, same as the per-host cards below. */
+function renderHostKpis(){
+  const set = (id, html) => { const el = document.getElementById(id); if(el) el.innerHTML = html; };
+  const unit = (t) => `<span style="font-size:18px;color:var(--muted)"> ${t}</span>`;
+  const staying = {};
+  homestayClients.forEach(c => { if(c.hostId && c.status === "active") staying[c.hostId] = (staying[c.hostId] || 0) + 1; });
+  const cap = homestayHosts.reduce((s, h) => s + (Number(h.capacity) || 0), 0);
+  const guests = homestayHosts.reduce((s, h) => s + (staying[h.id] || 0), 0);
+  const hosting = homestayHosts.filter(h => staying[h.id]).length;
+  const withRoom = homestayHosts.filter(h => (Number(h.capacity) || 0) > (staying[h.id] || 0));
+  const cities = {};
+  homestayHosts.forEach(h => { if(h.city) cities[h.city] = (cities[h.city] || 0) + 1; });
+  const cityList = Object.entries(cities).sort((a, b) => b[1] - a[1]);
+  set("hh-kpi-hosts", String(homestayHosts.length));
+  set("hh-kpi-hosting", `${hosting} hosting a student now`);
+  set("hh-kpi-capacity", cap + unit("guests"));
+  set("hh-kpi-occupancy", `${guests}/${cap} currently filled · ${cap ? Math.round(guests / cap * 100) : 0}%`);
+  set("hh-kpi-cities", String(cityList.length));
+  set("hh-kpi-citylist", cityList.map(([c, n]) => `${esc(c)} ${n}`).join(" · ") || "&nbsp;");
+  set("hh-kpi-free", String(Math.max(0, cap - guests)) + unit("beds"));
+  set("hh-kpi-freehosts", `across ${withRoom.length} host${withRoom.length === 1 ? "" : "s"} with room`);
+}
 function renderHomestayHosts(){
   const grid = document.getElementById("hh-grid");
   if(!grid) return;
@@ -14311,6 +14422,7 @@ function renderHomestayHosts(){
 
   document.getElementById("hh-count").textContent = list.length;
   document.getElementById("hh-total").textContent = homestayHosts.length;
+  renderHostKpis();
   renderPayoutSummary();
 
   if(list.length === 0){
@@ -16627,6 +16739,104 @@ document.querySelectorAll(".nav-item[data-view]").forEach(b => {
     }
   });
 });
+
+/* === MOBILE POLISH (2026-10-18) === see the "Mobile polish" CSS block.
+   Phone widths only; above them every node goes back where it was. */
+(function mobilePolish(){
+  const phone = matchMedia("(max-width:640px)"), narrow = matchMedia("(max-width:880px)");
+  const main = document.querySelector(".main");
+  if(!main) return;
+  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+
+  // 1. Country, currency and theme ride in the slide-out menu, so the header is one row.
+  const brand = document.querySelector(".sidebar .brand"), home = document.getElementById("notif-btn");
+  const tools = document.createElement("div");
+  tools.className = "m-tools";
+  if(brand && home){
+    brand.after(tools);
+    const placeTools = () => ["vmc-switch", "currency-toggle", "theme-toggle"].forEach((id) => {
+      const el = document.getElementById(id);
+      if(el) narrow.matches ? tools.appendChild(el) : home.before(el);
+    });
+    narrow.addEventListener("change", placeTools);
+    placeTools();
+  }
+
+  // 2. Table rows as cards: each cell gets its column name, the first named column is the
+  //    card title, a bare checkbox floats top-right, blank cells drop out.
+  function stamp(table){
+    if(table.closest('[data-view="partner-inventory"], .m-keep')) return;
+    const head = table.tHead && table.tHead.rows[table.tHead.rows.length - 1];
+    if(!head) return;
+    const names = [];
+    for(const th of head.cells) for(let i = 0; i < (th.colSpan || 1); i++) names.push(clean(th.textContent));
+    if(names.filter(Boolean).length < 3) return;
+    table.classList.add("m-cards");
+    const primary = names.findIndex(Boolean);
+    for(const body of table.tBodies) for(const tr of body.rows){
+      let col = 0, hasCheck = false;
+      for(const td of tr.cells){
+        const span = td.colSpan || 1;
+        const full = tr.cells.length === 1 || span >= Math.max(2, names.length - 1);
+        const label = full ? "" : (names[col] || "");
+        if(td.dataset.label !== label) td.dataset.label = label;
+        const txt = clean(td.textContent);
+        const ctl = !!td.querySelector("input,select,button,a,img,svg,textarea");
+        const check = !label && !full && !txt && !!td.querySelector("input[type=checkbox]");
+        if(check) hasCheck = true;
+        td.classList.toggle("m-full", full);
+        td.classList.toggle("m-primary", !full && col === primary);
+        td.classList.toggle("m-check", check);
+        td.classList.toggle("m-acts", !label && !full && !check && ctl);
+        td.classList.toggle("m-blank", !full && col !== primary && !ctl && (txt === "" || txt === "—" || txt === "-"));
+        col += span;
+      }
+      tr.classList.toggle("m-has-check", hasCheck);
+    }
+  }
+
+  // 3. Filter bars with 2+ dropdowns fold behind a "Filters" button (with a count of the
+  //    ones set); search stays in view.
+  function countSet(bar){
+    const isSort = (s) => /sort/i.test(s.id) || /^sort/i.test(clean(s.options[0] && s.options[0].text));
+    const n = [...bar.querySelectorAll(":scope > select")].filter((s) => s.selectedIndex > 0 && !isSort(s)).length +
+      [...bar.querySelectorAll(":scope > input[type=date]")].filter((i) => i.value).length;
+    const badge = bar.querySelector(":scope > .m-filter-toggle .m-n");
+    if(badge){ badge.hidden = !n; badge.textContent = n; }
+  }
+  function fold(bar){
+    if(bar.dataset.mFold){ countSet(bar); return; }
+    if(bar.querySelectorAll(":scope > select, :scope > input[type=date]").length < 2) return;
+    bar.dataset.mFold = "1";
+    bar.classList.add("m-folds");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-ghost m-filter-toggle";
+    btn.innerHTML = 'Filters <span class="m-n" hidden></span>';
+    btn.setAttribute("aria-expanded", "false");
+    btn.addEventListener("click", () => btn.setAttribute("aria-expanded", bar.classList.toggle("m-open")));
+    const search = bar.querySelector(":scope > input[type=search], :scope > input[type=text], :scope > .filter-search, :scope > .tn-search");
+    search ? search.after(btn) : bar.prepend(btn);
+    bar.addEventListener("change", () => countSet(bar));
+    countSet(bar);
+  }
+
+  let queued = false;
+  function run(){
+    queued = false;
+    if(!phone.matches) return;
+    main.querySelectorAll(".view.active table").forEach(stamp);
+    main.querySelectorAll(".view .filter-bar, .view .tn-tools").forEach(fold);
+  }
+  const queue = () => { if(!queued){ queued = true; requestAnimationFrame(run); } };
+  new MutationObserver(queue).observe(main, { childList: true, subtree: true });
+  document.addEventListener("click", queue);
+  phone.addEventListener("change", () => {
+    if(phone.matches) run();
+    else main.querySelectorAll("table.m-cards").forEach((t) => t.classList.remove("m-cards"));
+  });
+  run();
+})();
 
 /* === ENHANCED TOAST WITH UNDO === */
 let _toastTimer, _toastUndo;
@@ -19318,8 +19528,8 @@ function refreshDashboard(){
     const cur = occupancy;
     // Generate 12 months ending TODAY's month
     for(let i = 11; i >= 0; i--){
-      const d = new Date(TODAY); d.setMonth(d.getMonth() - i);
-      labels.push(MONTH_NAMES[d.getMonth()]);
+      const d = new Date(TODAY); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - i);
+      labels.push(MONTH_NAMES[d.getUTCMonth()]);
       // Linear ramp from cur-8 to cur with slight noise
       const base = cur - 8 + (8 * (11 - i)/11);
       const noise = ((i * 7) % 5) - 2; // deterministic small jitter
@@ -44015,9 +44225,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-17-mana1"></script>
-<script src="extensions.js?v=2026-10-17-mana1"></script>
-<script src="ap.js?v=2026-10-17-mana1"></script>
-<script src="properties.js?v=2026-10-17-mana1"></script>
+<script src="room-changes.js?v=2026-10-18-mobile1"></script>
+<script src="extensions.js?v=2026-10-18-mobile1"></script>
+<script src="ap.js?v=2026-10-18-mobile1"></script>
+<script src="properties.js?v=2026-10-18-mobile1"></script>
 </body>
 </html>
