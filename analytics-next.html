@@ -590,6 +590,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   }
   function channelTable(ch, cur) {
     if (!ch || !ch.length) return '<p class="note">No CRM activity in this period.</p>';
+    ch = ch.slice().sort(function (a, b) { return (b.leads - a.leads) || (b.bookings - a.bookings) || (b.sessions - a.sessions); });
     var max = Math.max.apply(null, ch.map(function (c) { return c.leads; }).concat([1]));
     return '<div class="tw"><table class="t"><thead><tr><th>Source</th><th class="n">Sessions</th><th>Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th>Evidence</th></tr></thead><tbody>' + ch.map(function (c) {
       var conf = c.confidence || {}, tot = c.leads || 1;
@@ -629,10 +630,12 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       return '<div class="card acct">' + (a.picture ? '<img src="' + esc(a.picture) + '" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">' : '<span class="ph"></span>') + '<div style="min-width:0;flex:1"><b>' + esc(a.name || a.handle) + '</b><small>' + esc(a.handle) + ' · ' + esc(UNIT[a.unit_id]) + ' · synced ' + esc(ago(a.last_sync_at)) + '</small></div><div style="text-align:right"><b>' + esc(fmt(a.followers)) + '</b><small>followers</small></div></div>';
     }).join('') + '</div>';
     var m = d.metrics;
+    var missing = Object.keys(MLABEL).filter(function (code) { return m[code] && !m[code].available; });
     h += '<div class="kpis">' + Object.keys(MLABEL).map(function (code) {
-      var x = m[code]; if (!x) return '';
+      var x = m[code]; if (!x || !x.available) return '';
       return kpiTile(code, x, '').replace('<div class="k-l">' + esc((KDEF[code] || [code])[0]), '<div class="k-l">' + esc(MLABEL[code]));
     }).join('') + '</div>';
+    if (missing.length) h += '<p class="note" style="margin:-4px 0 12px">Not available for ' + esc(PL[pl]) + ': ' + missing.map(function (c) { return '<span' + tip(MLABEL[c], [m[c].note || 'Not reported.']) + ' style="border-bottom:1px dotted var(--muted);cursor:help">' + esc(MLABEL[c]) + '</span>'; }).join(', ') + '.</p>';
     var folS = d.accounts.length > 1 ? d.followers.map(function (f, i) { return { name: d.accounts[i].handle || d.accounts[i].name, color: SERIES[i] || 'var(--muted)', values: f.series }; }) : [{ name: 'Followers', color: PCOL[pl], values: d.followers[0].series }];
     var avail = Object.keys(MLABEL).filter(function (c) { return m[c] && m[c].available && c !== 'posts_published'; });
     if (avail.indexOf(S.metric) < 0) S.metric = avail[0] || 'views';
@@ -688,9 +691,12 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var lw = wk.map(function () { return 0; }), qw = lw.slice(), bw = lw.slice();
     L.leads.forEach(function (l) { var i = weekIndex(wk, l.day); if (i >= 0) { lw[i]++; if (l.qualified) qw[i]++; } });
     (L.bookings || []).forEach(function (b) { var i = weekIndex(wk, b.day); if (i >= 0) bw[i]++; });
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Leads, qualified and bookings per week</h3><div class="sub">Week starting Monday · bookings are by close date (they can come from earlier leads)' + (S.leadCh ? ' · ' + esc(CH[S.leadCh]) + ' only' : '') + '</div></div></div>' +
+    var edge = []; if (wk.length && wk[0] < f.filters.from) edge.push(shortDay(wk[0])); if (wk.length && addDay(wk[wk.length - 1], 6) > f.filters.to) edge.push(shortDay(wk[wk.length - 1]));
+    h += '<div class="cols2" style="margin-top:12px"><div class="card pad"><div class="chead"><div><h3>Leads, qualified and bookings per week</h3><div class="sub">Week starting Monday · bookings by close date' + (edge.length ? ' · ' + esc(edge.join(' and ')) + ' week' + (edge.length > 1 ? 's are' : ' is') + ' only partly in the period' : '') + (S.leadCh ? ' · ' + esc(CH[S.leadCh]) + ' only' : '') + '</div></div></div>' +
       lineChart('cLeadWk', { days: wk, series: [{ name: 'Leads', color: 'var(--s1)', values: lw }, { name: 'Qualified', color: 'var(--s3)', values: qw }, { name: 'Bookings', color: 'var(--s2)', values: bw }], label: 'Leads per week' }) + '</div>';
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>By source</h3><div class="sub">Organic social, paid social, direct/unknown and other sources are kept separate. Platform reach is never summed as unique people.</div></div></div>' + channelTable(f.channels, f.currency) + '</div>';
+    var chs = (f.channels || []).filter(function (c) { return c.leads; }).sort(function (a, b) { return b.leads - a.leads; });
+    h += '<div class="card pad"><h3>Leads by source</h3><p class="note">' + (S.model === 'first' ? 'First-touch' : 'Last non-direct touch') + ' · all sources, this period</p>' + (chs.length ? bars(chs.map(function (c, i) { return { label: c.label, value: c.leads, color: i < 5 ? SERIES[i] : 'var(--muted)', sub: c.bookings ? c.bookings + ' booked' : '' }; })) : '<p class="note">No leads in this period.</p>') + '</div></div>';
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>By source — detail</h3><div class="sub">Organic social, paid social, direct/unknown and other sources are kept separate. Platform reach is never summed as unique people.</div></div></div>' + channelTable(f.channels, f.currency) + '</div>';
     // Lead drill-down
     h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Attributed leads</h3><div class="sub">Every lead with the rule and evidence used (no contact details shown here)</div></div><select class="sel" id="leadCh" aria-label="Filter by source"><option value="">All sources</option>' + Object.keys(CH).map(function (k) { return '<option value="' + k + '"' + (k === S.leadCh ? ' selected' : '') + '>' + esc(CH[k]) + '</option>'; }).join('') + '</select></div>';
     h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Source</th><th>Platform</th><th>Campaign</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td class="nw">' + esc(l.day) + '</td><td><code class="small id" title="' + esc(l.id) + '">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc(l.platform || '—') + '</td><td>' + esc(l.campaign || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
@@ -702,6 +708,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var out = []; while (d.toISOString().slice(0, 10) <= to) { out.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 7); }
     return out;
   }
+  function addDay(d, n) { var x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
   function weekIndex(weeks, day) { for (var i = weeks.length - 1; i >= 0; i--) if (day >= weeks[i]) return i; return -1; }
 
   async function viewCampaigns() {
@@ -714,7 +721,10 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     h += c.registered.length ? '<div class="tw"><table class="t"><thead><tr><th>Campaign</th><th>UTM id</th><th>Market</th><th>Objective</th><th>Dates</th><th class="n">Sessions</th><th class="n">Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th class="n">Spend</th><th class="n">CPL</th><th></th></tr></thead><tbody>' + c.registered.map(function (r) {
       var s = r.stats; return '<tr><td><b>' + esc(r.name) + '</b>' + (r.owner ? '<br><span class="muted small">' + esc(r.owner) + '</span>' : '') + '</td><td><code>' + esc(r.utm_campaign) + '</code></td><td>' + esc(r.unit_id) + '</td><td>' + esc(r.objective) + '</td><td class="small">' + esc((r.start_at || '…') + ' → ' + (r.end_at || '…')) + '</td><td class="n">' + fmt(s.sessions) + '</td><td class="n">' + fmt(s.leads) + '</td><td class="n">' + fmt(s.qualified) + '</td><td class="n">' + fmt(s.bookings) + '</td><td class="n">' + esc(money(s.revenue, f.currency)) + '</td><td class="n">' + (s.spend === null ? '<span class="na">no spend data</span>' : adMoney(s.spend)) + '</td><td class="n">' + (s.cpl === null ? '<span class="na">—</span>' : adMoney(s.cpl)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp="' + r.id + '">Edit</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>' : '<p class="note">No campaigns registered yet.</p>';
+    var unregAll = c.unregistered, unregQuiet = unregAll.filter(function (u) { return !u.leads && u.spend === null; }).length;
+    c = Object.assign({}, c, { unregistered: unregAll.filter(function (u) { return u.leads || u.spend !== null; }) });
     if (c.unregistered.length) h += '<h3 style="margin-top:14px">Campaign tags seen in your data but not registered</h3><div class="tw"><table class="t"><thead><tr><th>UTM / campaign</th><th class="n">Leads</th><th class="n">Sessions</th><th class="n">Spend</th><th></th></tr></thead><tbody>' + c.unregistered.map(function (u) { return '<tr><td><code>' + esc(u.utm) + '</code></td><td class="n">' + fmt(u.leads) + '</td><td class="n">' + fmt(u.sessions) + '</td><td class="n">' + (u.spend === null ? '—' : adMoney(u.spend)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp-new="' + esc(u.utm) + '">Register</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    if (unregQuiet) h += '<p class="note" style="margin-top:8px">' + unregQuiet + ' more tag' + (unregQuiet > 1 ? 's' : '') + ' seen only on website visits (no leads or spend) are hidden.</p>';
     h += '</div>';
     S.cache.campaigns = c.registered;
     return h;
