@@ -92,6 +92,12 @@ textarea.inp { width: 100%; resize: vertical; min-height: 70px; }
 .kpi .k-v.na { font-size: 14px; font-weight: 700; color: var(--muted); padding: 6px 0 4px; }
 .kpi .k-d { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kpi .k-s { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.sect { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 8px; flex-wrap: wrap; } .sect h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); } .sect .sub { font-size: 12px; color: var(--muted); }
+.linkbtn { border: 0; background: none; padding: 0; font-size: 12px; font-weight: 600; color: var(--red); cursor: pointer; white-space: nowrap; } .linkbtn:hover { text-decoration: underline; }
+.dnote { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--b-amber); background: var(--amber-soft); padding: 7px 12px; border-radius: 9px; margin-bottom: 12px; } .dnote span { flex: 1; min-width: 200px; }
+.covcell { display: flex; align-items: center; gap: 8px; } .covbar { flex: 1; min-width: 60px; height: 6px; border-radius: 3px; background: var(--cream-2); overflow: hidden; } .covbar i { display: block; height: 100%; }
+.dlist { margin: 0; padding-left: 18px; font-size: 12.5px; display: grid; gap: 5px; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 .kpi .k-p { display: inline-block; font-size: 11px; font-weight: 700; color: var(--b-amber); background: var(--amber-soft); padding: 2px 7px; border-radius: 7px; margin-top: 4px; }
 .kpi.partial .k-v { color: var(--muted); }
 .up { color: var(--b-green); } .down { color: var(--red); } .flat { color: var(--muted); }
@@ -184,12 +190,11 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   <span class="sp"></span>
   <nav class="tabs" id="tabs" aria-label="Sections">
     <button type="button" class="tab on" data-tab="overview">Overview</button>
-    <button type="button" class="tab" data-tab="instagram"><span class="dot" style="background:var(--p-instagram)"></span>Instagram</button>
-    <button type="button" class="tab" data-tab="facebook"><span class="dot" style="background:var(--p-facebook)"></span>Facebook</button>
-    <button type="button" class="tab" data-tab="threads"><span class="dot" style="background:var(--p-threads)"></span>Threads</button>
-    <button type="button" class="tab" data-tab="tiktok"><span class="dot" style="background:var(--p-tiktok)"></span>TikTok</button>
-    <button type="button" class="tab" data-tab="campaigns">Campaigns &amp; attribution</button>
+    <button type="button" class="tab" data-tab="leads">Leads</button>
+    <button type="button" class="tab" data-tab="social">Social</button>
+    <button type="button" class="tab" data-tab="campaigns">Paid &amp; campaigns</button>
     <button type="button" class="tab" data-tab="goals">Goals</button>
+    <button type="button" class="tab" data-tab="data">Data</button>
     <button type="button" class="tab" data-tab="ask">Ask AI</button>
     <button type="button" class="tab" data-tab="settings">Settings</button>
   </nav>
@@ -245,7 +250,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   var PCOL = { instagram: 'var(--p-instagram)', facebook: 'var(--p-facebook)', threads: 'var(--p-threads)', tiktok: 'var(--p-tiktok)', meta_ads: 'var(--s2)' };
   var UNIT = { CA: 'Canada', MX: 'Mexico', ALL: 'All markets' };
   var ROLE = { super_admin: 'Super Admin', marketing_admin: 'Marketing Admin', analyst: 'Marketing Analyst', executive: 'Read-only Executive' };
-  var S = { me: null, tab: 'overview', unit: null, days: '30', from: '', to: '', basis: 'fee', model: 'last', sort: 'published', offset: 0, metric: 'views', leadCh: '', goalPeriod: '', cache: {} };
+  var S = { me: null, tab: 'overview', unit: null, days: '30', from: '', to: '', basis: 'fee', model: 'last', sort: 'published', offset: 0, metric: 'views', leadCh: '', platform: 'instagram', goalPeriod: '', cache: {} };
   try { var saved = JSON.parse(localStorage.getItem('vm-analytics') || '{}'); ['unit', 'days', 'from', 'to', 'basis', 'model'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); } catch (e) {}
 
   function $(id) { return document.getElementById(id); }
@@ -407,7 +412,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var def = KDEF[key] || [key, '', ''];
     var unit = k.unit === '%' ? '%' : '';
     var isMoney = key === 'revenue' || key === 'cost_per_lead' || key === 'ad_spend';
-    var mon = key === 'cost_per_lead' ? adMoney : function (n) { return money(n, k.unit); };
+    var mon = key === 'cost_per_lead' || key === 'ad_spend' ? adMoney : function (n) { return money(n, k.unit); };
     var val = !k.available ? '<div class="k-v na">Not available</div>' : '<div class="k-v">' + (isMoney ? esc(mon(k.value)) : esc(fmt(k.value)) + unit) + '</div>';
     var d = '';
     if (k.available && k.changePts !== null && k.changePts !== undefined) {
@@ -427,16 +432,20 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   }
 
   // ------------------------------------------------------------- shell
+  var TABS = ['overview', 'leads', 'social', 'campaigns', 'goals', 'data', 'ask', 'settings'];
   function setTab(t, push) {
+    // Old links (#instagram, #facebook, …) open the Social tab on that platform.
+    if (PL[t] && t !== 'meta_ads') { S.platform = t; S.offset = 0; t = 'social'; }
+    if (TABS.indexOf(t) < 0) t = 'overview';
     S.tab = t;
     document.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === t); });
     if (push !== false) history.replaceState(null, '', '#' + t);
     $('filters').hidden = t === 'settings';
-    $('modelSel').hidden = !(t === 'campaigns' || t === 'ask' || t === 'overview');
+    $('modelSel').hidden = !(t === 'leads' || t === 'ask' || t === 'overview' || t === 'data');
     render();
   }
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest('.tab'); if (b) setTab(b.dataset.tab); });
-  window.addEventListener('hashchange', function () { var t = (location.hash || '#overview').slice(1).split('?')[0]; if (S.me && t !== S.tab && document.querySelector('.tab[data-tab="' + t + '"]')) setTab(t, false); });
+  window.addEventListener('hashchange', function () { var t = (location.hash || '#overview').slice(1).split('?')[0]; if (S.me && t !== S.tab && (TABS.indexOf(t) >= 0 || PL[t])) setTab(t, false); });
   $('rangeChips').addEventListener('click', function (e) {
     var b = e.target.closest('.chip'); if (!b) return;
     S.days = b.dataset.days; syncFilters(); persist(); if (S.days !== 'custom' || (S.from && S.to)) render();
@@ -448,13 +457,13 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   $('unitChips').addEventListener('click', function (e) { var b = e.target.closest('.chip'); if (!b) return; S.unit = b.dataset.unit; syncFilters(); persist(); render(); loadAlerts(); });
   $('pdfBtn').addEventListener('click', function () { $('printHead').textContent = 'Vanmates marketing analytics · ' + UNIT[S.unit] + ' · ' + $('periodLbl').textContent + ' · printed ' + new Date().toLocaleString('en-CA') + ' by ' + S.me.email; window.print(); });
   $('exportBtn').addEventListener('click', async function () {
-    var view = { overview: 'overview', instagram: 'posts', facebook: 'posts', threads: 'posts', tiktok: 'posts', campaigns: 'channels', goals: 'overview', ask: 'overview' }[S.tab] || 'overview';
-    var extra = PL[S.tab] ? { view: view, platform: S.tab } : { view: view };
+    var view = { overview: 'overview', social: 'posts', leads: 'channels', campaigns: 'channels', goals: 'overview', data: 'overview', ask: 'overview' }[S.tab] || 'overview';
+    var extra = S.tab === 'social' ? { view: view, platform: S.platform } : { view: view };
     try {
       var r = await api('/export' + qs(extra), { raw: true });
       var blob = await r.blob(), cd = r.headers.get('content-disposition') || '', m = /filename="([^"]+)"/.exec(cd);
       var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = m ? m[1] : 'vanmates-analytics.csv'; document.body.appendChild(a); a.click(); a.remove();
-      if (S.tab === 'campaigns') setTimeout(async function () { var r2 = await api('/export' + qs({ view: 'leads' }), { raw: true }); var b2 = await r2.blob(); var a2 = document.createElement('a'); a2.href = URL.createObjectURL(b2); a2.download = 'vanmates-attributed-leads-' + S.unit + '.csv'; document.body.appendChild(a2); a2.click(); a2.remove(); }, 400);
+      if (S.tab === 'leads') setTimeout(async function () { var r2 = await api('/export' + qs({ view: 'leads' }), { raw: true }); var b2 = await r2.blob(); var a2 = document.createElement('a'); a2.href = URL.createObjectURL(b2); a2.download = 'vanmates-attributed-leads-' + S.unit + '.csv'; document.body.appendChild(a2); a2.click(); a2.remove(); }, 400);
       toast('Export downloaded (same filters as the screen).');
     } catch (err) { toast(err.message); }
   });
@@ -486,8 +495,10 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     try {
       var html = '';
       if (S.tab === 'overview') html = await viewOverview();
-      else if (PL[S.tab]) html = await viewPlatform(S.tab);
+      else if (S.tab === 'social') html = await viewSocial();
+      else if (S.tab === 'leads') html = await viewLeads();
       else if (S.tab === 'campaigns') html = await viewCampaigns();
+      else if (S.tab === 'data') html = await viewData();
       else if (S.tab === 'goals') html = await viewGoals();
       else if (S.tab === 'ask') html = viewAsk();
       else if (S.tab === 'settings') html = await viewSettings();
@@ -498,34 +509,79 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   }
 
   // ------------------------------------------------------------- Overview
+  function section(title, sub, action) {
+    return '<div class="sect"><h3>' + esc(title) + '</h3>' + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '<span class="sp"></span>' + (action || '') + '</div>';
+  }
   async function viewOverview() {
     var o = await api('/overview' + qs());
     periodLabel(o.filters);
     var k = o.kpis, cur = o.currency;
     var h = '';
-    if (o.warnings.length) h += '<ul class="warns">' + o.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
     var noSocial = !o.health.length;
     if (noSocial) h += '<div class="banner info2"><b>Social accounts not connected yet.</b><span>CRM, website and attribution numbers below are live. Connect Instagram, Facebook, Threads and TikTok in Settings to fill the social metrics.</span><span class="sp"></span>' + (S.me.can.manageConnections ? '<button type="button" class="btn btn-primary btn-sm" data-go="settings">Connect accounts</button>' : '') + '</div>';
-    h += '<div class="kpis">' + ['followers', 'net_followers', 'views', 'reach', 'engagement_actions', 'engagement_rate', 'posts_published', 'sessions', 'leads', 'qualified', 'bookings', 'revenue', 'cost_per_lead'].map(function (key) {
-      var kk = k[key]; if (key === 'revenue') kk = Object.assign({}, kk, { unit: cur });
-      return kpiTile(key, kk);
-    }).join('') + '</div>';
-    var days = o.series.days, fb = o.series.followersByPlatform;
-    var folSeries = Object.keys(fb).map(function (p) { return { name: PL[p], color: PCOL[p], values: fb[p] }; });
+    // Data caveats live on the Data tab; here one quiet line says whether any apply.
+    var partial = Object.keys(k).filter(function (x) { return k[x] && k[x].available && k[x].partial; }).length;
+    if (partial || o.warnings.length) h += '<div class="dnote"><span>' + (partial ? partial + ' number' + (partial > 1 ? 's' : '') + ' below cover only part of this period (marked in amber)' : 'All numbers cover the full period') + (o.warnings.length ? ' · ' + o.warnings.length + ' data note' + (o.warnings.length > 1 ? 's' : '') : '') + '.</span><button type="button" class="linkbtn" data-go="data">See data coverage →</button></div>';
+    var tiles = function (keys) { return '<div class="kpis">' + keys.map(function (key) { var kk = k[key]; if (key === 'revenue') kk = Object.assign({}, kk, { unit: cur }); return kpiTile(key, kk); }).join('') + '</div>'; };
+    h += section('Pipeline', 'Website → leads → bookings · portal CRM, live', '<button type="button" class="linkbtn" data-go="leads">Leads detail →</button>');
+    h += tiles(['sessions', 'leads', 'qualified', 'bookings', 'revenue', 'cost_per_lead']);
+    var plats = []; o.health.forEach(function (a) { if (plats.indexOf(PL[a.platform]) < 0) plats.push(PL[a.platform]); });
+    var aud = ['followers', 'views', 'reach', 'engagement_actions', 'engagement_rate', 'posts_published'];
+    if (k.net_followers && k.net_followers.available) aud.splice(1, 0, 'net_followers');
+    h += section('Audience', plats.length ? plats.join(' + ') + ' · refreshed daily' : '', '<button type="button" class="linkbtn" data-go="social">Social detail →</button>');
+    h += tiles(aud);
+    var days = o.series.days;
     h += '<div class="cols2">';
-    h += '<div class="card pad"><div class="chead"><div><h3>Followers by platform</h3><div class="sub">Daily snapshot · not unique people</div></div></div>' + (folSeries.length ? lineChart('cFol', { days: days, series: folSeries, zero: false, label: 'Followers by platform' }) : '<div class="empty small">Connect accounts to start the follower history.</div>') + '</div>';
     h += '<div class="card pad"><div class="chead"><div><h3>Leads and confirmed bookings</h3><div class="sub">Portal CRM · per day</div></div></div>' + (o.series.leadsDaily ? lineChart('cLead', { days: days, series: [{ name: 'Leads', color: 'var(--s1)', values: o.series.leadsDaily }, { name: 'Bookings', color: 'var(--s2)', values: o.series.bookingsDaily }], label: 'Leads and bookings per day' }) : '<div class="empty small">CRM not available.</div>') + '</div>';
-    h += '<div class="card pad"><div class="chead"><div><h3>Daily engagement actions</h3><div class="sub">Likes, comments, shares, saves where reported</div></div></div>' + lineChart('cEng', { days: days, series: [{ name: 'Engagement', color: 'var(--s1)', values: o.series.engagementDaily }], label: 'Engagement per day' }) + '</div>';
     h += '<div class="card pad"><div class="chead"><div><h3>Daily views</h3><div class="sub">Views as each platform defines them</div></div></div>' + lineChart('cViews', { days: days, series: [{ name: 'Views', color: 'var(--s1)', values: o.series.viewsDaily }], label: 'Views per day' }) + '</div>';
     h += '</div>';
-    // Channel breakdown
-    h += '<div class="cols3" style="margin-top:12px"><div class="card pad"><div class="chead"><div><h3>Leads, bookings and revenue by source</h3><div class="sub">' + (S.model === 'first' ? 'First-touch' : 'Last non-direct touch') + ' attribution · organic and paid shown separately</div></div><button type="button" class="btn btn-ghost btn-sm" data-go="campaigns">Attribution detail</button></div>';
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Where leads and bookings come from</h3><div class="sub">' + (S.model === 'first' ? 'First-touch' : 'Last non-direct touch') + ' attribution · organic and paid shown separately</div></div><button type="button" class="linkbtn" data-go="data">How sources are decided →</button></div>';
     h += channelTable(o.channels, cur) + '</div>';
-    h += '<div class="card pad"><h3>Integration health</h3>' + (o.health.length ? o.health.map(function (a) {
-      return '<div class="acct" style="padding:6px 0"><span class="pdot" style="background:' + PCOL[a.platform] + '"></span><div style="min-width:0;flex:1"><b>' + esc(a.name) + '</b><small>' + esc(PL[a.platform]) + ' · synced ' + esc(ago(a.last_sync_at)) + '</small></div>' + statusPill(a.status, a.last_error) + '</div>';
-    }).join('') : '<p class="note">No social accounts connected.</p>') + '<p class="note" style="margin-top:8px">Social data refreshes daily; CRM figures are live.</p></div></div>';
-    // Top content
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Top 10 content</h3><div class="sub">By engagement actions · published in the period</div></div></div>' + postsTableHtml(o.topContent, false) + '</div>';
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Top content</h3><div class="sub">By engagement actions · published in the period</div></div><button type="button" class="linkbtn" data-go="social">All posts →</button></div>' + postsTableHtml((o.topContent || []).slice(0, 5), false) + '</div>';
+    return h;
+  }
+
+  async function viewSocial() {
+    var h = '<div class="chips" role="group" aria-label="Platform" style="margin-bottom:12px">' + ['instagram', 'facebook', 'threads', 'tiktok'].map(function (p) {
+      return '<button type="button" class="chip' + (p === S.platform ? ' on' : '') + '" data-plat="' + p + '"><span class="dot" style="background:var(--p-' + p + ')"></span>' + esc(PL[p]) + '</button>';
+    }).join('') + '</div>';
+    return h + await viewPlatform(S.platform);
+  }
+  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-plat]'); if (b) { S.platform = b.getAttribute('data-plat'); S.offset = 0; S.metric = 'views'; render(); } });
+
+  async function viewData() {
+    var res = await Promise.all([api('/coverage' + qs()), api('/overview' + qs()), api('/funnel' + qs()).catch(function () { return null; })]);
+    var cv = res[0], o = res[1], f = res[2];
+    periodLabel(cv.filters);
+    var KIND = { crm: 'Portal CRM', website: 'Website', social: 'Social', ads: 'Meta Ads' };
+    var order = { crm: 0, website: 1, ads: 2, social: 3 };
+    var rows = cv.rows.slice().sort(function (a, b) { return order[a.kind] - order[b.kind] || a.name.localeCompare(b.name); });
+    var h = '<div class="card pad"><div class="chead"><div><h3>Data coverage</h3><div class="sub">Every source behind this dashboard, and how much of ' + esc(shortDay(cv.period.from)) + ' – ' + esc(shortDay(cv.period.to)) + ' (' + cv.period.days + ' days) it covers</div></div></div>';
+    h += '<div class="tw"><table class="t"><thead><tr><th>Source</th><th>Type</th><th>Market</th><th>Data from</th><th>Latest</th><th style="min-width:150px">This period</th><th>Status</th></tr></thead><tbody>' + rows.map(function (r) {
+      var share = r.periodDays ? r.daysInPeriod / r.periodDays : 0;
+      var col = share >= 1 ? 'var(--green)' : share > 0 ? 'var(--amber)' : 'var(--line)';
+      var cov = '<span class="covbar"><i style="width:' + (share * 100).toFixed(1) + '%;background:' + col + '"></i></span><span class="small' + (share >= 1 ? '' : ' muted') + '">' + (share >= 1 ? 'Full' : r.daysInPeriod + ' of ' + r.periodDays + ' days') + '</span>';
+      var status = r.kind === 'crm' ? '<span class="pill ok">✓ Live</span>' : r.kind === 'website' ? (r.status === 'active' ? '<span class="pill ok">✓ Tracking</span>' : '<span class="pill">Waiting</span>') : statusPill(r.status, r.lastError);
+      return '<tr><td><b>' + (r.platform ? '<span class="pdot" style="background:' + PCOL[r.platform] + '"></span> ' : '') + esc(r.name) + '</b><br><span class="muted small">' + esc(r.note) + (r.lastSync ? ' Synced ' + esc(ago(r.lastSync)) + '.' : '') + '</span></td><td>' + esc(KIND[r.kind]) + '</td><td>' + esc(r.unit) + '</td><td class="nw">' + (r.firstDay ? esc(shortDay(r.firstDay)) + ' <span class="muted small">' + esc(r.firstDay.slice(0, 4)) + '</span>' : '<span class="na">—</span>') + '</td><td class="nw">' + (r.lastDay ? esc(shortDay(r.lastDay)) : '<span class="na">—</span>') + '</td><td><span class="covcell">' + cov + '</span></td><td>' + status + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+    if (cv.silentAdAccounts) h += '<p class="note" style="margin-top:8px">' + cv.silentAdAccounts + ' other Meta ad account' + (cv.silentAdAccounts > 1 ? 's' : '') + ' (read-only or agency) never reported spend and are hidden.</p>';
+    h += '</div>';
+    // Caveats: KPI-level partial coverage + overview warnings.
+    var notes = [];
+    Object.keys(o.kpis).forEach(function (key) { var x = o.kpis[key]; if (x && x.available && x.partial) notes.push('<b>' + esc((KDEF[key] || [key])[0]) + ':</b> ' + esc(x.partial) + '.'); });
+    o.warnings.forEach(function (w) { notes.push(esc(w)); });
+    h += '<div class="cols2" style="margin-top:12px"><div class="card pad"><h3>Data notes for this period</h3>' + (notes.length ? '<ul class="dlist">' + notes.map(function (n) { return '<li>' + n + '</li>'; }).join('') + '</ul>' : '<p class="note">Every number covers the full period.</p>') +
+      '<p class="note" style="margin-top:8px">Comparisons with the previous period are shown only when that period is fully covered and big enough (10+), so a new data source never looks like growth.</p></div>';
+    if (f) {
+      var conf = f.confidence, tot = (conf.tracked + conf.referrer + conf.crm_source + conf.unknown) || 1;
+      h += '<div class="card pad"><h3>Attribution evidence</h3><p class="note">How each lead’s source was decided (tagged UTM/ad data → referrer → CRM source field → unknown).</p>' + bars([
+        { label: 'Tracked (UTM / ad data)', value: conf.tracked, color: 'var(--ord1)' }, { label: 'Referrer only', value: conf.referrer, color: 'var(--ord2)' },
+        { label: 'CRM source field', value: conf.crm_source, color: 'var(--ord3)' }, { label: 'No evidence', value: conf.unknown, color: 'var(--ord4)' }]) +
+        '<p class="note" style="margin-top:8px">' + Math.round((conf.tracked + conf.referrer) / tot * 100) + '% of leads have a tracked path. Bookings: ' + f.bookingMatch['deal+lead'] + ' deal matched to a lead, ' + f.bookingMatch.lead_won + ' portal wins without a deal yet, ' + f.bookingMatch.deal_only + ' deals without a portal lead.</p></div>';
+    } else h += '<div class="card pad"><h3>Attribution evidence</h3><p class="note">CRM data could not be loaded for your login.</p></div>';
+    h += '</div>';
+    // Definitions
+    h += '<div class="card pad" style="margin-top:12px"><h3>Definitions</h3><div class="tw"><table class="t"><thead><tr><th>Metric</th><th>What it counts</th><th>Source</th></tr></thead><tbody>' + Object.keys(KDEF).map(function (key) { var d = KDEF[key]; return '<tr><td class="nw"><b>' + esc(d[0]) + '</b></td><td class="small">' + esc(d[1]) + '</td><td class="small muted">' + esc(d[2]) + '</td></tr>'; }).join('') + '</tbody></table></div></div>';
     return h;
   }
   function statusPill(s, err) {
@@ -534,6 +590,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   }
   function channelTable(ch, cur) {
     if (!ch || !ch.length) return '<p class="note">No CRM activity in this period.</p>';
+    ch = ch.slice().sort(function (a, b) { return (b.leads - a.leads) || (b.bookings - a.bookings) || (b.sessions - a.sessions); });
     var max = Math.max.apply(null, ch.map(function (c) { return c.leads; }).concat([1]));
     return '<div class="tw"><table class="t"><thead><tr><th>Source</th><th class="n">Sessions</th><th>Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th>Evidence</th></tr></thead><tbody>' + ch.map(function (c) {
       var conf = c.confidence || {}, tot = c.leads || 1;
@@ -573,10 +630,12 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       return '<div class="card acct">' + (a.picture ? '<img src="' + esc(a.picture) + '" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">' : '<span class="ph"></span>') + '<div style="min-width:0;flex:1"><b>' + esc(a.name || a.handle) + '</b><small>' + esc(a.handle) + ' · ' + esc(UNIT[a.unit_id]) + ' · synced ' + esc(ago(a.last_sync_at)) + '</small></div><div style="text-align:right"><b>' + esc(fmt(a.followers)) + '</b><small>followers</small></div></div>';
     }).join('') + '</div>';
     var m = d.metrics;
+    var missing = Object.keys(MLABEL).filter(function (code) { return m[code] && !m[code].available; });
     h += '<div class="kpis">' + Object.keys(MLABEL).map(function (code) {
-      var x = m[code]; if (!x) return '';
+      var x = m[code]; if (!x || !x.available) return '';
       return kpiTile(code, x, '').replace('<div class="k-l">' + esc((KDEF[code] || [code])[0]), '<div class="k-l">' + esc(MLABEL[code]));
     }).join('') + '</div>';
+    if (missing.length) h += '<p class="note" style="margin:-4px 0 12px">Not available for ' + esc(PL[pl]) + ': ' + missing.map(function (c) { return '<span' + tip(MLABEL[c], [m[c].note || 'Not reported.']) + ' style="border-bottom:1px dotted var(--muted);cursor:help">' + esc(MLABEL[c]) + '</span>'; }).join(', ') + '.</p>';
     var folS = d.accounts.length > 1 ? d.followers.map(function (f, i) { return { name: d.accounts[i].handle || d.accounts[i].name, color: SERIES[i] || 'var(--muted)', values: f.series }; }) : [{ name: 'Followers', color: PCOL[pl], values: d.followers[0].series }];
     var avail = Object.keys(MLABEL).filter(function (c) { return m[c] && m[c].available && c !== 'posts_published'; });
     if (avail.indexOf(S.metric) < 0) S.metric = avail[0] || 'views';
@@ -606,11 +665,12 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
 
   // ------------------------------------------------------------- Campaigns & attribution
   var CH = { organic_social: 'Organic social', paid_social: 'Paid social', organic_search: 'Organic search', paid_search: 'Paid search', messaging: 'Messaging (LINE/WhatsApp)', email: 'Email', referral: 'Referral sites', partner: 'Partners / agencies', staff_created: 'Created by staff', direct: 'Direct', unknown: 'Unknown' };
-  async function viewCampaigns() {
-    var res = await Promise.all([api('/funnel' + qs()), api('/campaigns' + qs()), api('/leads' + qs({ channel: S.leadCh }))]);
-    var f = res[0], c = res[1], L = res[2];
+  async function viewLeads() {
+    var res = await Promise.all([api('/funnel' + qs()), api('/leads' + qs({ channel: S.leadCh }))]);
+    var f = res[0], L = res[1];
     periodLabel(f.filters);
-    var h = '<div class="cols3"><div class="card pad"><div class="chead"><div><h3>Funnel</h3><div class="sub">' + esc(UNIT[S.unit]) + ' · ' + (S.model === 'first' ? 'first touch' : 'last non-direct touch') + ' · ' + f.filters.lookbackDays + '-day lookback</div></div></div><div class="funnel">';
+    var h = '';
+    h += '<div class="cols3"><div class="card pad"><div class="chead"><div><h3>Funnel</h3><div class="sub">' + esc(UNIT[S.unit]) + ' · ' + (S.model === 'first' ? 'first touch' : 'last non-direct touch') + ' · ' + f.filters.lookbackDays + '-day lookback</div></div></div><div class="funnel">';
     var maxV = Math.max.apply(null, f.stages.slice(0, 4).map(function (s) { return s.value || 0; }).concat([1]));
     var colors = ['var(--ord1)', 'var(--ord2)', 'var(--ord3)', 'var(--ord4)'];
     f.stages.forEach(function (s, i) {
@@ -622,24 +682,51 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var co = f.cohort;
     h += '</div><div class="banner info2" style="margin:10px 0 0"><span><b>Cohort:</b> of the ' + fmt(co.leads) + ' leads created in this period, ' + fmt(co.booked) + ' have booked so far (' + (co.leadToBooking === null ? 'n/a' : fmt(co.leadToBooking, 1) + '%') + '); ' + (co.qualifiedToBooking === null ? '' : fmt(co.qualifiedToBooking, 1) + '% of the qualified ones. ') + 'Recent leads may still convert.</span></div>';
     h += '<p class="note" style="margin-top:10px">' + esc(f.note) + '</p></div>';
-    var conf = f.confidence, tot = (conf.tracked + conf.referrer + conf.crm_source + conf.unknown) || 1;
-    h += '<div class="card pad"><h3>Attribution confidence</h3><p class="note">How each lead’s source was decided (source hierarchy: tagged UTM/ad data → referrer → CRM source field → unknown).</p>' + bars([
-      { label: 'Tracked (UTM / ad data)', value: conf.tracked, color: 'var(--ord1)' }, { label: 'Referrer only', value: conf.referrer, color: 'var(--ord2)' },
-      { label: 'CRM source field', value: conf.crm_source, color: 'var(--ord3)' }, { label: 'No evidence', value: conf.unknown, color: 'var(--ord4)' }]) +
-      '<p class="note" style="margin-top:8px">' + Math.round((conf.tracked + conf.referrer) / tot * 100) + '% of leads have a tracked path. Bookings: ' + f.bookingMatch['deal+lead'] + ' deal matched to a lead, ' + f.bookingMatch.lead_won + ' portal wins without a deal yet, ' + f.bookingMatch.deal_only + ' deals without a portal lead.</p></div></div>';
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>By source</h3><div class="sub">Organic social, paid social, direct/unknown and other sources are kept separate. Platform reach is never summed as unique people.</div></div></div>' + channelTable(f.channels, f.currency) + '</div>';
+    // Status mix of this period's leads (the list endpoint returns up to 500, newest first).
+    var st = {}; L.leads.forEach(function (l) { var s = l.status || 'unknown'; st[s] = (st[s] || 0) + 1; });
+    var stRows = Object.keys(st).sort(function (a, b) { return st[b] - st[a]; }).map(function (s, i) { return { label: s.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }), value: st[s], color: i < 5 ? SERIES[i] : 'var(--muted)' }; });
+    h += '<div class="card pad"><h3>Lead status</h3><p class="note">Where this period’s leads are now' + (S.leadCh ? ' · ' + esc(CH[S.leadCh]) + ' only' : '') + '.</p>' + (stRows.length ? bars(stRows) : '<p class="note">No leads in this period.</p>') + (L.leads.length >= 500 ? '<p class="note">Showing the newest 500 leads.</p>' : '') + '</div></div>';
+    // Weekly is easier to read than daily for lead flow.
+    var wk = weekBuckets(f.filters.from, f.filters.to);
+    var lw = wk.map(function () { return 0; }), qw = lw.slice(), bw = lw.slice();
+    L.leads.forEach(function (l) { var i = weekIndex(wk, l.day); if (i >= 0) { lw[i]++; if (l.qualified) qw[i]++; } });
+    (L.bookings || []).forEach(function (b) { var i = weekIndex(wk, b.day); if (i >= 0) bw[i]++; });
+    var edge = []; if (wk.length && wk[0] < f.filters.from) edge.push(shortDay(wk[0])); if (wk.length && addDay(wk[wk.length - 1], 6) > f.filters.to) edge.push(shortDay(wk[wk.length - 1]));
+    h += '<div class="cols2" style="margin-top:12px"><div class="card pad"><div class="chead"><div><h3>Leads, qualified and bookings per week</h3><div class="sub">Week starting Monday · bookings by close date' + (edge.length ? ' · ' + esc(edge.join(' and ')) + ' week' + (edge.length > 1 ? 's are' : ' is') + ' only partly in the period' : '') + (S.leadCh ? ' · ' + esc(CH[S.leadCh]) + ' only' : '') + '</div></div></div>' +
+      lineChart('cLeadWk', { days: wk, series: [{ name: 'Leads', color: 'var(--s1)', values: lw }, { name: 'Qualified', color: 'var(--s3)', values: qw }, { name: 'Bookings', color: 'var(--s2)', values: bw }], label: 'Leads per week' }) + '</div>';
+    var chs = (f.channels || []).filter(function (c) { return c.leads; }).sort(function (a, b) { return b.leads - a.leads; });
+    h += '<div class="card pad"><h3>Leads by source</h3><p class="note">' + (S.model === 'first' ? 'First-touch' : 'Last non-direct touch') + ' · all sources, this period</p>' + (chs.length ? bars(chs.map(function (c, i) { return { label: c.label, value: c.leads, color: i < 5 ? SERIES[i] : 'var(--muted)', sub: c.bookings ? c.bookings + ' booked' : '' }; })) : '<p class="note">No leads in this period.</p>') + '</div></div>';
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>By source — detail</h3><div class="sub">Organic social, paid social, direct/unknown and other sources are kept separate. Platform reach is never summed as unique people.</div></div></div>' + channelTable(f.channels, f.currency) + '</div>';
+    // Lead drill-down
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Attributed leads</h3><div class="sub">Every lead with the rule and evidence used (no contact details shown here)</div></div><select class="sel" id="leadCh" aria-label="Filter by source"><option value="">All sources</option>' + Object.keys(CH).map(function (k) { return '<option value="' + k + '"' + (k === S.leadCh ? ' selected' : '') + '>' + esc(CH[k]) + '</option>'; }).join('') + '</select></div>';
+    h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Source</th><th>Platform</th><th>Campaign</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td class="nw">' + esc(l.day) + '</td><td><code class="small id" title="' + esc(l.id) + '">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc(l.platform || '—') + '</td><td>' + esc(l.campaign || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
+    h += '</div>';
+    return h;
+  }
+  function weekBuckets(from, to) {
+    var d = new Date(from + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    var out = []; while (d.toISOString().slice(0, 10) <= to) { out.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 7); }
+    return out;
+  }
+  function addDay(d, n) { var x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+  function weekIndex(weeks, day) { for (var i = weeks.length - 1; i >= 0; i--) if (day >= weeks[i]) return i; return -1; }
+
+  async function viewCampaigns() {
+    var res = await Promise.all([api('/campaigns' + qs()), api('/overview' + qs())]);
+    var c = res[0], o = res[1], f = { currency: o.currency };
+    periodLabel(o.filters);
+    var h = '<div class="kpis">' + kpiTile('ad_spend', o.kpis.ad_spend) + kpiTile('cost_per_lead', o.kpis.cost_per_lead) + '</div>';
     // Campaign registry
     h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Campaign registry</h3><div class="sub">Tag campaigns by UTM campaign id; leads and sessions carrying that id roll up here. Analytics only — nothing is created in the ad platforms.</div></div>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-primary btn-sm" data-camp="new">Add campaign</button>' : '') + '</div>';
     h += c.registered.length ? '<div class="tw"><table class="t"><thead><tr><th>Campaign</th><th>UTM id</th><th>Market</th><th>Objective</th><th>Dates</th><th class="n">Sessions</th><th class="n">Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th class="n">Spend</th><th class="n">CPL</th><th></th></tr></thead><tbody>' + c.registered.map(function (r) {
       var s = r.stats; return '<tr><td><b>' + esc(r.name) + '</b>' + (r.owner ? '<br><span class="muted small">' + esc(r.owner) + '</span>' : '') + '</td><td><code>' + esc(r.utm_campaign) + '</code></td><td>' + esc(r.unit_id) + '</td><td>' + esc(r.objective) + '</td><td class="small">' + esc((r.start_at || '…') + ' → ' + (r.end_at || '…')) + '</td><td class="n">' + fmt(s.sessions) + '</td><td class="n">' + fmt(s.leads) + '</td><td class="n">' + fmt(s.qualified) + '</td><td class="n">' + fmt(s.bookings) + '</td><td class="n">' + esc(money(s.revenue, f.currency)) + '</td><td class="n">' + (s.spend === null ? '<span class="na">no spend data</span>' : adMoney(s.spend)) + '</td><td class="n">' + (s.cpl === null ? '<span class="na">—</span>' : adMoney(s.cpl)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp="' + r.id + '">Edit</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>' : '<p class="note">No campaigns registered yet.</p>';
+    var unregAll = c.unregistered, unregQuiet = unregAll.filter(function (u) { return !u.leads && u.spend === null; }).length;
+    c = Object.assign({}, c, { unregistered: unregAll.filter(function (u) { return u.leads || u.spend !== null; }) });
     if (c.unregistered.length) h += '<h3 style="margin-top:14px">Campaign tags seen in your data but not registered</h3><div class="tw"><table class="t"><thead><tr><th>UTM / campaign</th><th class="n">Leads</th><th class="n">Sessions</th><th class="n">Spend</th><th></th></tr></thead><tbody>' + c.unregistered.map(function (u) { return '<tr><td><code>' + esc(u.utm) + '</code></td><td class="n">' + fmt(u.leads) + '</td><td class="n">' + fmt(u.sessions) + '</td><td class="n">' + (u.spend === null ? '—' : adMoney(u.spend)) + '</td><td>' + (S.me.can.editCampaigns ? '<button type="button" class="btn btn-ghost btn-sm" data-camp-new="' + esc(u.utm) + '">Register</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    if (unregQuiet) h += '<p class="note" style="margin-top:8px">' + unregQuiet + ' more tag' + (unregQuiet > 1 ? 's' : '') + ' seen only on website visits (no leads or spend) are hidden.</p>';
     h += '</div>';
     S.cache.campaigns = c.registered;
-    // Lead drill-down
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Attributed leads</h3><div class="sub">Every lead with the rule and evidence used (no contact details shown here)</div></div><select class="sel" id="leadCh" aria-label="Filter by source"><option value="">All sources</option>' + Object.keys(CH).map(function (k) { return '<option value="' + k + '"' + (k === S.leadCh ? ' selected' : '') + '>' + esc(CH[k]) + '</option>'; }).join('') + '</select></div>';
-    h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Source</th><th>Platform</th><th>Campaign</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td class="nw">' + esc(l.day) + '</td><td><code class="small id" title="' + esc(l.id) + '">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc(l.platform || '—') + '</td><td>' + esc(l.campaign || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
-    h += '</div>';
     return h;
   }
   document.addEventListener('change', function (e) { if (e.target.id === 'leadCh') { S.leadCh = e.target.value; render(); } });
@@ -854,7 +941,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     if (STAGING) $('stagingBadge').hidden = false;
     var h = (location.hash || '#overview').slice(1).split('?')[0];
     loadAlerts();
-    setTab(['overview', 'instagram', 'facebook', 'threads', 'tiktok', 'campaigns', 'goals', 'ask', 'settings'].indexOf(h) >= 0 ? h : 'overview', false);
+    setTab(h, false);
   })();
 })();
 </script>
