@@ -1815,7 +1815,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-18-mobile4"></script>
+<script src="pms-supabase.js?v=2026-10-18-mobile5"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2141,12 +2141,13 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <div class="card-head" style="justify-content:space-between">
             <div>
               <div class="card-title">Occupancy <em>trend</em></div>
-              <div class="card-sub" id="occ-sub">Since May 2026 · rooms in use at each month's end</div>
+              <div class="card-sub" id="occ-sub">Since May 2026 · average for each month (room-nights used ÷ available)</div>
             </div>
             <div class="tabs" id="occ-modes">
               <div class="tab" data-occ-mode="day">Day</div>
               <div class="tab" data-occ-mode="week">Week</div>
-              <div class="tab active" data-occ-mode="month">Month</div>
+              <div class="tab" data-occ-mode="month">Month end</div>
+              <div class="tab active" data-occ-mode="monthly">Monthly</div>
             </div>
           </div>
           <div class="chart-scroll">
@@ -19522,14 +19523,37 @@ function occPoints(mode, todayIso, fromIso) {
 }
 function occSeries(list, props, mode, todayIso, fromIso) {
   const spans = occSpans(list);
+  if (mode === "monthly") return occMonthly(spans, props, todayIso, fromIso);
   return occPoints(mode, todayIso, fromIso).map((p) => Object.assign(p, occAt(spans, props, p.day)));
 }
+// Average over a stretch of days = room-nights occupied / room-nights available (the usual
+// "occupancy for the month"). occupied / rooms come back as per-night averages.
+function occAverage(spans, props, fromDay, toDay) {
+  let nights = 0, roomNights = 0, days = 0;
+  for (let d = fromDay; d <= toDay; d += 86400000) {
+    const r = occAt(spans, props, d);
+    nights += r.occupied; roomNights += r.rooms; days++;
+  }
+  return { nights, roomNights, days, occupied: days ? nights / days : 0, rooms: days ? roomNights / days : 0,
+    pct: roomNights ? Math.min(100, nights / roomNights * 100) : 0 };
+}
+// One point per month since OCC_HISTORY_FROM; the current month runs to today (partial).
+function occMonthly(spans, props, todayIso, fromIso) {
+  const from = occDay(fromIso || OCC_HISTORY_FROM);
+  return occPoints("month", todayIso, fromIso).map((p) => {
+    const end = new Date(p.day), y = end.getUTCFullYear(), m = end.getUTCMonth();
+    const start = Math.max(Date.UTC(y, m, 1), from), partial = p.day < Date.UTC(y, m + 1, 0);
+    return Object.assign({ label: OCC_MON[m], date: `${OCC_MON[m]} ${y}`, day: p.day, start, partial },
+      occAverage(spans, props, start, p.day));
+  });
+}
 /* OCC-TREND-CORE-END */
-let OCC_MODE = "month";
+let OCC_MODE = "monthly";
 const OCC_SUB = {
   day: "Last 14 days · rooms in use each day",
   week: "Last 12 weeks · rooms in use at each week's end",
-  month: "Since May 2026 · rooms in use at each month's end",
+  month: "Since May 2026 · rooms in use on the last day of each month",
+  monthly: "Since May 2026 · average for each month (room-nights used ÷ available)",
 };
 function renderOccTrend() {
   const chart = document.getElementById("occ-chart"), labels = document.getElementById("occ-labels");
@@ -19539,7 +19563,9 @@ function renderOccTrend() {
   if (sub) sub.textContent = OCC_SUB[OCC_MODE];
   chart.innerHTML = pts.map((p, i) => {
     const v = Math.round(p.pct), last = i === pts.length - 1;
-    const tip = `${last ? "Today, " : ""}${p.date}: ${p.occupied} of ${p.rooms} rooms (${p.pct.toFixed(1)}%)`;
+    const tip = OCC_MODE === "monthly"
+      ? `${p.date}${p.partial ? " (so far)" : ""}: ${p.pct.toFixed(1)}% average · about ${Math.round(p.occupied)} of ${Math.round(p.rooms)} rooms a night`
+      : `${last ? "Today, " : ""}${p.date}: ${p.occupied} of ${p.rooms} rooms (${p.pct.toFixed(1)}%)`;
     return `<div class="bar-col" title="${esc(tip)}"><div class="bar ${last ? "" : "faint"}" style="height:${(v / 100) * 160}px"></div>` +
       `<div class="bar-label">${v}%</div><div class="bar-label occ-x">${esc(p.label)}</div></div>`;
   }).join("");
@@ -44450,9 +44476,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-18-mobile4"></script>
-<script src="extensions.js?v=2026-10-18-mobile4"></script>
-<script src="ap.js?v=2026-10-18-mobile4"></script>
-<script src="properties.js?v=2026-10-18-mobile4"></script>
+<script src="room-changes.js?v=2026-10-18-mobile5"></script>
+<script src="extensions.js?v=2026-10-18-mobile5"></script>
+<script src="ap.js?v=2026-10-18-mobile5"></script>
+<script src="properties.js?v=2026-10-18-mobile5"></script>
 </body>
 </html>
