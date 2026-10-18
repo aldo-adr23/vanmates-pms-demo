@@ -1575,6 +1575,31 @@
   :root[data-theme="dark"] .modal-backdrop{ background:rgba(0,0,0,.65); }
   :root[data-theme="dark"] .panel-backdrop{ background:rgba(0,0,0,.6); }
 .vac-thumb-empty{width:48px;height:36px;border-radius:6px;background:var(--wash);border:1px dashed var(--line);display:block}
+/* Vacancies › Turnover: stacked groups of readable rows */
+.vt-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.vt-seg{display:inline-flex;background:var(--wash);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.vt-seg button{border:0;background:none;font:inherit;font-size:13px;font-weight:600;color:var(--muted);padding:7px 14px;border-radius:8px;cursor:pointer}
+.vt-seg button[aria-pressed="true"]{background:var(--surface,#fff);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.vt-jump{display:flex;gap:6px;flex-wrap:wrap}
+.vt-jump a{font-size:12.5px;padding:5px 10px;border:1px solid var(--line);border-radius:99px;color:var(--ink);text-decoration:none;white-space:nowrap}
+.vt-jump a b{margin-left:4px}
+.vt-group{padding:0;overflow:hidden;margin-bottom:14px}
+.vt-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 16px 10px;flex-wrap:wrap}
+.vt-head h3{margin:0;font-size:17px}
+.vt-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 90px;gap:4px 16px;align-items:center;padding:10px 16px;border-top:1px solid var(--line);cursor:pointer}
+.vt-row:hover{background:var(--wash)}
+.vt-row[hidden]{display:none}
+.vt-row .vt-room{font-weight:600;font-size:14px;line-height:1.3}
+.vt-row .vt-when{font-size:13px}
+.vt-row .vt-rent{text-align:right;font-weight:700;font-size:14px}
+.vt-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.vt-tags .badge{font-size:11.5px}
+.vt-more{display:block;width:100%;border:0;border-top:1px solid var(--line);background:none;font:inherit;font-size:13px;font-weight:600;color:var(--blue);padding:10px;cursor:pointer}
+@media (max-width:640px){
+  .vt-row{grid-template-columns:minmax(0,1fr) auto}
+  .vt-row .vt-when{grid-column:1;grid-row:2}
+  .vt-row .vt-rent{grid-column:2;grid-row:1}
+}
 
   /* Lead drawer · Submission summary. The raw webhook body used to be dumped
      into a <pre>; a form's `source` URL is one unbreakable string, so it forced
@@ -1819,7 +1844,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-18-mobile6"></script>
+<script src="pms-supabase.js?v=2026-10-18-vacturn1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -10995,6 +11020,7 @@ function wirePropertyCards(){
 const VAC_TYPE_LABEL = { standard: 'Standard', master: 'Master', flex: 'Flex', whole_unit: 'Whole unit' };
 const VAC_CITY_LABEL = { vancouver: 'Vancouver', toronto: 'Toronto', montreal: 'Montreal' };
 const VAC_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const VAC_MON_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 function vacTodayIn(city, now){
   return new Date(now).toLocaleDateString('en-CA', { timeZone: /toronto|montreal/i.test(String(city || '')) ? 'America/Toronto' : /guadalajara|zapopan|jalisco|m[eé]xico/i.test(String(city || '')) ? 'America/Mexico_City' : 'America/Vancouver' });
 }
@@ -11056,6 +11082,22 @@ function vacLanes(model){
   lanes.forEach(l => l.rooms.sort((a, b) => a.from.localeCompare(b.from) || a.room.localeCompare(b.room)));
   return lanes;
 }
+// Turnover › By month: empty-now first, then one group per calendar month of the free date (own city's
+// clock) for this month and the next 5; anything further out goes in Later.
+function vacMonths(model){
+  const now = { key: 'now', label: 'Available now', rooms: [] }, later = { key: 'later', label: 'Later', rooms: [] }, M = {};
+  const mi = iso => Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7)) - 1;
+  (model || []).forEach(v => {
+    if (!v.listable) return;
+    if (v.emptyNow) { now.rooms.push(v); return; }
+    if (mi(v.from) - mi(v.today) > 5) { later.rooms.push(v); return; }
+    const k = v.from.slice(0, 7);
+    (M[k] = M[k] || { key: k, label: VAC_MON_LONG[Number(k.slice(5, 7)) - 1] + (k.slice(0, 4) === v.today.slice(0, 4) ? '' : ' ' + k.slice(0, 4)), rooms: [] }).rooms.push(v);
+  });
+  const by = (a, b) => a.from.localeCompare(b.from) || a.room.localeCompare(b.room);
+  [now, later].forEach(g => g.rooms.sort(by));
+  return [now].concat(Object.keys(M).sort().map(k => { M[k].rooms.sort(by); return M[k]; }), later.rooms.length ? [later] : []);
+}
 function vacOverview(model, today){
   const live = (model || []).filter(v => v.status !== 'hidden');
   const soonOf = v => v.listable && !v.emptyNow && vacDays(v.today, v.from) <= 30;
@@ -11111,7 +11153,7 @@ function vacShareText(v){
     + 'Photos and booking: ' + vacRoomUrl(v) + '\n\nWant me to hold it for you?';
 }
 /* VAC-CORE-END */
-const VAC_STATE = { tab: 'find', f: { q: '', moveIn: '', maxRent: '', city: '', types: [] }, model: null, cases: {}, hist: null, loadedAt: 0, err: '' };
+const VAC_STATE = { tab: 'find', turnView: 'week', f: { q: '', moveIn: '', maxRent: '', city: '', types: [] }, model: null, cases: {}, hist: null, loadedAt: 0, err: '' };
 let vacLoading = null;
 async function loadVacancies(force){
   const vc = window.vmCountry ? window.vmCountry.current() : 'CA';
@@ -11238,20 +11280,48 @@ function vacCaseLine(v){
   try { if (typeof ckoCleaning === 'function' && typeof ckoCleaningLine === 'function') clean = ckoCleaningLine(ckoCleaning(c)) || ''; } catch (e) { clean = ''; }
   return `<div class="name-sub"><a href="#checkout=${encodeURIComponent(c.id)}">${esc(c.id)}</a> · moves out ${esc(vacDay(c.move_out_date))}${clean ? ' · ' + esc(String(clean)) : ''}</div>`;
 }
+// Short checkout tags for a Turnover row: "Moves out Oct 31" + cleaning state (no task id).
+function vacCaseTags(v){
+  const c = VAC_STATE.cases[v.gid]; if (!c) return '';
+  let clean = '';
+  try { if (typeof ckoCleaning === 'function' && typeof ckoCleaningLine === 'function') clean = String(ckoCleaningLine(ckoCleaning(c)) || '').split(' · ')[0]; } catch (e) { clean = ''; }
+  return `<a class="badge badge-grey" href="#checkout=${encodeURIComponent(c.id)}" title="${esc(c.id)}"><span class="dot"></span>Moves out ${esc(vacDay(c.move_out_date))}</a>`
+    + (clean && clean !== 'Not booked' ? `<span class="badge ${/booked|received/.test(clean) ? 'badge-green' : 'badge-grey'}"><span class="dot"></span>${esc(clean)}</span>` : clean ? `<span class="badge badge-amber"><span class="dot"></span>Cleaning not booked</span>` : '');
+}
+const VAC_TURN_VIEWS = [['now', 'Available now'], ['week', 'By week'], ['month', 'By month']];
 function vacRenderTurnover(root, M){
-  root.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">${vacLanes(M).map(l => `
-    <div class="card card-pad" style="align-content:start;display:grid;gap:8px">
-      <div style="display:flex;justify-content:space-between"><b>${esc(l.label)}</b><span class="name-sub">${l.rooms.length} room${l.rooms.length === 1 ? '' : 's'}</span></div>
-      ${l.rooms.map((v, i) => `
-        <div data-vac-open="${esc(v.id)}" ${i >= 6 ? 'data-vac-more hidden' : ''} style="border:1px solid var(--line);border-left:3px solid ${v.daysEmpty > 14 ? 'var(--amber)' : 'var(--line)'};border-radius:10px;padding:8px 10px;cursor:pointer">
-          <div class="name-main" style="font-size:13px">${esc(v.room)}</div>
-          <div class="name-sub">${esc(v.prop || '—')} · ${vacMoney(v.rent)} · ${esc(vacWhen(v))}</div>
-          ${v.daysEmpty > 14 ? `<div class="name-sub" style="color:var(--amber)">Empty ${v.daysEmpty} days</div>` : ''}
-          ${vacCaseLine(v)}
-        </div>`).join('')}
-      ${l.rooms.length > 6 ? `<button type="button" class="btn" data-vac-showmore>Show ${l.rooms.length - 6} more</button>` : ''}
-      ${l.rooms.length ? '' : '<div class="name-sub">Nothing here</div>'}
-    </div>`).join('')}</div>`;
+  const view = VAC_STATE.turnView;
+  let groups;
+  if (view === 'now') {
+    const now = vacLanes(M)[0];
+    groups = [{ key: 'now', label: 'Available now', rooms: now.rooms.slice().sort((a, b) => b.daysEmpty - a.daysEmpty || a.room.localeCompare(b.room)), sub: 'longest empty first' }];
+  } else groups = view === 'month' ? vacMonths(M) : vacLanes(M);
+  const LIMIT = view === 'now' ? 1000 : 8;
+  const rent = rs => rs.reduce((t, v) => t + (v.rent || 0), 0);
+  const row = (v, i) => `
+    <div class="vt-row" data-vac-open="${esc(v.id)}" ${i >= LIMIT ? 'data-vac-more hidden' : ''}>
+      <div style="min-width:0">
+        <div class="vt-room">${esc(v.room)}</div>
+        <div class="name-sub">${esc(v.prop || '—')}${v.city ? ' · ' + esc(v.city) : ''} · ${esc(v.typeLabel)}</div>
+        <div class="vt-tags">${v.daysEmpty > 0 ? `<span class="badge ${v.daysEmpty > 14 ? 'badge-amber' : 'badge-grey'}"><span class="dot"></span>Empty ${v.daysEmpty} day${v.daysEmpty === 1 ? '' : 's'}</span>` : ''}${vacCaseTags(v)}</div>
+      </div>
+      <div class="vt-when">${v.emptyNow ? '<b>Now</b>' : `<b>${esc(vacDay(v.from))}</b>${v.approx ? ' <span class="name-sub">approx.</span>' : ''}<div class="name-sub">in ${vacDays(v.today, v.from)} day${vacDays(v.today, v.from) === 1 ? '' : 's'}</div>`}</div>
+      <div class="vt-rent num">${vacMoney(v.rent)}<span class="name-sub">/mo</span></div>
+    </div>`;
+  root.innerHTML = `
+    <div class="vt-bar">
+      <div class="vt-seg" role="group" aria-label="Turnover view">${VAC_TURN_VIEWS.map(([k, l]) => `<button type="button" data-vt-view="${k}" aria-pressed="${k === view}">${l}</button>`).join('')}</div>
+      ${groups.length > 1 ? `<div class="vt-jump">${groups.map(g => `<a href="#" data-vt-jump="${esc(g.key)}">${esc(g.label)}<b>${g.rooms.length}</b></a>`).join('')}</div>` : ''}
+    </div>
+    ${groups.map(g => `
+    <div class="card vt-group" id="vt-${esc(g.key)}">
+      <div class="vt-head"><h3>${esc(g.label)}</h3><span class="name-sub">${g.rooms.length} room${g.rooms.length === 1 ? '' : 's'}${g.rooms.length ? ' · ' + vacMoney(rent(g.rooms)) + '/mo' : ''}${g.sub ? ' · ' + esc(g.sub) : ''}</span></div>
+      ${g.rooms.map(row).join('')}
+      ${g.rooms.length > LIMIT ? `<button type="button" class="vt-more" data-vac-showmore>Show ${g.rooms.length - LIMIT} more</button>` : ''}
+      ${g.rooms.length ? '' : '<div class="vt-row" style="cursor:default"><div class="name-sub">Nothing here</div></div>'}
+    </div>`).join('')}`;
+  root.querySelectorAll('[data-vt-view]').forEach(b => b.addEventListener('click', () => { VAC_STATE.turnView = b.dataset.vtView; vacRenderTurnover(root, M); }));
+  root.querySelectorAll('[data-vt-jump]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); const g = document.getElementById('vt-' + a.dataset.vtJump); if (g) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   root.querySelectorAll('[data-vac-showmore]').forEach(b => b.addEventListener('click', () => { b.parentElement.querySelectorAll('[data-vac-more]').forEach(x => { x.hidden = false; }); b.remove(); }));
   root.querySelectorAll('[data-vac-open]').forEach(x => x.addEventListener('click', e => { if (e.target.closest('a')) return; openVacancy(x.dataset.vacOpen); }));
 }
@@ -44480,9 +44550,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-18-mobile6"></script>
-<script src="extensions.js?v=2026-10-18-mobile6"></script>
-<script src="ap.js?v=2026-10-18-mobile6"></script>
-<script src="properties.js?v=2026-10-18-mobile6"></script>
+<script src="room-changes.js?v=2026-10-18-vacturn1"></script>
+<script src="extensions.js?v=2026-10-18-vacturn1"></script>
+<script src="ap.js?v=2026-10-18-vacturn1"></script>
+<script src="properties.js?v=2026-10-18-vacturn1"></script>
 </body>
 </html>
