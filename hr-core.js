@@ -1,8 +1,8 @@
 // hr-core.js — pure logic for hr.html (Employee Hub). No DOM, no Supabase. Tested by test/hr-core.test.js.
 //
 // Balances are integer minutes (spec §3); rounding happens only here, at display. A working day is the
-// employee's own day_minutes — never an assumed 8 hours. The employee preview decides what an employee WOULD
-// see once Aldo authorizes rollout; today only Aldo and Elisa can open it.
+// employee's own day_minutes — never an assumed 8 hours. The same text and rules drive an employee's own hub
+// (hr_my_hub, once HR switches it on for them) and HR's "See what they see" preview of it.
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
   else root.HR = factory();
@@ -80,6 +80,40 @@
     }).map(function (a) { return { who: actorName(a.actor), action: a.action, at: a.at }; });
   }
 
+  // Mon–Fri days between two YYYY-MM-DD dates, inclusive (same rule as hr_weekdays in SQL). 0 if either is bad.
+  function ymdUTC(s) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || "")); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; }
+  function weekdays(d1, d2) {
+    var a = ymdUTC(d1), b = ymdUTC(d2 || d1);
+    if (a === null || b === null || b < a || b - a > 400 * 864e5) return 0;
+    var n = 0;
+    for (var t = a; t <= b; t += 864e5) { var w = new Date(t).getUTCDay(); if (w !== 0 && w !== 6) n++; }
+    return n;
+  }
+
+  // What a time-off request will take, before it is sent — the server recomputes the same way.
+  // { minutes, weekdays, error: null | "dates" | "order" | "hours" | "needHours" | "weekend" }
+  function requestMinutes(d1, d2, dayMinutes, hours) {
+    var a = ymdUTC(d1), b = ymdUTC(d2 || d1);
+    if (a === null || b === null) return { minutes: 0, weekdays: 0, error: "dates" };
+    if (b < a) return { minutes: 0, weekdays: 0, error: "order" };
+    var wd = weekdays(d1, d2 || d1);
+    if (String(hours == null ? "" : hours).trim() !== "") {
+      var m = hoursToMinutes(hours);
+      return m === null || m <= 0 ? { minutes: 0, weekdays: wd, error: "hours" } : { minutes: m, weekdays: wd, error: null };
+    }
+    if (!dayMinutes) return { minutes: 0, weekdays: wd, error: "needHours" };
+    if (!wd) return { minutes: 0, weekdays: 0, error: "weekend" };
+    return { minutes: wd * dayMinutes, weekdays: wd, error: null };
+  }
+
+  // Requests the employee should notice first: waiting, then upcoming approved, then the rest (newest first).
+  function sortRequests(reqs, today) {
+    var rank = function (r) { return r.status === "pending" ? 0 : r.status === "approved" && String(r.end_date) >= today ? 1 : 2; };
+    return (reqs || []).slice().sort(function (a, b) {
+      return rank(a) - rank(b) || (rank(a) === 1 ? String(a.start_date).localeCompare(String(b.start_date)) : String(b.start_date).localeCompare(String(a.start_date)));
+    });
+  }
+
   var T = {
     en: {
       banner: "Preview — this is what {name} would see. Employees can’t open the hub yet.",
@@ -102,6 +136,26 @@
         "No one else at Vanmates, and no bank, tax or ID numbers are kept here.",
       ],
       noneOpened: "No one has opened your documents.", openedRow: "{who} opened a document",
+      // employee hub (part 3)
+      tHome: "Home", tTime: "Time off", tDocs: "Documents", tDetails: "My details", tAsk: "Ask HR",
+      left: "Vacation left", waiting: "{n} request waiting for HR", waitingN: "{n} requests waiting for HR", nextOff: "Next time off: {dates}",
+      reqBtn: "Request time off", writeBtn: "Write to HR", openBtn: "Open", editBtn: "Edit my details", allDocs: "See all documents",
+      askBlurb: "Questions about time off, your contract or anything else? Write to HR here.",
+      hrReplied: "HR replied: {text}", youWrote: "You wrote: {text}",
+      noEmergency: "No emergency contact yet — please add one.",
+      kVacation: "Vacation", kSick: "Sick", kPersonal: "Personal", kind: "Type",
+      first: "First day", last: "Last day", hoursOpt: "Hours (only if different)", hoursPh: "e.g. 4 for half a day",
+      noteOpt: "Note for HR (optional)", send: "Send request", estimate: "{n} working days · {h}", estimate1: "1 working day · {h}",
+      estHours: "{h}", eDates: "Pick the first day.", eOrder: "The last day is before the first day.", eHours: "Check the hours.",
+      eNeedHours: "Enter how many hours — HR hasn’t set your working day yet.", eWeekend: "Those days are a weekend — enter the hours if you work then.",
+      sent: "Sent. Elisa will reply here.", myRequests: "My requests", noRequests: "No requests yet.",
+      sPending: "Waiting", sApproved: "Approved", sDeclined: "Declined", sCancelled: "Cancelled", cancel: "Cancel request", cancelled: "Request cancelled.",
+      hrNote: "HR: {text}", workEmail: "Work email", prefName: "Preferred name", persEmail: "Personal email", phone: "Phone",
+      emName: "Emergency contact name", emPhone: "Their phone", emRel: "Relationship", save: "Save", saved: "Saved.",
+      fromHr: "HR", fromYou: "You", msgPh: "Write your question…", msgSend: "Send", noMsgs: "No messages yet.",
+      previewNote: "Preview — buttons don’t send anything.", lockTitle: "Your Employee Hub isn’t on yet",
+      lockBody: "HR switches it on for each person. If you think yours should be on, ask Elisa.", backPortal: "Back to the portal",
+      unitDays: "{n} days", unitDay: "1 day",
     },
     es: {
       banner: "Vista previa: esto es lo que vería {name}. Los empleados aún no pueden entrar.",
@@ -124,6 +178,25 @@
         "Nadie más en Vanmates. Aquí no se guardan datos bancarios, fiscales ni de identificación.",
       ],
       noneOpened: "Nadie ha abierto tus documentos.", openedRow: "{who} abrió un documento",
+      tHome: "Inicio", tTime: "Vacaciones", tDocs: "Documentos", tDetails: "Mis datos", tAsk: "Preguntar a RR. HH.",
+      left: "Vacaciones disponibles", waiting: "{n} solicitud esperando a RR. HH.", waitingN: "{n} solicitudes esperando a RR. HH.", nextOff: "Próximos días libres: {dates}",
+      reqBtn: "Solicitar días libres", writeBtn: "Escribir a RR. HH.", openBtn: "Abrir", editBtn: "Editar mis datos", allDocs: "Ver todos los documentos",
+      askBlurb: "¿Dudas sobre vacaciones, tu contrato u otra cosa? Escríbele a RR. HH. aquí.",
+      hrReplied: "RR. HH. respondió: {text}", youWrote: "Escribiste: {text}",
+      noEmergency: "Aún no tienes contacto de emergencia; agrega uno, por favor.",
+      kVacation: "Vacaciones", kSick: "Enfermedad", kPersonal: "Personal", kind: "Tipo",
+      first: "Primer día", last: "Último día", hoursOpt: "Horas (solo si es distinto)", hoursPh: "p. ej. 4 para medio día",
+      noteOpt: "Nota para RR. HH. (opcional)", send: "Enviar solicitud", estimate: "{n} días hábiles · {h}", estimate1: "1 día hábil · {h}",
+      estHours: "{h}", eDates: "Elige el primer día.", eOrder: "El último día es antes del primero.", eHours: "Revisa las horas.",
+      eNeedHours: "Escribe cuántas horas: RR. HH. aún no configuró tu jornada.", eWeekend: "Esos días son fin de semana; escribe las horas si trabajas esos días.",
+      sent: "Enviada. Elisa te responderá aquí.", myRequests: "Mis solicitudes", noRequests: "Aún no hay solicitudes.",
+      sPending: "En espera", sApproved: "Aprobada", sDeclined: "Rechazada", sCancelled: "Cancelada", cancel: "Cancelar solicitud", cancelled: "Solicitud cancelada.",
+      hrNote: "RR. HH.: {text}", workEmail: "Correo de trabajo", prefName: "Nombre preferido", persEmail: "Correo personal", phone: "Teléfono",
+      emName: "Nombre del contacto de emergencia", emPhone: "Su teléfono", emRel: "Parentesco", save: "Guardar", saved: "Guardado.",
+      fromHr: "RR. HH.", fromYou: "Tú", msgPh: "Escribe tu pregunta…", msgSend: "Enviar", noMsgs: "Aún no hay mensajes.",
+      previewNote: "Vista previa: los botones no envían nada.", lockTitle: "Tu Employee Hub aún no está activo",
+      lockBody: "RR. HH. lo activa para cada persona. Si crees que el tuyo debería estar activo, pregúntale a Elisa.", backPortal: "Volver al portal",
+      unitDays: "{n} días", unitDay: "1 día",
     },
   };
   function t(lang, key, vars) {
@@ -149,5 +222,6 @@
 
   return { hoursToMinutes: hoursToMinutes, fmtBalance: fmtBalance, employeeDocs: employeeDocs, readiness: readiness,
     hasOpening: hasOpening, actorName: actorName, accessLog: accessLog, t: t, T: T, previewLang: previewLang,
-    previewWarnings: previewWarnings, ENTRY: ENTRY, LEAVE: LEAVE, EMP_CATS: EMP_CATS };
+    previewWarnings: previewWarnings, ENTRY: ENTRY, LEAVE: LEAVE, EMP_CATS: EMP_CATS,
+    weekdays: weekdays, requestMinutes: requestMinutes, sortRequests: sortRequests };
 });
