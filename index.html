@@ -147,6 +147,9 @@
   }
   .btn-primary{background:var(--red);color:#fff}
   .btn-primary:hover{background:var(--red-dark)}
+  /* 2026-10-19: a locked button must look locked (Marcela clicked a disabled red one and nothing happened). */
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn-primary:disabled:hover{background:var(--red)}
   .btn-ghost{background:var(--surface);border:1px solid var(--line);color:var(--ink)}
   /* Small one-line pill for secondary actions (the homestay booking panel):
      a full-size button per action made the action rows wrap. */
@@ -1849,7 +1852,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-19-stfsubmit1"></script>
+<script src="pms-supabase.js?v=2026-10-19-decidereview1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20772,6 +20775,12 @@ if(_origGoToView){
       const { data: ta, error: taErr } = await sb.from('team_members').select('id,can_approve_refund_step');
       if (!taErr && Array.isArray(ta)) ta.forEach(r => { tmApproveStep[r.id] = r.can_approve_refund_step === true; });
     }
+    // Short-notice review decider (checkout-decide-review-2026-10-19.sql), read on its own for the same reason.
+    const tmDecide = {};
+    if (!tmErr) {
+      const { data: td, error: tdErr } = await sb.from('team_members').select('id,can_decide_short_notice');
+      if (!tdErr && Array.isArray(td)) td.forEach(r => { tmDecide[r.id] = r.can_decide_short_notice === true; });
+    }
     if (tmErr) {
       console.warn("[hydrateTeam] team_members error:", tmErr);
     } else if (Array.isArray(tms)) {
@@ -20792,6 +20801,7 @@ if(_origGoToView){
           allowed_pages: row.allowed_pages,  // NULL or array
           can_approve_refunds: row.can_approve_refunds === true,  // checkout money steps (vm_is_finance)
           can_approve_refund_step: tmApproveStep[row.id] === true,  // checkout approve_refund only
+          can_decide_short_notice: tmDecide[row.id] === true,  // checkout short-notice review decisions
           countries: Array.isArray(tmCountries[row.id]) && tmCountries[row.id].length ? tmCountries[row.id] : ["CA"],
           ini:      existing?.ini || initials,
           lastLogin: existing?.lastLogin || "today",
@@ -26786,8 +26796,8 @@ const CKO_FLAG_LABELS = {
   room_not_released: 'Room not released',
 };
 // Flags that mean somebody has to do something, for everyone. Plain short
-// notice is information. short_notice_review_required needs action for admins
-// only (only they can decide it), so it is checked in ckoNeedsAction instead.
+// notice is information. short_notice_review_required needs action only for
+// whoever can decide it (ckoCanDecideReview), so it is checked in ckoNeedsAction instead.
 const CKO_ACTION_FLAGS = ['refund_change_requested', 'mirror_failed', 'email_failed', 'email_unconfirmed', 'resident_dispute', 'date_changed', 'finance_overdue', 'resident_not_responding', 'room_not_released'];
 // Flags drawn red on the chip (the rest are blue).
 const CKO_RED_FLAGS = CKO_ACTION_FLAGS.concat(['short_notice_review_required', 'missing_keys', 'damage_review', 'missing_refund_info', 'unverified']);
@@ -26856,6 +26866,7 @@ const CKO_ERROR_TEXT = {
   bad_status: 'That is not a valid status.',
   no_review_requested: 'This case has no short-notice review to decide.',
   review_pending: 'Decide the short-notice review first.',
+  review_pending_other: 'The short-notice review has to be decided first (Aldo or Marcela).',
   refund_info_missing: 'The resident has not given refund details yet.',
   open_case_exists: 'This resident already has an open checkout.',
   unknown_step: 'Unknown step.',
@@ -27009,6 +27020,7 @@ Object.assign(CKO_ES, {
   'That step does not apply to this case any more.': 'Ese paso ya no aplica a este caso.', 'That flag cannot be changed here.': 'Esa alerta no se puede cambiar aquí.',
   'That is not a valid status.': 'Ese no es un estado válido.', 'This case has no short-notice review to decide.': 'Este caso no tiene una revisión de aviso tardío por decidir.',
   'Decide the short-notice review first.': 'Primero decide la revisión del aviso tardío.',
+  'The short-notice review has to be decided first (Aldo or Marcela).': 'Primero hay que decidir la revisión del aviso tardío (Aldo o Marcela).',
   'The resident has not given refund details yet.': 'El residente todavía no da sus datos de reembolso.',
   'This resident already has an open checkout.': 'Este residente ya tiene una salida abierta.', 'Unknown step.': 'Paso desconocido.',
   'Price every charge first (some have no amount).': 'Primero ponle monto a cada cargo (algunos no tienen).',
@@ -27150,7 +27162,7 @@ function ckoHomestayOnly(u){
 }
 // me = { email, role, can_approve_refunds, can_approve_refund_step }. Anything else (a
 // missing me, a map() index) is nobody. The flags count only when literally true.
-function ckoMeOf(me){ return me && typeof me === 'object' && !Array.isArray(me) ? { email: String(me.email || '').toLowerCase(), role: String(me.role || ''), can_approve_refunds: me.can_approve_refunds === true, can_approve_refund_step: me.can_approve_refund_step === true } : { email: '', role: '', can_approve_refunds: false, can_approve_refund_step: false }; }
+function ckoMeOf(me){ return me && typeof me === 'object' && !Array.isArray(me) ? { email: String(me.email || '').toLowerCase(), role: String(me.role || ''), can_approve_refunds: me.can_approve_refunds === true, can_approve_refund_step: me.can_approve_refund_step === true, can_decide_short_notice: me.can_decide_short_notice === true } : { email: '', role: '', can_approve_refunds: false, can_approve_refund_step: false, can_decide_short_notice: false }; }
 function ckoNowMs(now){ return typeof now === 'number' ? now : now instanceof Date ? now.getTime() : Date.now(); }
 function ckoIsOpen(c){ return c.status !== 'Closed'; }
 function ckoIsAdmin(me){ return ckoMeOf(me).role === 'admin'; }
@@ -27159,6 +27171,9 @@ function ckoIsFinance(me){ const m = ckoMeOf(me); return m.role === 'admin' || m
 // As vm_can_approve_refund(): finance, or a teammate flagged can_approve_refund_step
 // (the approve_refund step only, checkout-approve-step-2026-10-19.sql).
 function ckoCanApproveRefund(me){ const m = ckoMeOf(me); return ckoIsFinance(m) || m.can_approve_refund_step; }
+// As checkout_decide_exception: an admin, or a teammate flagged can_decide_short_notice
+// (checkout-decide-review-2026-10-19.sql).
+function ckoCanDecideReview(me){ const m = ckoMeOf(me); return m.role === 'admin' || m.can_decide_short_notice; }
 // The owner or an admin: who may run owner steps, release, cancel and flag.
 function ckoCanManage(c, me){ const m = ckoMeOf(me); return m.role === 'admin' || (!!c.owner && c.owner === m.email); }
 // Whole days since the case reached its current status (null when unknown).
@@ -27179,7 +27194,7 @@ function ckoNeedsAction(c, me, now){
   const f = c.flags || [], m = ckoMeOf(me), days = ckoDaysWaiting(c, now);
   if (!c.owner) return true;
   if (f.some(x => CKO_ACTION_FLAGS.indexOf(x) !== -1)) return true;
-  if (m.role === 'admin' && f.indexOf('short_notice_review_required') !== -1) return true;
+  if (ckoCanDecideReview(m) && f.indexOf('short_notice_review_required') !== -1) return true;
   if (c.status === 'Information Incomplete' && days != null && days > 3) return true;
   if (c.status === 'Inspection Completed' && days != null && days > 2) return true;
   if (c.status === 'Move-Out Scheduled') {
@@ -27215,7 +27230,7 @@ function ckoNextStep(c, me){
     return ckoCanManage(c, m) ? chain(true, '') : chain(false, 'Only the owner or an admin can do this.');
   }
   if (!ckoCanManage(c, m)) return out(false, 'Only the owner or an admin can do this.');
-  if (key === 'to_charges' && f.indexOf('short_notice_review_required') !== -1) return out(false, CKO_ERROR_TEXT.review_pending);
+  if (key === 'to_charges' && f.indexOf('short_notice_review_required') !== -1) return out(false, ckoCanDecideReview(m) ? CKO_ERROR_TEXT.review_pending : CKO_ERROR_TEXT.review_pending_other);
   return out(true, '');
 }
 // 2026-10-05: "Already moved out" — a resident who has left before staff caught up
@@ -27237,7 +27252,7 @@ function ckoFastPlan(c, me){
   // schedule is filled in by ckoAutoSchedule, never asked (2026-10-06).
   const fields = [].concat(...steps.filter(k => k !== 'schedule').map(k => CKO_STEPS[k].fields));
   const out = (allowed, reason) => ({ steps, fields, allowed, reason, take });
-  if ((c.flags || []).indexOf('short_notice_review_required') !== -1) return out(false, CKO_ERROR_TEXT.review_pending);
+  if ((c.flags || []).indexOf('short_notice_review_required') !== -1) return out(false, ckoCanDecideReview(m) ? CKO_ERROR_TEXT.review_pending : CKO_ERROR_TEXT.review_pending_other);
   return out(true, '');
 }
 // The plan's form values -> { ok, calls: [{ step, from, fields }] } in order, each
@@ -27275,7 +27290,7 @@ function ckoActions(c, me){
   if (open && !c.owner) a.push({ act: 'take', label: 'Take' });
   if (open && admin) a.push({ act: 'assign', label: c.owner ? 'Reassign' : 'Assign' });
   if (open && c.owner && manage) a.push({ act: 'release', label: 'Unassign' });
-  if (open && admin && f.indexOf('short_notice_review_required') !== -1) a.push({ act: 'decide', label: 'Decide review' });
+  if (open && ckoCanDecideReview(m) && f.indexOf('short_notice_review_required') !== -1) a.push({ act: 'decide', label: 'Decide review' });
   // Finance may flag / clear a dispute too (Phase 3a: it unlocks the charges).
   if (open && (manage || ckoIsFinance(m))) a.push(f.indexOf('resident_dispute') === -1 ? { act: 'flag_dispute', label: 'Flag dispute' } : { act: 'clear_dispute', label: 'Clear dispute' });
   if (open && manage && f.indexOf('missing_keys') !== -1) a.push({ act: 'clear_missing_keys', label: 'Keys sorted' });
@@ -28840,7 +28855,7 @@ let ckoOpenSeq = 0;
 // the buttons must match what the server will allow.
 function ckoMe(){
   const u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || {};
-  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true, can_approve_refund_step: u.can_approve_refund_step === true, homestay_only: typeof ckoHomestayOnly === 'function' && ckoHomestayOnly(u) };
+  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true, can_approve_refund_step: u.can_approve_refund_step === true, can_decide_short_notice: u.can_decide_short_notice === true, homestay_only: typeof ckoHomestayOnly === 'function' && ckoHomestayOnly(u) };
 }
 function ckoTeam(){ return typeof teamMembers !== 'undefined' ? teamMembers : []; }
 function ckoName(email){
@@ -44670,9 +44685,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-19-stfsubmit1"></script>
-<script src="extensions.js?v=2026-10-19-stfsubmit1"></script>
-<script src="ap.js?v=2026-10-19-stfsubmit1"></script>
-<script src="properties.js?v=2026-10-19-stfsubmit1"></script>
+<script src="room-changes.js?v=2026-10-19-decidereview1"></script>
+<script src="extensions.js?v=2026-10-19-decidereview1"></script>
+<script src="ap.js?v=2026-10-19-decidereview1"></script>
+<script src="properties.js?v=2026-10-19-decidereview1"></script>
 </body>
 </html>
