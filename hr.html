@@ -152,19 +152,56 @@ label.f.full { grid-column: 1 / -1; }
 .pv dd { margin: 0; overflow-wrap: anywhere; }
 .pv ul.plain { margin: 0; padding-left: 18px; font-size: 13px; }
 .pv-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* the employee's own hub (also the HR preview) */
+.my { max-width: 880px; margin: 0 auto; }
+.my .hi { font-family: var(--serif); font-size: 26px; margin: 0; }
+.mytabs { display: flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; margin: 12px 0 14px; max-width: 100%; }
+.mytabs .tab { flex: 1 0 auto; justify-content: center; }
+@media (max-width: 520px) { .mytabs { flex-wrap: wrap; border-radius: 16px; overflow: visible; } .mytabs .tab { flex: 1 0 30%; } }
+.home { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .home { grid-template-columns: minmax(0, 1fr); } }
+.hcard { padding: 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.hcard.wide { grid-column: 1 / -1; }
+.hcard h3 { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.hcard .big { font-family: var(--serif); font-size: 30px; font-weight: 700; line-height: 1.1; }
+.hcard .line { font-size: 13px; overflow-wrap: anywhere; }
+.hcard .actions { margin-top: auto; padding-top: 6px; }
+.sec { padding: 16px; margin-bottom: 12px; }
+.sec h3 { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.est { font-size: 13px; font-weight: 600; min-height: 18px; grid-column: 1 / -1; }
+.est.bad { color: var(--red); }
+.reqs { list-style: none; margin: 0; padding: 0; }
+.reqs li { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.reqs li:last-child { border-bottom: 0; }
+.st-pending { background: var(--amber-soft); color: var(--b-amber); }
+.st-declined { background: var(--red-soft); color: var(--red); }
+.st-cancelled { background: var(--cream-2); color: var(--muted); }
+.thread { display: flex; flex-direction: column; gap: 8px; margin: 0 0 10px; }
+.bub { max-width: 85%; padding: 8px 12px; border-radius: 14px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bub small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.bub.me { align-self: flex-end; background: var(--red-soft); }
+.bub.hr { align-self: flex-start; background: var(--cream-2); }
+details.fold { margin-top: 16px; }
+details.fold > summary { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
+.hubc { padding: 12px; margin-top: 10px; box-shadow: none; }
+.rq { padding: 12px 14px; margin-bottom: 8px; }
+.rq .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.h-sec { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
 </style>
 </head>
 <body>
 <div class="top">
   <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
   <span class="page-title">Employee <em>Hub</em></span>
-  <span class="pill" title="Only Aldo and Elisa can open this page. No employee has access and nothing is sent to anyone.">Private review</span>
+  <span class="pill" id="hrPill" hidden title="Everyone's records — only Aldo and Elisa see this view. Each employee sees only their own hub, once you switch it on for them.">HR view</span>
   <span class="sp"></span>
   <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab" data-tab="requests">Requests <span class="tbadge" id="rqCount" hidden></span></button>
     <button type="button" class="tab on" data-tab="people">Employees</button>
     <button type="button" class="tab" data-tab="queue">Review queue <span class="tbadge" id="qCount" hidden></span></button>
     <button type="button" class="tab" data-tab="activity">Activity</button>
     <button type="button" class="tab" data-tab="settings">Settings <span class="tbadge" id="lvCount" hidden></span></button>
+    <button type="button" class="tab" data-tab="mine" id="mineTab" hidden>My hub</button>
   </nav>
 </div>
 
@@ -175,7 +212,7 @@ label.f.full { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="hr-core.js?v=2026-10-19-maaccess2"></script>
+<script src="hr-core.js?v=2026-10-19-hrself2"></script>
 <script>
 (function () {
   'use strict';
@@ -190,7 +227,12 @@ label.f.full { grid-column: 1 / -1; }
   var LANGS = { en: 'English', es: 'Spanish', fr: 'French', other: 'Other' };
   var STATUS = { active: 'Active', on_leave: 'On leave', inactive: 'Inactive', terminated: 'Terminated' };
   var S = { tab: 'people', filter: 'all', q: '', emps: [], docs: [], openId: null, audit: [], search: [], busy: false,
-    ledger: [], balances: [], settings: {}, leavers: null, pvLang: null };
+    ledger: [], balances: [], settings: {}, leavers: null, requests: [], msgs: [], selfServiceMissing: false, meEmail: '',
+    mine: null,   // the signed-in employee's own hub: { h: hr_my_hub(), tab, lang }
+    pv: null };   // HR preview of one employee: { h, tab, lang, warn, empId }
+  var MY_TABS = { home: 'tHome', time: 'tTime', docs: 'tDocs', details: 'tDetails', ask: 'tAsk' };
+  var REQ = { pending: 'sPending', approved: 'sApproved', declined: 'sDeclined', cancelled: 'sCancelled' };
+  var KIND = { vacation: 'kVacation', sick: 'kSick', personal: 'kPersonal' };
 
   function $(id) { return document.getElementById(id); }
   function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -225,7 +267,21 @@ label.f.full { grid-column: 1 / -1; }
     if (bad) { toast('Could not load: ' + bad.error.message); return; }
     S.emps = r[0].data || []; S.docs = r[1].data || []; S.ledger = r[2].data || []; S.balances = r[3].data || [];
     S.settings = {}; (r[4].data || []).forEach(function (x) { S.settings[x.key] = x.value; });
+    // Part 3 tables (hr-hub-self-service SQL). Until that file is applied the rest of the hub still works.
+    var p3 = await Promise.all([
+      sb.from('hr_leave_requests').select('*').order('start_date', { ascending: true }).limit(1000),
+      sb.from('hr_messages').select('*').order('created_at', { ascending: true }).limit(3000),
+    ]);
+    S.selfServiceMissing = !!(p3[0].error || p3[1].error);
+    S.requests = p3[0].data || []; S.msgs = p3[1].data || [];
   }
+  async function loadMine() {
+    var h = await call('hr_my_hub', {});
+    if (!S.mine) S.mine = { tab: 'home', lang: savedLang() || (h.me && h.me.locale === 'es' ? 'es' : 'en') };
+    S.mine.h = h;
+  }
+  function savedLang() { try { var v = localStorage.getItem('vm-hr-lang'); return v === 'es' || v === 'en' ? v : null; } catch (e) { return null; } }
+  function saveLang(v) { try { localStorage.setItem('vm-hr-lang', v); } catch (e) {} }
   async function loadLeavers() {
     try { S.leavers = await call('hr_leaver_access', {}); } catch (e) { S.leavers = null; }
     $('lvCount').hidden = !(S.leavers && S.leavers.length); $('lvCount').textContent = S.leavers ? S.leavers.length : '';
@@ -248,11 +304,20 @@ label.f.full { grid-column: 1 / -1; }
     document.querySelectorAll('#tabs .tab').forEach(function (t) { t.classList.toggle('on', t.dataset.tab === S.tab); });
     var q = S.docs.filter(function (d) { return !d.employee_id; }).length;
     $('qCount').hidden = !q; $('qCount').textContent = q;
+    var w = waitingCount();
+    $('rqCount').hidden = !w; $('rqCount').textContent = w;
     if (S.tab === 'people') renderPeople();
+    else if (S.tab === 'requests') renderRequests();
     else if (S.tab === 'queue') renderQueue();
     else if (S.tab === 'settings') renderSettings();
+    else if (S.tab === 'mine') renderMine();
     else renderActivity();
   }
+  function openThreads() {   // employee ids with a message HR hasn't handled
+    var ids = []; S.msgs.forEach(function (m) { if (!m.from_hr && !m.done_at && ids.indexOf(m.employee_id) < 0) ids.push(m.employee_id); });
+    return ids;
+  }
+  function waitingCount() { return S.requests.filter(function (r) { return r.status === 'pending'; }).length + openThreads().length; }
 
   function counts() {
     var c = { all: S.emps.length, pending_review: 0, needs_correction: 0, approved: 0, missing: 0, no_balance: 0, not_ready: 0 };
@@ -285,7 +350,7 @@ label.f.full { grid-column: 1 / -1; }
         '<span class="c2"><span class="st st-' + esc(e.review_status) + '">' + esc(REVIEW[e.review_status]) + '</span></span>' +
         '<span class="c3"><small>' + esc([e.city, e.province, e.country].filter(Boolean).join(', ')) + '</small></span>' +
         '<span class="c4">' + (cc ? '<span class="st st-cur">Current contract</span>' : '<span class="st st-none">' + (n ? n + ' doc' + (n > 1 ? 's' : '') + ', none current' : 'No documents') + '</span>') +
-        '<small>Ready ' + rd.done + '/' + rd.total + '</small></span>' +
+        '<small>Ready ' + rd.done + '/' + rd.total + (e.hub_enabled ? ' · Hub on' : '') + '</small></span>' +
         '</button>';
     }).join('');
     $('app').innerHTML =
@@ -362,21 +427,31 @@ label.f.full { grid-column: 1 / -1; }
     var ready = '<div class="card" style="padding:12px;margin-top:10px;box-shadow:none"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center">' +
       '<b>Ready for rollout</b><span class="st ' + (rd.ready ? 'st-approved' : 'st-none') + '">' + rd.done + ' of ' + rd.total + '</span></div>' +
       '<ul class="ready">' + rd.items.map(function (i) { return '<li class="' + (i.ok ? 'ok' : '') + '">' + esc(i.label) + '</li>'; }).join('') + '</ul>' +
-      '<p class="muted" style="font-size:12px;margin:6px 0 0">Being ready switches nothing on. Only Aldo can authorize rollout.</p></div>';
-    return '<div class="pv-head"><h2>' + esc(name(e)) + '</h2><button type="button" class="btn btn-ghost" data-preview="' + esc(e.id) + '">Preview as employee</button></div><div class="muted" style="font-size:12.5px">' +
+      '<p class="muted" style="font-size:12px;margin:6px 0 0">Being ready switches nothing on — use Employee hub above.</p></div>';
+    var email = e.work_email || e.personal_email;
+    var hub = '<div class="card hubc"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>Employee hub</b>' +
+      '<span class="st ' + (e.hub_enabled ? 'st-approved' : 'st-none') + '">' + (e.hub_enabled ? 'On' : 'Off') + '</span></div>' +
+      '<p class="muted" style="font-size:12px;margin:6px 0 0">' + (e.hub_enabled
+        ? 'They sign in to the portal with ' + esc(email) + ' and see only their own time off, signed documents, details and messages to HR.'
+        : email ? 'When on, they sign in to the portal with ' + esc(email) + ' and see only their own hub. They need a portal invite with that email.'
+          : 'Add their work email in Profile first.') +
+      (!e.hub_enabled && email && !rd.ready ? ' Not everything is ready (' + rd.done + '/' + rd.total + '), so some parts will be blank.' : '') + '</p>' +
+      (email || e.hub_enabled ? '<div class="actions"><button type="button" class="btn ' + (e.hub_enabled ? 'btn-ghost' : 'btn-primary') + '" data-hub="' + (e.hub_enabled ? 'off' : 'on') + '">' +
+        (e.hub_enabled ? 'Switch off' : 'Switch on') + '</button><button type="button" class="btn btn-ghost" data-preview="' + esc(e.id) + '">See what they see</button></div>' : '') + '</div>';
+    return '<div class="pv-head"><h2>' + esc(name(e)) + '</h2></div><div class="muted" style="font-size:12.5px">' +
       esc([e.entity, e.province, e.pay_group].filter(Boolean).join(' · ')) + '</div>' +
       (src.kind === 'payroll_register' ? '<div class="muted" style="font-size:12px;margin-top:2px">Source: ' + esc(src.system) + ' register, pay cycle ending ' + esc(day(src.pay_cycle_ending)) + '</div>' : '') +
-      rv + ready +
+      hub + rv + ready +
       '<h3>Documents (' + docs.length + ')</h3>' +
       (docs.map(function (d) { return docHtml(d, false); }).join('') || '<p class="muted" style="font-size:12.5px">No documents yet. Contracts found in email will appear here.</p>') +
       '<div class="actions"><button type="button" class="btn btn-ghost" id="upBtn">Upload document</button><input type="file" id="upFile" hidden accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" /></div>' +
       '<h3>Time off</h3>' + timeOffHtml(e) +
-      '<h3>Profile</h3>' + profileForm(e) +
-      '<h3>Email search coverage</h3>' +
+      '<details class="fold"' + (S.profileOpen ? ' open' : '') + ' id="profileFold"><summary>Profile</summary><div style="margin-top:8px">' + profileForm(e) + '</div></details>' +
+      '<details class="fold"><summary>Email search coverage</summary><div style="margin-top:8px">' +
       (S.search.length ? '<ul class="hist">' + S.search.map(function (s) { return '<li><span>' + esc(s.query) + ' — ' + esc(s.result_count === null ? '?' : s.result_count) + ' result' + (s.result_count === 1 ? '' : 's') + (s.notes ? ' · ' + esc(s.notes) : '') + '</span><span>' + esc(when(s.searched_at)) + '</span></li>'; }).join('') + '</ul>'
-        : '<p class="muted" style="font-size:12.5px">Not searched yet. No match never proves no contract exists.</p>') +
-      '<h3>History</h3>' +
-      (S.audit.length ? '<ul class="hist">' + S.audit.map(auditLi).join('') + '</ul>' : '<p class="muted" style="font-size:12.5px">—</p>');
+        : '<p class="muted" style="font-size:12.5px">Not searched yet. No match never proves no contract exists.</p>') + '</div></details>' +
+      '<details class="fold"><summary>History</summary><div style="margin-top:8px">' +
+      (S.audit.length ? '<ul class="hist">' + S.audit.map(auditLi).join('') + '</ul>' : '<p class="muted" style="font-size:12.5px">—</p>') + '</div></details>';
   }
   function auditLi(a) {
     var what = a.action + (a.entity === 'hr_documents' ? ' document' : '') + (a.detail && a.detail.fields ? ': ' + a.detail.fields.join(', ') : '');
@@ -444,44 +519,207 @@ label.f.full { grid-column: 1 / -1; }
       '</div></div>';
   }
 
-  function previewHtml(e, lang) {
+  // ------------------------------------------------------------- the employee's own hub (and HR's preview of it)
+  // h has the hr_my_hub() shape. c = { h, tab, lang, preview, warn }. In a preview every button that would send
+  // something only shows a note; tabs still work so HR sees each screen.
+  function todayYmd() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function myHtml(c) {
+    var h = c.h || {}, lang = c.lang, me = h.me || {}, st = h.settings || {};
     var L = function (k, v) { return HR.t(lang, k, v); };
-    var docs = HR.employeeDocs(S.docs, e.id), mgr = empById(e.manager_employee_id);
-    var b = balanceOf(e.id), oc = S.settings.outside_contact, pay = S.settings.vacation_pay_method;
-    var warn = HR.previewWarnings(e, S.settings, S.docs, S.balances);
-    var opened = HR.accessLog(S.audit);
     var locale = lang === 'es' ? 'es' : 'en';
-    var d = function (ymd) { if (!ymd) return ''; var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString(locale, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' }) : ymd; };
-    var at = function (iso) { var x = new Date(iso); return isNaN(x) ? '' : x.toLocaleString(locale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); };
-    var dl = function (k, v) { return '<dt>' + esc(L(k)) + '</dt><dd>' + (v ? esc(v) : '<span class="muted">' + esc(L('notSet')) + '</span>') + '</dd>'; };
-    return '<div class="pv-head"><h2 id="mTitle">' + esc(L('hello', { name: e.preferred_name || e.legal_first_name })) + '</h2>' +
-      '<div class="chips"><button type="button" class="chip' + (lang === 'en' ? ' on' : '') + '" data-pvlang="en">English</button>' +
-      '<button type="button" class="chip' + (lang === 'es' ? ' on' : '') + '" data-pvlang="es">Español</button></div></div>' +
-      '<div class="pv-banner">' + esc(HR.t('en', 'banner', { name: name(e) })) + '</div>' +
-      (warn.length ? '<div class="warn"><b>Before this person could be switched on</b><ul>' + warn.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>' : '') +
-      '<div class="pv">' +
-      '<h3>' + esc(L('time')) + '</h3>' +
-      (b && b.opening_as_of ? '<div class="bal">' + esc(HR.fmtBalance(b.posted_minutes, e.day_minutes, lang).text) + '</div><div class="muted" style="font-size:12.5px">' +
-        esc(L('balance')) + ' · ' + esc(L('asOf', { date: d(new Date().toISOString().slice(0, 10)) })) + '</div>' : '<p class="muted">' + esc(L('noBalance')) + '</p>') +
-      (pay === 'per_cheque' ? '<p style="font-size:13px">' + esc(L('payPerCheque')) + '</p>' : pay === 'when_taken' ? '<p style="font-size:13px">' + esc(L('payWhenTaken')) + '</p>' : '') +
-      '<button type="button" class="btn btn-ghost" disabled>' + esc(L('request')) + ' ' + esc(L('requestSoon')) + '</button>' +
-      '<h3>' + esc(L('docs')) + '</h3>' +
-      (docs.length ? '<ul class="plain">' + docs.map(function (x) {
-        return '<li><b>' + esc(x.title) + '</b>' + (x.is_current_contract ? ' · ' + esc(L('current')) : '') + (x.effective_date ? ' · ' + esc(L('effective')) + ' ' + esc(d(x.effective_date)) : '') + '</li>';
-      }).join('') + '</ul>' : '<p class="muted" style="font-size:13px">' + esc(L('noDocs')) + '</p>') +
-      '<h3>' + esc(L('profile')) + '</h3><dl>' + dl('job', e.job_title) + dl('manager', mgr ? name(mgr) : '') + dl('start', d(e.start_date)) +
-        dl('entity', e.entity) + dl('location', [e.city, e.province].filter(Boolean).join(', ')) +
-        dl('emergency', [e.emergency_name, e.emergency_relation, e.emergency_phone].filter(Boolean).join(' · ')) + '</dl>' +
-      '<p class="muted" style="font-size:12.5px">' + esc(L('editNote')) + '</p>' +
-      '<h3>' + esc(L('contact')) + '</h3><p style="font-size:13px;margin:0 0 6px">' + esc(L('contactBody')) + '</p>' +
-      (oc && oc.name ? '<p style="font-size:13px;margin:0">' + esc(L('outside', { name: oc.name, role: oc.role ? ' (' + oc.role + ')' : '', email: oc.email })) + '</p>' : '') +
-      '<h3>' + esc(L('pay')) + '</h3><p style="font-size:13px;margin:0 0 6px">' + esc(L('payBody')) + '</p>' +
-      (S.settings.payroll_link ? '<a class="btn btn-ghost" href="' + esc(S.settings.payroll_link) + '" target="_blank" rel="noopener noreferrer">' + esc(L('payLink')) + '</a>' : '') +
-      '<h3>' + esc(L('privacy')) + '</h3><ul class="plain">' + L('privacyBody').map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
-      '<h3>' + esc(L('opened')) + '</h3>' +
-      (opened.length ? '<ul class="hist">' + opened.slice(0, 20).map(function (a) { return '<li><span>' + esc(L('openedRow', { who: a.who })) + '</span><span>' + esc(at(a.at)) + '</span></li>'; }).join('') + '</ul>'
-        : '<p class="muted" style="font-size:13px">' + esc(L('noneOpened')) + '</p>') +
-      '</div><div class="actions"><button type="button" class="btn btn-ghost" id="mClose">Close</button></div>';
+    var d = function (ymd) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || ''); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString(locale, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }) : ''; };
+    var at = function (iso) { var x = new Date(iso); return isNaN(x) ? '' : x.toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+    var amt = function (min) { return HR.fmtBalance(min, me.day_minutes, lang).text; };
+    var range = function (r) { return r.start_date === r.end_date ? d(r.start_date) : d(r.start_date) + ' – ' + d(r.end_date); };
+    var today = todayYmd(), reqs = HR.sortRequests(h.requests, today);
+    var pending = reqs.filter(function (r) { return r.status === 'pending'; });
+    var next = reqs.filter(function (r) { return r.status === 'approved' && String(r.end_date) >= today; })[0];
+    var bal = function (lt) { return (h.balances || []).filter(function (b) { return b.leave_type === lt; })[0] || null; };
+    var vac = bal('vacation'), docs = h.documents || [], msgs = h.messages || [], last = msgs[msgs.length - 1];
+    var dis = c.preview ? ' data-pvblock="1"' : '';
+    var first = me.preferred_name || me.first_name || '';
+    var tabs = '<nav class="mytabs" aria-label="Sections">' + Object.keys(MY_TABS).map(function (t) {
+      return '<button type="button" class="tab' + (c.tab === t ? ' on' : '') + '" data-mytab="' + t + '">' + esc(L(MY_TABS[t])) +
+        (t === 'time' && pending.length ? ' <span class="tbadge">' + pending.length + '</span>' : '') + '</button>';
+    }).join('') + '</nav>';
+    var head = '<div class="pv-head"><div><h2 class="hi" id="mTitle">' + esc(L('hello', { name: first })) + '</h2><div class="muted" style="font-size:12.5px">' +
+      esc([me.job_title, me.entity].filter(Boolean).join(' · ')) + '</div></div>' +
+      '<div class="chips"><button type="button" class="chip' + (lang === 'en' ? ' on' : '') + '" data-mylang="en">English</button>' +
+      '<button type="button" class="chip' + (lang === 'es' ? ' on' : '') + '" data-mylang="es">Español</button></div></div>';
+    var pre = c.preview ? '<div class="pv-banner">' + esc(HR.t('en', 'banner', { name: c.name || first })) + ' ' + esc(HR.t('en', 'previewNote')) + '</div>' +
+      (c.warn && c.warn.length ? '<div class="warn"><b>Before this person is switched on</b><ul>' + c.warn.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>' : '') : '';
+    var payNote = st.vacation_pay_method === 'per_cheque' ? L('payPerCheque') : st.vacation_pay_method === 'when_taken' ? L('payWhenTaken') : '';
+    var body;
+
+    if (c.tab === 'time') {
+      var kinds = ['vacation'].concat((h.balances || []).map(function (b) { return b.leave_type; }).filter(function (k) { return k !== 'vacation'; }));
+      body = '<div class="card sec"><h3>' + esc(L('balance')) + '</h3>' + kinds.map(function (k) {
+          var b = bal(k);
+          return '<div style="margin-bottom:6px"><div class="muted" style="font-size:12px">' + esc(L(KIND[k])) + '</div>' +
+            (b && (k !== 'vacation' || b.opening_as_of) ? '<div class="bal">' + esc(amt(b.posted_minutes)) + '</div>' : '<div class="muted">' + esc(L('noBalance')) + '</div>') + '</div>';
+        }).join('') + (payNote ? '<p class="muted" style="font-size:12.5px;margin:4px 0 0">' + esc(payNote) + '</p>' : '') + '</div>' +
+        '<div class="card sec"><h3>' + esc(L('reqBtn')) + '</h3><form id="myReq" class="grid2"' + dis + '>' +
+        '<input type="hidden" name="idem_key" value="' + esc(newKey()) + '" />' +
+        '<label class="f full">' + esc(L('kind')) + '<select class="sel" name="leave_type">' + Object.keys(KIND).map(function (k) { return '<option value="' + k + '">' + esc(L(KIND[k])) + '</option>'; }).join('') + '</select></label>' +
+        '<label class="f">' + esc(L('first')) + '<input class="inp" type="date" name="start_date" min="' + esc(today) + '" required /></label>' +
+        '<label class="f">' + esc(L('last')) + '<input class="inp" type="date" name="end_date" min="' + esc(today) + '" /></label>' +
+        '<label class="f full">' + esc(L('hoursOpt')) + '<input class="inp" name="hours" inputmode="decimal" placeholder="' + esc(L('hoursPh')) + '" /></label>' +
+        '<label class="f full">' + esc(L('noteOpt')) + '<textarea class="inp" name="note" rows="2" maxlength="1000"></textarea></label>' +
+        '<div class="est" id="myEst" aria-live="polite"></div>' +
+        '<div class="actions" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">' + esc(L('send')) + '</button></div></form></div>' +
+        '<div class="card sec"><h3>' + esc(L('myRequests')) + '</h3>' + (reqs.length ? '<ul class="reqs">' + reqs.map(function (r) {
+          return '<li><span><b>' + esc(range(r)) + '</b> · ' + esc(L(KIND[r.leave_type])) + ' · ' + esc(amt(r.minutes)) +
+            (r.note ? '<br><span class="muted" style="font-size:12.5px">' + esc(r.note) + '</span>' : '') +
+            (r.decision_note ? '<br><span style="font-size:12.5px">' + esc(L('hrNote', { text: r.decision_note })) + '</span>' : '') + '</span>' +
+            '<span style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><span class="st st-' + esc(r.status) + '">' + esc(L(REQ[r.status])) + '</span>' +
+            (r.status === 'pending' ? '<button type="button" class="btn btn-ghost" data-mycancel="' + esc(r.id) + '"' + dis + '>' + esc(L('cancel')) + '</button>' : '') + '</span></li>';
+        }).join('') + '</ul>' : '<p class="muted" style="margin:0">' + esc(L('noRequests')) + '</p>') + '</div>';
+
+    } else if (c.tab === 'docs') {
+      body = '<div class="card sec"><h3>' + esc(L('docs')) + '</h3>' + (docs.length ? '<ul class="reqs">' + docs.map(function (x) {
+          return '<li><span><b>' + esc(x.title) + '</b><br><span class="muted" style="font-size:12.5px">' +
+            esc([x.is_current_contract ? L('current') : '', x.effective_date ? L('effective') + ' ' + d(x.effective_date) : ''].filter(Boolean).join(' · ')) + '</span></span>' +
+            '<button type="button" class="btn btn-ghost" data-mydoc="' + esc(x.id) + '"' + dis + '>' + esc(L('openBtn')) + '</button></li>';
+        }).join('') + '</ul>' : '<p class="muted" style="margin:0">' + esc(L('noDocs')) + '</p>') + '</div>' +
+        '<div class="card sec"><h3>' + esc(L('opened')) + '</h3>' + ((h.opened || []).length ? '<ul class="hist">' + h.opened.map(function (a) {
+          return '<li><span>' + esc(L('openedRow', { who: HR.actorName(a.actor) })) + '</span><span>' + esc(at(a.at)) + '</span></li>';
+        }).join('') + '</ul>' : '<p class="muted" style="margin:0">' + esc(L('noneOpened')) + '</p>') + '</div>';
+
+    } else if (c.tab === 'details') {
+      var dl = function (k, v) { return '<dt>' + esc(L(k)) + '</dt><dd>' + (v ? esc(v) : '<span class="muted">' + esc(L('notSet')) + '</span>') + '</dd>'; };
+      var inp = function (k, label, v, type) { return '<label class="f">' + esc(L(label)) + '<input class="inp" name="' + k + '" type="' + (type || 'text') + '" value="' + esc(v) + '" /></label>'; };
+      body = '<div class="card sec pv"><h3>' + esc(L('profile')) + '</h3><dl>' + dl('job', me.job_title) + dl('manager', me.manager) + dl('start', me.start_date ? d(me.start_date) : '') +
+        dl('entity', me.entity) + dl('location', [me.city, me.province].filter(Boolean).join(', ')) + dl('workEmail', me.work_email) + '</dl>' +
+        '<p class="muted" style="font-size:12.5px;margin:10px 0 0">' + esc(L('editNote')) + '</p></div>' +
+        '<div class="card sec"><form id="myDetails" class="grid2"' + dis + '>' +
+        inp('preferred_name', 'prefName', me.preferred_name) + inp('phone', 'phone', me.phone, 'tel') +
+        '<label class="f full">' + esc(L('persEmail')) + '<input class="inp" name="personal_email" type="email" value="' + esc(me.personal_email) + '" /></label>' +
+        inp('emergency_name', 'emName', me.emergency_name) + inp('emergency_phone', 'emPhone', me.emergency_phone, 'tel') +
+        inp('emergency_relation', 'emRel', me.emergency_relation) + '<span></span>' +
+        '<div class="actions" style="grid-column:1/-1"><button type="submit" class="btn btn-primary">' + esc(L('save')) + '</button></div></form></div>' +
+        '<div class="card sec pv"><h3>' + esc(L('privacy')) + '</h3><ul class="plain">' + L('privacyBody').map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+
+    } else if (c.tab === 'ask') {
+      var oc = st.outside_contact;
+      body = '<div class="card sec"><h3>' + esc(L('contact')) + '</h3><p style="font-size:13px;margin:0 0 10px">' + esc(L('contactBody')) + '</p>' +
+        (msgs.length ? '<div class="thread">' + msgs.map(function (m) {
+          return '<div class="bub ' + (m.from_hr ? 'hr' : 'me') + '">' + esc(m.body) + '<small>' + esc(L(m.from_hr ? 'fromHr' : 'fromYou')) + ' · ' + esc(at(m.at)) + '</small></div>';
+        }).join('') + '</div>' : '<p class="muted">' + esc(L('noMsgs')) + '</p>') +
+        '<form id="myMsg"' + dis + '><textarea class="inp" name="body" rows="3" maxlength="4000" placeholder="' + esc(L('msgPh')) + '" aria-label="' + esc(L('msgPh')) + '"></textarea>' +
+        '<div class="actions"><button type="submit" class="btn btn-primary">' + esc(L('msgSend')) + '</button></div></form>' +
+        (oc && oc.name ? '<p class="muted" style="font-size:12.5px;margin:12px 0 0">' + esc(L('outside', { name: oc.name, role: oc.role ? ' (' + oc.role + ')' : '', email: oc.email })) + '</p>' : '') + '</div>';
+
+    } else {
+      var lastLine = last ? (last.from_hr ? L('hrReplied', { text: last.body }) : L('youWrote', { text: last.body })) : L('askBlurb');
+      if (lastLine.length > 140) lastLine = lastLine.slice(0, 137) + '…';
+      var cur = docs.filter(function (x) { return x.is_current_contract; })[0] || docs[0];
+      var hasEm = me.emergency_name && me.emergency_phone;
+      body = '<div class="home">' +
+        '<div class="card hcard"><h3>' + esc(L('tTime')) + '</h3>' +
+          (vac && vac.opening_as_of ? '<div class="big">' + esc(amt(vac.posted_minutes)) + '</div><div class="muted" style="font-size:12.5px">' + esc(L('left')) + '</div>'
+            : '<div class="line muted">' + esc(L('noBalance')) + '</div>') +
+          (pending.length ? '<div class="line"><span class="st st-pending">' + esc(L(pending.length === 1 ? 'waiting' : 'waitingN', { n: pending.length })) + '</span></div>' : '') +
+          (next ? '<div class="line">' + esc(L('nextOff', { dates: range(next) })) + '</div>' : '') +
+          '<div class="actions"><button type="button" class="btn btn-primary" data-mygo="time">' + esc(L('reqBtn')) + '</button></div></div>' +
+        '<div class="card hcard"><h3>' + esc(L('tAsk')) + '</h3><div class="line">' + esc(lastLine) + '</div>' +
+          '<div class="actions"><button type="button" class="btn btn-primary" data-mygo="ask">' + esc(L('writeBtn')) + '</button></div></div>' +
+        '<div class="card hcard"><h3>' + esc(L('tDocs')) + '</h3>' +
+          (cur ? '<div class="line"><b>' + esc(cur.title) + '</b>' + (cur.is_current_contract ? ' · ' + esc(L('current')) : '') + '</div>' : '<div class="line muted">' + esc(L('noDocs')) + '</div>') +
+          '<div class="actions">' + (cur ? '<button type="button" class="btn btn-ghost" data-mydoc="' + esc(cur.id) + '"' + dis + '>' + esc(L('openBtn')) + '</button>' : '') +
+          (docs.length > 1 ? '<button type="button" class="btn btn-ghost" data-mygo="docs">' + esc(L('allDocs')) + ' (' + docs.length + ')</button>' : '') + '</div></div>' +
+        '<div class="card hcard"><h3>' + esc(L('tDetails')) + '</h3>' +
+          (hasEm ? '<div class="line">' + esc(L('emergency')) + ': ' + esc([me.emergency_name, me.emergency_relation, me.emergency_phone].filter(Boolean).join(' · ')) + '</div>'
+            : '<div class="line"><span class="st st-pending">' + esc(L('noEmergency')) + '</span></div>') +
+          '<div class="actions"><button type="button" class="btn btn-ghost" data-mygo="details">' + esc(L('editBtn')) + '</button></div></div>' +
+        '<div class="card hcard wide"><h3>' + esc(L('pay')) + '</h3><div class="line">' + esc(L('payBody')) + '</div>' +
+          (st.payroll_link ? '<div class="actions"><a class="btn btn-ghost" href="' + esc(st.payroll_link) + '" target="_blank" rel="noopener noreferrer">' + esc(L('payLink')) + ' ↗</a></div>' : '') + '</div>' +
+        '</div>';
+    }
+    return '<div class="my">' + pre + head + tabs + body + (c.preview ? '<div class="actions"><button type="button" class="btn btn-ghost" id="mClose">Close</button></div>' : '') + '</div>';
+  }
+
+  // What employee e would get from hr_my_hub(), built from what HR already loaded.
+  function hubFor(e) {
+    var mgr = empById(e.manager_employee_id);
+    return {
+      me: { id: e.id, first_name: e.legal_first_name, last_name: e.legal_last_name, preferred_name: e.preferred_name, work_email: e.work_email,
+        personal_email: e.personal_email, phone: e.phone, job_title: e.job_title, entity: e.entity, city: e.city, province: e.province,
+        start_date: e.start_date, locale: e.locale, day_minutes: e.day_minutes, emergency_name: e.emergency_name, emergency_phone: e.emergency_phone,
+        emergency_relation: e.emergency_relation, manager: mgr ? name(mgr) : null },
+      balances: S.balances.filter(function (b) { return b.employee_id === e.id; }),
+      requests: S.requests.filter(function (r) { return r.employee_id === e.id; }),
+      documents: HR.employeeDocs(S.docs, e.id),
+      messages: S.msgs.filter(function (m) { return m.employee_id === e.id; }).map(function (m) { return { id: m.id, from_hr: m.from_hr, body: m.body, at: m.created_at }; }),
+      opened: S.audit.filter(function (a) { return a.action === 'view_document' || a.action === 'download_document'; }).map(function (a) { return { actor: a.actor, at: a.at }; }),
+      settings: { vacation_pay_method: S.settings.vacation_pay_method, outside_contact: S.settings.outside_contact, payroll_link: S.settings.payroll_link },
+    };
+  }
+  function renderMine() {
+    if (!S.mine || !S.mine.h) { $('app').innerHTML = '<div class="card empty">Loading…</div>'; return; }
+    $('app').innerHTML = myHtml(S.mine);
+    if (S.mine.tab === 'time') updateEstimate($('app'), S.mine);
+  }
+  function renderPreview() {
+    $('modalCard').innerHTML = myHtml(S.pv);
+    if (S.pv.tab === 'time') updateEstimate($('modalCard'), S.pv);
+  }
+  // Live "3 working days · 22.5 h" line under the request form.
+  function updateEstimate(root, c) {
+    var f = root.querySelector('#myReq'), out = root.querySelector('#myEst'); if (!f || !out || !c) return;
+    var L = function (k, v) { return HR.t(c.lang, k, v); }, me = c.h.me || {};
+    var s = f.elements.start_date.value, e = f.elements.end_date.value || s;
+    if (!s) { out.textContent = ''; out.classList.remove('bad'); return; }
+    var r = HR.requestMinutes(s, e, me.day_minutes, f.elements.hours.value);
+    var errs = { dates: 'eDates', order: 'eOrder', hours: 'eHours', needHours: 'eNeedHours', weekend: 'eWeekend' };
+    out.classList.toggle('bad', !!r.error);
+    if (r.error) { out.textContent = L(errs[r.error]); return; }
+    var hrs = HR.fmtBalance(r.minutes, null, c.lang).text;
+    out.textContent = f.elements.hours.value.trim() ? L('estHours', { h: hrs }) : L(r.weekdays === 1 ? 'estimate1' : 'estimate', { n: r.weekdays, h: hrs });
+  }
+
+  // ------------------------------------------------------------- HR: what employees are waiting on
+  function isMe(e) { return !!(e && S.meEmail && [e.work_email, e.personal_email].some(function (x) { return x && x.toLowerCase() === S.meEmail; })); }
+  function rangeTxt(r) { return r.start_date === r.end_date ? day(r.start_date) : day(r.start_date) + ' – ' + day(r.end_date); }
+  function renderRequests() {
+    if (S.selfServiceMissing) {
+      $('app').innerHTML = '<div class="card empty" style="max-width:720px">Time-off requests and messages need hr-hub-self-service-2026-10-19.sql applied in Supabase first.</div>';
+      return;
+    }
+    var pend = S.requests.filter(function (r) { return r.status === 'pending'; });
+    var done = S.requests.filter(function (r) { return r.status !== 'pending'; }).sort(function (a, b) { return String(b.decided_at || '').localeCompare(String(a.decided_at || '')); }).slice(0, 10);
+    var threads = openThreads();
+    var reqCard = function (r) {
+      var e = empById(r.employee_id), b = balanceOf(r.employee_id, r.leave_type), dm = e && e.day_minutes;
+      var now = b ? b.posted_minutes : 0;
+      return '<div class="card rq"><div class="top"><b>' + esc(name(e)) + '</b><span class="st st-pending">' + esc(HR.LEAVE[r.leave_type]) + '</span></div>' +
+        '<div style="margin-top:4px"><b>' + esc(rangeTxt(r)) + '</b> · ' + esc(HR.fmtBalance(r.minutes, dm).text) + '</div>' +
+        '<div class="muted" style="font-size:12.5px">' + (b && b.opening_as_of || r.leave_type !== 'vacation'
+          ? 'Balance ' + esc(HR.fmtBalance(now, dm).text) + ' → after ' + esc(HR.fmtBalance(now - r.minutes, dm).text)
+          : 'No opening vacation balance yet — approving still records the time taken.') + ' · asked ' + esc(when(r.created_at)) + '</div>' +
+        (r.note ? '<div style="font-size:13px;margin-top:4px">“' + esc(r.note) + '”</div>' : '') +
+        (isMe(e) ? '<p class="muted" style="font-size:12.5px;margin:8px 0 0">Your own request — the other reviewer decides it.</p>'
+          : '<div class="actions"><button type="button" class="btn btn-ok" data-decide="approved" data-req="' + esc(r.id) + '">Approve</button>' +
+            '<input class="inp" id="why-' + esc(r.id) + '" placeholder="Reason (needed to decline)" aria-label="Reason to decline" style="max-width:260px" />' +
+            '<button type="button" class="btn btn-warn" data-decide="declined" data-req="' + esc(r.id) + '">Decline</button></div>') + '</div>';
+    };
+    var threadCard = function (id) {
+      var e = empById(id), list = S.msgs.filter(function (m) { return m.employee_id === id; }).slice(-6);
+      return '<div class="card rq"><div class="top"><b>' + esc(name(e)) + '</b><button type="button" class="btn btn-ghost" data-emp="' + esc(id) + '" data-go-people="1">Open profile</button></div>' +
+        '<div class="thread" style="margin-top:8px">' + list.map(function (m) {
+          return '<div class="bub ' + (m.from_hr ? 'me' : 'hr') + '">' + esc(m.body) + '<small>' + esc(m.from_hr ? HR.actorName(m.created_by) : name(e)) + ' · ' + esc(when(m.created_at)) + '</small></div>';
+        }).join('') + '</div>' +
+        '<textarea class="inp" id="reply-' + esc(id) + '" rows="2" placeholder="Reply — they see it in their hub (nothing is emailed)" aria-label="Reply"></textarea>' +
+        '<div class="actions"><button type="button" class="btn btn-primary" data-reply="' + esc(id) + '">Send reply</button>' +
+        '<button type="button" class="btn btn-ghost" data-handled="' + esc(id) + '">Mark handled</button></div></div>';
+    };
+    $('app').innerHTML = '<div style="max-width:760px">' +
+      '<p class="note">Everything employees are waiting on. Approving time off takes it off their balance straight away. Nothing here is emailed — employees see the answer in their hub.</p>' +
+      '<div class="h-sec">Time off to decide (' + pend.length + ')</div>' + (pend.map(reqCard).join('') || '<div class="card empty">Nothing waiting.</div>') +
+      '<div class="h-sec">Messages from employees (' + threads.length + ')</div>' + (threads.map(threadCard).join('') || '<div class="card empty">No unanswered messages.</div>') +
+      (done.length ? '<div class="h-sec">Recently decided</div><div class="card" style="padding:6px 14px"><ul class="hist">' + done.map(function (r) {
+        return '<li><span><b>' + esc(name(empById(r.employee_id))) + '</b> · ' + esc(rangeTxt(r)) + ' · <span class="st st-' + esc(r.status) + '">' + esc(r.status) + '</span>' +
+          (r.decision_note ? ' <span class="muted">· ' + esc(r.decision_note) + '</span>' : '') + '</span><span>' + esc(r.status === 'cancelled' ? 'by them' : HR.actorName(r.decided_by)) + ' · ' + esc(when(r.decided_at)) + '</span></li>';
+      }).join('') + '</ul></div>' : '') + '</div>';
   }
 
   function renderQueue() {
@@ -590,10 +828,77 @@ label.f.full { grid-column: 1 / -1; }
   async function openPreview(id) {
     var e = empById(id); if (!e) return;
     if (S.openId !== id) { S.openId = id; await loadEmployeeExtras(id); }
-    S.pvLang = HR.previewLang(e);
+    S.pv = { h: hubFor(e), tab: 'home', lang: HR.previewLang(e), preview: true, name: name(e), empId: id,
+      warn: HR.previewWarnings(e, S.settings, S.docs, S.balances).concat(e.hub_enabled ? [] : ['Their hub is off — they can’t open any of this yet.']) };
     $('modalCard').classList.add('wide');
-    $('modalCard').innerHTML = previewHtml(e, S.pvLang);
+    renderPreview();
     $('modal').classList.add('open');
+  }
+
+  // Employee actions (their own hub). Each reloads hr_my_hub so the page shows what the server stored.
+  async function myRequest(form) {
+    var p = formJson(form), me = S.mine.h.me || {}, L = function (k) { return HR.t(S.mine.lang, k); };
+    var r = HR.requestMinutes(p.start_date, p.end_date || p.start_date, me.day_minutes, p.hours);
+    var errs = { dates: 'eDates', order: 'eOrder', hours: 'eHours', needHours: 'eNeedHours', weekend: 'eWeekend' };
+    if (r.error) { toast(L(errs[r.error])); return; }
+    await guarded(async function () {
+      await call('hr_request_leave', { p: { leave_type: p.leave_type, start_date: p.start_date, end_date: p.end_date || p.start_date,
+        hours: p.hours, note: p.note, idem_key: p.idem_key } });
+      toast(L('sent')); await loadMine(); renderMine();
+    });
+  }
+  async function myCancel(id) {
+    await guarded(async function () {
+      await call('hr_cancel_leave_request', { req_id: Number(id) });
+      toast(HR.t(S.mine.lang, 'cancelled')); await loadMine(); renderMine();
+    });
+  }
+  async function myDetails(form) {
+    await guarded(async function () {
+      await call('hr_update_my_details', { p: formJson(form) });
+      toast(HR.t(S.mine.lang, 'saved')); await loadMine(); renderMine();
+    });
+  }
+  async function myMessage(form) {
+    var body = form.elements.body.value.trim(); if (!body) { form.elements.body.focus(); return; }
+    await guarded(async function () {
+      await call('hr_send_message', { body: body });
+      await loadMine(); renderMine();
+    });
+  }
+  async function openMyDoc(id) {
+    var d = (S.mine.h.documents || []).filter(function (x) { return x.id === id; })[0]; if (!d) return;
+    var w = window.open('', '_blank');
+    try {
+      var r = await sb.storage.from(BUCKET).createSignedUrl(d.storage_path, 60);
+      if (r.error) throw r.error;
+      if (w) { w.opener = null; w.location = r.data.signedUrl; } else location.href = r.data.signedUrl;
+    } catch (e) { if (w) w.close(); toast(errText(e)); }
+  }
+
+  // HR actions on requests, messages and the per-employee switch.
+  async function decide(id, decision) {
+    var why = ($('why-' + id) || {}).value || '';
+    if (decision === 'declined' && !why.trim()) { toast('Add a reason so they know why.'); $('why-' + id).focus(); return; }
+    await guarded(async function () {
+      await call('hr_decide_leave_request', { req_id: Number(id), decision: decision, why: why });
+      toast(decision === 'approved' ? 'Approved — taken off their balance.' : 'Declined.'); await refresh(false);
+    });
+  }
+  async function reply(empId, withBody) {
+    var body = withBody ? ($('reply-' + empId).value || '').trim() : '';
+    if (withBody && !body) { $('reply-' + empId).focus(); return; }
+    await guarded(async function () {
+      await call('hr_reply_message', { emp_id: empId, body: body || null });
+      toast(body ? 'Sent — they’ll see it in their hub.' : 'Marked handled.'); await refresh(false);
+    });
+  }
+  async function setHub(on) {
+    var e = empById(S.openId);
+    await guarded(async function () {
+      await call('hr_set_hub_access', { emp_id: e.id, enabled: on });
+      toast(on ? 'Hub switched on for ' + name(e) + '.' : 'Hub switched off.'); await refresh(true);
+    });
   }
   async function addLeave(form) {
     var e = empById(S.openId), p = formJson(form), m = HR.hoursToMinutes(p.hours);
@@ -647,19 +952,43 @@ label.f.full { grid-column: 1 / -1; }
   // ------------------------------------------------------------- events
   document.addEventListener('click', function (ev) {
     var t = ev.target.closest('button, [data-emp]'); if (!t) return;
-    if (t.dataset.tab) { S.tab = t.dataset.tab; render(); if (S.tab === 'settings') loadLeavers().then(function () { if (S.tab === 'settings') render(); }); return; }
+    var inPv = !!t.closest('#modal');
+    // Employee hub (theirs, or HR's preview of it in the modal)
+    var ctx = inPv ? S.pv : S.mine;
+    var reMy = function () { if (inPv) renderPreview(); else renderMine(); };
+    if (t.dataset.mytab || t.dataset.mygo) { ctx.tab = t.dataset.mytab || t.dataset.mygo; reMy(); return; }
+    if (t.dataset.mylang) { ctx.lang = t.dataset.mylang; if (!inPv) saveLang(ctx.lang); reMy(); return; }
+    if (inPv && t.dataset.pvblock) { toast(HR.t('en', 'previewNote')); return; }
+    if (t.dataset.mycancel) { myCancel(t.dataset.mycancel); return; }
+    if (t.dataset.mydoc) { openMyDoc(t.dataset.mydoc); return; }
+    // HR
+    if (t.dataset.tab) { S.tab = t.dataset.tab; render(); if (S.tab === 'settings') loadLeavers().then(function () { if (S.tab === 'settings') render(); });
+      if (S.tab === 'mine') loadMine().then(function () { if (S.tab === 'mine') render(); }, function (e) { toast(errText(e)); }); return; }
     if (t.dataset.preview) { openPreview(t.dataset.preview); return; }
-    if (t.dataset.pvlang) { S.pvLang = t.dataset.pvlang; $('modalCard').innerHTML = previewHtml(empById(S.openId), S.pvLang); return; }
     if (t.dataset.filter) { S.filter = t.dataset.filter; render(); return; }
+    if (t.dataset.goPeople) { S.tab = 'people'; }
     if (t.dataset.emp) { openEmployee(t.dataset.emp); return; }
     if (t.dataset.review) { review(t.dataset.review); return; }
     if (t.dataset.openDoc) { openDoc(t.dataset.openDoc); return; }
+    if (t.dataset.hub) { setHub(t.dataset.hub === 'on'); return; }
+    if (t.dataset.decide) { decide(t.dataset.req, t.dataset.decide); return; }
+    if (t.dataset.reply) { reply(t.dataset.reply, true); return; }
+    if (t.dataset.handled) { reply(t.dataset.handled, false); return; }
     if (t.id === 'upBtn') { $('upFile').click(); return; }
     if (t.id === 'addEmp') { addEmployeeModal(); return; }
     if (t.id === 'mClose') { $('modal').classList.remove('open'); return; }
   });
   document.addEventListener('change', function (ev) { if (ev.target.id === 'upFile') upload(ev.target.files[0]); });
+  document.addEventListener('toggle', function (ev) { if (ev.target.id === 'profileFold') S.profileOpen = ev.target.open; }, true);
   document.addEventListener('input', function (ev) {
+    var f = ev.target.form;
+    if (f && f.id === 'myReq') {
+      // Last day follows the first day until it is set on its own.
+      if (ev.target.name === 'start_date' && (!f.elements.end_date.value || f.elements.end_date.value < ev.target.value)) f.elements.end_date.value = ev.target.value;
+      if (ev.target.name === 'start_date') f.elements.end_date.min = ev.target.value;
+      var inPv = !!ev.target.closest('#modal');
+      updateEstimate(inPv ? $('modalCard') : $('app'), inPv ? S.pv : S.mine); return;
+    }
     if (ev.target.id !== 'q') return;
     S.q = ev.target.value; var pos = ev.target.selectionStart; render();
     var q = $('q'); q.focus(); try { q.setSelectionRange(pos, pos); } catch (e) {}
@@ -667,7 +996,11 @@ label.f.full { grid-column: 1 / -1; }
   document.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var f = ev.target;
-    if (f.id === 'empForm') saveEmployee(f);
+    if (f.dataset.pvblock) { toast(HR.t('en', 'previewNote')); return; }
+    if (f.id === 'myReq') myRequest(f);
+    else if (f.id === 'myDetails') myDetails(f);
+    else if (f.id === 'myMsg') myMessage(f);
+    else if (f.id === 'empForm') saveEmployee(f);
     else if (f.id === 'newEmpForm') addEmployee(f);
     else if (f.classList.contains('docForm')) saveDoc(f);
     else if (f.id === 'leaveForm') addLeave(f);
@@ -680,16 +1013,24 @@ label.f.full { grid-column: 1 / -1; }
   (async function boot() {
     var who = null;
     try { who = await call('hr_whoami', {}); } catch (e) { who = null; }
-    if (!who || !who.allowed) {
-      $('app').innerHTML = '<div class="card lock"><h1>Private page</h1><p class="muted">The Employee Hub is in private review. Your account doesn’t have access.</p>' +
-        '<a class="btn btn-ghost" href="index.html">Back to the portal</a></div>';
+    if (who && !who.allowed && who.employee) {   // an employee: only their own hub, no HR tabs
+      try { await loadMine(); } catch (e) { toast(errText(e)); }
+      renderMine();
       return;
     }
-    $('tabs').hidden = false;
+    if (!who || !who.allowed) {
+      var lang = (navigator.language || '').slice(0, 2) === 'es' ? 'es' : 'en';
+      $('app').innerHTML = '<div class="card lock"><h1>' + esc(HR.t(lang, 'lockTitle')) + '</h1><p class="muted">' + esc(HR.t(lang, 'lockBody')) + '</p>' +
+        '<a class="btn btn-ghost" href="index.html">' + esc(HR.t(lang, 'backPortal')) + '</a></div>';
+      return;
+    }
+    $('tabs').hidden = false; $('hrPill').hidden = false; $('mineTab').hidden = !who.employee;
+    try { var u = await sb.auth.getUser(); S.meEmail = ((u.data && u.data.user && u.data.user.email) || '').toLowerCase(); } catch (e) {}
     await loadAll();
     loadLeavers();
+    if (waitingCount()) S.tab = 'requests';
     var m = /[#&]e=([0-9a-f-]{36})/.exec(location.hash);
-    if (m && empById(m[1])) openEmployee(m[1]); else render();
+    if (m && empById(m[1])) { S.tab = 'people'; openEmployee(m[1]); } else render();
   })();
 })();
 </script>
