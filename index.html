@@ -1849,7 +1849,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-19-vacturn5"></script>
+<script src="pms-supabase.js?v=2026-10-19-approvestep1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20766,6 +20766,12 @@ if(_origGoToView){
       const { data: tc, error: tcErr } = await sb.from('team_members').select('id,countries');
       if (!tcErr && Array.isArray(tc)) tc.forEach(r => { tmCountries[r.id] = r.countries; });
     }
+    // Approve-refund-only flag (checkout-approve-step-2026-10-19.sql), read on its own for the same reason.
+    const tmApproveStep = {};
+    if (!tmErr) {
+      const { data: ta, error: taErr } = await sb.from('team_members').select('id,can_approve_refund_step');
+      if (!taErr && Array.isArray(ta)) ta.forEach(r => { tmApproveStep[r.id] = r.can_approve_refund_step === true; });
+    }
     if (tmErr) {
       console.warn("[hydrateTeam] team_members error:", tmErr);
     } else if (Array.isArray(tms)) {
@@ -20785,6 +20791,7 @@ if(_origGoToView){
           avatar_url: row.avatar_url || existing?.avatar_url || null,
           allowed_pages: row.allowed_pages,  // NULL or array
           can_approve_refunds: row.can_approve_refunds === true,  // checkout money steps (vm_is_finance)
+          can_approve_refund_step: tmApproveStep[row.id] === true,  // checkout approve_refund only
           countries: Array.isArray(tmCountries[row.id]) && tmCountries[row.id].length ? tmCountries[row.id] : ["CA"],
           ini:      existing?.ini || initials,
           lastLogin: existing?.lastLogin || "today",
@@ -27138,14 +27145,17 @@ function ckoHomestayOnly(u){
   const pages = Array.isArray(u.allowed_pages) && u.allowed_pages.length ? u.allowed_pages : (r.nav || []);
   return pages.indexOf('checkouts-homestay') !== -1 && pages.indexOf('checkouts') === -1;
 }
-// me = { email, role, can_approve_refunds }. Anything else (a missing me, a map()
-// index) is nobody. can_approve_refunds counts only when it is literally true.
-function ckoMeOf(me){ return me && typeof me === 'object' && !Array.isArray(me) ? { email: String(me.email || '').toLowerCase(), role: String(me.role || ''), can_approve_refunds: me.can_approve_refunds === true } : { email: '', role: '', can_approve_refunds: false }; }
+// me = { email, role, can_approve_refunds, can_approve_refund_step }. Anything else (a
+// missing me, a map() index) is nobody. The flags count only when literally true.
+function ckoMeOf(me){ return me && typeof me === 'object' && !Array.isArray(me) ? { email: String(me.email || '').toLowerCase(), role: String(me.role || ''), can_approve_refunds: me.can_approve_refunds === true, can_approve_refund_step: me.can_approve_refund_step === true } : { email: '', role: '', can_approve_refunds: false, can_approve_refund_step: false }; }
 function ckoNowMs(now){ return typeof now === 'number' ? now : now instanceof Date ? now.getTime() : Date.now(); }
 function ckoIsOpen(c){ return c.status !== 'Closed'; }
 function ckoIsAdmin(me){ return ckoMeOf(me).role === 'admin'; }
 // As vm_is_finance(): admin, accountant, or a teammate flagged can_approve_refunds.
 function ckoIsFinance(me){ const m = ckoMeOf(me); return m.role === 'admin' || m.role === 'accountant' || m.can_approve_refunds; }
+// As vm_can_approve_refund(): finance, or a teammate flagged can_approve_refund_step
+// (the approve_refund step only, checkout-approve-step-2026-10-19.sql).
+function ckoCanApproveRefund(me){ const m = ckoMeOf(me); return ckoIsFinance(m) || m.can_approve_refund_step; }
 // The owner or an admin: who may run owner steps, release, cancel and flag.
 function ckoCanManage(c, me){ const m = ckoMeOf(me); return m.role === 'admin' || (!!c.owner && c.owner === m.email); }
 // Whole days since the case reached its current status (null when unknown).
@@ -27185,7 +27195,7 @@ function ckoNextStep(c, me){
   const s = CKO_STEPS[key], f = c.flags || [], m = ckoMeOf(me);
   const out = (allowed, reason) => ({ step: key, label: s.label, allowed, reason, fields: s.fields });
   if (s.who === 'finance') {
-    if (!ckoIsFinance(m)) return out(false, 'Only an admin, an accountant or a refund approver can do this.');
+    if (!(ckoIsFinance(m) || (key === 'approve_refund' && ckoCanApproveRefund(m)))) return out(false, 'Only an admin, an accountant or a refund approver can do this.');
     if (key === 'approve_refund' && f.indexOf('missing_refund_info') !== -1) return out(false, CKO_ERROR_TEXT.refund_info_missing);
     if (key === 'close' && ckoTopUpDue(c) > 0) return out(false, CKO_ERROR_TEXT.top_up_due);
     return out(true, '');
@@ -27349,7 +27359,8 @@ function ckoTab(cases, tab, me, now){
   return (cases || []).filter(c => {
     if (tab === 'closed') return !ckoIsOpen(c);
     if (!ckoIsOpen(c)) return false;
-    if (tab === 'forme') return (!!m.email && c.owner === m.email) || (ckoIsFinance(m) && ckoFinanceTurn(c));
+    if (tab === 'forme') return (!!m.email && c.owner === m.email) || (ckoIsFinance(m) && ckoFinanceTurn(c))
+      || (ckoCanApproveRefund(m) && c.status === 'Charges Review' && ckoChargesSubmitted(c));
     if (tab === 'action') return ckoNeedsAction(c, m, now);
     if (tab === 'mine') return !!m.email && c.owner === m.email;
     if (tab === 'unassigned') return !c.owner;
@@ -27975,8 +27986,8 @@ function ckoChargesActions(c, me, b){
       const why = !b.depositHeld ? ckoErrorText('missing:deposit_held') : t.unpriced > 0 ? CKO_ERROR_TEXT.unpriced_lines : infoMissing ? CKO_ERROR_TEXT.refund_info_missing : '';
       out.push({ act: 'submit_charges', label: 'Submit for approval', primary: !fin, disabled: !!why, title: why });
     }
-    if (fin) {
-      if (sub) out.push({ act: 'send_back', label: 'Send back' });
+    if (fin && sub) out.push({ act: 'send_back', label: 'Send back' });
+    if (ckoCanApproveRefund(m)) {
       const why = !sub ? CKO_ERROR_TEXT.not_submitted : infoMissing ? CKO_ERROR_TEXT.refund_info_missing : '';
       out.push({ act: 'approve', label: 'Approve refund', primary: true, disabled: !!why, title: why });
     }
@@ -28826,7 +28837,7 @@ let ckoOpenSeq = 0;
 // the buttons must match what the server will allow.
 function ckoMe(){
   const u = (typeof CURRENT_USER !== 'undefined' && CURRENT_USER) || {};
-  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true, homestay_only: typeof ckoHomestayOnly === 'function' && ckoHomestayOnly(u) };
+  return { email: String(u.email || '').toLowerCase(), role: String(u.role || ''), can_approve_refunds: u.can_approve_refunds === true, can_approve_refund_step: u.can_approve_refund_step === true, homestay_only: typeof ckoHomestayOnly === 'function' && ckoHomestayOnly(u) };
 }
 function ckoTeam(){ return typeof teamMembers !== 'undefined' ? teamMembers : []; }
 function ckoName(email){
@@ -44650,9 +44661,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-19-vacturn5"></script>
-<script src="extensions.js?v=2026-10-19-vacturn5"></script>
-<script src="ap.js?v=2026-10-19-vacturn5"></script>
-<script src="properties.js?v=2026-10-19-vacturn5"></script>
+<script src="room-changes.js?v=2026-10-19-approvestep1"></script>
+<script src="extensions.js?v=2026-10-19-approvestep1"></script>
+<script src="ap.js?v=2026-10-19-approvestep1"></script>
+<script src="properties.js?v=2026-10-19-approvestep1"></script>
 </body>
 </html>
