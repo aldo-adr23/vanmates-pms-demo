@@ -1586,6 +1586,11 @@
 .vt-group{padding:0;overflow:hidden;margin-bottom:14px}
 .vt-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 16px 10px;flex-wrap:wrap}
 .vt-head h3{margin:0;font-size:17px}
+.vt-cities{flex-basis:100%;display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.vt-cities b{color:var(--ink)}
+.vt-sum{margin-bottom:14px}
+.vt-sum td a{color:var(--ink);font-weight:600;text-decoration:none}
+.vt-sum .vt-total td{border-top:2px solid var(--line)}
 .vt-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 90px;gap:4px 16px;align-items:center;padding:10px 16px;border-top:1px solid var(--line);cursor:pointer}
 .vt-row:hover{background:var(--wash)}
 .vt-row[hidden]{display:none}
@@ -1844,7 +1849,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-18-vacturn1"></script>
+<script src="pms-supabase.js?v=2026-10-19-vacturn2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11098,6 +11103,14 @@ function vacMonths(model){
   [now, later].forEach(g => g.rooms.sort(by));
   return [now].concat(Object.keys(M).sort().map(k => { M[k].rooms.sort(by); return M[k]; }), later.rooms.length ? [later] : []);
 }
+// Rooms + summed asking rent of a group, overall and per city (Vancouver, Toronto, Montreal first).
+function vacTotals(rooms){
+  const C = {}, order = ['Vancouver', 'Toronto', 'Montreal'];
+  (rooms || []).forEach(v => { const k = v.city || '—', c = C[k] || (C[k] = { city: k, n: 0, rent: 0 }); c.n++; c.rent += v.rent || 0; });
+  const rank = c => { const i = order.indexOf(c); return i < 0 ? order.length : i; };
+  return { n: (rooms || []).length, rent: (rooms || []).reduce((t, v) => t + (v.rent || 0), 0),
+    cities: Object.values(C).sort((a, b) => rank(a.city) - rank(b.city) || a.city.localeCompare(b.city)) };
+}
 function vacOverview(model, today){
   const live = (model || []).filter(v => v.status !== 'hidden');
   const soonOf = v => v.listable && !v.emptyNow && vacDays(v.today, v.from) <= 30;
@@ -11297,7 +11310,18 @@ function vacRenderTurnover(root, M){
     groups = [{ key: 'now', label: 'Available now', rooms: now.rooms.slice().sort((a, b) => b.daysEmpty - a.daysEmpty || a.room.localeCompare(b.room)), sub: 'longest empty first' }];
   } else groups = view === 'month' ? vacMonths(M) : vacLanes(M);
   const LIMIT = view === 'now' ? 1000 : 8;
-  const rent = rs => rs.reduce((t, v) => t + (v.rent || 0), 0);
+  const tot = groups.map(g => vacTotals(g.rooms)), all = vacTotals([].concat(...groups.map(g => g.rooms)));
+  const cities = all.cities.map(c => c.city);
+  const cell = (t, city) => { const c = t.cities.find(x => x.city === city); return c ? `${vacMoney(c.rent)} <span class="name-sub">· ${c.n}</span>` : '<span class="name-sub">—</span>'; };
+  const summary = groups.length > 1 ? `
+    <div class="card card-pad vt-sum">
+      <div class="card-title">Empty rent by <em>${view === 'month' ? 'month' : 'week'}</em> and city</div>
+      <div class="card-sub">Monthly asking rent of the rooms in each group · number of rooms after the dot</div>
+      <div style="overflow-x:auto"><table class="m-keep"><thead><tr><th></th><th class="right">Rooms</th><th class="right">Total rent</th>${cities.map(c => `<th class="right">${esc(c)}</th>`).join('')}</tr></thead><tbody>
+      ${groups.map((g, i) => `<tr><td><a href="#" data-vt-jump="${esc(g.key)}">${esc(g.label)}</a></td><td class="right num">${tot[i].n}</td><td class="right num"><b>${vacMoney(tot[i].rent)}</b></td>${cities.map(c => `<td class="right num">${cell(tot[i], c)}</td>`).join('')}</tr>`).join('')}
+      <tr class="vt-total"><td><b>Total</b></td><td class="right num"><b>${all.n}</b></td><td class="right num"><b>${vacMoney(all.rent)}</b></td>${cities.map(c => `<td class="right num"><b>${cell(all, c)}</b></td>`).join('')}</tr>
+      </tbody></table></div>
+    </div>` : '';
   const row = (v, i) => `
     <div class="vt-row" data-vac-open="${esc(v.id)}" ${i >= LIMIT ? 'data-vac-more hidden' : ''}>
       <div style="min-width:0">
@@ -11313,9 +11337,11 @@ function vacRenderTurnover(root, M){
       <div class="vt-seg" role="group" aria-label="Turnover view">${VAC_TURN_VIEWS.map(([k, l]) => `<button type="button" data-vt-view="${k}" aria-pressed="${k === view}">${l}</button>`).join('')}</div>
       ${groups.length > 1 ? `<div class="vt-jump">${groups.map(g => `<a href="#" data-vt-jump="${esc(g.key)}">${esc(g.label)}<b>${g.rooms.length}</b></a>`).join('')}</div>` : ''}
     </div>
-    ${groups.map(g => `
+    ${summary}
+    ${groups.map((g, gi) => `
     <div class="card vt-group" id="vt-${esc(g.key)}">
-      <div class="vt-head"><h3>${esc(g.label)}</h3><span class="name-sub">${g.rooms.length} room${g.rooms.length === 1 ? '' : 's'}${g.rooms.length ? ' · ' + vacMoney(rent(g.rooms)) + '/mo' : ''}${g.sub ? ' · ' + esc(g.sub) : ''}</span></div>
+      <div class="vt-head"><h3>${esc(g.label)}</h3><span class="name-sub">${g.rooms.length} room${g.rooms.length === 1 ? '' : 's'}${g.rooms.length ? ' · <b>' + vacMoney(tot[gi].rent) + '/mo</b>' : ''}${g.sub ? ' · ' + esc(g.sub) : ''}</span>
+        ${tot[gi].cities.length ? `<div class="vt-cities">${tot[gi].cities.map(c => `<span>${esc(c.city)} <b>${vacMoney(c.rent)}</b> · ${c.n} room${c.n === 1 ? '' : 's'}</span>`).join('')}</div>` : ''}</div>
       ${g.rooms.map(row).join('')}
       ${g.rooms.length > LIMIT ? `<button type="button" class="vt-more" data-vac-showmore>Show ${g.rooms.length - LIMIT} more</button>` : ''}
       ${g.rooms.length ? '' : '<div class="vt-row" style="cursor:default"><div class="name-sub">Nothing here</div></div>'}
@@ -44550,9 +44576,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-18-vacturn1"></script>
-<script src="extensions.js?v=2026-10-18-vacturn1"></script>
-<script src="ap.js?v=2026-10-18-vacturn1"></script>
-<script src="properties.js?v=2026-10-18-vacturn1"></script>
+<script src="room-changes.js?v=2026-10-19-vacturn2"></script>
+<script src="extensions.js?v=2026-10-19-vacturn2"></script>
+<script src="ap.js?v=2026-10-19-vacturn2"></script>
+<script src="properties.js?v=2026-10-19-vacturn2"></script>
 </body>
 </html>
