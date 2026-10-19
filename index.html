@@ -1849,7 +1849,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-19-vacturn3"></script>
+<script src="pms-supabase.js?v=2026-10-19-maaccess2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4876,6 +4876,10 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
       <div class="form-field" style="margin-top:14px" id="edit-member-mk" hidden>
         <label style="margin-bottom:8px">Email marketing</label>
         <div id="edit-member-mk-body" style="font-size:12.5px;color:var(--muted)">Loading…</div>
+      </div>
+      <div class="form-field" style="margin-top:14px" id="edit-member-ma" hidden>
+        <label style="margin-bottom:8px">Marketing analytics</label>
+        <div id="edit-member-ma-body" style="font-size:12.5px;color:var(--muted)">Loading…</div>
       </div>
       <div class="form-field" style="margin-top:14px">
         <label style="margin-bottom:8px">Countries this person works in <span class="req">*</span></label>
@@ -9501,6 +9505,7 @@ function openEditMember(member){
   buildEditRolePicker(member.role || "ops", member.allowed_pages);
   vmcSetPicker("edit-member-countries", member.countries);
   mkAccessLoad(member);
+  maAccessLoad(member);
 
   const modal = document.getElementById("edit-member-backdrop");
   modal.classList.add("open");
@@ -9591,6 +9596,66 @@ async function mkAccessSave(){
   const res = await Promise.allSettled(ops);
   const bad = res.filter(x => x.status === "rejected");
   return bad.length ? "Email marketing access: " + bad.map(x => x.reason.message).join(", ") : null;
+}
+
+// Marketing analytics access in the team editor (2026-10-19). The analytics Worker's grants table (one row per email)
+// stays the source of truth: GET/POST /api/access, super admins (portal admins) only. Countries come from the form.
+const MA_API = "https://vanmates-analytics.talatcan.workers.dev/api";
+const MA_ROLES = {
+  analyst:         "Analyst: see everything, export",
+  marketing_admin: "Marketing admin: also campaigns, goals, connections",
+  executive:       "Executive: view only",
+};
+let _maAccess = null; // { email, grant }
+async function maApi(method, path, body){
+  const { data } = await window.vmDb.sb.auth.getSession();
+  const r = await fetch(MA_API + path, { method, headers: { "Content-Type": "application/json", Authorization: "Bearer " + (data.session && data.session.access_token) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+async function maAccessLoad(member){
+  const box = document.getElementById("edit-member-ma"), body = document.getElementById("edit-member-ma-body");
+  _maAccess = null;
+  const old = document.getElementById("ma-page-tile"); if(old) old.remove();
+  const email = String(member.email || "").trim().toLowerCase();
+  if(!window.vmDb || !window.vmDb.sb || !email){ box.hidden = true; return; }
+  box.hidden = false; body.textContent = "Loading…";
+  if(member.role === "admin"){ body.innerHTML = '<div style="color:var(--ink)">Admins always have full access.</div>'; return; }
+  let r;
+  try { r = await maApi("GET", "/access"); } catch(e){ body.textContent = "Couldn't load marketing analytics access (" + e.message + ")."; return; }
+  if(!_editingMember || String(_editingMember.email || "").trim().toLowerCase() !== email) return;
+  const grant = (r.grants || []).find(g => g.email === email) || null;
+  _maAccess = { email, grant };
+  // A "Marketing analytics" tile in the page grid switches this section on and off.
+  document.getElementById("edit-member-pages").insertAdjacentHTML("beforeend", `<label class="role-option ${grant ? "selected" : ""}" id="ma-page-tile" style="padding:9px 12px;font-size:12.5px">
+    <input type="checkbox" id="ma-page-toggle" ${grant ? "checked" : ""} />
+    <div class="meta"><div class="nm" style="font-size:12.5px">Marketing analytics</div></div></label>`);
+  const tog = document.getElementById("ma-page-toggle");
+  tog.addEventListener("change", () => {
+    tog.closest(".role-option").classList.toggle("selected", tog.checked);
+    document.getElementById("ma-on").hidden = !tog.checked;
+    document.getElementById("ma-off").hidden = tog.checked;
+    if(tog.checked) box.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  body.innerHTML =
+    '<div id="ma-off"' + (grant ? ' hidden' : '') + '>No access. Tick <b>Marketing analytics</b> in the pages above to give access.</div>' +
+    '<div id="ma-on"' + (grant ? '' : ' hidden') + '>' +
+    '<select class="form-input" id="edit-member-ma-role">' +
+      Object.keys(MA_ROLES).map(k => `<option value="${k}" ${(grant ? grant.role : "analyst") === k ? "selected" : ""}>${esc(MA_ROLES[k])}</option>`).join("") +
+    '</select>' +
+    '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">They see only the countries ticked below.</div></div>';
+}
+async function maAccessSave(countries){
+  if(!_maAccess || !document.getElementById("ma-page-toggle")) return null;
+  const on = document.getElementById("ma-page-toggle").checked;
+  const { email, grant } = _maAccess;
+  if(!on) return grant ? (await maApi("POST", "/access", { email, remove: true }), null) : null;
+  const role = document.getElementById("edit-member-ma-role").value;
+  const units = countries.filter(c => c === "CA" || c === "MX");
+  if(grant && grant.role === role && JSON.stringify(JSON.parse(grant.units || "[]").sort()) === JSON.stringify([...units].sort())) return null;
+  await maApi("POST", "/access", { email, role, units });
+  return null;
 }
 
 function closeEditMember(){
@@ -9688,6 +9753,8 @@ document.getElementById("edit-member-form").addEventListener("submit", async e =
     if(typeof renderSettingsTeam === "function") renderSettingsTeam();
     const mkErr = role === "admin" ? null : await mkAccessSave().catch(e => "Email marketing access: " + e.message);
     if(mkErr){ failEdit(mkErr); return; }
+    const maErr = role === "admin" ? null : await maAccessSave(countries).catch(e => "Marketing analytics access: " + e.message);
+    if(maErr){ failEdit(maErr); return; }
     if(typeof showToast === "function") showToast(`Updated ${name}`);
     closeEditMember();
   } catch(err){
@@ -44580,9 +44647,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-19-vacturn3"></script>
-<script src="extensions.js?v=2026-10-19-vacturn3"></script>
-<script src="ap.js?v=2026-10-19-vacturn3"></script>
-<script src="properties.js?v=2026-10-19-vacturn3"></script>
+<script src="room-changes.js?v=2026-10-19-maaccess2"></script>
+<script src="extensions.js?v=2026-10-19-maaccess2"></script>
+<script src="ap.js?v=2026-10-19-maaccess2"></script>
+<script src="properties.js?v=2026-10-19-maaccess2"></script>
 </body>
 </html>
