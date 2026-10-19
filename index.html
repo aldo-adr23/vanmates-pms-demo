@@ -1849,7 +1849,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-19-vacturn2"></script>
+<script src="pms-supabase.js?v=2026-10-19-vacturn3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11087,21 +11087,25 @@ function vacLanes(model){
   lanes.forEach(l => l.rooms.sort((a, b) => a.from.localeCompare(b.from) || a.room.localeCompare(b.room)));
   return lanes;
 }
-// Turnover › By month: empty-now first, then one group per calendar month of the free date (own city's
-// clock) for this month and the next 5; anything further out goes in Later.
+// Turnover › By month: one group per calendar month of the free date (own city's clock) for this month
+// and the next 5 — rooms empty now count in this month, first — then anything further out in Later.
 function vacMonths(model){
-  const now = { key: 'now', label: 'Available now', rooms: [] }, later = { key: 'later', label: 'Later', rooms: [] }, M = {};
+  const later = { key: 'later', label: 'Later', rooms: [] }, M = {};
   const mi = iso => Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7)) - 1;
   (model || []).forEach(v => {
     if (!v.listable) return;
-    if (v.emptyNow) { now.rooms.push(v); return; }
-    if (mi(v.from) - mi(v.today) > 5) { later.rooms.push(v); return; }
-    const k = v.from.slice(0, 7);
+    if (!v.emptyNow && mi(v.from) - mi(v.today) > 5) { later.rooms.push(v); return; }
+    const k = (v.emptyNow ? v.today : v.from).slice(0, 7);
     (M[k] = M[k] || { key: k, label: VAC_MON_LONG[Number(k.slice(5, 7)) - 1] + (k.slice(0, 4) === v.today.slice(0, 4) ? '' : ' ' + k.slice(0, 4)), rooms: [] }).rooms.push(v);
   });
   const by = (a, b) => a.from.localeCompare(b.from) || a.room.localeCompare(b.room);
-  [now, later].forEach(g => g.rooms.sort(by));
-  return [now].concat(Object.keys(M).sort().map(k => { M[k].rooms.sort(by); return M[k]; }), later.rooms.length ? [later] : []);
+  later.rooms.sort(by);
+  return Object.keys(M).sort().map(k => {
+    const g = M[k], n = g.rooms.filter(v => v.emptyNow).length;
+    g.rooms.sort(by);
+    if (n) g.sub = n + ' empty now + ' + (g.rooms.length - n) + ' opening';
+    return g;
+  }).concat(later.rooms.length ? [later] : []);
 }
 // Rooms + summed asking rent of a group, overall and per city (Vancouver, Toronto, Montreal first).
 function vacTotals(rooms){
@@ -11318,7 +11322,7 @@ function vacRenderTurnover(root, M){
       <div class="card-title">Empty rent by <em>${view === 'month' ? 'month' : 'week'}</em> and city</div>
       <div class="card-sub">Monthly asking rent of the rooms in each group · number of rooms after the dot</div>
       <div style="overflow-x:auto"><table class="m-keep"><thead><tr><th></th><th class="right">Rooms</th><th class="right">Total rent</th>${cities.map(c => `<th class="right">${esc(c)}</th>`).join('')}</tr></thead><tbody>
-      ${groups.map((g, i) => `<tr><td><a href="#" data-vt-jump="${esc(g.key)}">${esc(g.label)}</a></td><td class="right num">${tot[i].n}</td><td class="right num"><b>${vacMoney(tot[i].rent)}</b></td>${cities.map(c => `<td class="right num">${cell(tot[i], c)}</td>`).join('')}</tr>`).join('')}
+      ${groups.map((g, i) => `<tr><td><a href="#" data-vt-jump="${esc(g.key)}">${esc(g.label)}</a>${g.sub ? `<div class="name-sub">${esc(g.sub)}</div>` : ''}</td><td class="right num">${tot[i].n}</td><td class="right num"><b>${vacMoney(tot[i].rent)}</b></td>${cities.map(c => `<td class="right num">${cell(tot[i], c)}</td>`).join('')}</tr>`).join('')}
       <tr class="vt-total"><td><b>Total</b></td><td class="right num"><b>${all.n}</b></td><td class="right num"><b>${vacMoney(all.rent)}</b></td>${cities.map(c => `<td class="right num"><b>${cell(all, c)}</b></td>`).join('')}</tr>
       </tbody></table></div>
     </div>` : '';
@@ -44576,9 +44580,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-19-vacturn2"></script>
-<script src="extensions.js?v=2026-10-19-vacturn2"></script>
-<script src="ap.js?v=2026-10-19-vacturn2"></script>
-<script src="properties.js?v=2026-10-19-vacturn2"></script>
+<script src="room-changes.js?v=2026-10-19-vacturn3"></script>
+<script src="extensions.js?v=2026-10-19-vacturn3"></script>
+<script src="ap.js?v=2026-10-19-vacturn3"></script>
+<script src="properties.js?v=2026-10-19-vacturn3"></script>
 </body>
 </html>
