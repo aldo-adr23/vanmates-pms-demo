@@ -1849,7 +1849,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-19-approvestep1"></script>
+<script src="pms-supabase.js?v=2026-10-19-stfsubmit1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21955,6 +21955,8 @@ function haCounts(apps){
 function haActions(app){
   const s = app && app.status;
   const out = [];
+  // Every step done but Submit never pressed: staff can submit for the host.
+  if ((s === "started" || s === "changes_requested") && app.progress && app.progress.can_submit === true) out.push("submit");
   if (s === "submitted") out.push("review");
   if (s === "submitted" || s === "under_review") out.push("changes", "approve");
   if (HA_OPEN.includes(s)) out.push("send-link", "reject");
@@ -22069,6 +22071,7 @@ function haErrorText(b, statusWords){
   b = b || {};
   if (b.error === "busy") return "Someone else is approving this application right now \u2014 refresh in a minute.";
   if (b.error === "verify_email") return "The host hasn't confirmed their email yet.";
+  if (b.error === "incomplete") return "Not ready to submit" + (Array.isArray(b.missing) && b.missing.length ? ": still missing " + b.missing.join(", ") + "." : ": refresh.");
   if (b.error === "bad_status") return `This application is ${(statusWords && statusWords[b.status]) || b.status || "in another state"} now: refresh.`;
   if (b.error === "bad_note") return "The note must be between 1 and 1,000 characters.";
   if (b.error === "mail_failed") return "Saved, but the email to the host didn't send \u2014 use Send continue link.";
@@ -39931,7 +39934,7 @@ function haSay(text, bad){
   const el = document.getElementById("ha-panel-status");
   if (el) { el.textContent = text || ""; el.style.color = bad ? "var(--red)" : ""; }
 }
-const HA_ACTION_WORDS = { review: "Start review", changes: "Ask for changes", "send-link": "Send continue link", approve: "Approve…", reject: "Reject" };
+const HA_ACTION_WORDS = { submit: "Submit for host…", review: "Start review", changes: "Ask for changes", "send-link": "Send continue link", approve: "Approve…", reject: "Reject" };
 function haStepText(s){
   if (s == null) return "";
   if (typeof s !== "object") return String(s);
@@ -39966,6 +39969,12 @@ function haActionsHtml(a){
       <div class="ha-actions"><button type="button" class="btn btn-primary btn-mini" data-ha-act="${f}">${f === "changes" ? "Send to host" : "Reject application"}</button>
         <button type="button" class="btn btn-ghost btn-mini" data-ha-cancel>Cancel</button></div></div>`;
   }
+  if (f === "submit") {
+    return html + `<div class="ha-inline">
+      <div class="card-sub">Every step is done but the host never pressed Submit. Submitting moves it to To review and emails the host that we received it.</div>
+      <div class="ha-actions" style="margin-top:10px"><button type="button" class="btn btn-primary btn-mini" data-ha-act="submit">Submit now</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-ha-cancel>Cancel</button></div></div>`;
+  }
   if (f === "approve") {
     const warns = haApproveWarnings(a, Date.now());
     return html + `<div class="ha-inline">
@@ -39976,8 +39985,8 @@ function haActionsHtml(a){
         <button type="button" class="btn btn-ghost btn-mini" data-ha-cancel>Cancel</button></div></div>`;
   }
   return html + `<div class="ha-actions" style="margin-top:${html ? 10 : 0}px">` + acts.map(k => {
-    const primary = k === "approve";
-    const attr = k === "changes" || k === "reject" || k === "approve" ? `data-ha-form="${k}"` : `data-ha-act="${k}"`;
+    const primary = k === "approve" || k === "submit";
+    const attr = k === "changes" || k === "reject" || k === "approve" || k === "submit" ? `data-ha-form="${k}"` : `data-ha-act="${k}"`;
     return `<button type="button" class="btn ${primary ? "btn-primary" : "btn-ghost"} btn-mini" ${attr}>${HA_ACTION_WORDS[k]}</button>`;
   }).join("") + "</div>";
 }
@@ -40094,7 +40103,7 @@ function haRenderPanel(a){
   root.querySelector("#ha-panel-rest").innerHTML = haRestHtml(a);
 }
 
-const HA_DONE_WORDS = { review: "Review started.", changes: "Sent: the host has the note and a link.",
+const HA_DONE_WORDS = { submit: "Submitted: it is now in To review.", review: "Review started.", changes: "Sent: the host has the note and a link.",
   "send-link": "Continue link emailed.", approve: "Approved.", reject: "Rejected: the host was emailed." };
 async function haDo(action, btn){
   const id = HA.openId;
@@ -44661,9 +44670,9 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-19-approvestep1"></script>
-<script src="extensions.js?v=2026-10-19-approvestep1"></script>
-<script src="ap.js?v=2026-10-19-approvestep1"></script>
-<script src="properties.js?v=2026-10-19-approvestep1"></script>
+<script src="room-changes.js?v=2026-10-19-stfsubmit1"></script>
+<script src="extensions.js?v=2026-10-19-stfsubmit1"></script>
+<script src="ap.js?v=2026-10-19-stfsubmit1"></script>
+<script src="properties.js?v=2026-10-19-stfsubmit1"></script>
 </body>
 </html>
