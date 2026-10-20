@@ -172,11 +172,31 @@
     return [head, ...lines].map(l => l.map(csvCell).join(',')).join('\n');
   }
 
+  // Billing tab (phase 3b): QuickBooks recurring rent vs the portal's tenants, checked by Lu every morning.
+  const BILLING = {
+    billed_after_leaving: ['Billed after leaving', 'red', 'A QuickBooks recurring invoice bills after the lease ends, or the tenant has moved out'],
+    billed_twice: ['Billed twice', 'red', 'Two recurring invoices bill this tenant on the same date'],
+    not_billed: ['Not billed', 'amber', 'Staying next month but no QuickBooks recurring rent bills it (paid up front or by an agency? otherwise set it up)'],
+    amount_differs: ['Amount differs', '', 'The recurring amount matches neither the portal rent nor rent + 3% fee'],
+  };
+  const sortBilling = (rows) => rows.slice().sort((a, b) => Object.keys(BILLING).indexOf(a.kind) - Object.keys(BILLING).indexOf(b.kind) || Number(b.rent_cents || b.template_cents || 0) - Number(a.rent_cents || a.template_cents || 0));
+  function billingMatches(r, q, kind){
+    if (kind && r.kind !== kind) return false;
+    const n = String(q || '').trim().toLowerCase();
+    return !n || [r.tenant_name, r.property, r.qb_customer_name, r.detail].some(v => String(v || '').toLowerCase().includes(n));
+  }
+  function billingCsv(rows){
+    const head = ['Issue', 'Tenant', 'Property', 'Move in', 'Lease end', 'Portal rent', 'QuickBooks customer', 'QuickBooks customer #', 'Recurring amount', 'Next invoice', 'Templates', 'Detail', 'First seen'];
+    const amt = (c) => (Number(c || 0) / 100).toFixed(2);
+    return [head, ...rows.map(r => [(BILLING[r.kind] || [r.kind])[0], r.tenant_name, r.property, r.move_in || '', r.lease_end || '', amt(r.rent_cents), r.qb_customer_name, r.qb_customer_id,
+      amt(r.template_cents), r.next_date || '', (r.template_ids || []).join(' '), r.detail, String(r.first_seen || '').slice(0, 10)])].map(l => l.map(csvCell).join(',')).join('\n');
+  }
+
   window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
-    INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv };
+    INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv };
   if (typeof document === 'undefined') return;
 
-  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '' };
+  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '' };
   let data = null, loading = null;
   const e = (s) => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const toast = (m) => { if (typeof showToast === 'function') showToast(m); };
@@ -195,16 +215,17 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links, inc] = await Promise.all([
+        const [inv, un, run, links, inc, bill] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
           sb().from('tenant_qb_links').select('tenant_id,qb_customer_id').limit(10000),
           sb().from('ar_incoming_payments').select('*').limit(5000),
+          sb().from('ar_billing_issues').select('*').limit(5000),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
         // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
-        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []) };
+        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []) };
         render();
       } catch (err) {
         console.error('[ar] load failed', err);
@@ -231,7 +252,7 @@
     const fr = freshness(data.lastRun, Date.now());
     const fresh = document.getElementById('ar-fresh');
     if (fresh) fresh.innerHTML = !data.lastRun ? `<span class="tag-pill red" style="font-size:11px">Not synced yet</span> Lu fills this from QuickBooks every 2 hours (8:50–20:50 Vancouver).`
-      : `${fr.stale ? `<span class="tag-pill red" style="font-size:11px">Out of date</span> ` : ''}QuickBooks copy from <b>${e(when(data.lastRun.synced_at))}</b> · read-only · refreshed by Lu every 2 hours, 8:50–20:50 Vancouver${data.lastRun.incoming_at ? ` · incoming payments checked ${e(when(data.lastRun.incoming_at))}` : ''}`;
+      : `${fr.stale ? `<span class="tag-pill red" style="font-size:11px">Out of date</span> ` : ''}QuickBooks copy from <b>${e(when(data.lastRun.synced_at))}</b> · read-only · refreshed by Lu every 2 hours, 8:50–20:50 Vancouver${data.lastRun.incoming_at ? ` · incoming payments checked ${e(when(data.lastRun.incoming_at))}` : ''}${data.lastRun.billing_at ? ` · billing checked ${e(when(data.lastRun.billing_at))}` : ''}`;
 
     const cards = document.getElementById('ar-cards');
     if (cards) cards.innerHTML = [
@@ -260,10 +281,13 @@
     invRows.sort((a, b) => String(a.i.due_date || '').localeCompare(String(b.i.due_date || '')) || Number(b.i.balance_cents) - Number(a.i.balance_cents));
     const incAll = data.incoming || [];
     const incSum = incomingSummary(incAll);
-    if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length], ['incoming', 'Incoming payments', incSum.problems ? `<span class="tag-pill red" style="font-size:11px">${incSum.problems} to check</span>` : incAll.length]]
+    if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length], ['incoming', 'Incoming payments', incSum.problems ? `<span class="tag-pill red" style="font-size:11px">${incSum.problems} to check</span>` : incAll.length],
+      ['billing', 'Billing', (data.billing || []).length ? `<span class="tag-pill amber" style="font-size:11px">${(data.billing || []).length} to check</span>` : 0]]
       .map(([k, l, n]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ar-tab="${k}">${l} <span class="name-sub">${n}</span></button>`).join('');
-    for (const [id, show] of [['ar-kind', S.tab !== 'incoming'], ['ar-city', S.tab !== 'incoming'], ['ar-instate', S.tab === 'incoming']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
+    const side = S.tab === 'incoming' || S.tab === 'billing';
+    for (const [id, show] of [['ar-kind', !side], ['ar-city', !side], ['ar-instate', S.tab === 'incoming'], ['ar-billkind', S.tab === 'billing']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
     if (S.tab === 'incoming') return renderIncoming(incAll, incSum);
+    if (S.tab === 'billing') return renderBilling(data.billing);
 
     const total = S.tab === 'customers' ? list.reduce((s, r) => s + r.openCents, 0) : invRows.reduce((s, x) => s + Number(x.i.balance_cents || 0), 0);
     const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = S.tab === 'customers' ? `${list.length} customers` : `${invRows.length} invoices`;
@@ -318,6 +342,52 @@
           : (r.candidates || []).length ? `<span class="name-sub">Same amount: ${(r.candidates || []).map(id => `<a href="${e(qboPaymentUrl(id))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">#${e(id)}</a>`).join(', ')}</span>`
           : r.suggested_customer_name ? `<span class="name-sub">Likely customer: ${e(r.suggested_customer_name)}</span>` : '<span class="name-sub">—</span>'}</td>
         <td><span class="name-sub">${e(String(r.memo || '').slice(0, 80))}</span></td></tr>`).join('');
+  }
+
+  const stay = (r) => `${r.move_in || '?'} → ${r.lease_end || 'no end date'}`;
+  function renderBilling(all){
+    const head = document.getElementById('ar-head'), body = document.getElementById('ar-body'), empty = document.getElementById('ar-empty');
+    if (head) head.innerHTML = `<tr><th>Issue</th><th>Tenant</th><th>Stay</th><th style="text-align:right">Portal rent</th><th>QuickBooks recurring</th><th>What to check</th></tr>`;
+    if (all === null) { if (empty) empty.style.display = 'none'; msg('The billing check is not set up in the database yet (run ar-billing-2026-10-20.sql).'); return; }
+    const rows = sortBilling(all.filter(r => billingMatches(r, S.q, S.billKind)));
+    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${rows.length} to check`;
+    const tot = document.getElementById('ar-total'); if (tot) tot.textContent = `${money(rows.reduce((s, r) => s + Number(r.rent_cents || 0), 0))} monthly rent involved`;
+    if (empty) { empty.style.display = rows.length ? 'none' : ''; empty.textContent = all.length ? 'Nothing matches these filters.' : 'Nothing to check: QuickBooks recurring rent matches the portal.'; }
+    if (body) body.innerHTML = rows.slice(0, 1000).map(r => { const x = BILLING[r.kind] || [r.kind, '']; return `<tr class="clickable" data-ar-bill="${e(r.issue_key)}" tabindex="0" style="cursor:pointer">
+        <td><span class="tag-pill ${x[1]}" style="font-size:11px" title="${e(x[2] || '')}">${e(x[0])}</span></td>
+        <td><b>${e(r.tenant_name || '—')}</b><div class="name-sub">${e(r.property || '')}</div></td>
+        <td style="white-space:nowrap">${e(stay(r))}</td>
+        <td style="text-align:right;white-space:nowrap">${r.rent_cents ? e(money(r.rent_cents)) : '<span class="name-sub">—</span>'}</td>
+        <td>${r.template_cents ? `${e(money(r.template_cents))}${r.next_date ? `<div class="name-sub">next ${e(r.next_date)}</div>` : ''}` : '<span class="name-sub">none</span>'}</td>
+        <td><span class="name-sub">${e(String(r.detail || '').slice(0, 140))}</span></td></tr>`; }).join('');
+  }
+
+  function openBilling(key){
+    const r = data && (data.billing || []).find(x => x.issue_key === key);
+    if (!r) return;
+    const x = BILLING[r.kind] || [r.kind, '', ''];
+    document.getElementById('panel-hero').textContent = String(r.tenant_name || '?').slice(0, 1).toUpperCase();
+    document.getElementById('panel-title').innerHTML = e(r.tenant_name || 'Tenant');
+    document.getElementById('panel-sub').textContent = `${x[0]} · ${r.property || ''}`;
+    document.getElementById('panel-meta').innerHTML = `<span class="tag-pill ${x[1]}" style="font-size:11px">${e(x[0])}</span>`;
+    const field = (l, v) => v ? `<div style="display:flex;gap:10px"><span class="name-sub" style="min-width:150px">${e(l)}</span><span>${v}</span></div>` : '';
+    document.getElementById('panel-body').innerHTML = `<div data-ar-bill-id="${e(r.issue_key)}">
+      <p style="margin:0 0 12px">${e(r.detail || x[2])}</p>
+      <div style="display:grid;gap:6px">
+        ${field('Property', e(r.property))}
+        ${field('Stay (portal)', e(stay(r)))}
+        ${field('Portal rent', r.rent_cents ? e(money(r.rent_cents)) + ` <span class="name-sub">(${e(money(Math.round(r.rent_cents * 1.03)))} with 3% fee)</span>` : '')}
+        ${field('QuickBooks customer', r.qb_customer_id ? `<a href="${e(qboCustomerUrl(r.qb_customer_id))}" target="_blank" rel="noopener">${e(r.qb_customer_name || 'Customer #' + r.qb_customer_id)} ↗</a>` : '')}
+        ${field('Recurring amount', r.template_cents ? e(money(r.template_cents)) : '<span class="name-sub">no recurring invoice</span>')}
+        ${field('Next invoice', e(r.next_date))}
+        ${field('Templates', (r.template_ids || []).map(id => '#' + e(id)).join(', '))}
+        ${field('First seen', e(String(r.first_seen || '').slice(0, 10)))}
+      </div>
+      <p class="name-sub" style="margin-top:18px">Nothing here changes QuickBooks. Fix the recurring invoice in QuickBooks (Sales → Recurring transactions) or the tenant's dates and rent in the portal; the item disappears after Lu's next morning check.</p>
+    </div>`;
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
   }
 
   function openIncoming(id){
@@ -394,7 +464,8 @@
     const { t, cust } = model();
     const f = { q: S.q, kind: S.kind, city: S.city, bucket: S.bucket };
     const list = sortCustomers(cust.filter(r => matches(r, f)));
-    const text = S.tab === 'incoming' ? incomingCsv(sortIncoming((data.incoming || []).filter(r => incomingMatches(r, S.q, S.inState))))
+    const text = S.tab === 'billing' ? billingCsv(sortBilling((data.billing || []).filter(r => billingMatches(r, S.q, S.billKind))))
+      : S.tab === 'incoming' ? incomingCsv(sortIncoming((data.incoming || []).filter(r => incomingMatches(r, S.q, S.inState))))
       : S.tab === 'customers' ? customersCsv(list) : invoicesCsv(list.flatMap(c => c.invoices.filter(i => invoiceInBucket(i, S.bucket, t)).map(i => ({ i, c }))), t);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
@@ -425,11 +496,19 @@
       st.innerHTML = `<option value="">All statuses</option><option value="problems">To check (not found, unclear, twice)</option>` + Object.entries(INCOMING).map(([v, x]) => `<option value="${v}">${e(x[0])}</option>`).join('');
       city.after(st);
     }
+    const inst = document.getElementById('ar-instate');
+    if (inst && !document.getElementById('ar-billkind')) {
+      const bk = document.createElement('select');
+      bk.id = 'ar-billkind'; bk.className = 'form-input'; bk.style.cssText = 'max-width:220px;display:none'; bk.setAttribute('aria-label', 'Billing issue');
+      bk.innerHTML = `<option value="">All issues</option>` + Object.entries(BILLING).map(([v, x]) => `<option value="${v}">${e(x[0])}</option>`).join('');
+      inst.after(bk);
+    }
     let tm = null;
     on('ar-search', 'input', ev => { S.q = ev.target.value; clearTimeout(tm); tm = setTimeout(render, 150); });
     on('ar-kind', 'change', ev => { S.kind = ev.target.value; render(); });
     on('ar-city', 'change', ev => { S.city = ev.target.value; render(); });
     on('ar-instate', 'change', ev => { S.inState = ev.target.value; render(); });
+    on('ar-billkind', 'change', ev => { S.billKind = ev.target.value; render(); });
     on('ar-refresh', 'click', () => load(true));
     on('ar-export', 'click', exportCsv);
     on('ar-tabs', 'click', ev => { const b = ev.target.closest('[data-ar-tab]'); if (b) { S.tab = b.dataset.arTab; render(); } });
@@ -438,7 +517,7 @@
     on('ar-aging', 'click', bucketClick);
     const body = document.getElementById('ar-body');
     if (body) {
-      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) openIncoming(ti.dataset.arInc); };
+      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) openBilling(tb.dataset.arBill); };
       body.addEventListener('click', pick);
       body.addEventListener('keydown', ev => { if (ev.key === 'Enter') pick(ev); });
     }
