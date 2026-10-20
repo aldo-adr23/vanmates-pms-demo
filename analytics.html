@@ -204,6 +204,11 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   <div class="print-head" id="printHead"></div>
   <div class="filters" id="filters" hidden>
     <span class="chips" id="unitChips" role="group" aria-label="Market"></span>
+    <span class="chips" id="segChips" role="group" aria-label="Japan marketing" hidden>
+      <button type="button" class="chip on" data-seg="">All marketing</button>
+      <button type="button" class="chip" data-seg="jp" title="Japan accounts (@vanmates_japan, Nae Hase, anything named Japan/JP), ad campaigns named JP or Japan, and JLeads leads (LINE Maya or Japanese language)">Japan only</button>
+      <button type="button" class="chip" data-seg="rest">Without Japan</button>
+    </span>
     <span class="chips" id="rangeChips" role="group" aria-label="Date range">
       <button type="button" class="chip" data-days="7">7 days</button>
       <button type="button" class="chip on" data-days="30">30 days</button>
@@ -250,8 +255,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   var PCOL = { instagram: 'var(--p-instagram)', facebook: 'var(--p-facebook)', threads: 'var(--p-threads)', tiktok: 'var(--p-tiktok)', meta_ads: 'var(--s2)' };
   var UNIT = { CA: 'Canada', MX: 'Mexico', ALL: 'All markets' };
   var ROLE = { super_admin: 'Super Admin', marketing_admin: 'Marketing Admin', analyst: 'Marketing Analyst', executive: 'Read-only Executive' };
-  var S = { me: null, tab: 'overview', unit: null, days: '30', from: '', to: '', basis: 'fee', model: 'last', sort: 'published', offset: 0, metric: 'views', leadCh: '', platform: 'instagram', goalPeriod: '', cache: {} };
-  try { var saved = JSON.parse(localStorage.getItem('vm-analytics') || '{}'); ['unit', 'days', 'from', 'to', 'basis', 'model'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); } catch (e) {}
+  var S = { me: null, tab: 'overview', unit: null, days: '30', from: '', to: '', basis: 'fee', model: 'last', sort: 'published', offset: 0, metric: 'views', leadCh: '', platform: 'instagram', goalPeriod: '', seg: '', cache: {} };
+  try { var saved = JSON.parse(localStorage.getItem('vm-analytics') || '{}'); ['unit', 'days', 'from', 'to', 'basis', 'model', 'seg'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); } catch (e) {}
 
   function $(id) { return document.getElementById(id); }
   function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -263,7 +268,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   function adMoney(n) { return n === null || n === undefined ? '—' : '$' + Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function ago(iso) { if (!iso) return 'never'; var m = (Date.now() - Date.parse(iso)) / 60000; if (m < 1) return 'just now'; if (m < 60) return Math.round(m) + ' min ago'; if (m < 48 * 60) return Math.round(m / 60) + ' h ago'; return Math.round(m / 1440) + ' days ago'; }
   function shortDay(d) { var x = new Date(d + 'T12:00:00Z'); return x.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' }); }
-  function persist() { try { localStorage.setItem('vm-analytics', JSON.stringify({ unit: S.unit, days: S.days, from: S.from, to: S.to, basis: S.basis, model: S.model })); } catch (e) {} }
+  function persist() { try { localStorage.setItem('vm-analytics', JSON.stringify({ unit: S.unit, days: S.days, from: S.from, to: S.to, basis: S.basis, model: S.model, seg: S.seg })); } catch (e) {} }
 
   async function token() {
     var sess = (await sb.auth.getSession()).data.session;
@@ -285,11 +290,15 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     if (!r.ok) { var e = new Error(ERR[j.error] || j.message || j.error || ('HTTP ' + r.status)); e.code = j.error; e.status = r.status; throw e; }
     return j;
   }
+  // Japan marketing is a slice of Vanmates Canada, so the switch shows only when Canada is in view.
+  function segOn() { return !!S.seg && S.unit !== 'MX'; }
+  function segLabel() { return segOn() ? (S.seg === 'jp' ? ' · Japan marketing only' : ' · without Japan marketing') : ''; }
   function qs(extra) {
     var p = new URLSearchParams();
     p.set('unit', S.unit);
     if (S.days === 'custom' && S.from && S.to) { p.set('from', S.from); p.set('to', S.to); } else p.set('days', S.days === 'custom' ? '30' : S.days);
     p.set('basis', S.basis); p.set('model', S.model);
+    if (segOn()) p.set('seg', S.seg);
     Object.keys(extra || {}).forEach(function (k) { if (extra[k] !== null && extra[k] !== undefined && extra[k] !== '') p.set(k, extra[k]); });
     return '?' + p.toString();
   }
@@ -454,8 +463,9 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   $('toDate').addEventListener('change', function () { S.to = this.value; persist(); if (S.from && S.to) render(); });
   $('basisSel').addEventListener('change', function () { S.basis = this.value; persist(); render(); });
   $('modelSel').addEventListener('change', function () { S.model = this.value; persist(); render(); });
+  $('segChips').addEventListener('click', function (e) { var b = e.target.closest('.chip'); if (!b) return; S.seg = b.dataset.seg; syncFilters(); persist(); render(); });
   $('unitChips').addEventListener('click', function (e) { var b = e.target.closest('.chip'); if (!b) return; S.unit = b.dataset.unit; syncFilters(); persist(); render(); loadAlerts(); });
-  $('pdfBtn').addEventListener('click', function () { $('printHead').textContent = 'Vanmates marketing analytics · ' + UNIT[S.unit] + ' · ' + $('periodLbl').textContent + ' · printed ' + new Date().toLocaleString('en-CA') + ' by ' + S.me.email; window.print(); });
+  $('pdfBtn').addEventListener('click', function () { $('printHead').textContent = 'Vanmates marketing analytics · ' + UNIT[S.unit] + segLabel() + ' · ' + $('periodLbl').textContent + ' · printed ' + new Date().toLocaleString('en-CA') + ' by ' + S.me.email; window.print(); });
   $('exportBtn').addEventListener('click', async function () {
     var view = { overview: 'overview', social: 'posts', leads: 'channels', campaigns: 'channels', goals: 'overview', data: 'overview', ask: 'overview' }[S.tab] || 'overview';
     var extra = S.tab === 'social' ? { view: view, platform: S.platform } : { view: view };
@@ -475,9 +485,11 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var units = S.me.units.slice(); if (units.length > 1) units.push('ALL');
     $('unitChips').innerHTML = units.map(function (u) { return '<button type="button" class="chip' + (u === S.unit ? ' on' : '') + '" data-unit="' + u + '">' + esc(UNIT[u]) + '</button>'; }).join('');
     $('exportBtn').hidden = !S.me.can.export;
+    $('segChips').hidden = S.unit === 'MX' || S.me.units.indexOf('CA') < 0;
+    document.querySelectorAll('#segChips .chip').forEach(function (c) { c.classList.toggle('on', c.dataset.seg === (segOn() ? S.seg : '')); });
   }
   // A slower response for a market that is no longer selected must not overwrite the label.
-  function periodLabel(f) { if (!f || (f.units && f.units.join() !== (S.unit === 'ALL' ? 'CA,MX' : S.unit) && !(S.unit === 'ALL' && f.units.length > 1))) return ''; $('periodLbl').textContent = shortDay(f.from) + ' – ' + shortDay(f.to) + ' vs ' + shortDay(f.prevFrom) + ' – ' + shortDay(f.prevTo) + ' · ' + f.timezone.replace('America/', '').replace('_', ' ') + ' time'; }
+  function periodLabel(f) { if (!f || (f.units && f.units.join() !== (S.unit === 'ALL' ? 'CA,MX' : S.unit) && !(S.unit === 'ALL' && f.units.length > 1))) return ''; $('periodLbl').textContent = shortDay(f.from) + ' – ' + shortDay(f.to) + ' vs ' + shortDay(f.prevFrom) + ' – ' + shortDay(f.prevTo) + ' · ' + f.timezone.replace('America/', '').replace('_', ' ') + ' time' + segLabel(); }
 
   async function loadAlerts() {
     try {
@@ -760,7 +772,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     S.cache.goals = g.goals;
     var months = []; var d0 = new Date(Date.UTC(+period.slice(0, 4), +period.slice(5, 7) - 1, 1));
     for (var i = -3; i <= 2; i++) { var dd = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + i, 1)); months.push(dd.toISOString().slice(0, 7)); }
-    var h = '<div class="chead" style="margin-bottom:12px"><div><h2>Monthly goals</h2><p class="note" style="margin:0">Actual vs target with pacing (where you should be by today). ' + (S.unit === 'ALL' ? 'Both markets.' : UNIT[unit] + '.') + '</p></div><span style="display:flex;gap:8px;align-items:center"><select class="sel" id="goalMonth" aria-label="Month">' + months.map(function (m) { return '<option' + (m === period ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' + (S.me.can.editGoals ? '<button type="button" class="btn btn-primary btn-sm" data-goal="new">Add goal</button>' : '') + '</span></div>';
+    var h = '<div class="chead" style="margin-bottom:12px"><div><h2>Monthly goals</h2><p class="note" style="margin:0">Actual vs target with pacing (where you should be by today). ' + (S.unit === 'ALL' ? 'Both markets.' : UNIT[unit] + '.') + (segOn() ? ' Goals count the whole market; the Japan switch doesn’t apply here.' : '') + '</p></div><span style="display:flex;gap:8px;align-items:center"><select class="sel" id="goalMonth" aria-label="Month">' + months.map(function (m) { return '<option' + (m === period ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' + (S.me.can.editGoals ? '<button type="button" class="btn btn-primary btn-sm" data-goal="new">Add goal</button>' : '') + '</span></div>';
     if (!g.goals.length) return h + '<div class="card pad empty">No goals for ' + esc(period) + ' yet.' + (S.me.can.editGoals ? ' Add one to track pacing.' : '') + '</div>';
     h += '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">' + g.goals.map(function (x) {
       var cpl = x.metric === 'cost_per_lead';
@@ -826,6 +838,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var out = $('askOut'); out.innerHTML = '<div class="card pad empty">Analysing the data…</div>';
     try {
       var f = { unit: S.unit, basis: S.basis, model: S.model };
+      if (segOn()) f.seg = S.seg;
       if (S.days === 'custom' && S.from && S.to) { f.from = S.from; f.to = S.to; } else f.days = S.days === 'custom' ? '30' : S.days;
       var r = await api('/ask', { method: 'POST', body: { question: q, filters: f } });
       out.innerHTML = '<div class="card pad"><div class="chead"><b>' + esc(q) + '</b><span class="pill">' + esc(r.model) + '</span></div><div class="answer">' + md(r.answer) + '</div>' +
