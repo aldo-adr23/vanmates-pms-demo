@@ -1852,7 +1852,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-19-decidereview1"></script>
+<script src="pms-supabase.js?v=2026-10-19-ar1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2030,6 +2030,11 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
     <button class="nav-item" data-view="ap">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
       AP
+      <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="ar">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 15l3-3 2 2 3-4"/></svg>
+      AR
       <span class="nav-count">—</span>
     </button>
     </div>
@@ -3065,6 +3070,44 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
     </section>
 
     <!-- ============ FINANCIALS ============ -->
+    <!-- AR: read-only copy of QuickBooks open invoices (ar.js, ar-2026-10-19.sql; Lu refreshes it every 2 hours) -->
+    <section class="view" data-view="ar">
+      <div id="ar-fresh" class="name-sub" style="margin-bottom:12px"></div>
+      <div id="ar-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px"></div>
+      <div class="card" style="padding:14px 18px;margin-bottom:14px">
+        <div class="card-title" style="margin-bottom:8px">Aging</div>
+        <div id="ar-aging"></div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div class="tabs" id="ar-tabs" role="tablist" style="flex-wrap:wrap"></div>
+      </div>
+      <div class="filter-bar" id="ar-filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="ar-search" placeholder="Search customer, tenant, property, email, invoice #…" autocomplete="off" />
+        </div>
+        <select id="ar-kind" class="form-input" style="max-width:240px" aria-label="Customer type"></select>
+        <select id="ar-city" class="form-input" style="max-width:170px" aria-label="City">
+          <option value="">All cities</option><option>Vancouver</option><option>Toronto</option><option>Montreal</option><option value="—">No city (not linked)</option>
+        </select>
+        <button class="btn btn-ghost" id="ar-export" type="button">Export CSV</button>
+        <button class="btn btn-ghost" id="ar-refresh" type="button">Reload</button>
+      </div>
+      <div class="card" id="ar-list-card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px;flex-wrap:wrap;gap:8px">
+          <div class="card-title"><b id="ar-count">0</b> · <span id="ar-total">$0.00</span></div>
+          <div class="name-sub">Read-only · QuickBooks is the system of record</div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead id="ar-head"></thead>
+          <tbody id="ar-body"></tbody>
+        </table>
+        </div>
+        <div id="ar-empty" class="name-sub" style="display:none;padding:28px;text-align:center">Nothing matches these filters.</div>
+      </div>
+    </section>
+
     <section class="view" data-view="ap">
       <div id="ap-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px"></div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
@@ -8931,13 +8974,13 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","deposits","checkouts","room-changes","extensions","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
-                nav:["dashboard","portfolio","landlords","homestay-finance","financials","ap","deposits","checkouts"]},
+                nav:["dashboard","portfolio","landlords","homestay-finance","financials","ap","ar","deposits","checkouts"]},
   maintenance: {label:"Maintenance Lead",   color:"#8A7B6C", desc:"Maintenance tickets and vendors",
                 nav:["dashboard","maintenance"]},
 };
@@ -9232,6 +9275,7 @@ const ALL_PAGES = [
   ["contracts",        "Contracts"],
   ["financials",       "Financials"],
   ["ap",               "Accounts payable"],
+  ["ar",               "Accounts receivable"],
   ["team",             "Team"],
   ["settings",         "Settings"],
 ];
@@ -9961,7 +10005,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance","host-recruitment":"Host recruitment",
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
-    "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
+    "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","ar":"Accounts receivable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
     "team":"Team","settings":"Settings"
   };
   const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
@@ -11723,6 +11767,7 @@ const titles = {
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
   extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: co-living accept sends the extension contract; homestay accept emails a payment link"],
+  ar: ["Accounts <em>receivable</em>", "What customers owe, straight from QuickBooks: aging, overdue and unapplied credits (read-only)"],
   ap: ["Accounts <em>payable</em>", "Cleaners, utilities, internet, landlords and employee expenses: review, approve, pay"],
   checkouts: ["<em>Checkouts</em>", "Move-out requests from vanmates.com/checkout: notice, acknowledgements and flags"],
   contracts: ["<em>Contracts</em>", "Co-living subleases and BC tenancy agreements: who has signed, and what waits for Vanmates"],
@@ -11781,6 +11826,7 @@ function goToView(v, savedView){
   if(v === "room-changes" && typeof loadRoomChanges === "function") loadRoomChanges();
   if(v === "extensions" && typeof loadExtensions === "function") loadExtensions();
   if(v === "ap" && typeof loadAp === "function") loadAp();
+  if(v === "ar" && typeof loadAr === "function") loadAr();
   if(v === "contracts" && typeof renderContracts === "function") renderContracts();
   if(v === "properties" && typeof renderPropertiesGrid === "function") renderPropertiesGrid();
   if(v === "settings" && typeof ckoFeeRulesNav === "function") ckoFeeRulesNav();
@@ -44685,9 +44731,10 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-19-decidereview1"></script>
-<script src="extensions.js?v=2026-10-19-decidereview1"></script>
-<script src="ap.js?v=2026-10-19-decidereview1"></script>
-<script src="properties.js?v=2026-10-19-decidereview1"></script>
+<script src="room-changes.js?v=2026-10-19-ar1"></script>
+<script src="extensions.js?v=2026-10-19-ar1"></script>
+<script src="ap.js?v=2026-10-19-ar1"></script>
+<script src="properties.js?v=2026-10-19-ar1"></script>
+<script src="ar.js?v=2026-10-19-ar1"></script>
 </body>
 </html>
