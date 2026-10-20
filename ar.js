@@ -132,10 +132,51 @@
   // Same rule as vm_ar_member(): admins, accountants, and anyone granted the AR page.
   const canSee = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ar')));
 
-  window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, canSee };
+  const qboPaymentUrl = (id) => 'https://qbo.intuit.com/app/recvpayment?txnId=' + encodeURIComponent(id);
+
+  // Incoming tab (phase 2): Stripe / e-transfer payments Lu saw arrive, checked against the payments in QuickBooks.
+  // Problems first: entered twice, not in QuickBooks, needs a person's check.
+  const INCOMING = {
+    duplicate: ['Entered twice', 'red', 'Lu posted it and a matching payment was also entered by hand'],
+    missing: ['Not in QuickBooks', 'red', 'No matching QuickBooks payment after 3 days (or it was booked another way, e.g. inside a deposit)'],
+    possible: ['Check match', 'amber', 'A QuickBooks payment has the same amount but nothing ties it to this payer'],
+    waiting: ['Waiting', '', 'Received in the last 3 days; bookkeepers usually enter it within 1–3 days'],
+    recorded: ['In QuickBooks', 'green', 'Found in QuickBooks'],
+    posted_by_lu: ['Posted by Lu', 'blue', 'Lu entered it in QuickBooks'],
+  };
+  const INCOMING_ORDER = Object.keys(INCOMING);
+  const isIncomingProblem = (r) => ['duplicate', 'missing', 'possible'].includes(r.state);
+  function incomingSummary(rows){
+    const s = { count: rows.length, cents: 0, recorded: 0, problems: 0, missingCents: 0, byState: {} };
+    for (const r of rows) {
+      const c = Number(r.amount_cents || 0);
+      s.cents += c;
+      s.byState[r.state] = (s.byState[r.state] || 0) + 1;
+      if (r.state === 'recorded' || r.state === 'posted_by_lu') s.recorded++;
+      if (isIncomingProblem(r)) s.problems++;
+      if (r.state === 'missing' || r.state === 'duplicate') s.missingCents += c;
+    }
+    return s;
+  }
+  const sortIncoming = (rows) => rows.slice().sort((a, b) => INCOMING_ORDER.indexOf(a.state) - INCOMING_ORDER.indexOf(b.state) || String(b.received_on || '').localeCompare(String(a.received_on || '')) || Number(b.proposal_id) - Number(a.proposal_id));
+  function incomingMatches(r, q, state){
+    if (state === 'problems' ? !isIncomingProblem(r) : state && r.state !== state) return false;
+    const n = String(q || '').trim().toLowerCase();
+    if (!n) return true;
+    return [r.payer_name, r.payer_email, r.memo, r.qb_customer_name, r.suggested_customer_name, r.source_ref, r.qb_payment_id, money(r.amount_cents)].some(v => String(v || '').toLowerCase().includes(n));
+  }
+  function incomingCsv(rows){
+    const head = ['Received', 'Source', 'Reference', 'Payer', 'Payer email', 'Amount', 'Status', 'QuickBooks payment', 'QuickBooks customer', 'QuickBooks date', 'Matched by', 'Suggested customer', 'Possible QuickBooks payments', 'Memo'];
+    const lines = rows.map(r => [r.received_on, r.source === 'stripe' ? 'Stripe' : 'e-Transfer', r.source_ref, r.payer_name, r.payer_email, (Number(r.amount_cents || 0) / 100).toFixed(2),
+      (INCOMING[r.state] || [r.state])[0], r.qb_payment_id, r.qb_customer_name, r.qb_txn_date || '', r.how, r.suggested_customer_name, (r.candidates || []).join(' '), r.memo]);
+    return [head, ...lines].map(l => l.map(csvCell).join(',')).join('\n');
+  }
+
+  window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
+    INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv };
   if (typeof document === 'undefined') return;
 
-  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '' };
+  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '' };
   let data = null, loading = null;
   const e = (s) => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const toast = (m) => { if (typeof showToast === 'function') showToast(m); };
@@ -154,14 +195,16 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links] = await Promise.all([
+        const [inv, un, run, links, inc] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
           sb().from('tenant_qb_links').select('tenant_id,qb_customer_id').limit(10000),
+          sb().from('ar_incoming_payments').select('*').limit(5000),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
-        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []) };
+        // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
+        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []) };
         render();
       } catch (err) {
         console.error('[ar] load failed', err);
@@ -188,7 +231,7 @@
     const fr = freshness(data.lastRun, Date.now());
     const fresh = document.getElementById('ar-fresh');
     if (fresh) fresh.innerHTML = !data.lastRun ? `<span class="tag-pill red" style="font-size:11px">Not synced yet</span> Lu fills this from QuickBooks every 2 hours (8:50–20:50 Vancouver).`
-      : `${fr.stale ? `<span class="tag-pill red" style="font-size:11px">Out of date</span> ` : ''}QuickBooks copy from <b>${e(when(data.lastRun.synced_at))}</b> · read-only · refreshed by Lu every 2 hours, 8:50–20:50 Vancouver`;
+      : `${fr.stale ? `<span class="tag-pill red" style="font-size:11px">Out of date</span> ` : ''}QuickBooks copy from <b>${e(when(data.lastRun.synced_at))}</b> · read-only · refreshed by Lu every 2 hours, 8:50–20:50 Vancouver${data.lastRun.incoming_at ? ` · incoming payments checked ${e(when(data.lastRun.incoming_at))}` : ''}`;
 
     const cards = document.getElementById('ar-cards');
     if (cards) cards.innerHTML = [
@@ -215,8 +258,12 @@
     const invRows = [];
     for (const c of list) for (const i of c.invoices) if (invoiceInBucket(i, S.bucket, t)) invRows.push({ i, c });
     invRows.sort((a, b) => String(a.i.due_date || '').localeCompare(String(b.i.due_date || '')) || Number(b.i.balance_cents) - Number(a.i.balance_cents));
-    if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length]]
+    const incAll = data.incoming || [];
+    const incSum = incomingSummary(incAll);
+    if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length], ['incoming', 'Incoming payments', incSum.problems ? `<span class="tag-pill red" style="font-size:11px">${incSum.problems} to check</span>` : incAll.length]]
       .map(([k, l, n]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ar-tab="${k}">${l} <span class="name-sub">${n}</span></button>`).join('');
+    for (const [id, show] of [['ar-kind', S.tab !== 'incoming'], ['ar-city', S.tab !== 'incoming'], ['ar-instate', S.tab === 'incoming']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
+    if (S.tab === 'incoming') return renderIncoming(incAll, incSum);
 
     const total = S.tab === 'customers' ? list.reduce((s, r) => s + r.openCents, 0) : invRows.reduce((s, x) => s + Number(x.i.balance_cents || 0), 0);
     const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = S.tab === 'customers' ? `${list.length} customers` : `${invRows.length} invoices`;
@@ -247,6 +294,64 @@
           <td style="text-align:right;white-space:nowrap"><b>${e(money(i.balance_cents))}</b></td>
           <td>${e(i.item_name || '')}<div class="name-sub">${e(i.class_name || '')}</div></td></tr>`).join('');
     }
+  }
+
+  const inPill = (st) => { const x = INCOMING[st] || [st, '']; return `<span class="tag-pill ${x[1]}" style="font-size:11px" title="${e(x[2] || '')}">${e(x[0])}</span>`; };
+  const srcLabel = (r) => r.source === 'stripe' ? 'Stripe' : 'e-Transfer';
+  const LU_STATUS = { proposed: 'open in #bookkeping-review', recorded_in_qbo: 'closed: already in QuickBooks', approved: 'approved', shadow_posted: 'approved (test mode, nothing written)', posted: 'posted by Lu', failed: 'QuickBooks write failed', skipped: 'skipped' };
+  const HOW = { stripe_ref: 'Stripe id in the QuickBooks reference', customer: "payer's QuickBooks customer", name: "payer's name" };
+
+  function renderIncoming(all, sum){
+    const rows = sortIncoming(all.filter(r => incomingMatches(r, S.q, S.inState)));
+    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${rows.length} payment(s)` + (sum.problems ? ` · ${sum.problems} to check` : '');
+    const tot = document.getElementById('ar-total'); if (tot) tot.textContent = money(rows.reduce((s, r) => s + Number(r.amount_cents || 0), 0));
+    const head = document.getElementById('ar-head'), body = document.getElementById('ar-body'), empty = document.getElementById('ar-empty');
+    if (head) head.innerHTML = `<tr><th>Received</th><th>Payer</th><th style="text-align:right">Amount</th><th>Status</th><th>QuickBooks</th><th>Memo</th></tr>`;
+    if (data.incoming === null) { if (empty) empty.style.display = 'none'; msg('Incoming payments are not set up in the database yet (run ar-incoming-2026-10-20.sql).'); return; }
+    if (empty) { empty.style.display = rows.length ? 'none' : ''; empty.textContent = all.length ? 'Nothing matches these filters.' : 'No Stripe or e-Transfer payments in the last 60 days yet.'; }
+    if (body) body.innerHTML = rows.slice(0, 1000).map(r => `<tr class="clickable" data-ar-inc="${e(r.proposal_id)}" tabindex="0" style="cursor:pointer">
+        <td>${e(r.received_on || '—')}<div class="name-sub">${e(srcLabel(r))}</div></td>
+        <td><b>${e(r.payer_name || r.payer_email || '—')}</b>${r.payer_name && r.payer_email ? `<div class="name-sub">${e(r.payer_email)}</div>` : ''}</td>
+        <td style="text-align:right;white-space:nowrap"><b>${e(money(r.amount_cents))}</b></td>
+        <td>${inPill(r.state)}</td>
+        <td>${r.qb_payment_id ? `<a href="${e(qboPaymentUrl(r.qb_payment_id))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Payment #${e(r.qb_payment_id)} ↗</a><div class="name-sub">${e(r.qb_customer_name || '')}${r.qb_txn_date ? ' · ' + e(r.qb_txn_date) : ''}</div>`
+          : (r.candidates || []).length ? `<span class="name-sub">Same amount: ${(r.candidates || []).map(id => `<a href="${e(qboPaymentUrl(id))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">#${e(id)}</a>`).join(', ')}</span>`
+          : r.suggested_customer_name ? `<span class="name-sub">Likely customer: ${e(r.suggested_customer_name)}</span>` : '<span class="name-sub">—</span>'}</td>
+        <td><span class="name-sub">${e(String(r.memo || '').slice(0, 80))}</span></td></tr>`).join('');
+  }
+
+  function openIncoming(id){
+    const r = data && (data.incoming || []).find(x => String(x.proposal_id) === String(id));
+    if (!r) return;
+    const x = INCOMING[r.state] || [r.state, '', ''];
+    document.getElementById('panel-hero').textContent = '$';
+    document.getElementById('panel-title').innerHTML = `${e(money(r.amount_cents))} · ${e(srcLabel(r))}`;
+    document.getElementById('panel-sub').textContent = `${r.payer_name || r.payer_email || 'Unknown payer'} · received ${r.received_on || '—'}`;
+    document.getElementById('panel-meta').innerHTML = inPill(r.state);
+    const field = (l, v) => v ? `<div style="display:flex;gap:10px"><span class="name-sub" style="min-width:150px">${e(l)}</span><span>${v}</span></div>` : '';
+    const withAr = new Set((data.invoices || []).map(i => String(i.customer_id)));
+    const custLink = (cid, name) => !cid ? e(name) : `${withAr.has(String(cid)) ? `<a href="#ar=${e(cid)}">${e(name || 'Customer #' + cid)}</a> <span class="name-sub">(has open invoices)</span>` : e(name || 'Customer #' + cid)} <a href="${e(qboCustomerUrl(cid))}" target="_blank" rel="noopener" class="name-sub">QuickBooks ↗</a>`;
+    document.getElementById('panel-body').innerHTML = `<div data-ar-inc-id="${e(r.proposal_id)}">
+      <p style="margin:0 0 12px">${e(x[2] || '')}</p>
+      <div style="display:grid;gap:6px">
+        ${field('Payer', e(r.payer_name))}
+        ${field('Payer email', e(r.payer_email))}
+        ${field('Amount', `<b>${e(money(r.amount_cents))}</b>`)}
+        ${field('Received', e(r.received_on))}
+        ${field(r.source === 'stripe' ? 'Stripe payment' : 'Interac reference', e(r.source_ref))}
+        ${field('Memo', e(r.memo))}
+        ${field('QuickBooks payment', r.qb_payment_id ? `<a href="${e(qboPaymentUrl(r.qb_payment_id))}" target="_blank" rel="noopener">#${e(r.qb_payment_id)} ↗</a>${r.qb_txn_date ? ' · dated ' + e(r.qb_txn_date) : ''}` : '')}
+        ${field('QuickBooks customer', r.qb_customer_id || r.qb_customer_name ? custLink(r.qb_customer_id, r.qb_customer_name) : '')}
+        ${field('Matched by', e(HOW[r.how] || ''))}
+        ${field('Possible payments', (r.candidates || []).map(cid => `<a href="${e(qboPaymentUrl(cid))}" target="_blank" rel="noopener">#${e(cid)} ↗</a>`).join(', '))}
+        ${!r.qb_payment_id ? field('Likely customer', r.suggested_customer_id ? custLink(r.suggested_customer_id, r.suggested_customer_name) : '<span class="name-sub">Not identified</span>') : ''}
+        ${field("Lu's proposal", `#${e(r.proposal_id)} · ${e(LU_STATUS[r.lu_status] || r.lu_status || '')}`)}
+      </div>
+      <p class="name-sub" style="margin-top:18px">Nothing here writes to QuickBooks. Enter or fix the payment in QuickBooks; Lu checks again every 2 hours. When Lu finds it, it closes its own proposal in #bookkeping-review so the payment cannot be entered twice.</p>
+    </div>`;
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
   }
 
   function open(customerId){
@@ -289,7 +394,8 @@
     const { t, cust } = model();
     const f = { q: S.q, kind: S.kind, city: S.city, bucket: S.bucket };
     const list = sortCustomers(cust.filter(r => matches(r, f)));
-    const text = S.tab === 'customers' ? customersCsv(list) : invoicesCsv(list.flatMap(c => c.invoices.filter(i => invoiceInBucket(i, S.bucket, t)).map(i => ({ i, c }))), t);
+    const text = S.tab === 'incoming' ? incomingCsv(sortIncoming((data.incoming || []).filter(r => incomingMatches(r, S.q, S.inState))))
+      : S.tab === 'customers' ? customersCsv(list) : invoicesCsv(list.flatMap(c => c.invoices.filter(i => invoiceInBucket(i, S.bucket, t)).map(i => ({ i, c }))), t);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
     a.download = `ar-${S.tab}-${t}.csv`;
@@ -312,10 +418,18 @@
     const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
     const k = document.getElementById('ar-kind');
     if (k) k.innerHTML = KINDS.map(([v, l]) => `<option value="${v}">${e(l)}</option>`).join('');
+    const city = document.getElementById('ar-city');
+    if (city && !document.getElementById('ar-instate')) {
+      const st = document.createElement('select');
+      st.id = 'ar-instate'; st.className = 'form-input'; st.style.cssText = 'max-width:220px;display:none'; st.setAttribute('aria-label', 'Payment status');
+      st.innerHTML = `<option value="">All statuses</option><option value="problems">To check (not found, unclear, twice)</option>` + Object.entries(INCOMING).map(([v, x]) => `<option value="${v}">${e(x[0])}</option>`).join('');
+      city.after(st);
+    }
     let tm = null;
     on('ar-search', 'input', ev => { S.q = ev.target.value; clearTimeout(tm); tm = setTimeout(render, 150); });
     on('ar-kind', 'change', ev => { S.kind = ev.target.value; render(); });
     on('ar-city', 'change', ev => { S.city = ev.target.value; render(); });
+    on('ar-instate', 'change', ev => { S.inState = ev.target.value; render(); });
     on('ar-refresh', 'click', () => load(true));
     on('ar-export', 'click', exportCsv);
     on('ar-tabs', 'click', ev => { const b = ev.target.closest('[data-ar-tab]'); if (b) { S.tab = b.dataset.arTab; render(); } });
@@ -324,8 +438,9 @@
     on('ar-aging', 'click', bucketClick);
     const body = document.getElementById('ar-body');
     if (body) {
-      body.addEventListener('click', ev => { const tr = ev.target.closest('[data-ar-open]'); if (tr) open(tr.dataset.arOpen); });
-      body.addEventListener('keydown', ev => { if (ev.key !== 'Enter') return; const tr = ev.target.closest('[data-ar-open]'); if (tr) open(tr.dataset.arOpen); });
+      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) openIncoming(ti.dataset.arInc); };
+      body.addEventListener('click', pick);
+      body.addEventListener('keydown', ev => { if (ev.key === 'Enter') pick(ev); });
     }
     const pb = document.getElementById('panel-body');
     if (pb) pb.addEventListener('click', ev => {
@@ -333,9 +448,9 @@
       ev.preventDefault();
       if (typeof openTenant === 'function') openTenant(a.dataset.arTenant);
     });
-    // Live: Lu's refresh replaces the copy while the page is open.
+    // Live: Lu's refresh replaces the copy while the page is open (a new run, then its incoming-payments stamp).
     try {
-      if (sb() && sb().channel) sb().channel('ar_sync_live').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'ar_sync_runs' }, () => { if (data) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 1500); } }).subscribe();
+      if (sb() && sb().channel) sb().channel('ar_sync_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ar_sync_runs' }, () => { if (data) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 1500); } }).subscribe();
     } catch (_) {}
     fromHash();
   }
