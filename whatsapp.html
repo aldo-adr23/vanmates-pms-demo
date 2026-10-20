@@ -174,6 +174,8 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
     if (now - d < 6 * 864e5) return d.toLocaleDateString('en-CA', { weekday: 'short' });
     return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
   }
+  // WhatsApp formatting (and the model's **bold**) shown as it reads on the phone.
+  function fmtWa(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,!?]|$)/g, '$1<b>$2</b>').replace(/(^|\s)_([^_\n]+)_(?=\s|[.,!?]|$)/g, '$1<i>$2</i>'); }
   function clock(iso) { return new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }); }
   function dayLabel(iso) { return new Date(iso).toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' }); }
 
@@ -185,7 +187,7 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
   var ERR = {
     no_inbox_access: 'You don’t have access to Homestay WhatsApp. Ask an admin to tick “Homestay WhatsApp” for you in Team.',
     not_team: 'Your login isn’t a portal team member.', unauthorized: 'Your session expired. Reload the page to sign in again.',
-    window_closed: 'More than 24 hours since their last message.', not_found: 'That chat no longer exists.',
+    window_closed: 'More than 24 hours since their last message.', line_not_connected: 'The WhatsApp line isn’t connected yet, so nothing can be sent.', not_found: 'That chat no longer exists.',
   };
   async function api(path, opts) {
     opts = opts || {};
@@ -228,7 +230,7 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
     return (S.mediaUrls[id] = URL.createObjectURL(await r.blob()));
   }
   function bubble(it, wa) {
-    var cls = it.who, meta = clock(it.at), body = esc(it.text);
+    var cls = it.who, meta = clock(it.at), body = fmtWa(it.text);
     if (it.who === 'ted') { meta = 'Ted · ' + meta + (it.sent ? '' : ' · not sent'); if (!it.sent) cls += ' draft'; }
     if (it.who === 'team') meta = (it.by ? esc(it.by.split('@')[0]) + ' · ' : '') + meta + (it.status ? ' · ' + esc(it.status) : '');
     if (it.status === 'failed') { cls += ' failed'; meta += ' — ' + esc(it.error || 'not delivered'); }
@@ -238,7 +240,7 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
     if (it.media_id) {
       media = /^image\//.test(it.mime || '') ? '<img alt="Photo from the chat" data-media="' + esc(it.media_id) + '" />'
         : '<button class="btn btn-ghost btn-sm" data-file="' + esc(it.media_id) + '">Open ' + esc((it.type || 'file').replace('audio', 'voice note')) + '</button><br>';
-      body = esc(String(it.text || '').replace(/^\[[^\]]*\]\s*/, ''));
+      body = fmtWa(String(it.text || '').replace(/^\[[^\]]*\]\s*/, ''));
     }
     return '<div class="m ' + cls + '">' + media + body + '<span class="meta">' + meta + '</span></div>';
   }
@@ -279,7 +281,9 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
   }
   async function openThread(wa, keepDrawer) {
     if (S.open !== wa) { S.drawer = null; S.draft = null; }
+    var switching = S.open !== wa || !S.view;
     S.open = wa; $('app').classList.add('open');
+    if (switching) { S.view = null; $('th').innerHTML = '<div class="empty">Loading…</div>'; renderList(); }
     try { history.replaceState(null, '', 'whatsapp.html?c=' + wa); } catch (e) {}
     try { S.view = await api('/thread/' + wa); renderThread(); renderList(); }
     catch (e) { showErr(e); }
