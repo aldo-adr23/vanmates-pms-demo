@@ -192,11 +192,40 @@
       amt(r.template_cents), r.next_date || '', (r.template_ids || []).join(' '), r.detail, String(r.first_seen || '').slice(0, 10)])].map(l => l.map(csvCell).join(',')).join('\n');
   }
 
+  // Collections tab (phase 3c): who Lu reminds, who is paused and why, reminders sent. Lu keeps the holds; staff ask
+  // here to pause or resume (ar_collection_action) and Lu applies it within 10 minutes, always before a batch is sent.
+  const COLLECT = {
+    needs_person: ['Needs a person', 'red', 'Lu will not remind: a person has to act (dispute, reply to read, over 120 days, small balance, unapplied credit)'],
+    will_remind: ['Will be reminded', 'blue', 'In the next reminder batch (weekdays 9:00), sent only after approval in Slack'],
+    held: ['Paused', 'amber', 'Reminders paused: promise to pay, payment plan, paused by staff, or says they paid'],
+    waiting: ['Waiting', '', 'Not yet: under 3 days late, reminded in the last 3 days, or a payment is on its way into QuickBooks'],
+    not_reminded: ['Not reminded', '', 'Never reminded automatically: not a tenant, or no email on file'],
+  };
+  const PAUSE_REASONS = [['dispute', 'Disputes the balance'], ['promise_to_pay', 'Promised to pay by…'], ['payment_plan', 'On a payment plan until…'], ['manual', 'Pause (other reason)']];
+  const HOLD_LABEL = { dispute: 'Disputed', promise_to_pay: 'Promised to pay', payment_plan: 'Payment plan', manual: 'Paused by staff', replied: 'Replied to a reminder',
+    payment_claimed: 'Says they paid', rtb: 'RTB matter', deposit_matter: 'Deposit matter' };
+  const STAGE_LABEL = { friendly: 'Friendly reminder', firm: 'Firm reminder', final: 'Final notice' };
+  const sortCollections = (rows) => rows.slice().sort((a, b) => Object.keys(COLLECT).indexOf(a.status) - Object.keys(COLLECT).indexOf(b.status) || Number(b.total_cents || 0) - Number(a.total_cents || 0));
+  function collectionMatches(r, q, status){
+    if (status === 'escalated' ? !r.escalated : status && r.status !== status) return false;
+    const n = String(q || '').trim().toLowerCase();
+    return !n || [r.name, r.property, r.email, r.customer_id, r.detail, HOLD_LABEL[r.hold_reason], r.hold_note].some(v => String(v || '').toLowerCase().includes(n));
+  }
+  /** The newest request for this customer that Lu has not applied yet. */
+  const pendingAction = (actions, customerId) => (actions || []).filter(a => String(a.customer_id) === String(customerId) && a.status === 'pending').sort((a, b) => Number(b.id) - Number(a.id))[0] || null;
+  function collectionsCsv(rows){
+    const head = ['Status', 'Tenant', 'Property', 'Email', 'QuickBooks customer #', 'Overdue', 'Days late', '14+ days', 'What happens next', 'Paused because', 'Paused until', 'Pause note', 'Paused by', 'Reminders sent', 'Last reminder'];
+    return [head, ...rows.map(r => [(COLLECT[r.status] || [r.status])[0], r.name, r.property, r.email, r.customer_id, (Number(r.total_cents || 0) / 100).toFixed(2), r.max_days, r.escalated ? 'yes' : '',
+      r.detail, HOLD_LABEL[r.hold_reason] || r.hold_reason || '', r.hold_until || '', r.hold_note || '', String(r.hold_by || '').replace(/^portal:/, ''), (r.reminders || []).length,
+      (r.reminders || [])[0] ? `${r.reminders[0].on} ${STAGE_LABEL[r.reminders[0].stage] || r.reminders[0].stage}` : ''])].map(l => l.map(csvCell).join(',')).join('\n');
+  }
+
   window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
-    INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv };
+    INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv,
+    COLLECT, PAUSE_REASONS, HOLD_LABEL, STAGE_LABEL, sortCollections, collectionMatches, pendingAction, collectionsCsv };
   if (typeof document === 'undefined') return;
 
-  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '' };
+  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '', colState: '' };
   let data = null, loading = null;
   const e = (s) => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const toast = (m) => { if (typeof showToast === 'function') showToast(m); };
@@ -215,17 +244,20 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links, inc, bill] = await Promise.all([
+        const [inv, un, run, links, inc, bill, col, acts] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
           sb().from('tenant_qb_links').select('tenant_id,qb_customer_id').limit(10000),
           sb().from('ar_incoming_payments').select('*').limit(5000),
           sb().from('ar_billing_issues').select('*').limit(5000),
+          sb().from('ar_collections').select('*').limit(5000),
+          sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
         // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
-        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []) };
+        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []),
+          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []) };
         render();
       } catch (err) {
         console.error('[ar] load failed', err);
@@ -252,7 +284,7 @@
     const fr = freshness(data.lastRun, Date.now());
     const fresh = document.getElementById('ar-fresh');
     if (fresh) fresh.innerHTML = !data.lastRun ? `<span class="tag-pill red" style="font-size:11px">Not synced yet</span> Lu fills this from QuickBooks every 2 hours (8:50–20:50 Vancouver).`
-      : `${fr.stale ? `<span class="tag-pill red" style="font-size:11px">Out of date</span> ` : ''}QuickBooks copy from <b>${e(when(data.lastRun.synced_at))}</b> · read-only · refreshed by Lu every 2 hours, 8:50–20:50 Vancouver${data.lastRun.incoming_at ? ` · incoming payments checked ${e(when(data.lastRun.incoming_at))}` : ''}${data.lastRun.billing_at ? ` · billing checked ${e(when(data.lastRun.billing_at))}` : ''}`;
+      : `${fr.stale ? `<span class="tag-pill red" style="font-size:11px">Out of date</span> ` : ''}QuickBooks copy from <b>${e(when(data.lastRun.synced_at))}</b> · read-only · refreshed by Lu every 2 hours, 8:50–20:50 Vancouver${data.lastRun.incoming_at ? ` · incoming payments checked ${e(when(data.lastRun.incoming_at))}` : ''}${data.lastRun.billing_at ? ` · billing checked ${e(when(data.lastRun.billing_at))}` : ''}${data.lastRun.collections_at ? ` · collections ${e(when(data.lastRun.collections_at))}` : ''}`;
 
     const cards = document.getElementById('ar-cards');
     if (cards) cards.innerHTML = [
@@ -282,12 +314,14 @@
     const incAll = data.incoming || [];
     const incSum = incomingSummary(incAll);
     if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length], ['incoming', 'Incoming payments', incSum.problems ? `<span class="tag-pill red" style="font-size:11px">${incSum.problems} to check</span>` : incAll.length],
-      ['billing', 'Billing', (data.billing || []).length ? `<span class="tag-pill amber" style="font-size:11px">${(data.billing || []).length} to check</span>` : 0]]
+      ['billing', 'Billing', (data.billing || []).length ? `<span class="tag-pill amber" style="font-size:11px">${(data.billing || []).length} to check</span>` : 0],
+      ['collections', 'Collections', (() => { const np = (data.collections || []).filter(r => r.status === 'needs_person').length; return np ? `<span class="tag-pill red" style="font-size:11px">${np} need a person</span>` : (data.collections || []).length; })()]]
       .map(([k, l, n]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ar-tab="${k}">${l} <span class="name-sub">${n}</span></button>`).join('');
-    const side = S.tab === 'incoming' || S.tab === 'billing';
-    for (const [id, show] of [['ar-kind', !side], ['ar-city', !side], ['ar-instate', S.tab === 'incoming'], ['ar-billkind', S.tab === 'billing']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
+    const side = S.tab === 'incoming' || S.tab === 'billing' || S.tab === 'collections';
+    for (const [id, show] of [['ar-kind', !side], ['ar-city', !side], ['ar-instate', S.tab === 'incoming'], ['ar-billkind', S.tab === 'billing'], ['ar-colstate', S.tab === 'collections']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
     if (S.tab === 'incoming') return renderIncoming(incAll, incSum);
     if (S.tab === 'billing') return renderBilling(data.billing);
+    if (S.tab === 'collections') return renderCollections(data.collections);
 
     const total = S.tab === 'customers' ? list.reduce((s, r) => s + r.openCents, 0) : invRows.reduce((s, x) => s + Number(x.i.balance_cents || 0), 0);
     const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = S.tab === 'customers' ? `${list.length} customers` : `${invRows.length} invoices`;
@@ -390,6 +424,94 @@
     document.getElementById('panel-backdrop').classList.add('open');
   }
 
+  const colPill = (status) => { const x = COLLECT[status] || [status, '', '']; return `<span class="tag-pill ${x[1]}" style="font-size:11px" title="${e(x[2])}">${e(x[0])}</span>`; };
+  const lastRem = (r) => { const x = (r.reminders || [])[0]; return x ? `${e(STAGE_LABEL[x.stage] || x.stage)}<div class="name-sub">${e(x.on)}${r.reminders.length > 1 ? ` · ${r.reminders.length} sent` : ''}</div>` : '<span class="name-sub">none yet</span>'; };
+  function renderCollections(all){
+    const head = document.getElementById('ar-head'), body = document.getElementById('ar-body'), empty = document.getElementById('ar-empty');
+    if (head) head.innerHTML = `<tr><th>Status</th><th>Tenant</th><th style="text-align:right">Overdue</th><th>Last reminder</th><th>What happens next</th></tr>`;
+    if (all === null) { if (empty) empty.style.display = 'none'; msg('Collections are not set up in the database yet (run ar-collections-2026-10-20.sql).'); return; }
+    const rows = sortCollections(all.filter(r => collectionMatches(r, S.q, S.colState)));
+    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${rows.length} customers with overdue rent`;
+    const tot = document.getElementById('ar-total'); if (tot) tot.textContent = `${money(rows.reduce((s, r) => s + Number(r.total_cents || 0), 0))} overdue`;
+    if (empty) { empty.style.display = rows.length ? 'none' : ''; empty.textContent = all.length ? 'Nothing matches these filters.' : 'Nobody owes overdue rent.'; }
+    if (body) body.innerHTML = rows.slice(0, 1000).map(r => { const p = pendingAction(data.actions, r.customer_id); return `<tr class="clickable" data-ar-col="${e(r.customer_id)}" tabindex="0" style="cursor:pointer">
+        <td>${colPill(r.status)}${r.escalated ? ' <span class="tag-pill red" style="font-size:11px" title="14+ days late: accounting / manager review (AR spec 5.4)">14+ days</span>' : ''}</td>
+        <td><b>${e(r.name || 'Customer ' + r.customer_id)}</b><div class="name-sub">${e(r.property || '')}</div></td>
+        <td style="text-align:right;white-space:nowrap">${e(money(r.total_cents))}<div class="name-sub">${e(r.max_days)} d late</div></td>
+        <td style="white-space:nowrap">${lastRem(r)}</td>
+        <td><span class="name-sub">${r.hold_reason ? `<b>${e(HOLD_LABEL[r.hold_reason] || r.hold_reason)}</b>${r.hold_until ? ' until ' + e(r.hold_until) : ''}. ` : ''}${e(String(r.detail || '').slice(0, 160))}</span>
+          ${p ? `<div><span class="tag-pill amber" style="font-size:11px">${p.action === 'pause' ? 'Pause' : 'Resume'} requested, Lu applies it within 10 min</span></div>` : ''}</td></tr>`; }).join('');
+  }
+
+  function openCollection(customerId){
+    const r = data && (data.collections || []).find(x => String(x.customer_id) === String(customerId));
+    if (!r) return;
+    const x = COLLECT[r.status] || [r.status, '', ''];
+    const mine = (data.actions || []).filter(a => String(a.customer_id) === String(r.customer_id)).slice(0, 8);
+    const p = pendingAction(data.actions, r.customer_id);
+    document.getElementById('panel-hero').textContent = String(r.name || '?').slice(0, 1).toUpperCase();
+    document.getElementById('panel-title').innerHTML = e(r.name || 'Customer ' + r.customer_id);
+    document.getElementById('panel-sub').textContent = `${money(r.total_cents)} overdue · ${r.max_days} days late${r.property ? ' · ' + r.property : ''}`;
+    document.getElementById('panel-meta').innerHTML = colPill(r.status) + (r.escalated ? ' <span class="tag-pill red" style="font-size:11px">14+ days</span>' : '');
+    const field = (l, v) => v ? `<div style="display:flex;gap:10px"><span class="name-sub" style="min-width:150px">${e(l)}</span><span>${v}</span></div>` : '';
+    const minDate = today(), maxDate = addDays(today(), 180);
+    document.getElementById('panel-body').innerHTML = `<div data-ar-col-id="${e(r.customer_id)}">
+      <p style="margin:0 0 12px">${e(r.detail || x[2])}</p>
+      <div style="display:grid;gap:6px">
+        ${field('Overdue', `<b>${e(money(r.total_cents))}</b> <span class="name-sub">${e(r.invoice_count)} invoice(s) · <a href="#ar=${e(r.customer_id)}">see invoices</a></span>`)}
+        ${field('Email', e(r.email) || '<span class="name-sub">none on file</span>')}
+        ${field('QuickBooks', `<a href="${e(qboCustomerUrl(r.customer_id))}" target="_blank" rel="noopener">Customer #${e(r.customer_id)} ↗</a>`)}
+        ${field('Next reminder', r.next_stage ? e(STAGE_LABEL[r.next_stage] || r.next_stage) : '')}
+        ${field('In a batch', e(r.in_batch))}
+        ${r.hold_reason ? field('Paused because', `<b>${e(HOLD_LABEL[r.hold_reason] || r.hold_reason)}</b>${r.hold_until ? ' until ' + e(r.hold_until) : ' until resumed'}`) : ''}
+        ${field('Pause note', e(r.hold_note))}
+        ${field('Paused by', e(String(r.hold_by || '').replace(/^portal:/, '')))}
+      </div>
+      ${H(`Reminders sent (${(r.reminders || []).length})`)}
+      <div style="display:grid;gap:4px">${(r.reminders || []).map(m => `<div class="name-sub">${e(m.on)} · ${e(STAGE_LABEL[m.stage] || m.stage)} · ${e(money(m.total_cents))}</div>`).join('') || '<div class="name-sub">None yet</div>'}</div>
+      ${H('Pause or resume reminders')}
+      ${p ? `<p class="name-sub"><span class="tag-pill amber" style="font-size:11px">Waiting for Lu</span> ${p.action === 'pause' ? `Pause (${e(HOLD_LABEL[p.reason] || p.reason)}${p.until ? ' until ' + e(String(p.until).slice(0, 10)) : ''})` : 'Resume'} requested by ${e(p.created_by)}. Lu applies it within 10 minutes, and always before sending a batch.</p>` : ''}
+      <form data-ar-pause style="display:grid;gap:8px;max-width:420px">
+        <select name="reason" class="form-input" aria-label="Why pause">${PAUSE_REASONS.map(([v, l]) => `<option value="${v}">${e(l)}</option>`).join('')}</select>
+        <label class="name-sub">Until (required for a promise or payment plan; empty = until someone resumes)<input type="date" name="until" class="form-input" min="${minDate}" max="${maxDate}"></label>
+        <input type="text" name="note" class="form-input" maxlength="500" placeholder="Note for the team (what they said, the plan…)">
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="submit" class="btn btn-primary btn-mini">Pause reminders</button>
+          ${r.hold_reason || r.status === 'held' ? `<button type="button" class="btn btn-ghost btn-mini" data-ar-resume>Resume reminders</button>` : ''}</div>
+        <div class="name-sub" data-ar-pause-msg></div>
+      </form>
+      ${mine.length ? H('Requests') + `<div style="display:grid;gap:4px">${mine.map(a => `<div class="name-sub">${e(when(a.created_at))} · ${a.action === 'pause' ? `Pause: ${e(HOLD_LABEL[a.reason] || a.reason)}${a.until ? ' until ' + e(String(a.until).slice(0, 10)) : ''}` : 'Resume'} · ${e(a.created_by)} · <b>${e(a.status)}</b>${a.result ? ' · ' + e(a.result) : ''}${a.note ? ` · “${e(a.note)}”` : ''}</div>`).join('')}</div>` : ''}
+      <p class="name-sub" style="margin-top:18px">Pausing only stops Lu's reminder emails; nothing changes in QuickBooks. Lu decides with the same rules every morning and posts changes made here in #bookkeping-review.</p>
+    </div>`;
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
+  }
+
+  async function requestAction(customerId, action, reason, until, note, out){
+    if (out) out.textContent = 'Saving…';
+    const { error } = await sb().rpc('ar_collection_action', { p_customer_id: String(customerId), p_action: action, p_reason: action === 'pause' ? reason : null, p_until: until || null, p_note: note || '' });
+    if (error) { if (out) out.textContent = 'Not saved: ' + (error.message || error); return; }
+    toast(action === 'pause' ? 'Pause requested. Lu applies it within 10 minutes.' : 'Resume requested. Lu applies it within 10 minutes.');
+    const acts = await sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000);
+    if (!acts.error) data.actions = acts.data || [];
+    render(); openCollection(customerId);
+    pollActions();
+  }
+  // While a request waits for Lu, re-read the requests every 30 s (up to 15 min) so the drawer shows when it is applied.
+  function pollActions(n = 0){
+    clearTimeout(pollActions._t);
+    if (n > 30 || !(data.actions || []).some(a => a.status === 'pending')) return;
+    pollActions._t = setTimeout(async () => {
+      const acts = await sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000);
+      if (!acts.error) {
+        const was = new Set((data.actions || []).filter(a => a.status === 'pending').map(a => a.id));
+        data.actions = acts.data || [];
+        if (data.actions.some(a => was.has(a.id) && a.status !== 'pending')) { await load(true); const open = document.querySelector('[data-ar-col-id]'); if (open) openCollection(open.dataset.arColId); }
+      }
+      pollActions(n + 1);
+    }, 30000);
+  }
+
   function openIncoming(id){
     const r = data && (data.incoming || []).find(x => String(x.proposal_id) === String(id));
     if (!r) return;
@@ -464,7 +586,8 @@
     const { t, cust } = model();
     const f = { q: S.q, kind: S.kind, city: S.city, bucket: S.bucket };
     const list = sortCustomers(cust.filter(r => matches(r, f)));
-    const text = S.tab === 'billing' ? billingCsv(sortBilling((data.billing || []).filter(r => billingMatches(r, S.q, S.billKind))))
+    const text = S.tab === 'collections' ? collectionsCsv(sortCollections((data.collections || []).filter(r => collectionMatches(r, S.q, S.colState))))
+      : S.tab === 'billing' ? billingCsv(sortBilling((data.billing || []).filter(r => billingMatches(r, S.q, S.billKind))))
       : S.tab === 'incoming' ? incomingCsv(sortIncoming((data.incoming || []).filter(r => incomingMatches(r, S.q, S.inState))))
       : S.tab === 'customers' ? customersCsv(list) : invoicesCsv(list.flatMap(c => c.invoices.filter(i => invoiceInBucket(i, S.bucket, t)).map(i => ({ i, c }))), t);
     const a = document.createElement('a');
@@ -503,12 +626,20 @@
       bk.innerHTML = `<option value="">All issues</option>` + Object.entries(BILLING).map(([v, x]) => `<option value="${v}">${e(x[0])}</option>`).join('');
       inst.after(bk);
     }
+    const bkSel = document.getElementById('ar-billkind');
+    if (bkSel && !document.getElementById('ar-colstate')) {
+      const cs = document.createElement('select');
+      cs.id = 'ar-colstate'; cs.className = 'form-input'; cs.style.cssText = 'max-width:220px;display:none'; cs.setAttribute('aria-label', 'Collections status');
+      cs.innerHTML = `<option value="">All statuses</option><option value="escalated">14+ days late</option>` + Object.entries(COLLECT).map(([v, x]) => `<option value="${v}">${e(x[0])}</option>`).join('');
+      bkSel.after(cs);
+    }
     let tm = null;
     on('ar-search', 'input', ev => { S.q = ev.target.value; clearTimeout(tm); tm = setTimeout(render, 150); });
     on('ar-kind', 'change', ev => { S.kind = ev.target.value; render(); });
     on('ar-city', 'change', ev => { S.city = ev.target.value; render(); });
     on('ar-instate', 'change', ev => { S.inState = ev.target.value; render(); });
     on('ar-billkind', 'change', ev => { S.billKind = ev.target.value; render(); });
+    on('ar-colstate', 'change', ev => { S.colState = ev.target.value; render(); });
     on('ar-refresh', 'click', () => load(true));
     on('ar-export', 'click', exportCsv);
     on('ar-tabs', 'click', ev => { const b = ev.target.closest('[data-ar-tab]'); if (b) { S.tab = b.dataset.arTab; render(); } });
@@ -517,12 +648,22 @@
     on('ar-aging', 'click', bucketClick);
     const body = document.getElementById('ar-body');
     if (body) {
-      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) openBilling(tb.dataset.arBill); };
+      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) return openBilling(tb.dataset.arBill); const tc = ev.target.closest('[data-ar-col]'); if (tc) openCollection(tc.dataset.arCol); };
       body.addEventListener('click', pick);
       body.addEventListener('keydown', ev => { if (ev.key === 'Enter') pick(ev); });
     }
     const pb = document.getElementById('panel-body');
+    if (pb) pb.addEventListener('submit', ev => {
+      const f = ev.target.closest('[data-ar-pause]'); if (!f) return;
+      ev.preventDefault();
+      const wrap = f.closest('[data-ar-col-id]'), out = f.querySelector('[data-ar-pause-msg]');
+      const reason = f.reason.value, until = f.until.value;
+      if ((reason === 'promise_to_pay' || reason === 'payment_plan') && !until) { out.textContent = 'Pick the date for a promise or a payment plan.'; return; }
+      requestAction(wrap.dataset.arColId, 'pause', reason, until, f.note.value.trim(), out);
+    });
     if (pb) pb.addEventListener('click', ev => {
+      const rs = ev.target.closest('[data-ar-resume]');
+      if (rs) { const wrap = rs.closest('[data-ar-col-id]'); requestAction(wrap.dataset.arColId, 'resume', null, null, '', wrap.querySelector('[data-ar-pause-msg]')); return; }
       const a = ev.target.closest('[data-ar-tenant]'); if (!a) return;
       ev.preventDefault();
       if (typeof openTenant === 'function') openTenant(a.dataset.arTenant);
