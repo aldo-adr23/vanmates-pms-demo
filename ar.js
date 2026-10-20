@@ -439,7 +439,7 @@
         <td><b>${e(r.name || 'Customer ' + r.customer_id)}</b><div class="name-sub">${e(r.property || '')}</div></td>
         <td style="text-align:right;white-space:nowrap">${e(money(r.total_cents))}<div class="name-sub">${e(r.max_days)} d late</div></td>
         <td style="white-space:nowrap">${lastRem(r)}</td>
-        <td><span class="name-sub">${r.hold_reason ? `<b>${e(HOLD_LABEL[r.hold_reason] || r.hold_reason)}</b>${r.hold_until ? ' until ' + e(r.hold_until) : ''}. ` : ''}${e(String(r.detail || '').slice(0, 160))}</span>
+        <td><span class="name-sub">${r.hold_reason ? `<b>${e(HOLD_LABEL[r.hold_reason] || r.hold_reason)}</b>${r.hold_until ? ' until ' + e(r.hold_until) : ' until resumed'}.${r.hold_note ? ' “' + e(String(r.hold_note).slice(0, 120)) + '”' : ''}` : e(String(r.detail || '').slice(0, 160))}</span>
           ${p ? `<div><span class="tag-pill amber" style="font-size:11px">${p.action === 'pause' ? 'Pause' : 'Resume'} requested, Lu applies it within 10 min</span></div>` : ''}</td></tr>`; }).join('');
   }
 
