@@ -242,10 +242,14 @@
   }
   const tiesOut = (rep) => !!rep && (rep.checks || []).length > 0 && (rep.checks || []).every(c => c.ok);
 
+  // Job health (ar-health-2026-10-21.sql): Lu's steps that are failing right now, e.g. QuickBooks unreachable.
+  /** The failing checks, longest outage first. */
+  const failingChecks = (rows) => (rows || []).filter(r => r && r.ok === false).sort((a, b) => String(a.since || '').localeCompare(String(b.since || '')));
+
   window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
     INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv,
     COLLECT, PAUSE_REASONS, HOLD_LABEL, STAGE_LABEL, sortCollections, collectionMatches, pendingAction, collectionsCsv,
-    ME_BUCKETS, monthLabel, monthCustomers, monthEndCsv, tiesOut };
+    ME_BUCKETS, monthLabel, monthCustomers, monthEndCsv, tiesOut, failingChecks };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '', colState: '', month: '' };
@@ -268,7 +272,7 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links, inc, bill, col, acts, me] = await Promise.all([
+        const [inv, un, run, links, inc, bill, col, acts, me, health] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
@@ -278,11 +282,12 @@
           sb().from('ar_collections').select('*').limit(5000),
           sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000),
           sb().from('ar_month_end').select('*').order('month', { ascending: false }).limit(36),
+          sb().from('ar_job_health').select('*').limit(50),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
         // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
         data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []),
-          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []), monthEnd: me.error ? null : (me.data || []) };
+          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []), monthEnd: me.error ? null : (me.data || []), health: health.error ? [] : (health.data || []) };
         for (const k of Object.keys(meLines)) delete meLines[k];
         render();
       } catch (err) {
@@ -307,6 +312,13 @@
     const badge = document.querySelector('.nav-item[data-view="ar"] .nav-count');
     if (badge) badge.textContent = moneyShort(sum.overdueCents);
 
+    const hb = document.getElementById('ar-health');
+    if (hb) {
+      const bad = failingChecks(data.health);
+      hb.style.display = bad.length ? '' : 'none';
+      hb.innerHTML = bad.length ? `<b>⚠️ Lu has a problem${bad.length > 1 ? ` with ${bad.length} steps` : ''}</b> (usually QuickBooks or the bridge not answering). Nothing is lost: Lu only reads QuickBooks and nothing is sent without approval.
+        <ul style="margin:6px 0 0 18px;padding:0">${bad.map(r => `<li><b>${e(r.label || r.check_name)}</b>: failing since ${e(when(r.since))}${r.last_ok_at ? `, last worked ${e(when(r.last_ok_at))}` : ''}. <span class="name-sub">${e(r.last_error || '')}${r.retry ? ' · ' + e(r.retry) : ''}</span></li>`).join('')}</ul>` : '';
+    }
     const fr = freshness(data.lastRun, Date.now());
     const fresh = document.getElementById('ar-fresh');
     if (fresh) fresh.innerHTML = !data.lastRun ? `<span class="tag-pill red" style="font-size:11px">Not synced yet</span> Lu fills this from QuickBooks every 2 hours (8:50–20:50 Vancouver).`
@@ -725,6 +737,12 @@
       ms.id = 'ar-month'; ms.className = 'form-input'; ms.style.cssText = 'max-width:220px;display:none'; ms.setAttribute('aria-label', 'Month');
       csSel.after(ms);
     }
+    const fresh = document.getElementById('ar-fresh');
+    if (fresh && !document.getElementById('ar-health')) {
+      const hb = document.createElement('div');
+      hb.id = 'ar-health'; hb.setAttribute('role', 'alert'); hb.style.cssText = 'display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;border:1px solid #B94A3F;background:rgba(185,74,63,.08)';
+      fresh.before(hb);
+    }
     let tm = null;
     on('ar-search', 'input', ev => { S.q = ev.target.value; clearTimeout(tm); tm = setTimeout(render, 150); });
     on('ar-kind', 'change', ev => { S.kind = ev.target.value; render(); });
@@ -763,7 +781,9 @@
     });
     // Live: Lu's refresh replaces the copy while the page is open (a new run, then its incoming-payments stamp).
     try {
-      if (sb() && sb().channel) sb().channel('ar_sync_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ar_sync_runs' }, () => { if (data) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 1500); } }).subscribe();
+      const reload = () => { if (data) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 1500); } };
+      if (sb() && sb().channel) sb().channel('ar_sync_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ar_sync_runs' }, reload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_job_health' }, reload).subscribe();
     } catch (_) {}
     fromHash();
   }
