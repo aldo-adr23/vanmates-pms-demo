@@ -203,7 +203,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
 <main class="wrap">
   <div class="print-head" id="printHead"></div>
   <div class="filters" id="filters" hidden>
-    <span class="chips" id="unitChips" role="group" aria-label="Market"></span>
+    <span class="chips" id="unitChips" role="group" aria-label="Account"></span>
     <span class="chips" id="rangeChips" role="group" aria-label="Date range">
       <button type="button" class="chip" data-days="7">7 days</button>
       <button type="button" class="chip on" data-days="30">30 days</button>
@@ -250,8 +250,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   var PCOL = { instagram: 'var(--p-instagram)', facebook: 'var(--p-facebook)', threads: 'var(--p-threads)', tiktok: 'var(--p-tiktok)', meta_ads: 'var(--s2)' };
   var UNIT = { CA: 'Canada', MX: 'Mexico', ALL: 'All markets' };
   var ROLE = { super_admin: 'Super Admin', marketing_admin: 'Marketing Admin', analyst: 'Marketing Analyst', executive: 'Read-only Executive' };
-  var S = { me: null, tab: 'overview', unit: null, days: '30', from: '', to: '', basis: 'fee', model: 'last', sort: 'published', offset: 0, metric: 'views', leadCh: '', platform: 'instagram', goalPeriod: '', cache: {} };
-  try { var saved = JSON.parse(localStorage.getItem('vm-analytics') || '{}'); ['unit', 'days', 'from', 'to', 'basis', 'model'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); } catch (e) {}
+  var S = { me: null, tab: 'overview', unit: null, days: '30', from: '', to: '', basis: 'fee', model: 'last', sort: 'published', offset: 0, metric: 'views', leadCh: '', leadOrigin: '', account: '', platform: 'instagram', goalPeriod: '', seg: '', cache: {} };
+  try { var saved = JSON.parse(localStorage.getItem('vm-analytics') || '{}'); ['unit', 'days', 'from', 'to', 'basis', 'model', 'seg'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); } catch (e) {}
 
   function $(id) { return document.getElementById(id); }
   function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -263,7 +263,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   function adMoney(n) { return n === null || n === undefined ? '—' : '$' + Number(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function ago(iso) { if (!iso) return 'never'; var m = (Date.now() - Date.parse(iso)) / 60000; if (m < 1) return 'just now'; if (m < 60) return Math.round(m) + ' min ago'; if (m < 48 * 60) return Math.round(m / 60) + ' h ago'; return Math.round(m / 1440) + ' days ago'; }
   function shortDay(d) { var x = new Date(d + 'T12:00:00Z'); return x.toLocaleDateString('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' }); }
-  function persist() { try { localStorage.setItem('vm-analytics', JSON.stringify({ unit: S.unit, days: S.days, from: S.from, to: S.to, basis: S.basis, model: S.model })); } catch (e) {} }
+  function persist() { try { localStorage.setItem('vm-analytics', JSON.stringify({ unit: S.unit, days: S.days, from: S.from, to: S.to, basis: S.basis, model: S.model, seg: S.seg })); } catch (e) {} }
 
   async function token() {
     var sess = (await sb.auth.getSession()).data.session;
@@ -285,11 +285,24 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     if (!r.ok) { var e = new Error(ERR[j.error] || j.message || j.error || ('HTTP ' + r.status)); e.code = j.error; e.status = r.status; throw e; }
     return j;
   }
+  // One dashboard per marketing account: Vanmates Canada and Vanmates Japan are slices of the Canada market (seg),
+  // Vanmates México is the Mexico market. "All accounts" is the only view that combines them, and only when picked.
+  function segOn() { return !!S.seg && S.unit !== 'MX'; }
+  function brands() {
+    var ca = S.me.units.indexOf('CA') >= 0, mx = S.me.units.indexOf('MX') >= 0, b = [];
+    if (ca) b.push({ key: 'CA', unit: 'CA', seg: 'rest', label: 'Vanmates Canada', tip: 'Canada accounts and campaigns, without Japan marketing' }, { key: 'JP', unit: 'CA', seg: 'jp', label: 'Vanmates Japan', tip: 'Japan accounts (@vanmates_japan, Nae Hase, anything named Japan/JP), ad campaigns named JP or Japan, and JLeads leads (LINE Maya or Japanese language)' });
+    if (mx) b.push({ key: 'MX', unit: 'MX', seg: '', label: 'Vanmates México', tip: 'Mexico accounts (Vanmates México Page, @vanmates_mexico, MX ad accounts) and vanmates.com.mx leads' });
+    if (b.length > 1) b.push({ key: 'ALL', unit: ca && mx ? 'ALL' : 'CA', seg: '', label: 'All accounts (combined)', tip: 'Every account added together. Pick an account to see it on its own.' });
+    return b;
+  }
+  function brand() { var sg = S.unit === 'MX' ? '' : S.seg || ''; return brands().find(function (x) { return x.unit === S.unit && x.seg === sg; }) || null; }
+  function brandLabel() { var b = brand(); return b ? b.label : UNIT[S.unit]; }
   function qs(extra) {
     var p = new URLSearchParams();
     p.set('unit', S.unit);
     if (S.days === 'custom' && S.from && S.to) { p.set('from', S.from); p.set('to', S.to); } else p.set('days', S.days === 'custom' ? '30' : S.days);
     p.set('basis', S.basis); p.set('model', S.model);
+    if (segOn()) p.set('seg', S.seg);
     Object.keys(extra || {}).forEach(function (k) { if (extra[k] !== null && extra[k] !== undefined && extra[k] !== '') p.set(k, extra[k]); });
     return '?' + p.toString();
   }
@@ -454,8 +467,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
   $('toDate').addEventListener('change', function () { S.to = this.value; persist(); if (S.from && S.to) render(); });
   $('basisSel').addEventListener('change', function () { S.basis = this.value; persist(); render(); });
   $('modelSel').addEventListener('change', function () { S.model = this.value; persist(); render(); });
-  $('unitChips').addEventListener('click', function (e) { var b = e.target.closest('.chip'); if (!b) return; S.unit = b.dataset.unit; syncFilters(); persist(); render(); loadAlerts(); });
-  $('pdfBtn').addEventListener('click', function () { $('printHead').textContent = 'Vanmates marketing analytics · ' + UNIT[S.unit] + ' · ' + $('periodLbl').textContent + ' · printed ' + new Date().toLocaleString('en-CA') + ' by ' + S.me.email; window.print(); });
+  $('unitChips').addEventListener('click', function (e) { var b = e.target.closest('.chip'); if (!b) return; var x = brands().find(function (y) { return y.key === b.dataset.brand; }); if (!x) return; S.unit = x.unit; S.seg = x.seg; S.account = ''; S.offset = 0; syncFilters(); persist(); render(); loadAlerts(); });
+  $('pdfBtn').addEventListener('click', function () { $('printHead').textContent = 'Vanmates marketing analytics · ' + brandLabel() + ' · ' + $('periodLbl').textContent + ' · printed ' + new Date().toLocaleString('en-CA') + ' by ' + S.me.email; window.print(); });
   $('exportBtn').addEventListener('click', async function () {
     var view = { overview: 'overview', social: 'posts', leads: 'channels', campaigns: 'channels', goals: 'overview', data: 'overview', ask: 'overview' }[S.tab] || 'overview';
     var extra = S.tab === 'social' ? { view: view, platform: S.platform } : { view: view };
@@ -472,8 +485,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     $('customRange').hidden = S.days !== 'custom';
     $('fromDate').value = S.from; $('toDate').value = S.to;
     $('basisSel').value = S.basis; $('modelSel').value = S.model;
-    var units = S.me.units.slice(); if (units.length > 1) units.push('ALL');
-    $('unitChips').innerHTML = units.map(function (u) { return '<button type="button" class="chip' + (u === S.unit ? ' on' : '') + '" data-unit="' + u + '">' + esc(UNIT[u]) + '</button>'; }).join('');
+    var cur = brand();
+    $('unitChips').innerHTML = brands().map(function (b) { return '<button type="button" class="chip' + (cur && b.key === cur.key ? ' on' : '') + '" data-brand="' + b.key + '" title="' + esc(b.tip) + '">' + esc(b.label) + '</button>'; }).join('');
     $('exportBtn').hidden = !S.me.can.export;
   }
   // A slower response for a market that is no longer selected must not overwrite the label.
@@ -547,7 +560,9 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     }).join('') + '</div>';
     return h + await viewPlatform(S.platform);
   }
-  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-plat]'); if (b) { S.platform = b.getAttribute('data-plat'); S.offset = 0; S.metric = 'views'; render(); } });
+  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-plat]'); if (b) { S.platform = b.getAttribute('data-plat'); S.account = ''; S.offset = 0; S.metric = 'views'; render(); return; }
+    var ac = e.target.closest && e.target.closest('[data-acct]'); if (ac) { S.account = ac.getAttribute('data-acct'); S.offset = 0; render(); return; }
+    var tl = e.target.closest && e.target.closest('[data-tlink]'); if (tl) { var url = tl.getAttribute('data-tlink'); (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(function () { toast('Tracked link copied: ' + url); }, function () { window.prompt('Copy this tracked link', url); }); } });
 
   async function viewData() {
     var res = await Promise.all([api('/coverage' + qs()), api('/overview' + qs()), api('/funnel' + qs()).catch(function () { return null; })]);
@@ -598,36 +613,54 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       return '<tr><td><b>' + esc(c.label) + '</b></td><td class="n">' + (c.sessions ? fmt(c.sessions) : '<span class="na">—</span>') + '</td><td style="min-width:120px"><span style="display:inline-flex;align-items:center;gap:8px;width:100%"><span style="flex:1;height:8px;border-radius:0 4px 4px 0;background:var(--cream-2);position:relative"><span style="position:absolute;left:0;top:0;bottom:0;width:' + (c.leads / max * 100).toFixed(1) + '%;background:var(--s1);border-radius:0 4px 4px 0"></span></span><b>' + fmt(c.leads) + '</b></span></td><td class="n">' + fmt(c.qualified) + '</td><td class="n">' + fmt(c.bookings) + '</td><td class="n">' + esc(money(c.revenue, cur)) + '</td><td><span class="muted small"' + tip('Lead evidence', ['Tracked (UTM/ad data): ' + (conf.tracked || 0), 'Referrer only: ' + (conf.referrer || 0), 'CRM source field: ' + (conf.crm_source || 0), 'No evidence: ' + (conf.unknown || 0)]) + '>' + esc(ev) + '</span></td></tr>';
     }).join('') + '</tbody></table></div>';
   }
-  function postsTableHtml(rows, sortable) {
+  // A link that tags leads with this post (utm_content = IG shortcode / TikTok video id / post id), so the post's
+  // leads and bookings show up next to its views. Canada → /apply, Japan → /ja/, Mexico → vanmates.com.mx.
+  function postKey(p) {
+    var m = /instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/.exec(p.permalink || '') || /tiktok\.com\/.*\/video\/(\d+)/.exec(p.permalink || '');
+    return m ? m[1] : p.id.slice(p.account_id.length + 1);
+  }
+  function trackedLink(p) {
+    var jp = S.seg === 'jp' || /japan|(^|[^a-z])jp([^a-z]|$)|日本|nae hase/i.test(p.account || '');
+    var base = p.unit === 'MX' ? 'https://vanmates.com.mx/' : jp ? 'https://vanmates.com/ja/' : 'https://vanmates.com/apply';
+    return base + '?utm_source=' + encodeURIComponent(p.platform) + '&utm_medium=social&utm_campaign=organic&utm_content=' + encodeURIComponent(postKey(p));
+  }
+  function postsTableHtml(rows, sortable, conv) {
     if (!rows || !rows.length) return '<p class="note">No posts in this period' + (sortable ? '' : ' (or no accounts connected)') + '.</p>';
     var th = function (k, l, n) { return sortable ? '<th class="sortable' + (n ? ' n' : '') + (S.sort === k ? ' on' : '') + '" data-sort="' + k + '" tabindex="0">' + l + (S.sort === k ? ' ▾' : '') + '</th>' : '<th' + (n ? ' class="n"' : '') + '>' + l + '</th>'; };
     var cell = function (v) { return v === null || v === undefined ? '<span class="na" title="Not reported by this platform">n/a</span>' : esc(fmt(v)); };
     var chg = function (v) { return v === null || v === undefined ? '<span class="na">—</span>' : '<span class="' + (v > 0 ? 'up' : v < 0 ? 'down' : 'flat') + '">' + (v > 0 ? '+' : '') + esc(fmt(v)) + '</span>'; };
-    return '<div class="tw"><table class="t"><thead><tr><th></th>' + th('published', 'Published') + '<th>Post</th>' + th('views', 'Views', 1) + th('likes', 'Likes', 1) + th('comments', 'Comments', 1) + th('shares', 'Shares', 1) + th('saves', 'Saves', 1) + th('engagement', 'Engagement', 1) + th('rate', 'Eng. rate', 1) + '<th class="n">Views 7d</th><th class="n">Views 30d</th></tr></thead><tbody>' + rows.map(function (p) {
+    return '<div class="tw"><table class="t"><thead><tr><th></th>' + th('published', 'Published') + '<th>Post</th>' + th('views', 'Views', 1) + th('likes', 'Likes', 1) + th('comments', 'Comments', 1) + th('shares', 'Shares', 1) + th('saves', 'Saves', 1) + th('engagement', 'Engagement', 1) + th('rate', 'Eng. rate', 1) + '<th class="n">Views 7d</th><th class="n">Views 30d</th>' + (conv ? '<th class="n"' + tip('Leads and bookings from this post', ['People who reached a Vanmates form through this post’s tracked link (utm_content = the post), any time since it was published.', 'Copy the post’s tracked link and use it in the bio, story link sticker, ManyChat reply or caption.']) + '>Leads</th><th class="n">Bookings</th><th></th>' : '') + '</tr></thead><tbody>' + rows.map(function (p) {
       return '<tr><td>' + (p.thumbnail ? '<img class="thumb" loading="lazy" src="' + esc(p.thumbnail) + '" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">' : '<span class="thumb"></span>') + '</td>' +
         '<td style="white-space:nowrap">' + esc(shortDay(p.published_at.slice(0, 10))) + '<br><span class="muted small"><span class="pdot" style="background:' + PCOL[p.platform] + '"></span> ' + esc(p.format || '') + '</span></td>' +
         '<td><div class="cap">' + esc(p.caption || '(no caption)') + '</div>' + (p.permalink ? '<a class="small" href="' + esc(p.permalink) + '" target="_blank" rel="noopener">Open on ' + esc(PL[p.platform]) + ' ↗</a>' : '') + ' <span class="muted small">' + esc(p.account) + '</span></td>' +
         '<td class="n">' + cell(p.metrics.views) + '</td><td class="n">' + cell(p.metrics.likes) + '</td><td class="n">' + cell(p.metrics.comments) + '</td><td class="n">' + cell(p.metrics.shares) + '</td><td class="n">' + cell(p.metrics.saves) + '</td>' +
         '<td class="n"><b>' + cell(p.engagement) + '</b></td><td class="n">' + (p.engagement_rate === null ? '<span class="na" title="No valid denominator">n/a</span>' : '<span title="÷ ' + esc(p.rate_denominator) + '">' + esc(fmt(p.engagement_rate, 2)) + '%</span>') + '</td>' +
-        '<td class="n">' + chg(p.change7.views) + '</td><td class="n">' + chg(p.change30.views) + '</td></tr>';
+        '<td class="n">' + chg(p.change7.views) + '</td><td class="n">' + chg(p.change30.views) + '</td>' +
+        (conv ? '<td class="n">' + (p.conversions && p.conversions.leads ? '<b>' + fmt(p.conversions.leads) + '</b>' : '<span class="na">0</span>') + '</td><td class="n">' + (p.conversions && p.conversions.bookings ? '<b>' + fmt(p.conversions.bookings) + '</b>' : '<span class="na">0</span>') + '</td><td><button type="button" class="btn btn-ghost btn-sm nw" data-tlink="' + esc(trackedLink(p)) + '">Copy tracked link</button></td>' : '') + '</tr>';
     }).join('') + '</tbody></table></div>';
   }
 
   // ------------------------------------------------------------- Platform detail
   var MLABEL = { views: 'Views', reach: 'Reach', impressions: 'Impressions', likes: 'Likes', comments: 'Comments / replies', shares: 'Shares / reposts', saves: 'Saves', engagements_reported: 'Engagements (platform total)', profile_views: 'Profile views', link_clicks: 'Link clicks', follows: 'New follows', unfollows: 'Unfollows', posts_published: 'Posts published' };
   async function viewPlatform(pl) {
-    var res = await Promise.all([api('/platform' + qs({ platform: pl })), api('/posts' + qs({ platform: pl, sort: S.sort, limit: 25, offset: S.offset }))]);
+    var res = await Promise.all([api('/platform' + qs({ platform: pl, account: S.account })), api('/posts' + qs({ platform: pl, account: S.account, sort: S.sort, limit: 25, offset: S.offset, conv: 1 }))]);
     var d = res[0], posts = res[1];
     periodLabel(d.filters);
     var h = '';
+    // Each account has its own dashboard: the unfiltered list is remembered so the picker stays while one is open.
+    var ak = pl + '|' + S.unit + '|' + (S.seg || '');
+    S.cache.acct = S.cache.acct || {};
+    if (!S.account) S.cache.acct[ak] = d.accounts.map(function (a) { return { id: a.id, label: a.handle || a.name }; });
+    var list = S.cache.acct[ak] || [];
+    if (list.length > 1) h += '<div class="chips" role="group" aria-label="' + esc(PL[pl]) + ' account" style="margin-bottom:12px"><span class="muted small" style="align-self:center;margin-right:4px">Account:</span><button type="button" class="chip' + (S.account ? '' : ' on') + '" data-acct="">All ' + list.length + ' accounts combined</button>' + list.map(function (a) { return '<button type="button" class="chip' + (a.id === S.account ? ' on' : '') + '" data-acct="' + esc(a.id) + '">' + esc(a.label) + '</button>'; }).join('') + '</div>';
     if (!d.accounts.length) {
       var waiting = pl === 'tiktok' && !S.me.providers.tiktok ? 'TikTok’s API for Business access is awaiting approval from TikTok. Once approved, connect the account in Settings and data backfills automatically.'
         : pl === 'threads' && !S.me.providers.threads ? 'Threads insights need the Threads API enabled on the Meta app. Once enabled, connect the profile in Settings.'
-        : 'No ' + PL[pl] + ' account is connected for ' + UNIT[S.unit] + '.';
+        : 'No ' + PL[pl] + ' account is connected for ' + brandLabel() + '.';
       return '<div class="card pad"><h2>' + esc(PL[pl]) + '</h2><p class="note" style="margin-top:6px">' + esc(waiting) + '</p>' + (S.me.can.manageConnections ? '<button type="button" class="btn btn-primary btn-sm" data-go="settings">Open Settings</button>' : '') + '</div>';
     }
     h += '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));margin-bottom:12px">' + d.accounts.map(function (a) {
-      return '<div class="card acct">' + (a.picture ? '<img src="' + esc(a.picture) + '" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">' : '<span class="ph"></span>') + '<div style="min-width:0;flex:1"><b>' + esc(a.name || a.handle) + '</b><small>' + esc(a.handle) + ' · ' + esc(UNIT[a.unit_id]) + ' · synced ' + esc(ago(a.last_sync_at)) + '</small></div><div style="text-align:right"><b>' + esc(fmt(a.followers)) + '</b><small>followers</small></div></div>';
+      return '<div class="card acct"' + (list.length > 1 && !S.account ? ' data-acct="' + esc(a.id) + '" role="button" tabindex="0" style="cursor:pointer" title="Open this account on its own"' : '') + '>' + (a.picture ? '<img src="' + esc(a.picture) + '" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">' : '<span class="ph"></span>') + '<div style="min-width:0;flex:1"><b>' + esc(a.name || a.handle) + '</b><small>' + esc(a.handle) + ' · ' + esc(UNIT[a.unit_id]) + ' · synced ' + esc(ago(a.last_sync_at)) + '</small></div><div style="text-align:right"><b>' + esc(fmt(a.followers)) + '</b><small>followers</small></div></div>';
     }).join('') + '</div>';
     var m = d.metrics;
     var missing = Object.keys(MLABEL).filter(function (code) { return m[code] && !m[code].available; });
@@ -650,7 +683,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     h += '<div class="card pad"><h3>Weekly summary</h3><div class="tw"><table class="t"><thead><tr><th>Week of</th><th class="n">Views</th><th class="n">Engagement</th><th class="n">New follows</th></tr></thead><tbody>' + d.weeks.map(function (w) { return '<tr><td>' + esc(shortDay(w.week)) + (w.days < 7 ? ' <span class="muted small">(' + w.days + ' days)</span>' : '') + '</td><td class="n">' + (w.views === null ? '<span class="na">n/a</span>' : fmt(w.views)) + '</td><td class="n">' + (w.engagement === null ? '<span class="na">n/a</span>' : fmt(w.engagement)) + '</td><td class="n">' + (w.follows === null ? '<span class="na">n/a</span>' : fmt(w.follows)) + '</td></tr>'; }).join('') + '</tbody></table></div></div>';
     h += '<div class="card pad"><h3>Content format breakdown</h3>' + (d.formats.length ? '<div class="tw"><table class="t"><thead><tr><th>Format</th><th class="n">Posts</th><th class="n">Avg views</th><th class="n">Avg engagement</th><th class="n">Avg eng. rate</th></tr></thead><tbody>' + d.formats.map(function (f) { return '<tr><td>' + esc(f.format) + '</td><td class="n">' + f.posts + '</td><td class="n">' + (f.avgViews === null ? '<span class="na">n/a</span>' : fmt(f.avgViews)) + '</td><td class="n">' + (f.avgEngagement === null ? '<span class="na">n/a</span>' : fmt(f.avgEngagement)) + '</td><td class="n">' + (f.avgRate === null ? '<span class="na">n/a</span>' : fmt(f.avgRate, 2) + '%') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No posts in this period.</p>') + '</div>';
     h += '</div>';
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Posts</h3><div class="sub">' + posts.total + ' published in the period · click a column to sort · n/a = the platform doesn’t report it</div></div></div>' + postsTableHtml(posts.rows, true) +
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Posts</h3><div class="sub">' + posts.total + ' published in the period · click a column to sort · n/a = the platform doesn’t report it' + (posts.conversions ? ' · Leads/Bookings come from each post’s tracked link' : '') + '</div></div></div>' + postsTableHtml(posts.rows, true, posts.conversions) +
       (posts.total > 25 ? '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button type="button" class="btn btn-ghost btn-sm" data-page="-1"' + (S.offset ? '' : ' disabled') + '>Previous</button><span class="muted small" style="align-self:center">' + (S.offset + 1) + '–' + Math.min(S.offset + 25, posts.total) + ' of ' + posts.total + '</span><button type="button" class="btn btn-ghost btn-sm" data-page="1"' + (S.offset + 25 < posts.total ? '' : ' disabled') + '>Next</button></div>' : '') + '</div>';
     var un = d.availability.filter(function (a) { return a.status !== 'available'; });
     if (un.length) h += '<div class="card pad" style="margin-top:12px"><h3>Metrics this platform did not provide</h3><div class="tw"><table class="t"><thead><tr><th>Metric</th><th>Provider metric</th><th>Status</th><th>Reason given by the API</th></tr></thead><tbody>' + un.map(function (a) { return '<tr><td>' + esc(MLABEL[a.metric_code] || a.metric_code) + '</td><td><code>' + esc(a.provider_metric) + '</code></td><td><span class="pill ' + (a.status === 'permission' ? 'warn' : '') + '">' + esc(a.status) + '</span></td><td class="small muted">' + esc(a.note) + '</td></tr>'; }).join('') + '</tbody></table></div></div>';
@@ -661,16 +694,17 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var s = e.target.closest && e.target.closest('[data-sort]'); if (s) { S.sort = s.getAttribute('data-sort'); S.offset = 0; render(); return; }
     var pg = e.target.closest && e.target.closest('[data-page]'); if (pg) { S.offset = Math.max(0, S.offset + 25 * Number(pg.getAttribute('data-page'))); render(); }
   });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-sort]')) e.target.click(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-sort],[data-acct]')) e.target.click(); });
 
   // ------------------------------------------------------------- Campaigns & attribution
-  var CH = { organic_social: 'Organic social', paid_social: 'Paid social', organic_search: 'Organic search', paid_search: 'Paid search', messaging: 'Messaging (LINE/WhatsApp)', email: 'Email', referral: 'Referral sites', partner: 'Partners / agencies', staff_created: 'Created by staff', direct: 'Direct', unknown: 'Unknown' };
+  var CH = { organic_social: 'Organic social', paid_social: 'Paid social', organic_search: 'Organic search', paid_search: 'Paid search', messaging: 'Messaging (LINE/WhatsApp/ManyChat)', email: 'Email', referral: 'Referral sites', partner: 'Partners / agencies', staff_created: 'Created by staff', direct: 'Direct', unknown: 'Unknown' };
+  var ORIG = { instagram: 'Instagram (organic)', tiktok: 'TikTok', facebook: 'Facebook (organic)', meta_ads: 'Meta Ads (Facebook + Instagram ads)', manychat: 'ManyChat (Instagram DMs)', whatsapp: 'WhatsApp', line: 'LINE', website: 'Website (search, direct, other sites)', paid_search: 'Google Ads / paid search', email: 'Email', partner: 'Partners / agencies', staff: 'Created by staff', other_social: 'Other social', unknown: 'Unknown' };
   async function viewLeads() {
-    var res = await Promise.all([api('/funnel' + qs()), api('/leads' + qs({ channel: S.leadCh }))]);
+    var res = await Promise.all([api('/funnel' + qs()), api('/leads' + qs({ origin: S.leadOrigin }))]);
     var f = res[0], L = res[1];
     periodLabel(f.filters);
     var h = '';
-    h += '<div class="cols3"><div class="card pad"><div class="chead"><div><h3>Funnel</h3><div class="sub">' + esc(UNIT[S.unit]) + ' · ' + (S.model === 'first' ? 'first touch' : 'last non-direct touch') + ' · ' + f.filters.lookbackDays + '-day lookback</div></div></div><div class="funnel">';
+    h += '<div class="cols3"><div class="card pad"><div class="chead"><div><h3>Funnel</h3><div class="sub">' + esc(brandLabel()) + ' · ' + (S.model === 'first' ? 'first touch' : 'last non-direct touch') + ' · ' + f.filters.lookbackDays + '-day lookback</div></div></div><div class="funnel">';
     var maxV = Math.max.apply(null, f.stages.slice(0, 4).map(function (s) { return s.value || 0; }).concat([1]));
     var colors = ['var(--ord1)', 'var(--ord2)', 'var(--ord3)', 'var(--ord4)'];
     f.stages.forEach(function (s, i) {
@@ -685,21 +719,23 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     // Status mix of this period's leads (the list endpoint returns up to 500, newest first).
     var st = {}; L.leads.forEach(function (l) { var s = l.status || 'unknown'; st[s] = (st[s] || 0) + 1; });
     var stRows = Object.keys(st).sort(function (a, b) { return st[b] - st[a]; }).map(function (s, i) { return { label: s.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }), value: st[s], color: i < 5 ? SERIES[i] : 'var(--muted)' }; });
-    h += '<div class="card pad"><h3>Lead status</h3><p class="note">Where this period’s leads are now' + (S.leadCh ? ' · ' + esc(CH[S.leadCh]) + ' only' : '') + '.</p>' + (stRows.length ? bars(stRows) : '<p class="note">No leads in this period.</p>') + (L.leads.length >= 500 ? '<p class="note">Showing the newest 500 leads.</p>' : '') + '</div></div>';
+    h += '<div class="card pad"><h3>Lead status</h3><p class="note">Where this period’s leads are now' + (S.leadOrigin ? ' · ' + esc(ORIG[S.leadOrigin]) + ' only' : '') + '.</p>' + (stRows.length ? bars(stRows) : '<p class="note">No leads in this period.</p>') + (L.leads.length >= 500 ? '<p class="note">Showing the newest 500 leads.</p>' : '') + '</div></div>';
     // Weekly is easier to read than daily for lead flow.
     var wk = weekBuckets(f.filters.from, f.filters.to);
     var lw = wk.map(function () { return 0; }), qw = lw.slice(), bw = lw.slice();
     L.leads.forEach(function (l) { var i = weekIndex(wk, l.day); if (i >= 0) { lw[i]++; if (l.qualified) qw[i]++; } });
     (L.bookings || []).forEach(function (b) { var i = weekIndex(wk, b.day); if (i >= 0) bw[i]++; });
     var edge = []; if (wk.length && wk[0] < f.filters.from) edge.push(shortDay(wk[0])); if (wk.length && addDay(wk[wk.length - 1], 6) > f.filters.to) edge.push(shortDay(wk[wk.length - 1]));
-    h += '<div class="cols2" style="margin-top:12px"><div class="card pad"><div class="chead"><div><h3>Leads, qualified and bookings per week</h3><div class="sub">Week starting Monday · bookings by close date' + (edge.length ? ' · ' + esc(edge.join(' and ')) + ' week' + (edge.length > 1 ? 's are' : ' is') + ' only partly in the period' : '') + (S.leadCh ? ' · ' + esc(CH[S.leadCh]) + ' only' : '') + '</div></div></div>' +
+    h += '<div class="cols2" style="margin-top:12px"><div class="card pad"><div class="chead"><div><h3>Leads, qualified and bookings per week</h3><div class="sub">Week starting Monday · bookings by close date' + (edge.length ? ' · ' + esc(edge.join(' and ')) + ' week' + (edge.length > 1 ? 's are' : ' is') + ' only partly in the period' : '') + (S.leadOrigin ? ' · ' + esc(ORIG[S.leadOrigin]) + ' only' : '') + '</div></div></div>' +
       lineChart('cLeadWk', { days: wk, series: [{ name: 'Leads', color: 'var(--s1)', values: lw }, { name: 'Qualified', color: 'var(--s3)', values: qw }, { name: 'Bookings', color: 'var(--s2)', values: bw }], label: 'Leads per week' }) + '</div>';
-    var chs = (f.channels || []).filter(function (c) { return c.leads; }).sort(function (a, b) { return b.leads - a.leads; });
-    h += '<div class="card pad"><h3>Leads by source</h3><p class="note">' + (S.model === 'first' ? 'First-touch' : 'Last non-direct touch') + ' · all sources, this period</p>' + (chs.length ? bars(chs.map(function (c, i) { return { label: c.label, value: c.leads, color: i < 5 ? SERIES[i] : 'var(--muted)', sub: c.bookings ? c.bookings + ' booked' : '' }; })) : '<p class="note">No leads in this period.</p>') + '</div></div>';
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>By source — detail</h3><div class="sub">Organic social, paid social, direct/unknown and other sources are kept separate. Platform reach is never summed as unique people.</div></div></div>' + channelTable(f.channels, f.currency) + '</div>';
+    var ogs = (f.origins || []).filter(function (c) { return c.leads; }).sort(function (a, b) { return b.leads - a.leads; });
+    h += '<div class="card pad"><h3>Leads by channel</h3><p class="note">The platform each lead came from · ' + (S.model === 'first' ? 'first touch' : 'last non-direct touch') + ' · this period</p>' + (ogs.length ? bars(ogs.map(function (c, i) { return { label: c.label, value: c.leads, color: i < 5 ? SERIES[i] : 'var(--muted)', sub: c.bookings ? c.bookings + ' booked' : '' }; })) : '<p class="note">No leads in this period.</p>') + '</div></div>';
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Leads and bookings by channel</h3><div class="sub">Instagram, TikTok, Meta Ads, ManyChat, WhatsApp, website … DM leads count where the conversation happened (Sage on Instagram DMs runs through ManyChat; Maya on WhatsApp/LINE). Lead ads count as Meta Ads whichever app showed them.</div></div><button type="button" class="linkbtn" data-go="data">How sources are decided →</button></div>' + originTable(f.origins, f.currency) + '</div>';
+    h += contentCard(f.content || [], f.currency);
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>By source type — detail</h3><div class="sub">Organic social, paid social, direct/unknown and other sources are kept separate. Platform reach is never summed as unique people.</div></div></div>' + channelTable(f.channels, f.currency) + '</div>';
     // Lead drill-down
-    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Attributed leads</h3><div class="sub">Every lead with the rule and evidence used (no contact details shown here)</div></div><select class="sel" id="leadCh" aria-label="Filter by source"><option value="">All sources</option>' + Object.keys(CH).map(function (k) { return '<option value="' + k + '"' + (k === S.leadCh ? ' selected' : '') + '>' + esc(CH[k]) + '</option>'; }).join('') + '</select></div>';
-    h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Source</th><th>Platform</th><th>Campaign</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td class="nw">' + esc(l.day) + '</td><td><code class="small id" title="' + esc(l.id) + '">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc(l.platform || '—') + '</td><td>' + esc(l.campaign || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
+    h += '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Attributed leads</h3><div class="sub">Every lead with the rule and evidence used (no contact details shown here)</div></div><select class="sel" id="leadCh" aria-label="Filter by channel"><option value="">All channels</option>' + Object.keys(ORIG).map(function (k) { return '<option value="' + k + '"' + (k === S.leadOrigin ? ' selected' : '') + '>' + esc(ORIG[k]) + '</option>'; }).join('') + '</select></div>';
+    h += L.leads.length ? '<div class="tw" style="max-height:420px"><table class="t"><thead><tr><th>Day</th><th>Lead</th><th>Status</th><th>Channel</th><th>Source type</th><th>Campaign / content</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>' + L.leads.slice(0, 200).map(function (l) { return '<tr><td class="nw">' + esc(l.day) + '</td><td><code class="small id" title="' + esc(l.id) + '">' + esc(l.id) + '</code></td><td>' + esc(l.status) + '</td><td>' + esc(ORIG[l.origin] || '—') + '</td><td>' + esc(CH[l.channel]) + '</td><td>' + esc([l.campaign, l.content].filter(Boolean).join(' · ') || '—') + '</td><td><span class="pill ' + (l.confidence === 'tracked' ? 'ok' : l.confidence === 'unknown' ? '' : 'info2') + '">' + esc(l.confidence.replace('_', ' ')) + '</span></td><td class="small muted" title="' + esc(l.rule) + '">' + esc(l.evidence) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="note">No leads for this filter.</p>';
     h += '</div>';
     return h;
   }
@@ -709,6 +745,24 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     return out;
   }
   function addDay(d, n) { var x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+  function originTable(rows, cur) {
+    rows = (rows || []).slice().sort(function (a, b) { return (b.leads - a.leads) || (b.bookings - a.bookings); });
+    if (!rows.length) return '<p class="note">No CRM activity in this period.</p>';
+    return '<div class="tw"><table class="t"><thead><tr><th>Channel</th><th class="n">Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th class="n">Lead → booking</th><th></th></tr></thead><tbody>' + rows.map(function (r) {
+      return '<tr><td><b>' + esc(r.label) + '</b></td><td class="n">' + fmt(r.leads) + '</td><td class="n">' + fmt(r.qualified) + '</td><td class="n">' + fmt(r.bookings) + '</td><td class="n">' + esc(money(r.revenue, cur)) + '</td><td class="n">' + (r.leads >= 5 ? esc(fmt(r.bookings / r.leads * 100, 1)) + '%' : '<span class="na"' + tip('Too few leads', ['Shown from 5 leads up; bookings in the period may come from earlier leads.']) + '>—</span>') + '</td><td>' + (r.leads ? '<button type="button" class="linkbtn" data-origin="' + esc(r.origin) + '">See leads</button>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  }
+  function contentCard(rows, cur) {
+    var h = '<div class="card pad" style="margin-top:12px"><div class="chead"><div><h3>Content that converts</h3><div class="sub">Which ads, Reels, carousels and links brought leads and bookings this period · ad spend from Meta per ad · views from the matched post</div></div></div>';
+    if (!rows.length) return h + '<p class="note">No tracked content in this period yet. Leads count here when their link names the content: Meta lead ads do this automatically (ad name); for organic posts use <b>Copy tracked link</b> on a post in the Social tab (bio, story sticker, ManyChat reply), or add <code>utm_content=&lt;post or ad&gt;</code> to any link.</p></div>';
+    h += '<div class="tw" style="max-height:520px"><table class="t"><thead><tr><th>Content</th><th>Channel</th><th>Campaign</th><th class="n">Views</th><th class="n">Spend</th><th class="n">Leads</th><th class="n">Qualified</th><th class="n">Bookings</th><th class="n">Revenue</th><th class="n">CPL</th></tr></thead><tbody>' + rows.map(function (r) {
+      var c = r.post ? '<span style="display:flex;gap:8px;align-items:center">' + (r.post.thumbnail ? '<img class="thumb" loading="lazy" src="' + esc(r.post.thumbnail) + '" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility=\'hidden\'">' : '') + '<span><span class="cap">' + esc(r.post.caption || '(no caption)') + '</span><span class="muted small">' + esc(r.post.format || '') + ' · ' + esc(r.post.account) + ' · ' + esc(shortDay(r.post.published_at.slice(0, 10))) + '</span>' + (r.post.permalink ? ' <a class="small" href="' + esc(r.post.permalink) + '" target="_blank" rel="noopener">Open ↗</a>' : '') + '</span></span>'
+        : '<b>' + esc(r.content || '(campaign only)') + '</b>';
+      return '<tr><td style="min-width:220px">' + c + '</td><td class="small">' + esc(r.label) + '</td><td class="small">' + esc(r.campaign || '—') + '</td><td class="n">' + (r.post && r.post.views !== null ? fmt(r.post.views) : r.impressions !== null ? '<span' + tip('Ad impressions', ['Meta reports impressions per ad; organic views come from the matched post.']) + '>' + fmt(r.impressions) + ' impr.</span>' : '<span class="na">—</span>') + '</td><td class="n">' + (r.spend === null ? '<span class="na">—</span>' : adMoney(r.spend)) + '</td><td class="n"><b>' + fmt(r.leads) + '</b></td><td class="n">' + fmt(r.qualified) + '</td><td class="n">' + fmt(r.bookings) + '</td><td class="n">' + esc(money(r.revenue, cur)) + '</td><td class="n">' + (r.cpl === null ? '<span class="na">—</span>' : adMoney(r.cpl)) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+    return h + '<p class="note" style="margin-top:8px">Only leads whose link or lead form names the content appear here. Organic posts: use <b>Copy tracked link</b> in the Social tab. ManyChat flows: add <code>utm_source=manychat&amp;utm_content=&lt;reel&gt;</code> to the link the bot sends.</p></div>';
+  }
+  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-origin]'); if (b) { S.leadOrigin = b.getAttribute('data-origin'); render(); } });
   function weekIndex(weeks, day) { for (var i = weeks.length - 1; i >= 0; i--) if (day >= weeks[i]) return i; return -1; }
 
   async function viewCampaigns() {
@@ -729,7 +783,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     S.cache.campaigns = c.registered;
     return h;
   }
-  document.addEventListener('change', function (e) { if (e.target.id === 'leadCh') { S.leadCh = e.target.value; render(); } });
+  document.addEventListener('change', function (e) { if (e.target.id === 'leadCh') { S.leadOrigin = e.target.value; render(); } });
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-camp],[data-camp-new]'); if (!b) return;
     var id = b.getAttribute('data-camp'), utm = b.getAttribute('data-camp-new');
@@ -760,7 +814,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     S.cache.goals = g.goals;
     var months = []; var d0 = new Date(Date.UTC(+period.slice(0, 4), +period.slice(5, 7) - 1, 1));
     for (var i = -3; i <= 2; i++) { var dd = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + i, 1)); months.push(dd.toISOString().slice(0, 7)); }
-    var h = '<div class="chead" style="margin-bottom:12px"><div><h2>Monthly goals</h2><p class="note" style="margin:0">Actual vs target with pacing (where you should be by today). ' + (S.unit === 'ALL' ? 'Both markets.' : UNIT[unit] + '.') + '</p></div><span style="display:flex;gap:8px;align-items:center"><select class="sel" id="goalMonth" aria-label="Month">' + months.map(function (m) { return '<option' + (m === period ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' + (S.me.can.editGoals ? '<button type="button" class="btn btn-primary btn-sm" data-goal="new">Add goal</button>' : '') + '</span></div>';
+    var h = '<div class="chead" style="margin-bottom:12px"><div><h2>Monthly goals</h2><p class="note" style="margin:0">Actual vs target with pacing (where you should be by today). ' + (S.unit === 'ALL' ? 'Both markets.' : UNIT[unit] + '.') + (segOn() ? ' Goals count the whole Canada market (Canada + Japan accounts together).' : '') + '</p></div><span style="display:flex;gap:8px;align-items:center"><select class="sel" id="goalMonth" aria-label="Month">' + months.map(function (m) { return '<option' + (m === period ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' + (S.me.can.editGoals ? '<button type="button" class="btn btn-primary btn-sm" data-goal="new">Add goal</button>' : '') + '</span></div>';
     if (!g.goals.length) return h + '<div class="card pad empty">No goals for ' + esc(period) + ' yet.' + (S.me.can.editGoals ? ' Add one to track pacing.' : '') + '</div>';
     h += '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">' + g.goals.map(function (x) {
       var cpl = x.metric === 'cost_per_lead';
@@ -826,6 +880,7 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
     var out = $('askOut'); out.innerHTML = '<div class="card pad empty">Analysing the data…</div>';
     try {
       var f = { unit: S.unit, basis: S.basis, model: S.model };
+      if (segOn()) f.seg = S.seg;
       if (S.days === 'custom' && S.from && S.to) { f.from = S.from; f.to = S.to; } else f.days = S.days === 'custom' ? '30' : S.days;
       var r = await api('/ask', { method: 'POST', body: { question: q, filters: f } });
       out.innerHTML = '<div class="card pad"><div class="chead"><b>' + esc(q) + '</b><span class="pill">' + esc(r.model) + '</span></div><div class="answer">' + md(r.answer) + '</div>' +
@@ -936,6 +991,8 @@ td.nw { white-space: nowrap; } code.id { display: inline-block; max-width: 180px
       return;
     }
     if (!S.unit || (S.unit === 'ALL' ? S.me.units.length < 2 : S.me.units.indexOf(S.unit) < 0)) S.unit = S.me.units[0];
+    // Saved state from before the account switch (e.g. "Canada, all marketing") opens on the first account.
+    if (!brand()) { var b0 = brands()[0]; S.unit = b0.unit; S.seg = b0.seg; }
     if (!saved || !saved.basis) S.basis = S.me.settings.revenue_basis;
     syncFilters();
     if (STAGING) $('stagingBadge').hidden = false;
