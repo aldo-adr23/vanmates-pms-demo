@@ -220,12 +220,36 @@
       (r.reminders || [])[0] ? `${r.reminders[0].on} ${STAGE_LABEL[r.reminders[0].stage] || r.reminders[0].stage}` : ''])].map(l => l.map(csvCell).join(',')).join('\n');
   }
 
+  // Month-end tab (phase 3e): QuickBooks A/R aging + Balance Sheet AS OF each month end, with the tie-out (Lu, 1st-15th).
+  const ME_BUCKETS = [['current', 'Current'], ['1-30', '1–30'], ['31-60', '31–60'], ['61-90', '61–90'], ['91+', '91+']];
+  const monthLabel = (m) => { const [y, mo] = String(m || '').split('-').map(Number); return y && mo ? new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : String(m || ''); };
+  /** Month-end lines -> one row per customer with the five buckets, largest balance first. */
+  function monthCustomers(lines){
+    const by = new Map();
+    for (const l of lines || []) {
+      const k = l.customer_id || l.customer_name || '?';
+      const c = by.get(k) || by.set(k, { customerId: l.customer_id || '', name: l.customer_name || '', buckets: Object.fromEntries(ME_BUCKETS.map(([b]) => [b, 0])), totalCents: 0, lines: [] }).get(k);
+      const cents = Number(l.open_cents || 0);
+      c.buckets[ME_BUCKETS.some(([b]) => b === l.bucket) ? l.bucket : 'current'] += cents; c.totalCents += cents; c.lines.push(l);
+    }
+    return [...by.values()].sort((a, b) => b.totalCents - a.totalCents || a.name.localeCompare(b.name));
+  }
+  function monthEndCsv(lines){
+    const head = ['Customer', 'QuickBooks customer #', 'Type', 'Num', 'Date', 'Due', 'Days past due', 'Aging', 'Amount', 'Open balance'];
+    const amt = (c) => (Number(c || 0) / 100).toFixed(2);
+    return [head, ...(lines || []).map(l => [l.customer_name, l.customer_id, l.txn_type, l.doc_number, l.txn_date || '', l.due_date || '', l.days_past_due, (ME_BUCKETS.find(([b]) => b === l.bucket) || [, l.bucket])[1], amt(l.amount_cents), amt(l.open_cents)])]
+      .map(l => l.map(csvCell).join(',')).join('\n');
+  }
+  const tiesOut = (rep) => !!rep && (rep.checks || []).length > 0 && (rep.checks || []).every(c => c.ok);
+
   window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
     INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv,
-    COLLECT, PAUSE_REASONS, HOLD_LABEL, STAGE_LABEL, sortCollections, collectionMatches, pendingAction, collectionsCsv };
+    COLLECT, PAUSE_REASONS, HOLD_LABEL, STAGE_LABEL, sortCollections, collectionMatches, pendingAction, collectionsCsv,
+    ME_BUCKETS, monthLabel, monthCustomers, monthEndCsv, tiesOut };
   if (typeof document === 'undefined') return;
 
-  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '', colState: '' };
+  const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '', colState: '', month: '' };
+  const meLines = {}; // month -> lines (loaded when the Month-end tab shows that month)
   let data = null, loading = null;
   const e = (s) => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const toast = (m) => { if (typeof showToast === 'function') showToast(m); };
@@ -244,7 +268,7 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links, inc, bill, col, acts] = await Promise.all([
+        const [inv, un, run, links, inc, bill, col, acts, me] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
@@ -253,11 +277,13 @@
           sb().from('ar_billing_issues').select('*').limit(5000),
           sb().from('ar_collections').select('*').limit(5000),
           sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000),
+          sb().from('ar_month_end').select('*').order('month', { ascending: false }).limit(36),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
         // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
         data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []),
-          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []) };
+          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []), monthEnd: me.error ? null : (me.data || []) };
+        for (const k of Object.keys(meLines)) delete meLines[k];
         render();
       } catch (err) {
         console.error('[ar] load failed', err);
@@ -315,10 +341,12 @@
     const incSum = incomingSummary(incAll);
     if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length], ['incoming', 'Incoming payments', incSum.problems ? `<span class="tag-pill red" style="font-size:11px">${incSum.problems} to check</span>` : incAll.length],
       ['billing', 'Billing', (data.billing || []).length ? `<span class="tag-pill amber" style="font-size:11px">${(data.billing || []).length} to check</span>` : 0],
-      ['collections', 'Collections', (() => { const np = (data.collections || []).filter(r => r.status === 'needs_person').length; return np ? `<span class="tag-pill red" style="font-size:11px">${np} need a person</span>` : (data.collections || []).length; })()]]
+      ['collections', 'Collections', (() => { const np = (data.collections || []).filter(r => r.status === 'needs_person').length; return np ? `<span class="tag-pill red" style="font-size:11px">${np} need a person</span>` : (data.collections || []).length; })()],
+      ['monthend', 'Month-end', (() => { const m = (data.monthEnd || [])[0]; return !m ? '' : tiesOut(m) ? `<span class="name-sub">${e(monthLabel(m.month))}</span>` : `<span class="tag-pill red" style="font-size:11px">${e(monthLabel(m.month))}: check</span>`; })()]]
       .map(([k, l, n]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ar-tab="${k}">${l} <span class="name-sub">${n}</span></button>`).join('');
-    const side = S.tab === 'incoming' || S.tab === 'billing' || S.tab === 'collections';
-    for (const [id, show] of [['ar-kind', !side], ['ar-city', !side], ['ar-instate', S.tab === 'incoming'], ['ar-billkind', S.tab === 'billing'], ['ar-colstate', S.tab === 'collections']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
+    const side = S.tab === 'incoming' || S.tab === 'billing' || S.tab === 'collections' || S.tab === 'monthend';
+    for (const [id, show] of [['ar-kind', !side], ['ar-city', !side], ['ar-instate', S.tab === 'incoming'], ['ar-billkind', S.tab === 'billing'], ['ar-colstate', S.tab === 'collections'], ['ar-month', S.tab === 'monthend']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
+    if (S.tab === 'monthend') return renderMonthEnd();
     if (S.tab === 'incoming') return renderIncoming(incAll, incSum);
     if (S.tab === 'billing') return renderBilling(data.billing);
     if (S.tab === 'collections') return renderCollections(data.collections);
@@ -394,6 +422,60 @@
         <td style="text-align:right;white-space:nowrap">${r.rent_cents ? e(money(r.rent_cents)) : '<span class="name-sub">—</span>'}</td>
         <td>${r.template_cents ? `${e(money(r.template_cents))}${r.next_date ? `<div class="name-sub">next ${e(r.next_date)}</div>` : ''}` : '<span class="name-sub">none</span>'}</td>
         <td><span class="name-sub">${e(String(r.detail || '').slice(0, 140))}</span></td></tr>`; }).join('');
+  }
+
+  function renderMonthEnd(){
+    const head = document.getElementById('ar-head'), body = document.getElementById('ar-body'), empty = document.getElementById('ar-empty');
+    if (empty) empty.style.display = 'none';
+    if (head) head.innerHTML = `<tr><th>Customer</th>${ME_BUCKETS.map(([, l]) => `<th style="text-align:right">${e(l)}</th>`).join('')}<th style="text-align:right">Total</th></tr>`;
+    if (data.monthEnd === null) { msg('The month-end report is not set up in the database yet (run ar-month-end-2026-10-20.sql).'); return; }
+    const reps = data.monthEnd || [];
+    const sel = document.getElementById('ar-month');
+    if (sel) { sel.innerHTML = reps.map(r => `<option value="${e(r.month)}">${e(monthLabel(r.month))}</option>`).join(''); if (!S.month && reps[0]) S.month = reps[0].month; sel.value = S.month; }
+    const rep = reps.find(r => r.month === S.month);
+    if (!rep) { msg('No month-end report yet. Lu makes it on the 1st of each month (and refreshes it until the 15th) from QuickBooks.'); return; }
+    if (!meLines[rep.month]) {
+      msg('Loading ' + e(monthLabel(rep.month)) + '…');
+      sb().from('ar_month_end_lines').select('*').eq('month', rep.month).order('line_no').limit(20000)
+        .then(({ data: rows, error }) => { if (error) { msg('Could not load the lines: ' + e(error.message)); return; } meLines[rep.month] = rows || []; render(); });
+      return;
+    }
+    const n = String(S.q || '').trim().toLowerCase();
+    const custs = monthCustomers(meLines[rep.month]).filter(c => !n || [c.name, c.customerId, ...c.lines.map(l => l.doc_number)].some(v => String(v || '').toLowerCase().includes(n)));
+    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${custs.length} customers`;
+    const tot = document.getElementById('ar-total'); if (tot) tot.textContent = money(custs.reduce((s, c) => s + c.totalCents, 0));
+    const b = rep.buckets || {};
+    const checks = (rep.checks || []).map(c => `<div style="display:flex;gap:8px;align-items:baseline"><span class="tag-pill ${c.ok ? 'green' : 'red'}" style="font-size:11px">${c.ok ? 'OK' : 'Off by ' + e(money(c.diffCents))}</span>
+        <span>${e(c.label)}${c.ok ? '' : ` <span class="name-sub">(${e(money(c.aCents))} vs ${e(money(c.bCents))}). ${e(c.note || '')}</span>`}</span></div>`).join('');
+    const summary = `<tr><td colspan="${COLS}" style="background:var(--panel,#faf8f5)">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+        <div><div class="name-sub">Outstanding AR at ${e(rep.as_of)}</div><div style="font-size:22px;font-weight:600">${e(money(rep.total_cents))}</div><div class="name-sub">${e(rep.customer_count)} customers · ${e(rep.invoice_count)} invoices</div></div>
+        <div><div class="name-sub">Balance Sheet A/R</div><div style="font-size:16px;font-weight:600">${rep.ar_account_cents == null ? '—' : e(money(rep.ar_account_cents))}</div></div>
+        ${ME_BUCKETS.map(([k, l]) => `<div><div class="name-sub">${e(l)}</div><div style="font-weight:600">${e(money(b[k] || 0))}</div></div>`).join('')}
+      </div>
+      <div style="display:grid;gap:4px">${checks}</div>
+      <div class="name-sub" style="margin-top:8px">From QuickBooks (A/R Aging Detail and Balance Sheet as of ${e(rep.as_of)}), made by Lu ${e(when(rep.generated_at))}. Late entries dated in the month change it: Lu refreshes it every morning until the 15th. Credits and unapplied payments count as negatives.</div>
+    </td></tr>`;
+    if (body) body.innerHTML = summary + custs.slice(0, 2000).map(c => `<tr class="clickable" data-ar-me="${e(c.customerId || c.name)}" tabindex="0" style="cursor:pointer">
+        <td><b>${e(c.name || 'Customer ' + c.customerId)}</b><div class="name-sub">${e(c.lines.length)} line(s)${c.customerId ? ' · #' + e(c.customerId) : ''}</div></td>
+        ${ME_BUCKETS.map(([k]) => `<td style="text-align:right;white-space:nowrap">${c.buckets[k] ? e(money(c.buckets[k])) : '<span class="name-sub">—</span>'}</td>`).join('')}
+        <td style="text-align:right;white-space:nowrap"><b>${e(money(c.totalCents))}</b></td></tr>`).join('');
+  }
+
+  function openMonthEndCustomer(key){
+    const c = monthCustomers(meLines[S.month] || []).find(x => (x.customerId || x.name) === key);
+    if (!c) return;
+    document.getElementById('panel-hero').textContent = String(c.name || '?').slice(0, 1).toUpperCase();
+    document.getElementById('panel-title').innerHTML = e(c.name || 'Customer ' + c.customerId);
+    document.getElementById('panel-sub').textContent = `${money(c.totalCents)} open at ${monthLabel(S.month)} end`;
+    document.getElementById('panel-meta').innerHTML = c.customerId ? `<a href="${e(qboCustomerUrl(c.customerId))}" target="_blank" rel="noopener">QuickBooks customer #${e(c.customerId)} ↗</a>` : '';
+    document.getElementById('panel-body').innerHTML = `<table class="table" style="width:100%;font-size:13px"><thead><tr><th>Type</th><th>Num</th><th>Due</th><th style="text-align:right">Days</th><th style="text-align:right">Open</th></tr></thead><tbody>
+      ${c.lines.map(l => `<tr><td>${e(l.txn_type)}</td><td>${/invoice/i.test(l.txn_type) && l.txn_id ? `<a href="${e(qboInvoiceUrl(l.txn_id))}" target="_blank" rel="noopener">${e(l.doc_number || l.txn_id)} ↗</a>` : e(l.doc_number || '—')}</td><td>${e(l.due_date || '')}</td>
+        <td style="text-align:right">${e(l.days_past_due)}</td><td style="text-align:right">${e(money(l.open_cents))}</td></tr>`).join('')}</tbody></table>
+      <p class="name-sub" style="margin-top:14px">As QuickBooks had it on ${e(S.month)} month end. Today's balance is on the Customers tab.</p>`;
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
   }
 
   function openBilling(key){
@@ -586,13 +668,14 @@
     const { t, cust } = model();
     const f = { q: S.q, kind: S.kind, city: S.city, bucket: S.bucket };
     const list = sortCustomers(cust.filter(r => matches(r, f)));
-    const text = S.tab === 'collections' ? collectionsCsv(sortCollections((data.collections || []).filter(r => collectionMatches(r, S.q, S.colState))))
+    const text = S.tab === 'monthend' ? monthEndCsv(meLines[S.month] || [])
+      : S.tab === 'collections' ? collectionsCsv(sortCollections((data.collections || []).filter(r => collectionMatches(r, S.q, S.colState))))
       : S.tab === 'billing' ? billingCsv(sortBilling((data.billing || []).filter(r => billingMatches(r, S.q, S.billKind))))
       : S.tab === 'incoming' ? incomingCsv(sortIncoming((data.incoming || []).filter(r => incomingMatches(r, S.q, S.inState))))
       : S.tab === 'customers' ? customersCsv(list) : invoicesCsv(list.flatMap(c => c.invoices.filter(i => invoiceInBucket(i, S.bucket, t)).map(i => ({ i, c }))), t);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
-    a.download = `ar-${S.tab}-${t}.csv`;
+    a.download = S.tab === 'monthend' ? `ar-month-end-${S.month}.csv` : `ar-${S.tab}-${t}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     toast('CSV downloaded.');
   }
@@ -633,6 +716,12 @@
       cs.innerHTML = `<option value="">All statuses</option><option value="escalated">14+ days late</option>` + Object.entries(COLLECT).map(([v, x]) => `<option value="${v}">${e(x[0])}</option>`).join('');
       bkSel.after(cs);
     }
+    const csSel = document.getElementById('ar-colstate');
+    if (csSel && !document.getElementById('ar-month')) {
+      const ms = document.createElement('select');
+      ms.id = 'ar-month'; ms.className = 'form-input'; ms.style.cssText = 'max-width:220px;display:none'; ms.setAttribute('aria-label', 'Month');
+      csSel.after(ms);
+    }
     let tm = null;
     on('ar-search', 'input', ev => { S.q = ev.target.value; clearTimeout(tm); tm = setTimeout(render, 150); });
     on('ar-kind', 'change', ev => { S.kind = ev.target.value; render(); });
@@ -640,6 +729,7 @@
     on('ar-instate', 'change', ev => { S.inState = ev.target.value; render(); });
     on('ar-billkind', 'change', ev => { S.billKind = ev.target.value; render(); });
     on('ar-colstate', 'change', ev => { S.colState = ev.target.value; render(); });
+    on('ar-month', 'change', ev => { S.month = ev.target.value; render(); });
     on('ar-refresh', 'click', () => load(true));
     on('ar-export', 'click', exportCsv);
     on('ar-tabs', 'click', ev => { const b = ev.target.closest('[data-ar-tab]'); if (b) { S.tab = b.dataset.arTab; render(); } });
@@ -648,7 +738,7 @@
     on('ar-aging', 'click', bucketClick);
     const body = document.getElementById('ar-body');
     if (body) {
-      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) return openBilling(tb.dataset.arBill); const tc = ev.target.closest('[data-ar-col]'); if (tc) openCollection(tc.dataset.arCol); };
+      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) return openBilling(tb.dataset.arBill); const tc = ev.target.closest('[data-ar-col]'); if (tc) return openCollection(tc.dataset.arCol); const tm2 = ev.target.closest('[data-ar-me]'); if (tm2) openMonthEndCustomer(tm2.dataset.arMe); };
       body.addEventListener('click', pick);
       body.addEventListener('keydown', ev => { if (ev.key === 'Enter') pick(ev); });
     }
