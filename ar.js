@@ -441,7 +441,8 @@
       return;
     }
     const n = String(S.q || '').trim().toLowerCase();
-    const custs = monthCustomers(meLines[rep.month]).filter(c => !n || [c.name, c.customerId, ...c.lines.map(l => l.doc_number)].some(v => String(v || '').toLowerCase().includes(n)));
+    const allCusts = monthCustomers(meLines[rep.month]);
+    const custs = allCusts.filter(c => !n || [c.name, c.customerId, ...c.lines.map(l => l.doc_number)].some(v => String(v || '').toLowerCase().includes(n)));
     // Most rows with nothing owed are payments QuickBooks has not applied to an invoice (credits): say so, apart from those who owe.
     const owe = custs.filter(c => c.totalCents > 0).length, credit = custs.filter(c => c.totalCents < 0).length;
     const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${owe} owe${credit ? ` · ${credit} with a credit` : ''}`;
@@ -451,7 +452,7 @@
         <span>${e(c.label)}${c.ok ? '' : ` <span class="name-sub">(${e(money(c.aCents))} vs ${e(money(c.bCents))}). ${e(c.note || '')}</span>`}</span></div>`).join('');
     const summary = `<tr><td colspan="${COLS}" style="background:var(--panel,#faf8f5)">
       <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
-        <div><div class="name-sub">Outstanding AR at ${e(rep.as_of)}</div><div style="font-size:22px;font-weight:600">${e(money(rep.total_cents))}</div><div class="name-sub">${e(rep.customer_count)} customers owe · ${e(rep.invoice_count)} invoices</div></div>
+        <div><div class="name-sub">Outstanding AR at ${e(rep.as_of)}</div><div style="font-size:22px;font-weight:600">${e(money(rep.total_cents))}</div><div class="name-sub">${e(allCusts.filter(c => c.totalCents > 0).length)} customers owe (after credits) · ${e(rep.invoice_count)} invoices</div></div>
         <div><div class="name-sub">Balance Sheet A/R</div><div style="font-size:16px;font-weight:600">${rep.ar_account_cents == null ? '—' : e(money(rep.ar_account_cents))}</div></div>
         ${ME_BUCKETS.map(([k, l]) => `<div><div class="name-sub">${e(l)}</div><div style="font-weight:600">${e(money(b[k] || 0))}</div></div>`).join('')}
       </div>
