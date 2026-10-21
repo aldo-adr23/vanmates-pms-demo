@@ -141,10 +141,22 @@
     missing: ['Not in QuickBooks', 'red', 'No matching QuickBooks payment after 3 days (or it was booked another way, e.g. inside a deposit)'],
     possible: ['Check match', 'amber', 'A QuickBooks payment has the same amount but nothing ties it to this payer'],
     waiting: ['Waiting', '', 'Received in the last 3 days; bookkeepers usually enter it within 1–3 days'],
+    marked: ['Marked as added', 'blue', 'A person marked it as entered in QuickBooks (or booked another way); Lu ties it to the QuickBooks payment # when it finds it'],
     recorded: ['In QuickBooks', 'green', 'Found in QuickBooks'],
     posted_by_lu: ['Posted by Lu', 'blue', 'Lu entered it in QuickBooks'],
   };
   const INCOMING_ORDER = Object.keys(INCOMING);
+  // A person's mark (ar_incoming_marks) takes a payment off the "to check" list until Lu finds it in QuickBooks.
+  const MARK_LABEL = { added: 'Added in QuickBooks', other_way: 'Booked another way (e.g. inside a deposit)' };
+  const MARKABLE = ['missing', 'possible', 'waiting'];
+  function withMarks(rows, marks){
+    const by = new Map((marks || []).map(m => [String(m.proposal_id), m]));
+    return (rows || []).map(r => {
+      const m = by.get(String(r.proposal_id));
+      return { ...r, lu_state: r.state, mark: m || null, state: m && MARKABLE.includes(r.state) ? 'marked' : r.state };
+    });
+  }
+  const qboReceivePaymentUrl = (customerId) => 'https://qbo.intuit.com/app/recvpayment' + (customerId ? '?nameId=' + encodeURIComponent(customerId) : '');
   const isIncomingProblem = (r) => ['duplicate', 'missing', 'possible'].includes(r.state);
   function incomingSummary(rows){
     const s = { count: rows.length, cents: 0, recorded: 0, problems: 0, missingCents: 0, byState: {} };
@@ -163,7 +175,7 @@
     if (state === 'problems' ? !isIncomingProblem(r) : state && r.state !== state) return false;
     const n = String(q || '').trim().toLowerCase();
     if (!n) return true;
-    return [r.payer_name, r.payer_email, r.memo, r.qb_customer_name, r.suggested_customer_name, r.source_ref, r.qb_payment_id, money(r.amount_cents)].some(v => String(v || '').toLowerCase().includes(n));
+    return [r.payer_name, r.payer_email, r.memo, r.qb_customer_name, r.suggested_customer_name, r.source_ref, r.qb_payment_id, money(r.amount_cents), r.mark && r.mark.marked_by, r.mark && r.mark.qb_payment_id].some(v => String(v || '').toLowerCase().includes(n));
   }
   function incomingCsv(rows){
     const head = ['Received', 'Source', 'Reference', 'Payer', 'Payer email', 'Amount', 'Status', 'QuickBooks payment', 'QuickBooks customer', 'QuickBooks date', 'Matched by', 'Suggested customer', 'Possible QuickBooks payments', 'Memo'];
@@ -273,7 +285,7 @@
   const failingChecks = (rows) => (rows || []).filter(r => r && r.ok === false).sort((a, b) => String(a.since || '').localeCompare(String(b.since || '')));
 
   window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
-    INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv,
+    INCOMING, MARK_LABEL, withMarks, qboReceivePaymentUrl, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv,
     COLLECT, PAUSE_REASONS, HOLD_LABEL, STAGE_LABEL, sortCollections, collectionMatches, pendingAction, collectionsCsv,
     ME_BUCKETS, monthLabel, monthCustomers, monthEndCsv, tiesOut, failingChecks,
     BATCH_KIND, BATCH_STATUS, itemState, waitingBatches, batchRequest, leavingOut, toSend, batchCsv };
@@ -300,7 +312,7 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links, inc, bill, col, acts, me, health, bat, bacts] = await Promise.all([
+        const [inv, un, run, links, inc, bill, col, acts, me, health, bat, bacts, imarks] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
@@ -313,12 +325,14 @@
           sb().from('ar_job_health').select('*').limit(50),
           sb().from('ar_batches').select('*').order('batch_id', { ascending: false }).limit(60),
           sb().from('ar_batch_actions').select('*').order('id', { ascending: false }).limit(500),
+          sb().from('ar_incoming_marks').select('*').limit(5000),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
         // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
-        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []),
+        data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incomingRaw: inc.error ? null : (inc.data || []), incomingMarks: imarks.error ? [] : (imarks.data || []), billing: bill.error ? null : (bill.data || []),
           collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []), monthEnd: me.error ? null : (me.data || []), health: health.error ? [] : (health.data || []),
           batches: bat.error ? null : (bat.data || []), batchActions: bacts.error ? [] : (bacts.data || []) };
+        data.incoming = data.incomingRaw === null ? null : withMarks(data.incomingRaw, data.incomingMarks);
         for (const k of Object.keys(meLines)) delete meLines[k];
         render();
         if (openBatchId && document.querySelector('[data-ar-batch-id]')) openBatch(openBatchId);
@@ -431,7 +445,8 @@
   const inPill = (st) => { const x = INCOMING[st] || [st, '']; return `<span class="tag-pill ${x[1]}" style="font-size:11px" title="${e(x[2] || '')}">${e(x[0])}</span>`; };
   const srcLabel = (r) => r.source === 'stripe' ? 'Stripe' : 'e-Transfer';
   const LU_STATUS = { proposed: 'open in #bookkeping-review', recorded_in_qbo: 'closed: already in QuickBooks', approved: 'approved', shadow_posted: 'approved (test mode, nothing written)', posted: 'posted by Lu', failed: 'QuickBooks write failed', skipped: 'skipped' };
-  const HOW = { stripe_ref: 'Stripe id in the QuickBooks reference', customer: "payer's QuickBooks customer", name: "payer's name" };
+  const HOW = { stripe_ref: 'Stripe id in the QuickBooks reference', customer: "payer's QuickBooks customer", name: "payer's name", marked: 'payment # given in the portal' };
+  const markedBy = (m) => `by ${String(m.marked_by || 'someone').split('@')[0]}${m.marked_at ? ' · ' + String(m.marked_at).slice(0, 10) : ''}`;
 
   function renderIncoming(all, sum){
     const rows = sortIncoming(all.filter(r => incomingMatches(r, S.q, S.inState)));
@@ -445,7 +460,7 @@
         <td>${e(r.received_on || '—')}<div class="name-sub">${e(srcLabel(r))}</div></td>
         <td><b>${e(r.payer_name || r.payer_email || '—')}</b>${r.payer_name && r.payer_email ? `<div class="name-sub">${e(r.payer_email)}</div>` : ''}</td>
         <td style="text-align:right;white-space:nowrap"><b>${e(money(r.amount_cents))}</b></td>
-        <td>${inPill(r.state)}</td>
+        <td>${inPill(r.state)}${r.mark && r.state === 'marked' ? `<div class="name-sub">${e(markedBy(r.mark))}</div>` : ''}</td>
         <td>${r.qb_payment_id ? `<a href="${e(qboPaymentUrl(r.qb_payment_id))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Payment #${e(r.qb_payment_id)} ↗</a><div class="name-sub">${e(r.qb_customer_name || '')}${r.qb_txn_date ? ' · ' + e(r.qb_txn_date) : ''}</div>`
           : (r.candidates || []).length ? `<span class="name-sub">Same amount: ${(r.candidates || []).map(id => `<a href="${e(qboPaymentUrl(id))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">#${e(id)}</a>`).join(', ')}</span>`
           : r.suggested_customer_name ? `<span class="name-sub">Likely customer: ${e(r.suggested_customer_name)}</span>` : '<span class="name-sub">—</span>'}</td>
@@ -708,6 +723,41 @@
     }, 30000);
   }
 
+  // "Not in QuickBooks": open QuickBooks' Receive payment (for the likely customer), then mark it here.
+  function incomingMarkBox(r){
+    const m = r.mark;
+    if (m) return `<div style="margin-top:16px;padding:12px;border:1px solid var(--border, #e5e0d8);border-radius:10px">
+        <b>${e(MARK_LABEL[m.mark] || m.mark)}</b>${m.qb_payment_id ? ` · QuickBooks payment <a href="${e(qboPaymentUrl(m.qb_payment_id))}" target="_blank" rel="noopener">#${e(m.qb_payment_id)} ↗</a>` : ''}
+        <div class="name-sub">Marked ${e(markedBy(m))}${m.note ? ' · ' + e(m.note) : ''}${r.state === 'marked' ? ' · Lu has not found the QuickBooks payment yet' : ''}</div>
+        <button type="button" class="btn btn-ghost btn-mini" style="margin-top:8px" data-ar-imark="">Undo</button> <span class="name-sub" data-ar-imsg></span></div>`;
+    if (!MARKABLE.includes(r.lu_state || r.state)) return '';
+    const cid = r.suggested_customer_id || r.qb_customer_id;
+    return `<div style="margin-top:16px;padding:12px;border:1px solid var(--border, #e5e0d8);border-radius:10px;display:grid;gap:8px">
+        <b>Add it to QuickBooks</b>
+        <div><a class="btn btn-ghost btn-mini" href="${e(qboReceivePaymentUrl(cid))}" target="_blank" rel="noopener">Receive payment in QuickBooks ↗</a>
+          <span class="name-sub">${cid ? 'for the likely customer · ' : ''}${e(money(r.amount_cents))} · ${e(r.received_on || '')}${r.source_ref ? ' · ref ' + e(r.source_ref) : ''}</span></div>
+        <div class="name-sub">Once it is in QuickBooks (or if it was booked another way), mark it here so it leaves the "to check" list:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input data-ar-iref inputmode="numeric" placeholder="QuickBooks payment # (optional)" style="flex:1;min-width:180px">
+          <input data-ar-inote placeholder="Note (optional)" style="flex:1;min-width:180px">
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" data-ar-imark="added">Mark as added in QuickBooks</button>
+          <button type="button" class="btn btn-ghost btn-mini" data-ar-imark="other_way">Booked another way (e.g. in a deposit)</button>
+        </div>
+        <span class="name-sub" data-ar-imsg></span></div>`;
+  }
+
+  async function markIncoming(id, mark, ref, note, out){
+    if (out) out.textContent = 'Saving…';
+    const { error } = await sb().rpc('ar_incoming_mark', { p_proposal_id: Number(id), p_mark: mark || null, p_qb_payment_id: ref || '', p_note: note || '' });
+    if (error) { if (out) out.textContent = 'Not saved: ' + (error.message || error); return; }
+    toast(mark ? 'Marked. Lu closes its Slack proposal within 2 hours.' : 'Mark removed.');
+    const m = await sb().from('ar_incoming_marks').select('*').limit(5000);
+    if (!m.error) { data.incomingMarks = m.data || []; data.incoming = withMarks(data.incomingRaw, data.incomingMarks); }
+    render(); openIncoming(id);
+  }
+
   function openIncoming(id){
     const r = data && (data.incoming || []).find(x => String(x.proposal_id) === String(id));
     if (!r) return;
@@ -735,7 +785,8 @@
         ${!r.qb_payment_id ? field('Likely customer', r.suggested_customer_id ? custLink(r.suggested_customer_id, r.suggested_customer_name) : '<span class="name-sub">Not identified</span>') : ''}
         ${field("Lu's proposal", `#${e(r.proposal_id)} · ${e(LU_STATUS[r.lu_status] || r.lu_status || '')}`)}
       </div>
-      <p class="name-sub" style="margin-top:18px">Nothing here writes to QuickBooks. Enter or fix the payment in QuickBooks; Lu checks again every 2 hours. When Lu finds it, it closes its own proposal in #bookkeping-review so the payment cannot be entered twice.</p>
+      ${incomingMarkBox(r)}
+      <p class="name-sub" style="margin-top:18px">Nothing here writes to QuickBooks. Enter or fix the payment in QuickBooks; Lu checks again every 2 hours. When Lu finds it, or a person marks it here, Lu closes its own proposal in #bookkeping-review so the payment cannot be entered twice.</p>
     </div>`;
     document.getElementById('detail-panel').classList.add('open');
     document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
@@ -886,6 +937,9 @@
         const lv = ev.target.closest('[data-ar-bleave]');
         if (lv) { lv.disabled = true; requestBatch(bid, 'leave_out', lv.dataset.arBleave, bmsg); return; }
       }
+      const im = ev.target.closest('[data-ar-imark]');
+      if (im) { const wrap = im.closest('[data-ar-inc-id]'); const v = (sel) => (wrap.querySelector(sel) || {}).value || '';
+        im.disabled = true; markIncoming(wrap.dataset.arIncId, im.dataset.arImark, v('[data-ar-iref]').trim(), v('[data-ar-inote]').trim(), wrap.querySelector('[data-ar-imsg]')); return; }
       const rs = ev.target.closest('[data-ar-resume]');
       if (rs) { const wrap = rs.closest('[data-ar-col-id]'); requestAction(wrap.dataset.arColId, 'resume', null, null, '', wrap.querySelector('[data-ar-pause-msg]')); return; }
       const a = ev.target.closest('[data-ar-tenant]'); if (!a) return;
@@ -898,7 +952,8 @@
       if (sb() && sb().channel) sb().channel('ar_sync_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ar_sync_runs' }, reload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_job_health' }, reload)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_batches' }, reload)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_batch_actions' }, reload).subscribe();
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_batch_actions' }, reload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_incoming_marks' }, reload).subscribe();
     } catch (_) {}
     fromHash();
   }
