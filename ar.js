@@ -193,10 +193,10 @@
   }
 
   // Collections tab (phase 3c): who Lu reminds, who is paused and why, reminders sent. Lu keeps the holds; staff ask
-  // here to pause or resume (ar_collection_action) and Lu applies it within 10 minutes, always before a batch is sent.
+  // here to pause or resume (ar_collection_action) and Lu applies it within 5 minutes, always before a batch is sent.
   const COLLECT = {
     needs_person: ['Needs a person', 'red', 'Lu will not remind: a person has to act (dispute, reply to read, over 120 days, small balance, unapplied credit)'],
-    will_remind: ['Will be reminded', 'blue', 'In the next reminder batch (weekdays 9:00), sent only after approval in Slack'],
+    will_remind: ['Will be reminded', 'blue', 'In the next reminder batch (weekdays 9:00), sent only after approval in the Reminders tab'],
     held: ['Paused', 'amber', 'Reminders paused: promise to pay, payment plan, paused by staff, or says they paid'],
     waiting: ['Waiting', '', 'Not yet: under 3 days late, reminded in the last 3 days, or a payment is on its way into QuickBooks'],
     not_reminded: ['Not reminded', '', 'Never reminded automatically: not a tenant, or no email on file'],
@@ -204,7 +204,7 @@
   const PAUSE_REASONS = [['dispute', 'Disputes the balance'], ['promise_to_pay', 'Promised to pay by…'], ['payment_plan', 'On a payment plan until…'], ['manual', 'Pause (other reason)']];
   const HOLD_LABEL = { dispute: 'Disputed', promise_to_pay: 'Promised to pay', payment_plan: 'Payment plan', manual: 'Paused by staff', replied: 'Replied to a reminder',
     payment_claimed: 'Says they paid', rtb: 'RTB matter', deposit_matter: 'Deposit matter' };
-  const STAGE_LABEL = { friendly: 'Friendly reminder', firm: 'Firm reminder', final: 'Final notice' };
+  const STAGE_LABEL = { friendly: 'Friendly reminder', firm: 'Firm reminder', final: 'Final notice', upcoming: 'Upcoming rent', due: 'Rent due' };
   const sortCollections = (rows) => rows.slice().sort((a, b) => Object.keys(COLLECT).indexOf(a.status) - Object.keys(COLLECT).indexOf(b.status) || Number(b.total_cents || 0) - Number(a.total_cents || 0));
   function collectionMatches(r, q, status){
     if (status === 'escalated' ? !r.escalated : status && r.status !== status) return false;
@@ -242,6 +242,32 @@
   }
   const tiesOut = (rep) => !!rep && (rep.checks || []).length > 0 && (rep.checks || []).every(c => c.ok);
 
+  // Reminders tab (ar-batches-2026-10-21.sql): Lu's daily batches, approved here instead of in Slack. Staff ask to send,
+  // cancel or leave a tenant out (ar_batch_action); Lu applies it within 5 minutes, only for its approvers (Denisse, Aldo).
+  const BATCH_KIND = { reminders: 'Overdue rent reminders', notices: 'Rent notices (not late yet)' };
+  const BATCH_STATUS = { proposed: ['Waiting for approval', 'amber'], approved: ['Approved, sending', 'blue'], sent: ['Sent', 'green'], cancelled: ['Cancelled', ''] };
+  const SKIP_WORDS = { left_out: 'Left out', no_email: 'No email on file', payment_in_flight: 'A payment is on its way', recently_reminded: 'Reminded in the last 3 days',
+    paid_since_approval: 'Paid before it went out', due_date_passed: 'Due date passed' };
+  /** What happened (or will happen) to one tenant in a batch. */
+  function itemState(state){
+    if (state === 'pending') return ['Will be sent', ''];
+    if (state === 'sent') return ['Sent', 'green'];
+    const why = String(state || '').replace(/^skipped:/, '');
+    return [why.startsWith('hold:') ? 'Paused (' + (HOLD_LABEL[why.slice(5)] || why.slice(5)) + ')' : SKIP_WORDS[why] || 'Skipped (' + why + ')', why === 'left_out' ? 'amber' : ''];
+  }
+  const waitingBatches = (batches) => (batches || []).filter(b => b.status === 'proposed');
+  /** The send / cancel request for this batch that Lu has not applied yet. */
+  const batchRequest = (actions, batchId) => (actions || []).find(a => Number(a.batch_id) === Number(batchId) && a.status === 'pending' && a.action !== 'leave_out') || null;
+  /** Tenants someone asked to leave out, not yet applied by Lu. */
+  const leavingOut = (actions, batchId) => new Set((actions || []).filter(a => Number(a.batch_id) === Number(batchId) && a.status === 'pending' && a.action === 'leave_out').map(a => String(a.customer_id)));
+  /** Tenants who will get an email if the batch is sent now. */
+  const toSend = (batch, actions) => { const out = leavingOut(actions, batch && batch.batch_id); return ((batch && batch.items) || []).filter(i => i.state === 'pending' && !out.has(String(i.customer_id))); };
+  function batchCsv(b){
+    const head = ['Batch', 'Kind', 'Date', 'Tenant', 'Reference', 'Email', 'Stage', 'Amount', 'Days late', 'Due', 'Invoices', 'Status'];
+    return [head, ...(b.items || []).map(i => [b.batch_id, BATCH_KIND[b.kind] || b.kind, b.run_date, i.name, i.reference, i.email, STAGE_LABEL[i.stage] || i.stage, (Number(i.total_cents || 0) / 100).toFixed(2),
+      i.stage === 'upcoming' ? '' : i.max_days, i.due_on || '', (i.invoices || []).join(' '), itemState(i.state)[0]])].map(l => l.map(csvCell).join(',')).join('\n');
+  }
+
   // Job health (ar-health-2026-10-21.sql): Lu's steps that are failing right now, e.g. QuickBooks unreachable.
   /** The failing checks, longest outage first. */
   const failingChecks = (rows) => (rows || []).filter(r => r && r.ok === false).sort((a, b) => String(a.since || '').localeCompare(String(b.since || '')));
@@ -249,10 +275,12 @@
   window.AR_CORE = { BUCKETS, KINDS, STALE_HOURS, daysLate, bucketOf, money, moneyShort, addDays, summarize, tenantIndex, customerRows, matches, invoiceInBucket, sortCustomers, customersCsv, invoicesCsv, freshness, qboInvoiceUrl, qboCustomerUrl, qboPaymentUrl, canSee,
     INCOMING, incomingSummary, sortIncoming, incomingMatches, incomingCsv, BILLING, sortBilling, billingMatches, billingCsv,
     COLLECT, PAUSE_REASONS, HOLD_LABEL, STAGE_LABEL, sortCollections, collectionMatches, pendingAction, collectionsCsv,
-    ME_BUCKETS, monthLabel, monthCustomers, monthEndCsv, tiesOut, failingChecks };
+    ME_BUCKETS, monthLabel, monthCustomers, monthEndCsv, tiesOut, failingChecks,
+    BATCH_KIND, BATCH_STATUS, itemState, waitingBatches, batchRequest, leavingOut, toSend, batchCsv };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'customers', q: '', kind: '', city: '', bucket: '', inState: '', billKind: '', colState: '', month: '' };
+  let openBatchId = null; // the batch shown in the drawer (re-rendered when Lu applies a request)
   const meLines = {}; // month -> lines (loaded when the Month-end tab shows that month)
   let data = null, loading = null;
   const e = (s) => (typeof esc === 'function' ? esc(s) : String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -272,7 +300,7 @@
     if (!data) msg('Loading…');
     loading = (async () => {
       try {
-        const [inv, un, run, links, inc, bill, col, acts, me, health] = await Promise.all([
+        const [inv, un, run, links, inc, bill, col, acts, me, health, bat, bacts] = await Promise.all([
           sb().from('ar_open_invoices').select('*').order('due_date', { ascending: true }).limit(10000),
           sb().from('ar_unapplied_payments').select('*').limit(10000),
           sb().from('ar_sync_runs').select('*').order('synced_at', { ascending: false }).limit(1),
@@ -283,13 +311,17 @@
           sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000),
           sb().from('ar_month_end').select('*').order('month', { ascending: false }).limit(36),
           sb().from('ar_job_health').select('*').limit(50),
+          sb().from('ar_batches').select('*').order('batch_id', { ascending: false }).limit(60),
+          sb().from('ar_batch_actions').select('*').order('id', { ascending: false }).limit(500),
         ]);
         for (const r of [inv, un, run]) if (r.error) throw r.error;
         // Incoming is optional: before ar-incoming-2026-10-20.sql runs the tab just says so.
         data = { invoices: inv.data || [], unapplied: un.data || [], lastRun: (run.data || [])[0] || null, links: links.error ? [] : (links.data || []), incoming: inc.error ? null : (inc.data || []), billing: bill.error ? null : (bill.data || []),
-          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []), monthEnd: me.error ? null : (me.data || []), health: health.error ? [] : (health.data || []) };
+          collections: col.error ? null : (col.data || []), actions: acts.error ? [] : (acts.data || []), monthEnd: me.error ? null : (me.data || []), health: health.error ? [] : (health.data || []),
+          batches: bat.error ? null : (bat.data || []), batchActions: bacts.error ? [] : (bacts.data || []) };
         for (const k of Object.keys(meLines)) delete meLines[k];
         render();
+        if (openBatchId && document.querySelector('[data-ar-batch-id]')) openBatch(openBatchId);
       } catch (err) {
         console.error('[ar] load failed', err);
         const m = String(err && err.message || err);
@@ -353,15 +385,17 @@
     const incSum = incomingSummary(incAll);
     if (tabs) tabs.innerHTML = [['customers', 'Customers', list.length], ['invoices', 'Invoices', invRows.length], ['incoming', 'Incoming payments', incSum.problems ? `<span class="tag-pill red" style="font-size:11px">${incSum.problems} to check</span>` : incAll.length],
       ['billing', 'Billing', (data.billing || []).length ? `<span class="tag-pill amber" style="font-size:11px">${(data.billing || []).length} to check</span>` : 0],
+      ['reminders', 'Reminders', data.batches === null ? '' : (() => { const w = waitingBatches(data.batches).length; return w ? `<span class="tag-pill amber" style="font-size:11px">${w} to approve</span>` : ''; })()],
       ['collections', 'Collections', (() => { const np = (data.collections || []).filter(r => r.status === 'needs_person').length; return np ? `<span class="tag-pill red" style="font-size:11px">${np} need a person</span>` : (data.collections || []).length; })()],
       ['monthend', 'Month-end', (() => { const m = (data.monthEnd || [])[0]; return !m ? '' : tiesOut(m) ? `<span class="name-sub">${e(monthLabel(m.month))}</span>` : `<span class="tag-pill red" style="font-size:11px">${e(monthLabel(m.month))}: check</span>`; })()]]
       .map(([k, l, n]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ar-tab="${k}">${l} <span class="name-sub">${n}</span></button>`).join('');
-    const side = S.tab === 'incoming' || S.tab === 'billing' || S.tab === 'collections' || S.tab === 'monthend';
+    const side = S.tab === 'incoming' || S.tab === 'billing' || S.tab === 'collections' || S.tab === 'monthend' || S.tab === 'reminders';
     for (const [id, show] of [['ar-kind', !side], ['ar-city', !side], ['ar-instate', S.tab === 'incoming'], ['ar-billkind', S.tab === 'billing'], ['ar-colstate', S.tab === 'collections'], ['ar-month', S.tab === 'monthend']]) { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; }
     if (S.tab === 'monthend') return renderMonthEnd();
     if (S.tab === 'incoming') return renderIncoming(incAll, incSum);
     if (S.tab === 'billing') return renderBilling(data.billing);
     if (S.tab === 'collections') return renderCollections(data.collections);
+    if (S.tab === 'reminders') return renderReminders(data.batches);
 
     const total = S.tab === 'customers' ? list.reduce((s, r) => s + r.openCents, 0) : invRows.reduce((s, x) => s + Number(x.i.balance_cents || 0), 0);
     const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = S.tab === 'customers' ? `${list.length} customers` : `${invRows.length} invoices`;
@@ -537,7 +571,72 @@
         <td style="text-align:right;white-space:nowrap">${e(money(r.total_cents))}<div class="name-sub">${e(r.max_days)} d late</div></td>
         <td style="white-space:nowrap">${lastRem(r)}</td>
         <td><span class="name-sub">${r.hold_reason ? `<b>${e(HOLD_LABEL[r.hold_reason] || r.hold_reason)}</b>${r.hold_until ? ' until ' + e(r.hold_until) : ' until resumed'}.${r.hold_note ? ' “' + e(String(r.hold_note).slice(0, 120)) + '”' : ''}` : e(String(r.detail || '').slice(0, 160))}</span>
-          ${p ? `<div><span class="tag-pill amber" style="font-size:11px">${p.action === 'pause' ? 'Pause' : 'Resume'} requested, Lu applies it within 10 min</span></div>` : ''}</td></tr>`; }).join('');
+          ${p ? `<div><span class="tag-pill amber" style="font-size:11px">${p.action === 'pause' ? 'Pause' : 'Resume'} requested, Lu applies it within 5 min</span></div>` : ''}</td></tr>`; }).join('');
+  }
+
+  const bPill = (st) => { const x = BATCH_STATUS[st] || [st, '']; return `<span class="tag-pill ${x[1]}" style="font-size:11px">${e(x[0])}</span>`; };
+  function renderReminders(all){
+    const head = document.getElementById('ar-head'), body = document.getElementById('ar-body'), empty = document.getElementById('ar-empty');
+    if (head) head.innerHTML = `<tr><th>Batch</th><th>What</th><th style="text-align:right">Tenants</th><th style="text-align:right">Amount</th><th>Status</th></tr>`;
+    if (all === null) { if (empty) empty.style.display = 'none'; msg('Reminders are not set up in the database yet (run ar-batches-2026-10-21.sql).'); return; }
+    const n = String(S.q || '').trim().toLowerCase();
+    const rows = all.filter(b => !n || (b.items || []).some(i => [i.name, i.reference, i.email, i.customer_id].some(v => String(v || '').toLowerCase().includes(n))));
+    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${rows.length} batches in the last 2 weeks · ${waitingBatches(rows).length} waiting for approval`;
+    const tot = document.getElementById('ar-total'); if (tot) tot.textContent = money(waitingBatches(rows).reduce((s, b) => s + toSend(b, data.batchActions).reduce((t, i) => t + Number(i.total_cents || 0), 0), 0)) + ' to approve';
+    if (empty) { empty.style.display = rows.length ? 'none' : ''; empty.textContent = all.length ? 'No batch has this tenant.' : 'No reminder batches in the last 2 weeks. Lu makes them on weekdays at 9:00.'; }
+    if (body) body.innerHTML = rows.map(b => { const c = b.counts || {}, req = batchRequest(data.batchActions, b.batch_id); return `<tr class="clickable" data-ar-batch="${e(b.batch_id)}" tabindex="0" style="cursor:pointer">
+        <td><b>#${e(b.batch_id)}</b><div class="name-sub">${e(b.run_date)}</div></td>
+        <td>${e(BATCH_KIND[b.kind] || b.kind)}</td>
+        <td style="text-align:right">${e((b.items || []).length)}<div class="name-sub">${[c.sent ? `${c.sent} sent` : '', c.left_out ? `${c.left_out} left out` : '', c.skipped ? `${c.skipped} skipped` : ''].filter(Boolean).join(' · ')}</div></td>
+        <td style="text-align:right;white-space:nowrap">${e(money(b.total_cents))}</td>
+        <td>${bPill(b.status)}${req ? ` <span class="tag-pill amber" style="font-size:11px">${req.action === 'send' ? 'Send' : 'Cancel'} requested</span>` : ''}${b.approved_by ? `<div class="name-sub">by ${e(b.approved_by)}</div>` : ''}</td></tr>`; }).join('');
+  }
+
+  function openBatch(id){
+    const b = data && (data.batches || []).find(x => Number(x.batch_id) === Number(id));
+    if (!b) return;
+    openBatchId = b.batch_id;
+    const acts = data.batchActions || [], req = batchRequest(acts, b.batch_id), out = leavingOut(acts, b.batch_id), go = toSend(b, acts);
+    const waiting = b.status === 'proposed' && !req;
+    const mine = acts.filter(a => Number(a.batch_id) === Number(b.batch_id)).slice(0, 12);
+    const goCents = go.reduce((s, i) => s + Number(i.total_cents || 0), 0);
+    document.getElementById('panel-hero').textContent = '✉';
+    document.getElementById('panel-title').innerHTML = `${e(BATCH_KIND[b.kind] || b.kind)} · #${e(b.batch_id)}`;
+    document.getElementById('panel-sub').textContent = `${b.run_date} · ${(b.items || []).length} tenant(s) · ${money(b.total_cents)}`;
+    document.getElementById('panel-meta').innerHTML = bPill(b.status);
+    const due = (i) => i.stage === 'upcoming' || i.stage === 'due' ? `due ${e(i.due_on || '')}` : `${e(i.max_days)} d late`;
+    document.getElementById('panel-body').innerHTML = `<div data-ar-batch-id="${e(b.batch_id)}">
+      <p style="margin:0 0 12px">${b.kind === 'notices' ? 'A heads-up email before rent is due (or on the day, when QuickBooks never emailed the invoice), with how to pay.' : 'A reminder email to tenants whose rent is late; the wording gets firmer with the days late.'}
+        Lu checks each tenant again right before sending: anyone who paid, was paused, or was reminded in the last 3 days is skipped. Emails go out 9:00–19:00 tenant time, up to 60 an hour.</p>
+      ${req ? `<p><span class="tag-pill amber" style="font-size:11px">Waiting for Lu</span> ${req.action === 'send' ? 'Send' : 'Cancel'} requested by ${e(req.created_by)} ${e(when(req.created_at))}. Lu does it within 5 minutes.</p>` : ''}
+      ${waiting ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 6px">
+          <button type="button" class="btn btn-primary" data-ar-bsend="${e(b.batch_id)}" ${go.length ? '' : 'disabled'}>Send emails to ${go.length} tenant${go.length === 1 ? '' : 's'} (${e(money(goCents))})</button>
+          <button type="button" class="btn btn-ghost btn-mini" data-ar-bcancel="${e(b.batch_id)}">Cancel batch</button></div>
+        <div class="name-sub" data-ar-bmsg>Only Denisse or Aldo can approve; Lu refuses anyone else.</div>` : ''}
+      ${b.status === 'approved' && !req ? `<div style="margin:4px 0 6px"><button type="button" class="btn btn-ghost btn-mini" data-ar-bcancel="${e(b.batch_id)}">Stop sending the rest</button><div class="name-sub" data-ar-bmsg></div></div>` : ''}
+      ${H(`Tenants (${(b.items || []).length})`)}
+      <div style="display:grid;gap:6px">${(b.items || []).map(i => { const st = out.has(String(i.customer_id)) ? ['Leaving out…', 'amber'] : itemState(i.state); return `<div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-bottom:1px solid var(--line,#e5e2dc);padding:6px 0">
+          <div><b>${e(i.name || 'Customer ' + i.customer_id)}</b> <span class="name-sub">${e(i.reference || '')}</span>
+            <div class="name-sub">${e(money(i.total_cents))} · ${due(i)} · ${e(STAGE_LABEL[i.stage] || i.stage)}${(i.invoices || []).length ? ' · ' + e(i.invoices.join(', ')) : ''}</div>
+            <div class="name-sub">${i.email ? e(i.email) : '<b>no email on file</b>'}${i.customer_id ? ` · <a href="#ar=${e(i.customer_id)}">open invoices</a>` : ''}</div></div>
+          <div style="text-align:right;white-space:nowrap"><span class="tag-pill ${st[1]}" style="font-size:11px">${e(st[0])}</span>
+            ${waiting && i.state === 'pending' && !out.has(String(i.customer_id)) ? `<div><button type="button" class="btn btn-ghost btn-mini" data-ar-bleave="${e(i.customer_id)}" style="margin-top:4px">Leave out</button></div>` : ''}</div></div>`; }).join('')}</div>
+      ${mine.length ? H('Requests') + `<div style="display:grid;gap:4px">${mine.map(a => `<div class="name-sub">${e(when(a.created_at))} · ${a.action === 'send' ? 'Send' : a.action === 'cancel' ? 'Cancel' : 'Leave out ' + e(((b.items || []).find(i => String(i.customer_id) === String(a.customer_id)) || {}).name || a.customer_id)} · ${e(a.created_by)} · <b>${e(a.status)}</b>${a.result ? ' · ' + e(a.result) : ''}</div>`).join('')}</div>` : ''}
+      <p class="name-sub" style="margin-top:18px">Emails go from rent@vanmates.net. Replies pause that tenant's reminders for 7 days and are posted in #bookkeping-review. Nothing changes in QuickBooks.</p>
+    </div>`;
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
+  }
+
+  async function requestBatch(batchId, action, customerId, out){
+    if (out) out.textContent = 'Saving…';
+    const { error } = await sb().rpc('ar_batch_action', { p_batch_id: Number(batchId), p_action: action, p_customer_id: customerId ? String(customerId) : null });
+    if (error) { if (out) out.textContent = 'Not saved: ' + (error.message || error); return; }
+    toast(action === 'send' ? 'Sent to Lu. The emails start going out within 5 minutes.' : action === 'cancel' ? 'Cancel requested. Lu applies it within 5 minutes.' : 'Lu leaves this tenant out within 5 minutes.');
+    const acts = await sb().from('ar_batch_actions').select('*').order('id', { ascending: false }).limit(500);
+    if (!acts.error) data.batchActions = acts.data || [];
+    render(); openBatch(batchId);
   }
 
   function openCollection(customerId){
@@ -567,7 +666,7 @@
       ${H(`Reminders sent (${(r.reminders || []).length})`)}
       <div style="display:grid;gap:4px">${(r.reminders || []).map(m => `<div class="name-sub">${e(m.on)} · ${e(STAGE_LABEL[m.stage] || m.stage)} · ${e(money(m.total_cents))}</div>`).join('') || '<div class="name-sub">None yet</div>'}</div>
       ${H('Pause or resume reminders')}
-      ${p ? `<p class="name-sub"><span class="tag-pill amber" style="font-size:11px">Waiting for Lu</span> ${p.action === 'pause' ? `Pause (${e(HOLD_LABEL[p.reason] || p.reason)}${p.until ? ' until ' + e(String(p.until).slice(0, 10)) : ''})` : 'Resume'} requested by ${e(p.created_by)}. Lu applies it within 10 minutes, and always before sending a batch.</p>` : ''}
+      ${p ? `<p class="name-sub"><span class="tag-pill amber" style="font-size:11px">Waiting for Lu</span> ${p.action === 'pause' ? `Pause (${e(HOLD_LABEL[p.reason] || p.reason)}${p.until ? ' until ' + e(String(p.until).slice(0, 10)) : ''})` : 'Resume'} requested by ${e(p.created_by)}. Lu applies it within 5 minutes, and always before sending a batch.</p>` : ''}
       <form data-ar-pause style="display:grid;gap:8px;max-width:420px">
         <select name="reason" class="form-input" aria-label="Why pause">${PAUSE_REASONS.map(([v, l]) => `<option value="${v}">${e(l)}</option>`).join('')}</select>
         <label class="name-sub">Until (required for a promise or payment plan; empty = until someone resumes)<input type="date" name="until" class="form-input" min="${minDate}" max="${maxDate}"></label>
@@ -588,7 +687,7 @@
     if (out) out.textContent = 'Saving…';
     const { error } = await sb().rpc('ar_collection_action', { p_customer_id: String(customerId), p_action: action, p_reason: action === 'pause' ? reason : null, p_until: until || null, p_note: note || '' });
     if (error) { if (out) out.textContent = 'Not saved: ' + (error.message || error); return; }
-    toast(action === 'pause' ? 'Pause requested. Lu applies it within 10 minutes.' : 'Resume requested. Lu applies it within 10 minutes.');
+    toast(action === 'pause' ? 'Pause requested. Lu applies it within 5 minutes.' : 'Resume requested. Lu applies it within 5 minutes.');
     const acts = await sb().from('ar_collection_actions').select('*').order('id', { ascending: false }).limit(1000);
     if (!acts.error) data.actions = acts.data || [];
     render(); openCollection(customerId);
@@ -683,7 +782,8 @@
     const { t, cust } = model();
     const f = { q: S.q, kind: S.kind, city: S.city, bucket: S.bucket };
     const list = sortCustomers(cust.filter(r => matches(r, f)));
-    const text = S.tab === 'monthend' ? monthEndCsv(meLines[S.month] || [])
+    const text = S.tab === 'reminders' ? (data.batches || []).map((b, k) => { const c = batchCsv(b); return k ? c.split('\n').slice(1).join('\n') : c; }).filter(Boolean).join('\n')
+      : S.tab === 'monthend' ? monthEndCsv(meLines[S.month] || [])
       : S.tab === 'collections' ? collectionsCsv(sortCollections((data.collections || []).filter(r => collectionMatches(r, S.q, S.colState))))
       : S.tab === 'billing' ? billingCsv(sortBilling((data.billing || []).filter(r => billingMatches(r, S.q, S.billKind))))
       : S.tab === 'incoming' ? incomingCsv(sortIncoming((data.incoming || []).filter(r => incomingMatches(r, S.q, S.inState))))
@@ -696,6 +796,8 @@
   }
 
   function fromHash(){
+    const bm = (location.hash || '').match(/^#ar-batch=(\d+)$/);
+    if (bm) { if (typeof goToView === 'function') goToView('ar'); S.tab = 'reminders'; load().then(() => { render(); openBatch(bm[1]); }); return true; }
     const m = (location.hash || '').match(/^#ar(?:=(\d+))?$/);
     if (!m) return false;
     if (typeof goToView === 'function') goToView('ar');
@@ -759,7 +861,7 @@
     on('ar-aging', 'click', bucketClick);
     const body = document.getElementById('ar-body');
     if (body) {
-      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) return openBilling(tb.dataset.arBill); const tc = ev.target.closest('[data-ar-col]'); if (tc) return openCollection(tc.dataset.arCol); const tm2 = ev.target.closest('[data-ar-me]'); if (tm2) openMonthEndCustomer(tm2.dataset.arMe); };
+      const pick = (ev) => { const tr = ev.target.closest('[data-ar-open]'); if (tr) return open(tr.dataset.arOpen); const ti = ev.target.closest('[data-ar-inc]'); if (ti) return openIncoming(ti.dataset.arInc); const tb = ev.target.closest('[data-ar-bill]'); if (tb) return openBilling(tb.dataset.arBill); const tc = ev.target.closest('[data-ar-col]'); if (tc) return openCollection(tc.dataset.arCol); const tbt = ev.target.closest('[data-ar-batch]'); if (tbt) return openBatch(tbt.dataset.arBatch); const tm2 = ev.target.closest('[data-ar-me]'); if (tm2) openMonthEndCustomer(tm2.dataset.arMe); };
       body.addEventListener('click', pick);
       body.addEventListener('keydown', ev => { if (ev.key === 'Enter') pick(ev); });
     }
@@ -773,6 +875,17 @@
       requestAction(wrap.dataset.arColId, 'pause', reason, until, f.note.value.trim(), out);
     });
     if (pb) pb.addEventListener('click', ev => {
+      const bw = ev.target.closest('[data-ar-batch-id]');
+      if (bw) {
+        const bid = bw.dataset.arBatchId, bmsg = bw.querySelector('[data-ar-bmsg]');
+        const snd = ev.target.closest('[data-ar-bsend]');
+        // Two clicks: the first turns the button into a confirmation, so a batch of 200 is never sent by a stray click.
+        if (snd) { if (snd.dataset.armed !== '1') { snd.dataset.armed = '1'; snd.textContent = 'Click again to confirm: ' + snd.textContent; return; } snd.disabled = true; requestBatch(bid, 'send', null, bmsg); return; }
+        const cn = ev.target.closest('[data-ar-bcancel]');
+        if (cn) { if (cn.dataset.armed !== '1') { cn.dataset.armed = '1'; cn.textContent = 'Click again to confirm'; return; } cn.disabled = true; requestBatch(bid, 'cancel', null, bmsg); return; }
+        const lv = ev.target.closest('[data-ar-bleave]');
+        if (lv) { lv.disabled = true; requestBatch(bid, 'leave_out', lv.dataset.arBleave, bmsg); return; }
+      }
       const rs = ev.target.closest('[data-ar-resume]');
       if (rs) { const wrap = rs.closest('[data-ar-col-id]'); requestAction(wrap.dataset.arColId, 'resume', null, null, '', wrap.querySelector('[data-ar-pause-msg]')); return; }
       const a = ev.target.closest('[data-ar-tenant]'); if (!a) return;
@@ -783,7 +896,9 @@
     try {
       const reload = () => { if (data) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 1500); } };
       if (sb() && sb().channel) sb().channel('ar_sync_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ar_sync_runs' }, reload)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_job_health' }, reload).subscribe();
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_job_health' }, reload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_batches' }, reload)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ar_batch_actions' }, reload).subscribe();
     } catch (_) {}
     fromHash();
   }
