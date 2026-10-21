@@ -6,7 +6,7 @@
    and the shared detail panel). */
 (function(){
   const TYPES = { cleaning: 'Cleaning', utility: 'Utilities', internet: 'Internet', employee_expense: 'Employee expense', landlord_rent: 'Landlord rent', other: 'Other' };
-  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['landlord_rent', 'Landlords']];
+  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['landlord_rent', 'Landlords'], ['school', 'School properties']];
   const VIEWS = [['open', 'Open'], ['review', 'To review'], ['approved', 'Approved · to pay'], ['paid', 'Paid'], ['skipped', 'Skipped'], ['everything', 'Everything']];
   const STATUS = { needs_review: ['Needs review', 'red'], flagged: ['Flagged', 'red'], approved: ['Approved', 'blue'], paid: ['Paid', ''], recorded: ['In QuickBooks', ''], skipped: ['Skipped', ''] };
   const FLAGS = {
@@ -98,9 +98,30 @@
       return { term, left, lastDated: fut.map(c => String(c.dated_for)).sort().pop() || null, warn };
     }).sort((a, b) => (a.warn == null) - (b.warn == null) || (rank[a.warn] ?? 9) - (rank[b.warn] ?? 9) || a.left - b.left || String(a.term.landlord_name || '').localeCompare(String(b.term.landlord_name || '')));
   }
+  // ── internet / utility accounts and school properties (ap-accounts-2026-10-21.sql) ──
+  const ACC_STATUS = { active: ['Active', 'blue'], canceled: ['Canceled', ''] };
+  // Where an account is: its portal property, else its school property, else the building as the sheet wrote it.
+  const accountPlace = (a, schoolNames) => a.property || (a.school_property_id && (schoolNames || {})[a.school_property_id]) || a.building || '';
+  // Accounts of one type (internet | utility) or at one school property, by status and search. Active first, then place and unit.
+  function accountsFor(accounts, f, schoolNames){
+    const q = String(f.q || '').trim().toLowerCase();
+    return accounts.filter(a => (!f.type || a.type === f.type) && (!f.school || a.school_property_id === f.school) && (!f.status || a.status === f.status)
+      && (!q || [a.provider, a.service, a.account_no, a.unit, a.building, a.address, a.property, a.login, a.payment_method, a.notes, accountPlace(a, schoolNames)].some(v => String(v || '').toLowerCase().includes(q))))
+      .sort((x, y) => (x.status === 'active' ? 0 : 1) - (y.status === 'active' ? 0 : 1) || accountPlace(x, schoolNames).localeCompare(accountPlace(y, schoolNames))
+        || String(x.unit || '').localeCompare(String(y.unit || ''), undefined, { numeric: true }));
+  }
+  // One row per school property: its active accounts by type, their monthly total and the units they cover.
+  function schoolSummary(schools, accounts){
+    return schools.map(s => {
+      const mine = accounts.filter(a => a.school_property_id === s.id && a.status === 'active');
+      return { s, internet: mine.filter(a => a.type === 'internet').length, utility: mine.filter(a => a.type === 'utility').length,
+        monthlyCents: mine.reduce((t, a) => t + Number(a.monthly_cents || 0), 0),
+        units: [...new Set(mine.map(a => String(a.unit || '').replace(/C$/, '')).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
+    }).sort((a, b) => (b.s.active === false ? 0 : 1) - (a.s.active === false ? 0 : 1) || String(a.s.name).localeCompare(String(b.s.name)));
+  }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
   const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
-  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary };
+  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'all', view: 'open', q: '', city: '', sel: new Set() };
@@ -159,7 +180,8 @@
     ].map(([l, n, c, v]) => `<button type="button" class="card" data-ap-view="${v}" style="text-align:left;padding:14px 16px;cursor:pointer;border:1px solid var(--line,#e5e2dc)">
         <div class="name-sub">${e(l)}</div><div style="font-size:22px;font-weight:600;margin-top:4px">${e(n)}</div>${c != null ? `<div class="name-sub">${e(money(c))}</div>` : ''}</button>`).join('');
     const tabs = document.getElementById('ap-tabs');
-    if (tabs) tabs.innerHTML = TABS.map(([k, l]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ap-tab="${k}">${l} <span class="name-sub">${rows.filter(r => inTab(r, k) && inView(r, S.view)).length}</span></button>`).join('');
+    const tabCount = (k) => k === 'school' ? (ACC.schools ? ACC.schools.filter(x => x.active !== false).length : '') : rows.filter(r => inTab(r, k) && inView(r, S.view)).length;
+    if (tabs) tabs.innerHTML = TABS.map(([k, l]) => `<button type="button" class="tab${S.tab === k ? ' active' : ''}" role="tab" aria-selected="${S.tab === k}" data-ap-tab="${k}">${l} <span class="name-sub">${tabCount(k)}</span></button>`).join('');
     const vsel = document.getElementById('ap-view'); if (vsel && vsel.value !== S.view) vsel.value = S.view;
     const list = sortRows(filtered());
     const cnt = document.getElementById('ap-count'); if (cnt) cnt.textContent = list.length;
@@ -177,7 +199,7 @@
         <td>${(r.flags || []).map(flag).join(' ')}</td>
       </tr>`).join('');
     bulkBar(list);
-    showLL(S.tab === 'landlord_rent');
+    layout();
   }
 
   function bulkBar(list){
@@ -336,12 +358,16 @@
     return LL.loading;
   }
 
-  function showLL(on){
-    const ll = document.getElementById('ap-ll'), list = document.getElementById('ap-list-card'), bar = document.getElementById('ap-filter-bar');
+  // Landlords and School properties replace the bills list; Internet and Utilities show their accounts under it.
+  function layout(){
+    const on = S.tab === 'landlord_rent', school = S.tab === 'school', acc = school || ['internet', 'utility'].includes(S.tab);
+    const ll = document.getElementById('ap-ll'), list = document.getElementById('ap-list-card'), bar = document.getElementById('ap-filter-bar'), card = document.getElementById('ap-acc');
     if (ll) ll.style.display = on ? '' : 'none';
-    if (list) list.style.display = on ? 'none' : '';
-    if (bar) bar.style.display = on ? 'none' : '';
+    if (list) list.style.display = on || school ? 'none' : '';
+    if (bar) bar.style.display = on || school ? 'none' : '';
+    if (card) card.style.display = acc ? '' : 'none';
     if (on) { if (!LL.terms) llLoad(); else renderLL(); }
+    if (acc) { if (!ACC.accounts) accLoad(); else renderAcc(); }
   }
 
   function renderLL(){
@@ -575,6 +601,174 @@
     } catch (_) {}
   }
 
+  // ───────────── AP → Internet / Utilities accounts · School properties ─────────────
+  const ACC = { accounts: null, schools: null, loading: null, q: '', status: 'active' };
+  const ACC_SHEET = 'https://docs.google.com/spreadsheets/d/1ItaP3NbmBBT0JkCb_x5xuAXsFB6U4Ucp4B464Zv54q0/edit';
+  const schoolNames = () => Object.fromEntries((ACC.schools || []).map(x => [x.id, x.name]));
+
+  async function accLoad(force){
+    if (ACC.loading) return ACC.loading;
+    if (ACC.accounts && ACC.schools && !force) { renderAcc(); return; }
+    ACC.loading = (async () => {
+      try {
+        const [a, s] = await Promise.all([
+          sb().from('ap_service_accounts').select('*').order('provider').limit(5000),
+          sb().from('ap_school_properties').select('*').order('name'),
+        ]);
+        if (a.error) throw a.error; if (s.error) throw s.error;
+        ACC.accounts = a.data || []; ACC.schools = s.data || [];
+        render();
+      } catch (err) {
+        console.error('[ap] accounts load failed', err);
+        const msg = String(err && err.message || err);
+        const note = document.getElementById('ap-acc-note');
+        if (note) note.textContent = /ap_service_accounts|ap_school_properties/.test(msg) && /exist|schema cache/i.test(msg) ? 'Accounts are not set up in the database yet (run ap-accounts-2026-10-21.sql).' : 'Could not load accounts: ' + msg;
+      } finally { ACC.loading = null; }
+    })();
+    return ACC.loading;
+  }
+
+  function renderAcc(){
+    const title = document.getElementById('ap-acc-title'), tools = document.getElementById('ap-acc-tools'), note = document.getElementById('ap-acc-note'),
+      head = document.getElementById('ap-acc-head'), body = document.getElementById('ap-acc-body'), empty = document.getElementById('ap-acc-empty');
+    if (!body || !ACC.accounts) return;
+    const act = canAct(me()), names = schoolNames(), sheet = `<a href="${e(ACC_SHEET)}" target="_blank" rel="noopener">Utilities TORONTO sheet</a>`;
+    const search = (ph) => `<input class="form-input" id="ap-acc-q" placeholder="${e(ph)}" value="${e(ACC.q)}" style="max-width:220px">`;
+    let n = 0;
+    if (S.tab === 'school') {
+      title.innerHTML = '<b>School properties</b>';
+      tools.innerHTML = search('Name, address or unit') + (act ? `<button class="btn btn-primary" type="button" data-acc-do="add-school">Add school property</button>` : '');
+      const q = ACC.q.trim().toLowerCase();
+      const list = schoolSummary(ACC.schools, ACC.accounts).filter(r => !q || [r.s.name, r.s.address, r.s.city, ...r.units].some(v => String(v || '').toLowerCase().includes(q)));
+      note.innerHTML = `Buildings we pay internet or utilities for that are not portal properties. Their accounts show here and in the Internet / Utilities tabs. Logins and passwords: ${sheet}.`;
+      head.innerHTML = '<tr><th>School property</th><th>Address</th><th>Units</th><th>Internet</th><th>Utilities</th><th style="text-align:right">Monthly (active)</th></tr>';
+      body.innerHTML = list.map(r => `<tr class="clickable" data-acc-school="${e(r.s.id)}" tabindex="0" style="cursor:pointer${r.s.active === false ? ';opacity:.6' : ''}">
+          <td><b>${e(r.s.name)}</b>${r.s.active === false ? ' <span class="tag-pill" style="font-size:11px">Inactive</span>' : ''}<div class="name-sub">${e(r.s.city || '')}</div></td>
+          <td>${e(r.s.address || '—')}</td><td>${e(r.units.join(', ') || '—')}</td><td>${e(r.internet)}</td><td>${e(r.utility)}</td>
+          <td style="text-align:right">${r.monthlyCents ? `<b>${e(money(r.monthlyCents))}</b>` : '—'}</td></tr>`).join('');
+      n = list.length;
+    } else {
+      const type = S.tab;
+      title.innerHTML = `<b>${type === 'internet' ? 'Internet' : 'Utility'} accounts</b>`;
+      tools.innerHTML = search('Unit, building, account #, provider')
+        + `<select class="form-input" id="ap-acc-status" style="max-width:140px" aria-label="Account status"><option value="active" ${ACC.status === 'active' ? 'selected' : ''}>Active</option><option value="canceled" ${ACC.status === 'canceled' ? 'selected' : ''}>Canceled</option><option value="" ${!ACC.status ? 'selected' : ''}>All</option></select>`
+        + (act ? `<button class="btn btn-primary" type="button" data-acc-do="add" data-type="${type}">Add account</button>` : '');
+      const list = accountsFor(ACC.accounts, { type, status: ACC.status, q: ACC.q }, names);
+      const monthly = list.filter(a => a.status === 'active').reduce((t, a) => t + Number(a.monthly_cents || 0), 0);
+      note.innerHTML = `${list.length} account(s)${monthly ? ` · ${e(money(monthly))} a month (active, where the sheet has an amount)` : ''} · Logins and passwords: ${sheet}.`;
+      head.innerHTML = '<tr><th>Provider</th><th>Where</th><th>Unit</th><th>Account #</th><th style="text-align:right">Monthly</th><th>Paid by</th><th>Status</th></tr>';
+      body.innerHTML = list.map(a => {
+        const school = a.school_property_id && names[a.school_property_id];
+        return `<tr class="clickable" data-acc-open="${e(a.id)}" tabindex="0" style="cursor:pointer">
+          <td><b>${e(a.provider)}</b><div class="name-sub">${e(a.service || '')}</div></td>
+          <td>${e(accountPlace(a, names) || '—')}${school && !a.property ? ' <span class="tag-pill" style="font-size:10px">School</span>' : ''}<div class="name-sub">${e(a.address || '')}</div></td>
+          <td>${e(a.unit || '—')}</td><td>${e(a.account_no || '—')}</td>
+          <td style="text-align:right">${a.monthly_cents != null ? e(money(a.monthly_cents)) : '—'}</td><td>${e(a.payment_method || '—')}</td>
+          <td>${chip(ACC_STATUS[a.status] || [a.status, ''])}</td></tr>`;
+      }).join('');
+      n = list.length;
+    }
+    empty.style.display = n ? 'none' : '';
+  }
+
+  function schoolOptions(current){
+    return `<option value="">— none —</option>` + (ACC.schools || []).map(x => `<option value="${e(x.id)}" ${x.id === current ? 'selected' : ''}>${e(x.name)}</option>`).join('');
+  }
+
+  // One account: edit form (or a new one with defaults), opened from a row or a school property.
+  function openAccount(id, defaults){
+    const a = id ? (ACC.accounts || []).find(x => x.id === id) : Object.assign({ type: 'internet', status: 'active', city: 'Toronto' }, defaults || {});
+    if (!a) return;
+    const act = canAct(me()), dis = act ? '' : 'disabled', names = schoolNames();
+    const inp = (name, label, v, extra) => `<label class="name-sub">${e(label)} <input class="form-input" name="${name}" value="${e(v == null ? '' : v)}" ${dis} ${extra || ''}></label>`;
+    openPanel(a.provider || '+', id ? `${a.provider}${a.unit ? ' · ' + a.unit : ''}` : 'New account', id ? `${a.service || TYPES[a.type]} · ${accountPlace(a, names) || 'no property'}` : 'Internet or utility account',
+      id ? chip(ACC_STATUS[a.status] || [a.status, '']) : '');
+    document.getElementById('panel-body').innerHTML = `<form data-acc-form="account" data-acc-id="${e(id || '')}" style="display:grid;gap:8px;max-width:440px">
+      <div style="display:flex;gap:8px"><label class="name-sub" style="flex:1">Type <select class="form-input" name="type" ${dis}>${['internet', 'utility'].map(t => `<option value="${t}" ${a.type === t ? 'selected' : ''}>${e(TYPES[t])}</option>`).join('')}</select></label>
+        <label class="name-sub" style="flex:1">Status <select class="form-input" name="status" ${dis}>${Object.entries(ACC_STATUS).map(([k, [l]]) => `<option value="${k}" ${a.status === k ? 'selected' : ''}>${e(l)}</option>`).join('')}</select></label></div>
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('provider', 'Provider', a.provider, 'required placeholder="Rogers"')}</div><div style="flex:1">${inp('service', 'Service', a.service, 'placeholder="Internet, Electricity…"')}</div></div>
+      <div style="display:flex;gap:8px"><div style="flex:2">${inp('account_no', 'Account #', a.account_no)}</div><div style="flex:1">${inp('unit', 'Unit', a.unit)}</div></div>
+      <label class="name-sub">Portal property <select class="form-input" name="property" ${dis}>${propertyOptions(a.property)}</select></label>
+      <label class="name-sub">School property (not in the portal) <select class="form-input" name="school_property_id" ${dis}>${schoolOptions(a.school_property_id)}</select></label>
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('building', 'Building', a.building)}</div><div style="flex:1">${inp('city', 'City', a.city)}</div></div>
+      ${inp('address', 'Service address', a.address)}
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('monthly', 'Monthly charge', a.monthly_cents != null ? (Number(a.monthly_cents) / 100).toFixed(2) : '', 'inputmode="decimal"')}</div><div style="flex:1">${inp('payment_method', 'Paid by', a.payment_method, 'placeholder="PAD - 0670"')}</div></div>
+      ${inp('login', 'Login (email / user name)', a.login)}
+      <div class="name-sub">Passwords stay in the <a href="${e(ACC_SHEET)}" target="_blank" rel="noopener">Utilities TORONTO sheet</a>, not in the portal.</div>
+      <label class="name-sub">Notes <textarea class="form-input" name="notes" rows="3" ${dis}>${e(a.notes || '')}</textarea></label>
+      ${act ? `<div><button class="btn btn-primary" type="submit">${id ? 'Save' : 'Add account'}</button></div>` : ''}
+      ${id ? `<div class="name-sub">${a.updated_by ? `Last change ${e(when(a.updated_at))} · ${e(a.updated_by)}` : ''}</div>` : ''}
+    </form>`;
+  }
+
+  function openSchool(id){
+    const s = id ? (ACC.schools || []).find(x => x.id === id) : { city: 'Toronto', active: true };
+    if (!s) return;
+    const act = canAct(me()), dis = act ? '' : 'disabled';
+    const mine = id ? accountsFor(ACC.accounts || [], { school: id }, schoolNames()) : [];
+    const active = mine.filter(a => a.status === 'active');
+    openPanel(s.name || '+', id ? s.name : 'New school property', id ? `${active.length} active account(s) · ${money(active.reduce((t, a) => t + Number(a.monthly_cents || 0), 0))} a month` : 'A building we pay for that is not in the portal', '');
+    document.getElementById('panel-body').innerHTML = `<form data-acc-form="school" data-acc-id="${e(id || '')}" style="display:grid;gap:8px;max-width:440px">
+      <label class="name-sub">Name <input class="form-input" name="name" value="${e(s.name || '')}" required placeholder="Markham · 38 Simcoe Promenade" ${dis}></label>
+      <label class="name-sub">Address <input class="form-input" name="address" value="${e(s.address || '')}" ${dis}></label>
+      <label class="name-sub">City <input class="form-input" name="city" value="${e(s.city || '')}" ${dis}></label>
+      <label class="name-sub">Notes <textarea class="form-input" name="notes" rows="2" ${dis}>${e(s.notes || '')}</textarea></label>
+      <label class="name-sub"><input type="checkbox" name="active" ${s.active !== false ? 'checked' : ''} ${dis}> Active</label>
+      ${act ? `<div><button class="btn btn-primary" type="submit">${id ? 'Save' : 'Add school property'}</button></div>` : ''}
+    </form>
+    ${id ? H(`Accounts (${mine.length})`) + `<div style="display:grid;gap:4px">${mine.map(a => `<div style="display:flex;gap:10px;align-items:center;cursor:pointer" data-acc-open="${e(a.id)}">
+        <span style="min-width:70px"><b>${e(a.unit || '—')}</b></span><span style="min-width:110px">${e(a.provider)} <span class="name-sub">${e(a.service || '')}</span></span>
+        <span class="name-sub" style="min-width:90px">${e(a.account_no || '')}</span><span style="min-width:70px;text-align:right">${a.monthly_cents != null ? e(money(a.monthly_cents)) : ''}</span>${chip(ACC_STATUS[a.status] || [a.status, ''])}</div>`).join('') || '<div class="name-sub">No accounts yet.</div>'}</div>
+      ${act ? `<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" type="button" data-acc-do="add-here" data-type="internet" data-school="${e(id)}">Add internet account</button><button class="btn btn-ghost" type="button" data-acc-do="add-here" data-type="utility" data-school="${e(id)}">Add utility account</button></div>` : ''}` : ''}`;
+  }
+
+  async function accSubmit(f){
+    const fd = new FormData(f), id = f.dataset.accId || '', str = (k) => String(fd.get(k) || '').trim();
+    try {
+      if (f.dataset.accForm === 'school') {
+        const r = await sb().rpc('ap_school_property_save', { p: { id, name: str('name'), address: str('address'), city: str('city'), notes: str('notes'), active: !!fd.get('active') } });
+        if (r.error) throw r.error;
+        toast(id ? 'School property saved.' : 'School property added.');
+        await accLoad(true); openSchool(r.data.id);
+      } else {
+        const monthly = str('monthly') ? parseAmount(str('monthly')) : null;
+        if (str('monthly') && monthly == null) return toast('Type the monthly charge like 137.86');
+        const r = await sb().rpc('ap_account_save', { p: { id, type: str('type'), status: str('status'), provider: str('provider'), service: str('service'), account_no: str('account_no'), unit: str('unit'),
+          property: str('property'), school_property_id: str('school_property_id'), building: str('building'), city: str('city'), address: str('address'),
+          monthly_cents: monthly, payment_method: str('payment_method'), login: str('login'), notes: String(fd.get('notes') || '') } });
+        if (r.error) throw r.error;
+        toast(id ? 'Account saved.' : 'Account added.');
+        await accLoad(true); openAccount(r.data.id);
+      }
+    } catch (err) { toast('Could not save: ' + (err && err.message || err)); }
+  }
+
+  function wireAcc(){
+    const card = document.getElementById('ap-acc');
+    if (!card) return;
+    const add = (b) => b.dataset.accDo === 'add-school' ? openSchool(null) : openAccount(null, { type: b.dataset.type || 'internet', school_property_id: b.dataset.school || null });
+    card.addEventListener('click', ev => {
+      const b = ev.target.closest('[data-acc-do]'); if (b) { add(b); return; }
+      const a = ev.target.closest('[data-acc-open]'); if (a) { openAccount(a.dataset.accOpen); return; }
+      const s = ev.target.closest('[data-acc-school]'); if (s) openSchool(s.dataset.accSchool);
+    });
+    card.addEventListener('keydown', ev => { if (ev.key !== 'Enter') return; const r = ev.target.closest('[data-acc-open],[data-acc-school]'); if (r) r.click(); });
+    let t = null;
+    card.addEventListener('input', ev => { if (ev.target.id === 'ap-acc-q') { ACC.q = ev.target.value; clearTimeout(t); t = setTimeout(() => { renderAcc(); const q = document.getElementById('ap-acc-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250); } });
+    card.addEventListener('change', ev => { if (ev.target.id === 'ap-acc-status') { ACC.status = ev.target.value; renderAcc(); } });
+    const pb = document.getElementById('panel-body');
+    if (pb) {
+      pb.addEventListener('click', ev => {
+        const b = ev.target.closest('[data-acc-do]'); if (b) { add(b); return; }
+        const a = ev.target.closest('[data-acc-open]'); if (a && !ev.target.closest('form')) openAccount(a.dataset.accOpen);
+      });
+      pb.addEventListener('submit', ev => { const f = ev.target.closest('[data-acc-form]'); if (!f) return; ev.preventDefault(); accSubmit(f); });
+    }
+    try {
+      if (sb() && sb().channel) sb().channel('ap_accounts_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ap_service_accounts' }, () => { if (ACC.accounts) { clearTimeout(wireAcc._t); wireAcc._t = setTimeout(() => accLoad(true), 800); } }).subscribe();
+    } catch (_) {}
+  }
+
   function fromHash(){
     const m = (location.hash || '').match(/^#ap(?:=(ap-[0-9a-f]+))?$/);
     if (!m) return false;
@@ -628,6 +822,7 @@
       if (sb() && sb().channel) sb().channel('ap_items_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ap_items' }, () => { if (rows) { clearTimeout(wire._t); wire._t = setTimeout(() => load(true), 800); } }).subscribe();
     } catch (_) {}
     wireLL();
+    wireAcc();
     fromHash();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
