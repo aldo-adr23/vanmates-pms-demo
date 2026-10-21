@@ -442,19 +442,21 @@
     }
     const n = String(S.q || '').trim().toLowerCase();
     const custs = monthCustomers(meLines[rep.month]).filter(c => !n || [c.name, c.customerId, ...c.lines.map(l => l.doc_number)].some(v => String(v || '').toLowerCase().includes(n)));
-    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${custs.length} customers`;
+    // Most rows with nothing owed are payments QuickBooks has not applied to an invoice (credits): say so, apart from those who owe.
+    const owe = custs.filter(c => c.totalCents > 0).length, credit = custs.filter(c => c.totalCents < 0).length;
+    const cnt = document.getElementById('ar-count'); if (cnt) cnt.textContent = `${owe} owe${credit ? ` · ${credit} with a credit` : ''}`;
     const tot = document.getElementById('ar-total'); if (tot) tot.textContent = money(custs.reduce((s, c) => s + c.totalCents, 0));
     const b = rep.buckets || {};
     const checks = (rep.checks || []).map(c => `<div style="display:flex;gap:8px;align-items:baseline"><span class="tag-pill ${c.ok ? 'green' : 'red'}" style="font-size:11px">${c.ok ? 'OK' : 'Off by ' + e(money(c.diffCents))}</span>
         <span>${e(c.label)}${c.ok ? '' : ` <span class="name-sub">(${e(money(c.aCents))} vs ${e(money(c.bCents))}). ${e(c.note || '')}</span>`}</span></div>`).join('');
     const summary = `<tr><td colspan="${COLS}" style="background:var(--panel,#faf8f5)">
       <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
-        <div><div class="name-sub">Outstanding AR at ${e(rep.as_of)}</div><div style="font-size:22px;font-weight:600">${e(money(rep.total_cents))}</div><div class="name-sub">${e(rep.customer_count)} customers · ${e(rep.invoice_count)} invoices</div></div>
+        <div><div class="name-sub">Outstanding AR at ${e(rep.as_of)}</div><div style="font-size:22px;font-weight:600">${e(money(rep.total_cents))}</div><div class="name-sub">${e(rep.customer_count)} customers owe · ${e(rep.invoice_count)} invoices</div></div>
         <div><div class="name-sub">Balance Sheet A/R</div><div style="font-size:16px;font-weight:600">${rep.ar_account_cents == null ? '—' : e(money(rep.ar_account_cents))}</div></div>
         ${ME_BUCKETS.map(([k, l]) => `<div><div class="name-sub">${e(l)}</div><div style="font-weight:600">${e(money(b[k] || 0))}</div></div>`).join('')}
       </div>
       <div style="display:grid;gap:4px">${checks}</div>
-      <div class="name-sub" style="margin-top:8px">From QuickBooks (A/R Aging Detail and Balance Sheet as of ${e(rep.as_of)}), made by Lu ${e(when(rep.generated_at))}. Late entries dated in the month change it: Lu refreshes it every morning until the 15th. Credits and unapplied payments count as negatives.</div>
+      <div class="name-sub" style="margin-top:8px">From QuickBooks (A/R Aging Detail and Balance Sheet as of ${e(rep.as_of)}), made by Lu on ${e(when(rep.generated_at)).replace(/\.$/, '')}. Late entries dated in the month change it: Lu refreshes it every morning until the 15th. Credits and payments not applied to an invoice count as negatives (customers with only a credit are listed last).</div>
     </td></tr>`;
     if (body) body.innerHTML = summary + custs.slice(0, 2000).map(c => `<tr class="clickable" data-ar-me="${e(c.customerId || c.name)}" tabindex="0" style="cursor:pointer">
         <td><b>${e(c.name || 'Customer ' + c.customerId)}</b><div class="name-sub">${e(c.lines.length)} line(s)${c.customerId ? ' · #' + e(c.customerId) : ''}</div></td>
