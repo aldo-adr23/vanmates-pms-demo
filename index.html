@@ -217,7 +217,7 @@
   #hm-case .list-row{flex-wrap:wrap}
   /* Case list Delete: quiet text link, shown on row hover (always on touch screens) */
   .hm-del{border:0;background:none;padding:0;font:inherit;font-size:11.5px;color:var(--muted);cursor:pointer;opacity:0;transition:opacity .15s}
-  .list-row:hover .hm-del,.hm-del:focus-visible{opacity:1}
+  .list-row:hover .hm-del,.hm-gap-row:hover .hm-del,.hm-del:focus-visible{opacity:1}
   .hm-del:hover{color:var(--red-dark);text-decoration:underline}
   .hm-del:disabled{cursor:default;text-decoration:none}
   @media (hover:none){.hm-del{opacity:1}}
@@ -1858,7 +1858,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-22-hmdel2"></script>
+<script src="pms-supabase.js?v=2026-10-22-hmdel3"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -37819,6 +37819,32 @@ async function hmDeleteCase(id, btn){
   await loadHomestayMatching();
 }
 
+// "without a case" Delete: an agency request nobody will work (test, duplicate). Cancels the
+// partner_homestay_requests row through an admin-only RPC (hm-request-dismiss-2026-10-22.sql).
+async function hmDeleteRequest(ref, btn){
+  const r = (HM.agencyRequests || []).find(x => x.ref === ref);
+  if (!r) return;
+  const who = [HM.agencyNames.get(r.agency_id) || "agency", r.student_name].filter(Boolean).join(" · ");
+  const go = await hmNotice({ title: `Delete ${ref} · ${who}?`,
+    lines: ["The agency request is cancelled and no case is started for it. The agency sees it as cancelled."],
+    input: { label: "Reason (optional)", placeholder: "e.g. test request, duplicate" },
+    buttons: [{ label: "Keep", value: null }, { label: "Delete", primary: true, value: "delete" }] });
+  if (!go || go.value !== "delete") return;
+  if (btn) { btn.disabled = true; btn.textContent = "Deleting…"; }
+  const why = { FORBIDDEN: "only portal admins can delete agency requests.", NOT_FOUND: "the request was not found.",
+    NOT_REQUESTED: "it is no longer waiting (it was matched or cancelled already).", HAS_CASE: "it already has a case: delete that case from the list instead." };
+  try {
+    const { data, error } = await window.vmDb.sb.rpc("partner_dismiss_homestay_request", { p_ref: ref, p_reason: (go.text || "").trim() || null });
+    if (error) throw new Error(/function|schema cache/i.test(error.message || "") ? "the database update for this button is not installed yet (tell Aldo)." : error.message);
+    if (!data || !data.ok) throw new Error(why[data && data.code] || (data && data.code) || "refused");
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Delete"; }
+    await hmNotice({ title: `Could not delete ${ref}`, lines: [e.message || String(e)] });
+    return;
+  }
+  await loadHomestayMatching();
+}
+
 async function loadHomestayMatching(){
   const sb = window.vmDb && window.vmDb.sb;
   if (!sb || HM.loading) return;
@@ -37927,10 +37953,10 @@ function hmRenderAgencyGaps(gaps){
   box.innerHTML = `<div style="border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:10px">
     <div style="font-weight:600">${gaps.length === 1 ? "1 agency request has" : gaps.length + " agency requests have"} no case yet</div>
     <div class="card-sub">No case means nobody is looking for a host for them. Start a case to work them like any other. If one will not start, tell Aldo.</div>
-    ${gaps.map(r => `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap">
+    ${gaps.map(r => `<div class="hm-gap-row" style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap">
       <div><code>${hmEsc(r.ref)}</code> · ${hmEsc(HM.agencyNames.get(r.agency_id) || "agency")}${r.student_name ? " · " + hmEsc(r.student_name) : ""}
         <span class="card-sub">· sent ${hmElapsed(r.created_at, Date.now())} ago</span></div>
-      <button class="btn btn-ghost btn-mini" type="button" data-hm-pull="${hmEsc(r.ref)}">Start case</button>
+      <span style="display:flex;gap:10px;align-items:center"><button class="btn btn-ghost btn-mini" type="button" data-hm-pull="${hmEsc(r.ref)}">Start case</button><button class="hm-del" type="button" data-hm-delete-req="${hmEsc(r.ref)}" title="Cancel this agency request">Delete</button></span>
     </div>`).join("")}
   </div>`;
 }
@@ -38581,12 +38607,13 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hm-delete],[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
+  const t = ev.target.closest("[data-hm-delete],[data-hm-delete-req],[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
   try {
     if (t.dataset.hmDelete) return await hmDeleteCase(t.dataset.hmDelete, t);
+    if (t.dataset.hmDeleteReq) return await hmDeleteRequest(t.dataset.hmDeleteReq, t);
     if (t.dataset.hmCase) return hmOpenCase(t.dataset.hmCase);
     if (t.hasAttribute("data-hmo-refresh")) return hmLoadOffers();
     if (t.dataset.hmoCase) {
@@ -44833,11 +44860,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-22-hmdel2"></script>
-<script src="extensions.js?v=2026-10-22-hmdel2"></script>
-<script src="retention.js?v=2026-10-22-hmdel2"></script>
-<script src="ap.js?v=2026-10-22-hmdel2"></script>
-<script src="properties.js?v=2026-10-22-hmdel2"></script>
-<script src="ar.js?v=2026-10-22-hmdel2"></script>
+<script src="room-changes.js?v=2026-10-22-hmdel3"></script>
+<script src="extensions.js?v=2026-10-22-hmdel3"></script>
+<script src="retention.js?v=2026-10-22-hmdel3"></script>
+<script src="ap.js?v=2026-10-22-hmdel3"></script>
+<script src="properties.js?v=2026-10-22-hmdel3"></script>
+<script src="ar.js?v=2026-10-22-hmdel3"></script>
 </body>
 </html>
