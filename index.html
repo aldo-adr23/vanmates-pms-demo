@@ -1852,7 +1852,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-21-apacct1"></script>
+<script src="pms-supabase.js?v=2026-10-21-retention1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1946,6 +1946,11 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
     <button class="nav-item" data-view="extensions">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M10 16h6M13 13l3 3-3 3"/></svg>
       Extensions
+      <span class="nav-count">—</span>
+    </button>
+    <button class="nav-item" data-view="retention">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+      Customer retention
       <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="checkouts">
@@ -3403,6 +3408,42 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
         </div>
         <div id="ex-empty" class="name-sub" style="display:none;padding:28px;text-align:center">No extension requests match.</div>
       </div>
+    </section>
+    <section class="view" data-view="retention">
+      <div class="kpi-grid" id="ret-kpis" style="margin-bottom:16px"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div class="tabs" id="ret-tabs" role="tablist" style="flex-wrap:wrap"></div>
+        <button class="btn btn-primary" id="ret-new" type="button">New case</button>
+      </div>
+      <div class="filter-bar" id="ret-filter-bar">
+        <div class="filter-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="ret-search" placeholder="Search by tenant, email, house, room or case / checkout / extension ID…" autocomplete="off" />
+        </div>
+        <select id="ret-f-country" class="form-input" style="max-width:170px" aria-label="Country"></select>
+        <select id="ret-f-city" class="form-input" style="max-width:160px" aria-label="City"></select>
+        <select id="ret-f-trigger" class="form-input" style="max-width:160px" aria-label="Trigger"></select>
+        <select id="ret-f-stage" class="form-input" style="max-width:180px" aria-label="Stage"></select>
+        <select id="ret-f-owner" class="form-input" style="max-width:170px" aria-label="Owner"></select>
+        <select id="ret-f-reason" class="form-input" style="max-width:170px" aria-label="Reason"></select>
+        <label class="name-sub" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="ret-f-test"/> Test cases</label>
+        <button class="btn btn-ghost" id="ret-refresh" type="button">Refresh</button>
+        <button class="btn btn-ghost" id="ret-export" type="button" hidden>Export CSV</button>
+      </div>
+      <div class="card" id="ret-list-card">
+        <div class="card-head" style="justify-content:space-between;padding:14px 18px">
+          <div class="card-title"><b id="ret-count">0</b> cases</div>
+          <div class="name-sub">Opened by checkout forms and leases ending within 60 days · Retained is set when the extension or room change completes</div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Tenant</th><th>Property · room</th><th>Rent</th><th>Lease end</th><th>Move-out</th><th>Trigger · reason</th><th>Stage</th><th>Owner</th><th>Priority</th><th>Next action</th></tr></thead>
+          <tbody id="ret-body"></tbody>
+        </table>
+        </div>
+        <div id="ret-empty" class="name-sub" style="display:none;padding:28px;text-align:center">No cases match.</div>
+      </div>
+      <div id="ret-report" hidden><div id="ret-report-body"></div></div>
     </section>
     <section class="view ct-view" data-view="contracts">
       <div class="ct-top">
@@ -8990,7 +9031,7 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","team","settings"]},
+                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","retention","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -9289,6 +9330,7 @@ const ALL_PAGES = [
   ["room-changes",     "Room changes"],
   ["extensions",       "Extensions"],
   ["extensions-homestay","Extensions: homestay only"],
+  ["retention",        "Customer retention"],
   ["contracts",        "Contracts"],
   ["financials",       "Financials"],
   ["ap",               "Accounts payable"],
@@ -10022,7 +10064,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "homestay-hosts":"Homestay hosts","homestay-finance":"Homestay finance","homestay-whatsapp":"Homestay WhatsApp","host-recruitment":"Host recruitment",
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
-    "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","ar":"Accounts receivable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","contracts":"Contracts",
+    "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","ar":"Accounts receivable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","retention":"Customer retention","contracts":"Contracts",
     "team":"Team","settings":"Settings"
   };
   const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
@@ -11783,6 +11825,7 @@ const titles = {
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
+  retention: ["Customer <em>retention</em>", "Tenants who sent a checkout form or whose lease ends soon: contact, offer an extension or room change, track the outcome"],
   extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: co-living accept sends the extension contract; homestay accept emails a payment link"],
   ar: ["Accounts <em>receivable</em>", "What customers owe, straight from QuickBooks: aging, overdue and unapplied credits (read-only)"],
   ap: ["Accounts <em>payable</em>", "Cleaners, utilities, internet, landlords and employee expenses: review, approve, pay"],
@@ -11842,6 +11885,7 @@ function goToView(v, savedView){
   if(v === "checkouts" && typeof loadCheckouts === "function") loadCheckouts();
   if(v === "room-changes" && typeof loadRoomChanges === "function") loadRoomChanges();
   if(v === "extensions" && typeof loadExtensions === "function") loadExtensions();
+  if(v === "retention" && typeof loadRetention === "function") loadRetention();
   if(v === "ap" && typeof loadAp === "function") loadAp();
   if(v === "ar" && typeof loadAr === "function") loadAr();
   if(v === "contracts" && typeof renderContracts === "function") renderContracts();
@@ -34954,7 +34998,7 @@ renderLeads();
    export works on one country without knowing countries exist. Vacancies are rebuilt per
    country (loadVacancies). The real gate is the database (restrictive RLS on country): a
    Mexico-only teammate never receives a Canadian row. This module is the view + the switcher. */
-const VMC_MX_PAGES = ['dashboard', 'leads', 'tenants', 'properties', 'vacancies', 'assistants', 'contracts', 'checkouts'];
+const VMC_MX_PAGES = ['dashboard', 'leads', 'tenants', 'properties', 'vacancies', 'assistants', 'contracts', 'checkouts', 'retention'];
 const VMC_INFO = {
   CA: { code: 'CA', flag: '🇨🇦', name: 'Canada', label: 'Vanmates Canada', ccy: 'CAD', sym: '$', cities: 'Vancouver, Toronto, Montréal', tz: 'America/Vancouver' },
   MX: { code: 'MX', flag: '🇲🇽', name: 'Mexico', label: 'Vanmates Mexico', ccy: 'MXN', sym: 'MX$', cities: 'Guadalajara', tz: 'America/Mexico_City' }
@@ -44748,10 +44792,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-21-apacct1"></script>
-<script src="extensions.js?v=2026-10-21-apacct1"></script>
-<script src="ap.js?v=2026-10-21-apacct1"></script>
-<script src="properties.js?v=2026-10-21-apacct1"></script>
-<script src="ar.js?v=2026-10-21-apacct1"></script>
+<script src="room-changes.js?v=2026-10-21-retention1"></script>
+<script src="extensions.js?v=2026-10-21-retention1"></script>
+<script src="retention.js?v=2026-10-21-retention1"></script>
+<script src="ap.js?v=2026-10-21-retention1"></script>
+<script src="properties.js?v=2026-10-21-retention1"></script>
+<script src="ar.js?v=2026-10-21-retention1"></script>
 </body>
 </html>
