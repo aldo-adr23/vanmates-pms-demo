@@ -435,7 +435,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         <button type="button" id="wkNext" aria-label="Next weekend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></button>
       </div>
       <select class="sel" id="cityF" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Vancouver</option><option>Montréal</option></select>
-      <select class="sel" id="srcF" aria-label="Source" hidden><option value="">All sources</option><option value="roster">Roster</option><option value="contract">Contract</option></select>
+      <select class="sel" id="srcF" aria-label="Source" hidden><option value="">All sources</option><option value="roster">Roster</option><option value="contract">Contract</option><option value="partner">Partner booking</option></select>
       <span class="sp"></span>
       <button type="button" class="btn btn-ghost" id="uploadRefresh" hidden>Refresh</button>
       <button type="button" class="btn btn-ghost" id="uploadRoster">Upload roster</button>
@@ -526,7 +526,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-22-retention4"></script>
+<script src="arrivals-core.js?v=2026-10-22-ptnarr1"></script>
 <script>
 (function () {
   'use strict';
@@ -881,7 +881,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
           g.arrivals.map(function (r) {
             // a div, not a <button>: it holds the row's own Send button (no nested buttons)
             return '<div role="button" tabindex="0" class="arow' + (r.id === S.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
-              '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + (isContract(r) ? contractTag() + ' ' + esc(r.booking_ref || '') : esc(r.school || '—')) + '</small></span>' +
+              '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + (isBooked(r) ? sourceTag(r) + ' ' + esc(r.booking_ref || '') : esc(r.school || '—')) + '</small></span>' +
               '<span class="c-room">' + esc(roomText(r)) + '</span>' +
               '<span class="c-date">' + esc(shortDate(r.arrival_date)) + (str(r.arrival_time) ? ' · ' + esc(r.arrival_time) : '') + '</span>' +
               '<span class="c-chip">' + chipHtml(r) + (openText(r) ? '<span class="c-open">' + esc(openText(r)) + '</span>' : '') + fuChipsHtml(r) +
@@ -912,9 +912,9 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       ['Arrives', A.longDate(r.arrival_date) + (str(r.arrival_time) ? ' · ' + str(r.arrival_time) : '')],
       ['Checks out', r.checkout_date ? A.longDate(r.checkout_date) : ''],
       ['Room', str(r.building) + ' · ' + roomText(r)],
-      ['Source', isContract(r) ? 'Signed co-living contract' : ''],
+      ['Source', isContract(r) ? 'Signed co-living contract' : isPartner(r) ? ['Partner-portal booking', str(r.school)].filter(str).join(' · ') : ''],
       ['Lease type', isContract(r) ? leaseText(r.lease_type) : ''],
-      ['Booking reference', isContract(r) ? str(r.booking_ref) : ''],
+      ['Booking reference', isBooked(r) ? str(r.booking_ref) : ''],
       ['Roster', str(r.roster_filename)],
       // per-email lines (Emails sent) replace the merged Sent / Opened / Error facts when arrival_sends_v has rows
       ['Sent', !perEmail && r.sent_at ? clock(r.sent_at) + (r.sent_by ? ' by ' + r.sent_by : '') : ''],
@@ -926,7 +926,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (canSend(r)) acts.push('<button type="button" class="btn btn-primary" data-act="send">' + (r.status === 'failed' ? 'Retry send' : 'Send this one') + '</button>');
     if (r.status === 'sent') acts.push('<button type="button" class="btn btn-ghost" data-act="resend">Resend</button>');
     if (r.status !== 'handled' && r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="handled">Mark handled</button>');
-    else if (!(r.status === 'cancelled' && r.cancelled_by === 'contract')) acts.push('<button type="button" class="btn btn-ghost" data-act="reopen">Reopen</button>');
+    else if (!(r.status === 'cancelled' && (r.cancelled_by === 'contract' || r.cancelled_by === 'partner'))) acts.push('<button type="button" class="btn btn-ghost" data-act="reopen">Reopen</button>');
     if (r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="cancel">Cancel arrival</button>');
 
     var warn = '';
@@ -966,7 +966,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
     var mail = emailFor(r);
     $('panel').innerHTML = '<div class="pin"><div class="ph"><div class="who"><div class="pname">' + esc(r.student_name || '(no name)') + '</div>' +
-      '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + chipHtml(r) + (isContract(r) ? ' ' + contractTag() : '') + '</div></div>' +
+      '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + chipHtml(r) + (isBooked(r) ? ' ' + sourceTag(r) : '') + '</div></div>' +
       '<button type="button" class="pclose" data-act="close" aria-label="Close">✕</button></div>' +
       '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
       sendsPanelHtml(sendList, Date.now()) + (S.sendsErr && r.sent_at ? '<p class="note">Could not load the emails sent: ' + esc(S.sendsErr) + '</p>' : '') +
@@ -1444,8 +1444,12 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   // counts as a roster arrival. The filter runs on the loaded week (no server column needed) and is hidden until
   // booking_messages_v (same SQL file) answers.
   function isContract(r) { return !!r && r.source === 'contract'; }
-  function srcMatch(r, src) { return !src || (src === 'contract' ? isContract(r) : !isContract(r)); }
+  // source 'partner' (partner-arrivals-2026-10-22.sql): a partners.vanmates.com booking, scheduled like a contract arrival
+  function isPartner(r) { return !!r && r.source === 'partner'; }
+  function isBooked(r) { return isContract(r) || isPartner(r); }
+  function srcMatch(r, src) { return !src || (src === 'contract' ? isContract(r) : src === 'partner' ? isPartner(r) : !isBooked(r)); }
   function contractTag() { return '<span class="tag ctr">Contract</span>'; }
+  function sourceTag(r) { return isPartner(r) ? '<span class="tag ctr">Partner</span>' : contractTag(); }
   function leaseText(v) { var s = str(v).toLowerCase(); return s === 'fixed' ? 'Fixed term' : s === 'open' ? 'Open-ended' : str(v); }
   // end source filter
 
@@ -1828,7 +1832,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var room = str(r.room_label) || (str(r.bed) ? 'Room ' + str(r.bed) : '');
     return [str(r.city), str(r.building) || '—', str(r.unit) ? 'Unit ' + str(r.unit) : '', room].filter(str).join(' · ');
   }
-  function scPayText(r) { return r.payment_status === 'paid' ? 'Paid (signed)' : r.payment_status === 'not_paid' ? 'Not signed' : 'Unknown'; }
+  function scPayText(r) { return r.payment_status === 'agency' ? 'Agency booking' : r.payment_status === 'paid' ? 'Paid (signed)' : r.payment_status === 'not_paid' ? 'Not signed' : 'Unknown'; }
   function scContractText(r) { var s = str(r.contract_status); return s === 'customer_signed' ? 'Signed' : s === 'completed' ? 'Countersigned' : s === 'void' ? 'Void' : s || '—'; }
   function scWhenText(r) {
     if (r.status === 'sent') return 'Sent ' + A.schedWhen(r.sent_at, r.city);
@@ -2013,7 +2017,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<div class="frow"><input class="inp" type="email" name="owner" value="' + esc(r.owner) + '" autocomplete="off" /><button class="btn btn-ghost" type="submit">Save</button></div>',
       'Gets the alert email when this can’t be sent.');
     $('scPanel').innerHTML = '<div class="pin"><div class="ph"><div class="who"><div class="pname">' + esc(r.student_name || '(no name)') + '</div>' +
-      '<div class="psub">' + esc(r.student_email || '—') + '</div><div style="margin-top:6px">' + scChipHtml(r) + ' ' + contractTag() + '</div></div>' +
+      '<div class="psub">' + esc(r.student_email || '—') + '</div><div style="margin-top:6px">' + scChipHtml(r) + ' ' + sourceTag(r) + '</div></div>' +
       '<button type="button" class="pclose" data-sc="close" aria-label="Close">✕</button></div>' +
       '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
       warn + '<div class="pact">' + acts.join('') + '</div>' + fx +
