@@ -427,7 +427,7 @@
         const r = await call('retention_offer_extension', { id, version: c.version, new_end: fd.get('new_end'), note: fd.get('note') || '' }, null, null);
         if (r) {
           toast(r.existing ? `${r.extension_id} was already open: linked. Opening it…` : `Drafted ${r.extension_id}. Review the rent and press Accept & send contract.`);
-          if (typeof window.openExtension === 'function') { if (typeof goToView === 'function') goToView('extensions'); setTimeout(() => window.openExtension(r.extension_id), 300); }
+          if (typeof window.openExtension === 'function') { if (typeof goToView === 'function') goToView('extensions'); openExtFresh(r.extension_id); }
           else open(id);
         }
       } else if (d.retMove) {
@@ -453,9 +453,14 @@
     else if (a.hasAttribute('data-ret-copy-swap')) { try { await navigator.clipboard.writeText(ROOM_SWAP_URL); toast('Copied ' + ROOM_SWAP_URL + ' — send it to the tenant; their request links here.'); } catch (_) { toast(ROOM_SWAP_URL); } }
     else if (a.dataset.retOptout) await call('retention_update', { id: c.id, version: c.version, opted_out: a.dataset.retOptout === 'on' }, a.dataset.retOptout === 'on' ? 'Marked opted out: follow-ups stopped' : 'Opt-out removed', c.id);
     else if (a.dataset.retTaskDone) await call('retention_task', { id: c.id, op: 'done', task_id: Number(a.dataset.retTaskDone) }, 'Task done', c.id);
-    else if (a.dataset.retExt && typeof window.openExtension === 'function') { if (typeof goToView === 'function') goToView('extensions'); setTimeout(() => window.openExtension(a.dataset.retExt), 300); }
+    else if (a.dataset.retExt && typeof window.openExtension === 'function') { if (typeof goToView === 'function') goToView('extensions'); openExtFresh(a.dataset.retExt); }
     else if (a.dataset.retRc && typeof window.openRoomChange === 'function') { if (typeof goToView === 'function') goToView('room-changes'); setTimeout(() => window.openRoomChange(a.dataset.retRc), 300); }
     else if (a.dataset.retTenant) { if (typeof goToView === 'function') goToView('tenants'); if (typeof openTenant === 'function') setTimeout(() => openTenant(a.dataset.retTenant), 300); }
+  }
+  // Extensions caches its list: reload it so a request drafted a moment ago is found.
+  async function openExtFresh(id){
+    try { if (typeof window.loadExtensions === 'function') await window.loadExtensions(true); } catch (_) {}
+    window.openExtension(id);
   }
   let currentId = null;
   const openTracked = async (id) => { currentId = id; return open(id); };
