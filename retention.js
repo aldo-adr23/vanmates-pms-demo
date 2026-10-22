@@ -122,7 +122,7 @@
     if (/roommate|housemate|flatmate/.test(s)) return 'roommates';
     if (/maintenance|repair|broken|pest|mould|mold/.test(s)) return /clean/.test(s) && !/maintenance/.test(s) ? 'cleanliness' : 'maintenance';
     if (/clean|dirty/.test(s)) return 'cleanliness';
-    if (/home country|going back|moving to|leaving (the )?(city|country|canada|mexico)|visa/.test(s)) return 'moving_city';
+    if (/home country|going back|moving to|another city|other city|travel|relocat|leaving (the )?(city|country|canada|mexico)|visa/.test(s)) return 'moving_city';
     if (/commute|far from|location|closer to/.test(s)) return 'location';
     return '';
   }
@@ -191,11 +191,13 @@
   function roomOptions(vacs, c, o){
     const x = o || {}, limit = x.limit || 6;
     const by = c.move_out_date || c.lease_end; const horizon = by ? ymd(Date.parse(String(by).slice(0, 10) + 'T12:00:00Z') + 21 * DAY) : null;
+    // Otherwise closest to what they pay now (in $100 steps, then soonest free).
+    const near = (v) => (c.rent == null || v.rent == null ? 99 : Math.round(Math.abs(v.rent - Number(c.rent)) / 100));
     const city = String(c.city || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     return (vacs || []).filter(v => v && v.listable !== false && v.from && String(v.city || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') === city
         && (!horizon || v.from <= horizon) && !(v.room && c.room && v.room === c.room && v.prop === c.house)
         && (x.reason !== 'price' || c.rent == null || (v.rent != null && v.rent < Number(c.rent))))
-      .sort((a, b) => (x.reason === 'price' ? (a.rent || 0) - (b.rent || 0) : 0) || a.from.localeCompare(b.from) || (a.rent || 0) - (b.rent || 0))
+      .sort((a, b) => (x.reason === 'price' ? (a.rent || 0) - (b.rent || 0) : near(a) - near(b)) || a.from.localeCompare(b.from) || (a.rent || 0) - (b.rent || 0))
       .slice(0, limit);
   }
   window.RET_CORE = { STAGES, CLOSED, STAGE_LABEL, isClosed, prio, inTab, movesFor, monthEnds, kpis, sortCases, csv, addBusinessDays, daysUntil,
@@ -400,7 +402,7 @@
       sb().from('retention_tasks').select('*').eq('case_id', id).order('due_at'),
       c.extension_id ? sb().from('extension_requests').select('id,status,new_end,current_end,contract_id,new_rent').eq('id', c.extension_id).maybeSingle() : Promise.resolve({}),
       c.room_change_id ? sb().from('room_change_requests').select('id,status,target_name,target_price,move_date,data').eq('id', c.room_change_id).maybeSingle() : Promise.resolve({}),
-      c.checkout_id ? sb().from('checkout_cases').select('id,status,outcome,move_out_date,notice_received_at').eq('id', c.checkout_id).maybeSingle() : Promise.resolve({}),
+      c.checkout_id ? sb().from('checkout_cases').select('id,status,outcome,move_out_date,notice_received_at,phone:data->>phone').eq('id', c.checkout_id).maybeSingle() : Promise.resolve({}),
     ]);
     if (tok !== openSeq || !document.querySelector(`#panel-body [data-ret-tok="${tok}"]`)) return false;
     const closed = isClosed(c.stage), mine = c.owner === me().email, optedOut = (c.flags || []).includes('opted_out');
@@ -413,7 +415,8 @@
     const tenantLink = c.tenant_id ? ` · <a href="#" data-ret-tenant="${e(c.tenant_id)}">Tenant profile</a>` : '';
     const tn = tenantOf(c), st = contactStats(acts.data), now = Date.now();
     const reason = c.primary_reason || suggestReason(c.reason_text), suggested = !c.primary_reason && reason;
-    const phone = tn && (tn.whatsapp || tn.phone), digits = phoneDigits(phone, c.country);
+    const phone = (tn && (tn.whatsapp || tn.phone)) || (cor && cor.phone) || '', digits = phoneDigits(phone, c.country);
+    const phoneSrc = tn && (tn.whatsapp || tn.phone) ? '' : phone ? ' <span class="name-sub">(from the checkout form)</span>' : '';
     const lang = c.country === 'MX' ? 'es' : 'en';
     const msg = script(c, { lang, reason, agent: String(nameOf(me().email) || '').split(/\s+/)[0] || undefined });
     const since = tn && tn.moveIn ? daysUntil(tn.moveIn, now) : null;
@@ -450,7 +453,7 @@
       ${outreach}
       ${playbook}
       ${h('Tenant & lease')}
-      ${kv('Contact', `${e(c.email)}${phone ? ' · ' + e(phone) : ''}${tenantLink}`)}
+      ${kv('Contact', `${e(c.email)}${phone ? ' · ' + e(phone) + phoneSrc : ''}${tenantLink}`)}
       ${since != null && since < 0 ? kv('Tenant since', `${e(day(tn.moveIn))} <span class="name-sub">(${Math.round(-since / 30.4)} months)</span>`) : ''}
       ${kv('Property · room', e([c.house, c.room].filter(Boolean).join(' · ') || '—') + `<div class="name-sub">${e(c.city || '')} · ${c.country === 'MX' ? 'Mexico' : 'Canada'}</div>`)}
       ${kv('Rent', e(money(c.rent, c.currency)) + ` <span class="name-sub">${e(c.currency)} / month (when the case opened)</span>`)}
@@ -547,10 +550,10 @@
     const rooms = roomOptions(vac(), c, { reason });
     const by = c.move_out_date || c.lease_end;
     box.innerHTML = rooms.length ? `<div class="name-sub" style="margin-bottom:4px">Rooms to offer in ${e(c.city || 'their city')}${reason === 'price' && c.rent ? ' under ' + e(money(c.rent, c.currency)) : ''}, free by ${e(day(by))} + 3 weeks:</div>
-      ${rooms.map(v => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:4px 0;border-bottom:1px solid var(--line,#eee)"><span>${e(v.prop)} · ${e(v.room)} <span class="name-sub">${e(v.typeLabel || '')}</span></span><span>${e(money(v.rent, c.currency))}${c.rent && v.rent != null ? ` <span class="name-sub">${v.rent < c.rent ? '−' : '+'}${e(money(Math.abs(v.rent - c.rent)))}</span>` : ''} <span class="name-sub">· ${v.emptyNow ? 'free now' : 'from ' + e(day(v.from))}</span></span></div>`).join('')}
+      ${rooms.map(v => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:4px 0;border-bottom:1px solid var(--line,#eee)"><span>${e(String(v.room).includes(v.prop) ? v.room : v.prop + ' · ' + v.room)} <span class="name-sub">${e(v.typeLabel || '')}</span></span><span>${e(money(v.rent, c.currency))}${c.rent && v.rent != null ? ` <span class="name-sub">${v.rent < c.rent ? '−' : '+'}${e(money(Math.abs(v.rent - c.rent)))}</span>` : ''} <span class="name-sub">· ${v.emptyNow ? 'free now' : 'from ' + e(day(v.from))}</span></span></div>`).join('')}
       <div style="margin-top:6px"><button class="btn btn-ghost" type="button" data-ret-copy-rooms style="font-size:12px;padding:4px 10px">Copy options for the tenant</button> <button class="btn btn-ghost" type="button" data-ret-copy-swap style="font-size:12px;padding:4px 10px">Copy room-swap link</button></div>`
       : `<span class="name-sub">No free rooms in ${e(c.city || 'their city')}${reason === 'price' ? ' cheaper than now' : ''} around ${e(day(by))}.</span>`;
-    box.dataset.rooms = JSON.stringify(rooms.map(v => `${v.prop} · ${v.room}: ${money(v.rent, c.currency)}/month, ${v.emptyNow ? 'available now' : 'from ' + day(v.from)}`));
+    box.dataset.rooms = JSON.stringify(rooms.map(v => `${String(v.room).includes(v.prop) ? v.room : v.prop + ' · ' + v.room}: ${money(v.rent, c.currency)}/month, ${v.emptyNow ? 'available now' : 'from ' + day(v.from)}`));
   }
 
   async function call(name, p, okMsg, id){
