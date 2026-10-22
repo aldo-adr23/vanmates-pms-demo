@@ -1189,7 +1189,7 @@ function schedActions(r) {
   a.hold = open && s !== "held" && s !== "sending";
   a.unhold = s === "held";
   a.cancel = open && s !== "sending";
-  a.restore = s === "cancelled" && r.cancelled_by !== "contract" && !(r.email_type === "checkin" && !r.cancelled_at);
+  a.restore = s === "cancelled" && r.cancelled_by !== "contract" && r.cancelled_by !== "partner" && !(r.email_type === "checkin" && !r.cancelled_at);
   a.edit = r.email_type !== "checkin" ? open : true;   // check-in content = the building template
   a.date = s !== "cancelled";
   return a;
