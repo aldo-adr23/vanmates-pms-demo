@@ -1852,7 +1852,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-22-ptnarr1"></script>
+<script src="pms-supabase.js?v=2026-10-22-hmdel1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21606,6 +21606,11 @@ const HM_STATUS = {
   CANCELLED: ["Cancelled", "grey"], MANUAL_REVIEW: ["Manual review", "red"],
 };
 const HM_CLOSED = ["CONFIRMED", "NO_MATCH", "DECLINED", "EXPIRED", "CANCELLED"];
+// "Delete" in the case list cancels the case (the Worker allows CANCELLED from every open status),
+// so only open cases get the button; a cancelled one stays findable under the Cancelled filter.
+function hmCanDelete(c){
+  return !!c && !!c.status && !HM_CLOSED.includes(c.status);
+}
 function hmQueue(cases, filter){
   const list = (cases || []).filter(c => filter === "open" ? !HM_CLOSED.includes(c.status)
     : filter === "all" ? true : c.status === filter);
@@ -37779,6 +37784,35 @@ function hmHostEmailLine(r, name){
   return "but the email to the host failed: tell them yourself.";
 }
 
+// Case list "Delete": confirm, then cancel the case through the Worker (closes its host invitations,
+// withdraws a sent offer) so it leaves the open list. Still listed under the Cancelled filter.
+async function hmDeleteCase(id, btn){
+  const c = HM.cases.find(x => x.id === id);
+  if (!hmCanDelete(c)) return;
+  const live = ["INVITING", "HOST_VERIFICATION", "OFFER_REVIEW", "OFFER_SENT", "ACCEPTED"].includes(c.status);
+  const go = await hmNotice({ title: `Delete ${c.id} · ${c.student_name || "No name"}?`,
+    lines: ["The case is cancelled and taken off the list. You can still find it under the Cancelled filter.",
+      live ? "Hosts invited for it are told it is closed, and any offer sent is withdrawn." : ""],
+    input: { label: "Reason (optional)", placeholder: "e.g. test case, duplicate, student found a place" },
+    buttons: [{ label: "Keep", value: null }, { label: "Delete", primary: true, value: "delete" }] });
+  if (!go || go.value !== "delete") return;
+  if (btn) { btn.disabled = true; btn.textContent = "Deleting…"; }
+  try {
+    await hmWorker(`/staff/cases/${c.id}/status`, { to: "CANCELLED", reason: (go.text || "").trim() || "Deleted from the case list" });
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Delete"; }
+    await hmNotice({ title: `Could not delete ${c.id}`, lines: [e.message || String(e)] });
+    if (e.body && e.body.error === "not_allowed") await loadHomestayMatching();
+    return;
+  }
+  if (HM.selected === id) {
+    HM.selected = null;
+    const box = document.getElementById("hm-case");
+    if (box) box.innerHTML = `<div class="card-sub">${hmEsc(id)} deleted (moved to Cancelled). Pick a case on the left</div>`;
+  }
+  await loadHomestayMatching();
+}
+
 async function loadHomestayMatching(){
   const sb = window.vmDb && window.vmDb.sb;
   if (!sb || HM.loading) return;
@@ -37911,7 +37945,7 @@ function hmRenderQueue(){
       <div class="list-main">
         <div class="list-title">${hmEsc(c.id)} · ${hmEsc(c.student_name || "No name")} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
         <div class="list-sub">${c.source === "partner" ? `<span class="badge badge-blue">${hmEsc(hmAgencyLabel(c, HM.agencyNames))}</span>` : "Direct"} · ${hmEsc(c.city || "?")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmElapsed(c.created_at, now)} ago</div>
-      </div>${hmChip(c.status)}
+      </div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${hmChip(c.status)}${hmCanDelete(c) ? `<button class="btn btn-ghost btn-mini" type="button" data-hm-delete="${hmEsc(c.id)}" title="Cancel this case and take it off the list">Delete</button>` : ""}</div>
     </div>`).join("") : `<div class="card-sub">No cases here.</div>`;
 }
 
@@ -38541,11 +38575,12 @@ async function hmSaveOverride(c, override){
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
+  const t = ev.target.closest("[data-hm-delete],[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
   try {
+    if (t.dataset.hmDelete) return await hmDeleteCase(t.dataset.hmDelete, t);
     if (t.dataset.hmCase) return hmOpenCase(t.dataset.hmCase);
     if (t.hasAttribute("data-hmo-refresh")) return hmLoadOffers();
     if (t.dataset.hmoCase) {
@@ -44792,11 +44827,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-22-ptnarr1"></script>
-<script src="extensions.js?v=2026-10-22-ptnarr1"></script>
-<script src="retention.js?v=2026-10-22-ptnarr1"></script>
-<script src="ap.js?v=2026-10-22-ptnarr1"></script>
-<script src="properties.js?v=2026-10-22-ptnarr1"></script>
-<script src="ar.js?v=2026-10-22-ptnarr1"></script>
+<script src="room-changes.js?v=2026-10-22-hmdel1"></script>
+<script src="extensions.js?v=2026-10-22-hmdel1"></script>
+<script src="retention.js?v=2026-10-22-hmdel1"></script>
+<script src="ap.js?v=2026-10-22-hmdel1"></script>
+<script src="properties.js?v=2026-10-22-hmdel1"></script>
+<script src="ar.js?v=2026-10-22-hmdel1"></script>
 </body>
 </html>
