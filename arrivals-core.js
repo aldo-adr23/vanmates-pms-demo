@@ -1196,6 +1196,24 @@ function schedActions(r) {
 }
 /* SCHED-CORE-END */
 
+// ---- "Same building as…" (arrival-building-alias-2026-10-23.sql): the Rooms buildings another name most likely means.
+// Words shared with the name, ignoring the generic ones every building has; best first, ties by name. Never the name itself.
+var BUILDING_FILLER = { house: 1, residence: 1, residences: 1, apartment: 1, apartments: 1, apt: 1, the: 1, building: 1, flex: 1, only: 1 };
+function buildingWords(s) {
+  return String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/)
+    .filter(function (w) { return w && !BUILDING_FILLER[w]; });
+}
+function sameBuildingSuggestions(name, buildings) {
+  var mine = buildingWords(name), set = {};
+  mine.forEach(function (w) { set[w] = 1; });
+  return (buildings || []).filter(function (b) { return b !== name; }).map(function (b) {
+    var w = buildingWords(b), shared = w.filter(function (x) { return set[x]; }).length;
+    return { building: b, score: shared ? shared / Math.max(w.length, mine.length) : 0 };
+  }).filter(function (x) { return x.score > 0; })
+    .sort(function (a, b) { return b.score - a.score || a.building.localeCompare(b.building); })
+    .map(function (x) { return x.building; });
+}
+
 
 var ArrCore = {
   buildArrivalEmail: buildArrivalEmail, arrivalEmailSpec: arrivalEmailSpec, renderEmail: renderEmail,
@@ -1217,7 +1235,8 @@ var ArrCore = {
   bookingTemplateWithOverrides: bookingTemplateWithOverrides,
   fill: fill, ACCESS_FIELDS: ACCESS_FIELDS,
   schedTypeLabel: schedTypeLabel, schedChip: schedChip, schedBucket: schedBucket, schedCounts: schedCounts, cityTz: cityTz,
-  zonedParts: zonedParts, zonedToUtc: zonedToUtc, schedWhen: schedWhen, schedActions: schedActions, SCHED_STATUS: SCHED_STATUS
+  zonedParts: zonedParts, zonedToUtc: zonedToUtc, schedWhen: schedWhen, schedActions: schedActions, SCHED_STATUS: SCHED_STATUS,
+  sameBuildingSuggestions: sameBuildingSuggestions
 };
 if (typeof window !== "undefined") window.ArrCore = ArrCore;
 if (typeof module !== "undefined" && module.exports) module.exports = ArrCore;
