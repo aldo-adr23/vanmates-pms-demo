@@ -1858,7 +1858,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-22-hmdel3"></script>
+<script src="pms-supabase.js?v=2026-10-23-hmowner1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -21639,6 +21639,32 @@ function hmAgencyLabel(c, agencyNames){
   const name = c.agency_id && agencyNames && agencyNames.get ? agencyNames.get(c.agency_id) : "";
   return ["Agency", name, c.partner_request_ref || c.source_ref].filter(Boolean).join(" · ");
 }
+// The sales agent who owns a case (2026-10-23). Same rule as the Worker's src/caseowner.ts, which emails them
+// when options go out: the owner set on the case, else (direct) whoever holds the student's Lead, else (agency)
+// a teammate who filed the request. `member` false = held by someone not on the team (Taylor, Maya): not emailed.
+function hmCaseOwner(c, leads, team){
+  if (!c) return null;
+  const low = s => String(s || "").trim().toLowerCase();
+  const byId = new Map((team || []).map(m => [m.id, m]));
+  const byEmail = new Map((team || []).filter(m => m.email).map(m => [low(m.email), m]));
+  const shape = (m, via) => ({ id: m.id, email: low(m.email), name: m.name || low(m.email).split("@")[0], via, member: true });
+  if (c.owner && byId.has(c.owner) && byId.get(c.owner).email) return shape(byId.get(c.owner), "case");
+  if (c.source !== "partner") {
+    for (const e of [...new Set([low(c.student_email), low(c.requester_email)])].filter(Boolean)) {
+      const held = (leads || []).filter(l => low(l.email) === e && !l.deleted_at && (low(l.assignee) || low(l.claimed_by)))
+        .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+      if (!held) continue;
+      const who = low(held.assignee) || low(held.claimed_by);
+      if (byEmail.has(who)) return shape(byEmail.get(who), "lead");
+      const local = who.split("@")[0];
+      return { id: null, email: who, name: local.charAt(0).toUpperCase() + local.slice(1), via: "lead", member: false };
+    }
+    return null;
+  }
+  const req = low(c.requester_email);
+  return byEmail.has(req) ? shape(byEmail.get(req), "requester") : null;
+}
+const HM_OWNER_VIA = { case: "set on this case", lead: "from the lead", requester: "filed the agency request" };
 // Open agency requests that have no case here: the hand-off from the partner app failed or
 // has not run yet. Requests younger than graceMin are left out — group requests are queued
 // and handed over a few minutes later, and are not missing yet.
@@ -35294,6 +35320,8 @@ window.vmCountry = (function(){
     catch (e) { console.warn('[vmDb] openPartnersFromHash failed:', e.message); }
     try { if (typeof window.openCelFromHash === 'function') window.openCelFromHash(); }
     catch (e) { console.warn('[vmDb] openCelFromHash failed:', e.message); }
+    try { if (typeof window.openHmCaseFromHash === 'function') window.openHmCaseFromHash(); }
+    catch (e) { console.warn('[vmDb] openHmCaseFromHash failed:', e.message); }
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
@@ -37966,6 +37994,29 @@ function hmChip(status){
   return `<span class="badge badge-${s[1]}">${hmEsc(s[0])}</span>`;
 }
 
+function hmOwnerOf(c){ return hmCaseOwner(c, window.leads || [], typeof teamMembers !== "undefined" ? teamMembers : []); }
+function hmOwnerTag(c){
+  const o = hmOwnerOf(c);
+  return o ? `<b style="color:var(--ink)" title="Sales owner, ${hmEsc(HM_OWNER_VIA[o.via])}">${hmEsc(o.name)}</b>` : `<span title="No sales owner: set one on the case">No owner</span>`;
+}
+// Sales owner line on the case: who gets the "options sent" email, and a picker to set someone else.
+function hmOwnerLine(c){
+  const o = hmOwnerOf(c);
+  const auto = hmCaseOwner(Object.assign({}, c, { owner: null }), window.leads || [], typeof teamMembers !== "undefined" ? teamMembers : []);
+  const team = (typeof teamMembers !== "undefined" ? teamMembers : []).filter(m => m.email).slice()
+    .sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
+  const locked = HM_CLOSED.includes(c.status) ? "disabled" : "";
+  const what = !o ? "No sales owner yet: nobody is emailed when options go out."
+    : o.member ? `${hmEsc(o.name)} (${hmEsc(HM_OWNER_VIA[o.via])}) is emailed when options go out.`
+    : `The lead is held by ${hmEsc(o.name)}, not a teammate: nobody is emailed when options go out.`;
+  return `<div class="card-sub" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+    <span>Sales owner</span>
+    <select class="form-input" data-hm-owner="${hmEsc(c.id)}" ${locked} style="max-width:220px;padding:2px 6px;font-size:12.5px">
+      <option value="">${auto ? `From ${auto.via === "lead" ? "the lead" : "the request"}: ${hmEsc(auto.name)}` : "No owner"}</option>
+      ${team.map(m => `<option value="${hmEsc(m.id)}" ${c.owner === m.id ? "selected" : ""}>${hmEsc(m.name || m.email)}</option>`).join("")}
+    </select><span>${what}</span></div>`;
+}
+
 function hmRenderQueue(){
   const now = Date.now();
   const gaps = hmAgencyGaps(HM.agencyRequests, HM.cases, now);
@@ -37976,7 +38027,7 @@ function hmRenderQueue(){
     <div class="list-row" style="cursor:pointer" data-hm-case="${hmEsc(c.id)}">
       <div class="list-main">
         <div class="list-title">${hmEsc(c.id)} · ${hmEsc(c.student_name || "No name")} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
-        <div class="list-sub">${c.source === "partner" ? `<span class="badge badge-blue">${hmEsc(hmAgencyLabel(c, HM.agencyNames))}</span>` : "Direct"} · ${hmEsc(c.city || "?")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmElapsed(c.created_at, now)} ago</div>
+        <div class="list-sub">${hmOwnerTag(c)} · ${c.source === "partner" ? `<span class="badge badge-blue">${hmEsc(hmAgencyLabel(c, HM.agencyNames))}</span>` : "Direct"} · ${hmEsc(c.city || "?")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmElapsed(c.created_at, now)} ago</div>
       </div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${hmChip(c.status)}${hmCanDelete(c) ? `<button class="hm-del" type="button" data-hm-delete="${hmEsc(c.id)}" title="Cancel this case and take it off the list">Delete</button>` : ""}</div>
     </div>`).join("") : `<div class="card-sub">No cases here.</div>`;
 }
@@ -38456,7 +38507,8 @@ async function hmOpenCase(id){
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)}${c.student_name ? " · " + hmEsc(c.student_name) : ""} ${hmChip(c.status)} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
       <div class="card-sub">${hmEsc(c.city ? c.city.charAt(0).toUpperCase() + c.city.slice(1) : "city not set")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmEsc(mealWord)}</div>
-      <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div></div></div>
+      <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div>
+      ${hmOwnerLine(c)}</div></div>
     ${hmPreferredHostsText(c.preferred_host_ids, hmWebNames()) ? `<div class="card-sub">Student liked on website: ${hmEsc(hmPreferredHostsText(c.preferred_host_ids, hmWebNames()))}</div>` : ""}
     ${nextCard}
     ${readyForOffer || offerOut ? "" : (cur || earlierHtml ? `<div style="margin-top:8px">${cur ? (isGroup ? groupHtml(curSet) : singleHtml(cur)) : ""}${earlierHtml}</div>` : "")}
@@ -38605,6 +38657,40 @@ async function hmSaveOverride(c, override){
   HM.flash = { id: c.id, text: "Shortlist order saved." };
   await loadHomestayMatching();
 }
+
+document.addEventListener("change", async (ev) => {
+  const sel = ev.target.closest("[data-hm-owner]");
+  if (!sel) return;
+  const c = HM.cases.find(x => x.id === sel.dataset.hmOwner);
+  if (!c) return;
+  const owner = sel.value || null;
+  sel.disabled = true;
+  try {
+    await hmWorker(`/staff/cases/${c.id}/update`, { owner });
+    c.owner = owner;
+    HM.flash = { id: c.id, text: owner ? "Sales owner saved." : "Sales owner back to automatic." };
+  } catch (e) {
+    await hmNotice({ title: "Could not change the sales owner", lines: [e.message || String(e)] });
+  }
+  hmRenderQueue();
+  await hmOpenCase(c.id);
+});
+
+/* Deep link from the "options sent" email to the sales owner: portal.vanmates.com/#hm=HM-1036. Runs after
+   hydrate (next to openLeadFromHash) and on hashchange. */
+function openHmCaseFromHash(){
+  let hash = location.hash || "";
+  if (!hash) { try { hash = sessionStorage.getItem("vm_next_hash") || ""; } catch (e) {} }
+  const m = hash.match(/^#hm=(HM-[0-9]+)$/);
+  if (!m) return false;
+  try { sessionStorage.removeItem("vm_next_hash"); } catch (e) {}
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  HM.selected = m[1];
+  if (typeof goToView === "function") goToView("homestay-matching");
+  return true;
+}
+window.openHmCaseFromHash = openHmCaseFromHash;
+window.addEventListener("hashchange", openHmCaseFromHash);
 
 document.addEventListener("click", async (ev) => {
   const t = ev.target.closest("[data-hm-delete],[data-hm-delete-req],[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
@@ -44860,11 +44946,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-22-hmdel3"></script>
-<script src="extensions.js?v=2026-10-22-hmdel3"></script>
-<script src="retention.js?v=2026-10-22-hmdel3"></script>
-<script src="ap.js?v=2026-10-22-hmdel3"></script>
-<script src="properties.js?v=2026-10-22-hmdel3"></script>
-<script src="ar.js?v=2026-10-22-hmdel3"></script>
+<script src="room-changes.js?v=2026-10-23-hmowner1"></script>
+<script src="extensions.js?v=2026-10-23-hmowner1"></script>
+<script src="retention.js?v=2026-10-23-hmowner1"></script>
+<script src="ap.js?v=2026-10-23-hmowner1"></script>
+<script src="properties.js?v=2026-10-23-hmowner1"></script>
+<script src="ar.js?v=2026-10-23-hmowner1"></script>
 </body>
 </html>
