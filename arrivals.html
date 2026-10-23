@@ -515,6 +515,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       </aside>
       <div>
         <div class="thead"><div><h2 id="tplName"></h2><span class="muted" id="tplMeta"></span></div><span class="muted" id="tplState"></span></div>
+        <div id="tplMerge"></div>
         <div class="chips tplchips" id="tplChips" role="tablist" aria-label="Template kind" style="margin-bottom:10px"></div>
         <div id="tplBody"><div class="empty">Loading…</div></div>
       </div>
@@ -526,7 +527,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-23-hmowner1"></script>
+<script src="arrivals-core.js?v=2026-10-23-bldalias1"></script>
 <script>
 (function () {
   'use strict';
@@ -2737,7 +2738,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   function renderTemplates() {
     var list = buildingList();
-    if (!list.length) { $('tplSide').innerHTML = ''; $('tplName').textContent = ''; $('tplMeta').textContent = ''; $('tplChips').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
+    if (!list.length) { $('tplMerge').innerHTML = ''; $('tplSide').innerHTML = ''; $('tplName').textContent = ''; $('tplMeta').textContent = ''; $('tplChips').innerHTML = ''; $('tplBody').innerHTML = '<div class="empty card"><b>No buildings yet</b>Templates are per building.</div>'; return; }
     var co = S.tk === 'checkout', ah = S.tk === 'afterhours', bk = isBkKind(S.tk);
     var tplOf = function (m) { return ah ? fuRulesFor(m.building)[0] : co ? m.co : bk ? (m.bk || {})[S.tk] : m.tpl; };
     var pick = S.tplPick || (ah ? (S.fur && S.fur.building) || ((S.fuRules || [])[0] || list[0]).building
@@ -2750,6 +2751,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('tplName').textContent = pick;
     $('tplMeta').textContent = [pm.city || 'No city', pm.upcoming ? pm.upcoming + ' upcoming arrival' + (pm.upcoming === 1 ? '' : 's') : ''].filter(Boolean).join(' · ');
     $('tplChips').innerHTML = tplChipsHtml(S.acc[pick]);
+    $('tplMerge').innerHTML = tplMergeHtml(S.acc[pick]);
     if (bk) { renderBkt(pick); return; }
     if (co) { renderCot(pick); return; }
     if (ah) { renderFur(pick); return; }
@@ -2953,6 +2955,51 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }).join('');
   }
   // end tplChipsHtml
+
+  // "Same building as…" (arrival-building-alias-2026-10-23.sql): a name that isn't a building in Rooms — usually a contract
+  // or roster spelling it differently — is merged into the real one. Admins only (arrivals_merge_building).
+  function tplMergeHtml(m) {
+    if (!m) return '';
+    var others = buildingList().filter(function (x) { return x.saved && x.building !== m.building; }).map(function (x) { return x.building; });
+    if (!others.length || (m.saved && !scIsAdmin())) return '';
+    var likely = A.sameBuildingSuggestions(m.building, others).slice(0, 3);
+    var opt = function (b) { return '<option value="' + esc(b) + '">' + esc(b) + '</option>'; };
+    var pick = '<div class="frow" style="margin-top:8px"><select class="inp" id="tplMergeTo" aria-label="Same building as">' +
+      (likely.length ? '<optgroup label="Likely">' + likely.map(opt).join('') + '</optgroup><optgroup label="All buildings">' : '<option value="">Pick a building…</option>') +
+      others.map(opt).join('') + (likely.length ? '</optgroup>' : '') + '</select>' +
+      '<button type="button" class="btn btn-primary" data-merge>Same building</button></div>';
+    if (m.saved) return '<details class="note" style="margin:0 0 10px"><summary>Same building as…</summary>' +
+      '<p class="note" style="margin:6px 0 0">If ' + esc(m.building) + ' is another name for one of your buildings, merge it: its arrivals, rooms and templates move there.</p>' + pick + '</details>';
+    return '<div class="check card"><b>' + esc(m.building) + ' isn’t a building in Rooms</b>' +
+      '<p class="note" style="margin:4px 0 0">Arrivals filed under this name can’t use a building’s templates, Wi-Fi or door codes. ' +
+      'If it’s another name for one of your buildings, pick it — its arrivals move there and future contracts or rosters with this name go there too.</p>' +
+      (scIsAdmin() ? pick : '<p class="note" style="margin:6px 0 0">Ask an admin to merge it.</p>') + '</div>';
+  }
+  async function tplMerge() {
+    var from = S.tplCur, sel = $('tplMergeTo'), to = sel && sel.value;
+    var fm = S.acc && S.acc[from], tm = S.acc && S.acc[to];
+    if (!fm || !to || !tm) { toast('Pick the building it’s the same as.'); return; }
+    if (S.tplDirty && !window.confirm('Leave the template without saving?')) return;
+    var dup = [], move = [];
+    TPL_KINDS.forEach(function (k) {
+      var f = kindState(fm, k), t = kindState(tm, k);
+      if (!f || f === 'none' || f === 'new') return;
+      (t && t !== 'none' && t !== 'new' ? dup : move).push(KIND_LABEL[k]);
+    });
+    var li = function (s) { return '<li>' + s + '</li>'; };
+    var body = '<ul class="note" style="margin:6px 0 0 18px">' +
+      li((fm.upcoming ? fm.upcoming + ' upcoming arrival' + (fm.upcoming === 1 ? '' : 's') : 'Its arrivals') + ' move to ' + esc(to) + ' and use its templates, Wi-Fi and door codes.') +
+      li('Contracts, rosters and partner bookings that say “' + esc(from) + '” go to ' + esc(to) + ' from now on.') +
+      (move.length ? li('Moved to ' + esc(to) + ' (it has none): ' + esc(move.join(', ')) + '.') : '') +
+      (dup.length ? li('Removed — ' + esc(to) + ' keeps its own: ' + esc(dup.join(', ')) + '.') : '') +
+      li(esc(from) + ' disappears from the building list.') + '</ul>';
+    if (!(await confirmSheet('Same building as ' + to + '?', body, 'Merge'))) return;
+    var ok = await rpc('arrivals_merge_building', { p_from: from, p_to: to });
+    if (!ok) return;
+    toast('Merged into ' + to + (ok.arrivals ? ' — ' + ok.arrivals + ' arrival' + (ok.arrivals === 1 ? '' : 's') + ' moved' : ''));
+    S.tplDirty = false; S.tplPick = to; S.tpl = null; S.cot = null; S.bkt = null; S.fur = null; S.acc = null;
+    await loadAccess();
+  }
   function cotFromRow(b, t) {
     var m = S.acc[b] || {};
     var fresh = !t;
@@ -3712,6 +3759,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('tplQ').addEventListener('input', function () { S.tplQ = this.value; if (S.acc) renderTplSide(); });
     $('tplInc').addEventListener('change', function () { S.tplInc = this.checked; if (S.acc) renderTplSide(); });
     $('tplChips').addEventListener('click', function (e) { var b = e.target.closest('[data-tk]'); if (b) setTplKind(b.getAttribute('data-tk')); });
+    $('tplMerge').addEventListener('click', function (e) { if (e.target.closest('[data-merge]')) tplMerge(); });
     var tplIn = function (e) { if (S.tk === 'checkout') cotInput(e); else if (S.tk === 'afterhours') furInput(e); else if (isBkKind(S.tk)) bktInput(e); else tplInput(e); };
     $('tplBody').addEventListener('input', tplIn);
     $('tplBody').addEventListener('change', tplIn);
