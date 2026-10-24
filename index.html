@@ -1690,6 +1690,26 @@
   background-position:calc(100% - 10px) 55%,calc(100% - 6px) 55%;background-size:4px 4px,4px 4px;background-repeat:no-repeat;vertical-align:middle}
 .ml-st:focus-visible{outline:2px solid currentColor;outline-offset:1px}
 .ml-tag{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:10px;border:1px solid;vertical-align:middle}
+.lmi{display:inline-block;padding:1px 8px;border-radius:6px;background:var(--cream-2);color:var(--ink,#2b2620);white-space:nowrap}
+.lmi b{font-weight:700}
+.lmi-soon{background:#B94A3F1f;color:#B94A3F}
+.lmi-month{background:#d977061f;color:#b45309}
+.lmi-past{background:transparent;border:1px dashed var(--line,#E4DBC9);color:var(--muted,#7A6E5E)}
+.lmi-past b{text-decoration:line-through;font-weight:600}
+.lmi-in{font-weight:600}
+:root[data-theme="dark"] .lmi-soon{color:#f08a7e}
+:root[data-theme="dark"] .lmi-month{color:#f5a54a}
+.lmi-tools{display:inline-flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.lmi-tools select{max-width:250px}
+.lmi-pick{position:relative;display:inline-flex;gap:4px}
+.lmi-pick .lmi-on{background:var(--ink,#2b2620);color:#fff;border-color:var(--ink,#2b2620)}
+.lmi-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:340px;padding:12px;border-radius:10px;border:1px solid var(--line,#E4DBC9);background:var(--surface,#fff);box-shadow:var(--shadow-md,0 10px 30px rgba(0,0,0,.15))}
+.lmi-months{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:6px;max-height:220px;overflow:auto;font-size:13px}
+.lmi-months label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.lmi-range{display:flex;gap:6px;align-items:center;margin-top:4px}
+.lmi-range input{flex:1;min-width:0;padding:4px 6px}
+.lmi-note{margin:0 0 6px}
+@media (max-width:640px){.lmi-tools{margin-left:0;width:100%;position:relative}.lmi-tools select{flex:1;min-width:0;max-width:none}.lmi-pick{position:static}.lmi-menu{left:0;right:0;width:auto}}
 .ml-contact a{color:inherit;text-decoration:none}.ml-contact a:hover{text-decoration:underline}
 .ml-big{font-size:22px;font-weight:700}.ml-red{color:#B94A3F}.ml-amber{color:#9a6b00}
 .ml-stage{height:9px;border-radius:5px;display:flex;overflow:hidden;margin:8px 0 4px;background:var(--cream-2)}
@@ -1858,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-23-bldalias1"></script>
+<script src="pms-supabase.js?v=2026-10-24-leadarr1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2637,6 +2657,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
         <div class="ml-seg" id="leads-view-seg"></div>
         <select id="leads-view-as" class="form-input" style="max-width:220px;display:none" title="View as rep"></select>
         <span id="leads-view-focus"></span>
+        <span id="leads-arr-tools" class="lmi-tools" style="display:none"></span>
       </div>
       <div id="leads-mine" style="display:none"></div>
       <div id="leads-team" style="display:none"></div>
@@ -4807,6 +4828,8 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
     </div>
     <div class="modal-body">
       <div class="form-field"><label for="lfu-date">Follow up on</label><input class="form-input" id="lfu-date" type="date" /></div>
+      <div class="form-field"><label for="lfu-movein">Expected move-in</label><input class="form-input" id="lfu-movein" type="date" />
+        <div class="card-sub" id="lfu-movein-hint" style="margin-top:4px"></div></div>
       <div class="form-field"><label for="lfu-reason">Why later (optional)</label><input class="form-input" id="lfu-reason" maxlength="200" placeholder="Moving in January · waiting on visa · comparing options" autocomplete="off" /></div>
       <div class="card-sub">When the date comes, switch the status back to <b>Contacted</b> or <b>Qualified</b> to work it again (it then counts in your limit).</div>
       <div class="card-sub" id="lfu-error" style="color:var(--red-dark);min-height:18px;margin-top:4px"></div>
@@ -31359,7 +31382,7 @@ function leadContactPatch(l, viewerEmail, nowIso){
 function mlDetails(l, p){
   p = p || {}; l = l || {};
   const pick = (...v) => { for(const x of v) if(x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
-  return { city: pick(l.city, p.city), moveIn: pick(p.moveIn, p.moveInDate), months: pick(p.months, p.stayMonths),
+  return { city: pick(l.city, p.city), moveIn: pick(l.move_in, p.moveIn, p.moveInDate), months: pick(p.months, p.stayMonths),
     budget: pick(p.budget, p.price), room: pick(p.roomName) };
 }
 // City + Service pills on My leads rows. The rep's saved choice wins; otherwise the
@@ -31524,6 +31547,94 @@ function lfuGroups(list, today){
     .filter(g => g[2].length);
 }
 /* FOLLOW-UP-CORE-END */
+/* LEAD-ARRIVAL-CORE-START */
+// Move-in (arrival) dates on lead rows: the highlighted date, urgency tint, arrival-month filter and the sorts
+// shared by My leads, Follow up, Payment pending and All leads. A rep-entered date (l.move_in, 'YYYY-MM-DD',
+// set from the Follow up dialog) wins over what the form sent (payload moveIn / moveInDate). Pure.
+const LMI_DAY_MS = 864e5;
+const LMI_MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const lmiPad = n => String(n).padStart(2, '0');
+function lmiValid(y, m, d){
+  const s = `${y}-${lmiPad(m)}-${lmiPad(d)}`, t = new Date(s + 'T00:00:00Z');
+  return !isNaN(t.getTime()) && t.toISOString().slice(0, 10) === s ? s : '';
+}
+// What a customer typed → {day: 'YYYY-MM-DD', approx} (approx = only a month was given; day = the 1st), or null.
+// Slash dates (3/4/2027) are left alone: day and month order can't be told apart.
+function lmiParse(v){
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if(!s) return null;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m){ const d = lmiValid(+m[1], +m[2], +m[3]); return d ? { day: d, approx: false } : null; }
+  m = s.match(/^(\d{4})-(\d{2})$/);
+  if(m){ const d = lmiValid(+m[1], +m[2], 1); return d ? { day: d, approx: true } : null; }
+  const mon = w => LMI_MON.indexOf(String(w).slice(0, 3)) + 1;
+  m = s.match(/\b([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/);
+  if(m && mon(m[1])){ const d = lmiValid(+m[3], mon(m[1]), +m[2]); return d ? { day: d, approx: false } : null; }
+  m = s.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]{3,9})\.?,?\s+(\d{4})\b/);
+  if(m && mon(m[2])){ const d = lmiValid(+m[3], mon(m[2]), +m[1]); return d ? { day: d, approx: false } : null; }
+  m = s.match(/\b([a-z]{3,9})\.?,?\s+(\d{4})\b/);
+  if(m && mon(m[1])) return { day: lmiValid(+m[2], mon(m[1]), 1), approx: true };
+  return null;
+}
+// p = the lead's form payload. {raw, day, approx, edited}: day '' when nothing usable (raw may still be text like "ASAP").
+function lmiOf(l, p){
+  l = l || {}; p = p || {};
+  const pick = (...v) => { for(const x of v) if(x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
+  const edited = !!pick(l.move_in), raw = pick(l.move_in, p.moveIn, p.moveInDate), d = lmiParse(raw);
+  return { raw, day: d ? d.day : '', approx: !!(d && d.approx), edited };
+}
+function lmiDiff(today, day){ return Math.round((Date.parse(day + 'T00:00:00Z') - Date.parse(today + 'T00:00:00Z')) / LMI_DAY_MS); }
+// past | soon (0–7 days, red) | month (8–30, orange) | later | none. A month-only date counts as passed once the month is over.
+function lmiUrgency(a, today){
+  if(!a || !a.day) return { state: 'none', days: null };
+  let days = lmiDiff(today, a.day);
+  if(a.approx && days < 0 && a.day.slice(0, 7) === today.slice(0, 7)) days = 0;
+  return { state: days < 0 ? 'past' : days <= 7 ? 'soon' : days <= 30 ? 'month' : 'later', days };
+}
+function lmiMonthLabel(key){ const [y, m] = key.split('-').map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }); }
+// Months for the filter menu: this month and the next five, plus any later month a lead names, oldest first.
+// Earlier months only if a lead names them (a past arrival someone still has to chase).
+function lmiMonthOptions(days, today){
+  const set = new Set(), [y, m] = today.slice(0, 7).split('-').map(Number);
+  for(let k = 0; k < 6; k++){ const d = new Date(Date.UTC(y, m - 1 + k, 1)); set.add(d.toISOString().slice(0, 7)); }
+  (days || []).forEach(d => { if(d) set.add(d.slice(0, 7)); });
+  return [...set].sort();
+}
+// f = {months: ['YYYY-MM'], from: 'YYYY-MM-DD', to}. Any month picked OR inside the range. No filter → everything;
+// a filter on → leads without a usable date drop out.
+function lmiActive(f){ return !!(f && ((f.months && f.months.length) || f.from || f.to)); }
+function lmiMatches(a, f){
+  if(!lmiActive(f)) return true;
+  if(!a || !a.day) return false;
+  const months = f.months || [];
+  if(months.length && months.indexOf(a.day.slice(0, 7)) >= 0) return true;
+  if(f.from || f.to){
+    // A month-only date is in the range if any day of that month is.
+    const lo = a.day, hi = a.approx ? a.day.slice(0, 8) + '31' : a.day;
+    return (!f.from || hi >= f.from) && (!f.to || lo <= f.to);
+  }
+  return false;
+}
+const LMI_SORTS = [['', 'Default order'], ['arr_asc', 'Arrival date: earliest first'], ['arr_desc', 'Arrival date: latest first'],
+  ['fu_asc', 'Follow-up date: earliest first'], ['updated', 'Recently updated']];
+// Sorted copy. g = {arr: l → lmiOf result, act: l → ms of last activity}. '' keeps the list's own order.
+// Leads with no date always go last; ties keep their order.
+function lmiSort(list, key, g){
+  const arr = (list || []).slice();
+  if(!key) return arr;
+  const val = l => {
+    if(key === 'arr_asc' || key === 'arr_desc') return g.arr(l).day || null;
+    if(key === 'fu_asc'){ const s = String((l && l.follow_up_at) || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; }
+    const t = g.act(l) || Date.parse((l && l.created_at) || ''); return isNaN(t) || !t ? null : t;
+  };
+  const desc = key === 'arr_desc' || key === 'updated';
+  return arr.map((l, i) => ({ l, i, v: val(l) })).sort((a, b) => {
+    if(a.v == null || b.v == null) return (a.v == null) - (b.v == null) || a.i - b.i;
+    const c = a.v < b.v ? -1 : a.v > b.v ? 1 : 0;
+    return (desc ? -c : c) || a.i - b.i;
+  }).map(x => x.l);
+}
+/* LEAD-ARRIVAL-CORE-END */
 /* TAYLOR-CORE-START */
 // Taylor (AI sales assistant) emails web leads from TAYLOR_EMAIL and claims the ones she works
 // (taylor-assign-2026-10-12.sql); a rep takes one over with "Take over from Taylor".
@@ -32214,7 +32325,7 @@ async function claimLead(id){
 
 function applyLeadFilters(){
   const q = LEAD_FILTERS.search.trim().toLowerCase();
-  return leads.filter(l => {
+  const list = leads.filter(l => {
     // JLeads (LINE Maya) is the same ledger but a different pipeline and a
     // different team — it has its own section, so it never shows up here.
     if(isJLead(l)) return false;
@@ -32227,6 +32338,7 @@ function applyLeadFilters(){
     }
     return true;
   }).sort((a,b) => String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  return leadArrApply(list);
 }
 
 // Leads page view: 'mine' (rep default), 'team' (admin default), 'all' (the table).
@@ -32281,6 +32393,8 @@ function renderLeadsChrome(mode){
   const FOCUS = { stale: 'Going stale', due: 'Due today / overdue', new: 'New', contacted: 'Contacted', qualified: 'Qualified' };
   document.getElementById('leads-view-focus').innerHTML = mode === 'mine' && LEAD_VIEW.focus
     ? `<span class="ml-chip" data-lv-clear="1">Showing: ${FOCUS[LEAD_VIEW.focus] || esc(LEAD_VIEW.focus)} ✕</span>` : '';
+  const arrTools = document.getElementById('leads-arr-tools');
+  if(arrTools){ arrTools.style.display = mode === 'team' ? 'none' : ''; arrTools.innerHTML = mode === 'team' ? '' : leadArrToolsHtml(); }
   document.getElementById('leads-mine').style.display = mode === 'mine' ? '' : 'none';
   document.getElementById('leads-team').style.display = mode === 'team' ? '' : 'none';
   document.getElementById('leads-pp').style.display = mode === 'pp' ? '' : 'none';
@@ -32293,6 +32407,64 @@ const ML_SEL = new Set();
 let ML_GROUPS = {};   // section key → lead ids, for the section's select-all box
 function mlAgo(ms){ const h = Math.max(0, Math.floor(ms / 36e5)); return h < 24 ? h + ' h' : Math.floor(h / 24) + ' d' + (h % 24 ? ' ' + (h % 24) + ' h' : ''); }
 function mlMoney(n){ return (window.__vmcSym || '$') + Math.round(Number(n) || 0).toLocaleString('en-CA'); }
+
+/* ---- Move-in dates: highlighted chip + one sort and arrival filter for My leads, Follow up, Payment pending and
+   All leads. Pure helpers: LEAD-ARRIVAL-CORE. The choice is this viewer's convenience, kept in the browser. */
+const LEAD_ARR_KEY = 'vm.leadsArrival';
+const LEAD_ARR = (() => {
+  const d = { sort: '', months: [], from: '', to: '' };
+  try { const v = JSON.parse(localStorage.getItem(LEAD_ARR_KEY) || 'null');
+    if(v && typeof v === 'object'){
+      if(LMI_SORTS.some(([k]) => k === v.sort)) d.sort = v.sort;
+      if(Array.isArray(v.months)) d.months = v.months.filter(m => /^\d{4}-\d{2}$/.test(m));
+      ['from', 'to'].forEach(k => { if(/^\d{4}-\d{2}-\d{2}$/.test(v[k] || '')) d[k] = v[k]; });
+    } } catch(_){}
+  return d;
+})();
+let LEAD_ARR_OPEN = false;   // the arrival-month menu
+function leadArrSave(){ try { localStorage.setItem(LEAD_ARR_KEY, JSON.stringify(LEAD_ARR)); } catch(_){} }
+function leadArrOf(l){ return lmiOf(l, leadPayloadOf(l)); }
+// Filter then sort; with the default order the list keeps the order its tab gives it.
+function leadArrApply(list){
+  return lmiSort((list || []).filter(l => lmiMatches(leadArrOf(l), LEAD_ARR)), LEAD_ARR.sort, { arr: leadArrOf, act: leadLastActivity });
+}
+function lmiShortMonth(day){ return new Date(day + 'T00:00:00').toLocaleString('en-US', { month: 'short', year: 'numeric' }); }
+// 📅 Move-in: Jan 9, 2027 — tinted red within 7 days, orange within 30, struck grey once passed (the status is left alone).
+function lmiChip(l, p, today){
+  const a = lmiOf(l, p || leadPayloadOf(l));
+  if(!a.raw) return '';
+  const u = lmiUrgency(a, today || salesDay(new Date()));
+  const when = a.day ? (a.approx ? lmiShortMonth(a.day) : fmtDate(a.day)) : a.raw;
+  const n = u.days;
+  const soon = u.state === 'soon' || u.state === 'month' ? (n === 0 ? (a.approx ? 'this month' : 'today') : n === 1 ? 'tomorrow' : `in ${n} days`) : '';
+  const tip = (a.edited ? 'Set by the sales rep' : 'From the customer’s form') + (a.approx ? ' · month only' : '') + (a.day ? '' : ' · not a date the portal can read, so it is not sorted or filtered');
+  return `<span class="lmi lmi-${u.state}" title="${esc(tip)}">📅 ${u.state === 'past' ? 'Move-in passed' : 'Move-in'}: <b>${esc(when)}</b>${soon ? ` <span class="lmi-in">· ${soon}</span>` : ''}</span>`;
+}
+function leadArrToolsHtml(){
+  const today = salesDay(new Date()), on = lmiActive(LEAD_ARR);
+  const months = lmiMonthOptions((leads || []).filter(l => !isJLead(l)).map(l => leadArrOf(l).day), today);
+  const label = !on ? 'Any' : LEAD_ARR.months.length && !LEAD_ARR.from && !LEAD_ARR.to
+    ? (LEAD_ARR.months.length === 1 ? lmiMonthLabel(LEAD_ARR.months[0]) : LEAD_ARR.months.length + ' months')
+    : (LEAD_ARR.months.length ? LEAD_ARR.months.length + ' months + dates' : (LEAD_ARR.from ? fmtDate(LEAD_ARR.from) : '…') + ' – ' + (LEAD_ARR.to ? fmtDate(LEAD_ARR.to) : '…'));
+  return `<select id="leads-arr-sort" class="form-input" aria-label="Sort leads" title="Sort leads">${LMI_SORTS.map(([k, lab]) =>
+      `<option value="${k}" ${k === LEAD_ARR.sort ? 'selected' : ''}>${k ? 'Sort: ' + esc(lab) : 'Sort: default order'}</option>`).join('')}</select>
+    <span class="lmi-pick">
+      <button type="button" class="btn btn-mini ${on ? 'lmi-on' : ''}" data-lmi-menu="1" aria-expanded="${LEAD_ARR_OPEN}">📅 Arrival: ${esc(label)} ▾</button>
+      ${on ? `<button type="button" class="btn btn-mini" data-lmi-clear="1" aria-label="Clear arrival filter" title="Clear arrival filter">✕</button>` : ''}
+      ${LEAD_ARR_OPEN ? `<div class="lmi-menu" role="dialog" aria-label="Arrival month">
+        <div class="card-sub">Arriving in (pick one or more)</div>
+        <div class="lmi-months">${months.map(m => `<label><input type="checkbox" data-lmi-month="${m}" ${LEAD_ARR.months.indexOf(m) >= 0 ? 'checked' : ''}> ${esc(lmiMonthLabel(m))}</label>`).join('')}</div>
+        <div class="card-sub" style="margin-top:8px">or between</div>
+        <div class="lmi-range"><input type="date" class="form-input" data-lmi-range="from" value="${esc(LEAD_ARR.from)}" aria-label="From"><span>–</span><input type="date" class="form-input" data-lmi-range="to" value="${esc(LEAD_ARR.to)}" aria-label="To"></div>
+        <div class="card-sub" style="margin-top:6px">Leads without a move-in date are hidden while this is on.</div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px"><button type="button" class="btn btn-mini" data-lmi-clear="1">Clear</button><button type="button" class="btn btn-mini btn-primary" data-lmi-menu="1">Done</button></div>
+      </div>` : ''}
+    </span>`;
+}
+// "Showing 12 of 40 · arrival filter" so a filtered list never passes for the whole pipeline.
+function leadArrNote(shown, total){
+  return lmiActive(LEAD_ARR) && shown !== total ? `<div class="card-sub lmi-note">Arrival filter: showing ${shown} of ${total}</div>` : '';
+}
 // The status pill is a dropdown for whoever may change the lead (its owner or an admin).
 // Money stages open the same dialogs as the drawer: deal (qualified / won / lost), Ruf link (payment pending).
 function mlStatusControl(l){
@@ -32345,8 +32517,8 @@ async function mlFieldChange(sel){
 // Shared by every lead row so changing the status never hides what we know about the customer.
 function mlRowMain(l, sub){
   const p = leadPayloadOf(l), det = mlDetails(l, p);
-  const detTxt = [det.moveIn && 'move-in ' + esc(/^\d{4}-\d{2}-\d{2}/.test(det.moveIn) ? fmtDate(det.moveIn) : det.moveIn),
-    det.months && esc(det.months) + ' mo', det.budget && esc(leadMoney(det.budget)), det.room && esc(det.room)].filter(Boolean).join(' · ');
+  const detTxt = [lmiChip(l, p), det.months && esc(det.months) + (/^1$/.test(det.months) ? ' month' : /^[\d.\s–-]+$/.test(det.months) ? ' months' : ''),
+    det.budget && esc(leadMoney(det.budget)), det.room && esc(det.room)].filter(Boolean).join(' · ');
   const email = String(l.email || p.email || '').trim(), phone = String(l.phone || p.phone || '').trim();
   const contact = [email && `<a href="mailto:${esc(email)}">${esc(email)}</a>`, phone && `<a href="tel:${esc(phone.replace(/[^\d+]/g, ''))}">${esc(phone)}</a>`].filter(Boolean).join(' · ');
   return `<div class="ml-main"><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())} ${mlStatusControl(l)} ${mlCityControl(l, det.city)} ${mlServiceControl(l, p)}</div>${contact ? `<div class="name-sub ml-contact">${contact}</div>` : ''}${detTxt ? `<div class="name-sub ml-det">${detTxt}</div>` : ''}<div class="name-sub">${sub}</div></div>`;
@@ -32418,21 +32590,27 @@ function renderMyLeads(){
   const groups = f === 'stale' ? [['stale', staleTitle, sec.stale, 'ml-red']]
     : f === 'due' ? [['due', 'Due today / overdue', sec.due, '']]
     : (f === 'new' || f === 'contacted' || f === 'qualified') ? [[f, f[0].toUpperCase() + f.slice(1), mine.filter(l => (l.status || 'new') === f), '']]
+    // A chosen sort is one list in that order; the stale / due wording stays on each row.
+    : LEAD_ARR.sort ? [['sorted', esc((LMI_SORTS.find(([k]) => k === LEAD_ARR.sort) || [])[1] || ''), mine, '']]
     : [['stale', staleTitle, sec.stale, 'ml-red'], ['due', 'Due today / overdue', sec.due, ''], ['fresh', 'New', sec.fresh, ''], ['progress', 'In progress', sec.progress, '']];
   ML_GROUPS = {};
-  const listHtml = groups.map(([key, title, arr, cls]) => {
-    if(!arr.length && !(key === 'due' && !f)) return '';
+  let shownOpen = 0;
+  const listHtml = groups.map(([key, title, all0, cls]) => {
+    const arr = leadArrApply(all0);
+    shownOpen += arr.length;
+    if(!arr.length && !(key === 'due' && !f && !lmiActive(LEAD_ARR))) return '';
     ML_GROUPS[key] = arr.map(l => String(l.id));
     const all = arr.length && arr.every(l => ML_SEL.has(String(l.id)));
     return `<div class="ml-sec"><label class="${cls}">${arr.length ? `<input type="checkbox" data-ml-all="${key}" ${all ? 'checked' : ''} aria-label="Select all in ${esc(title)}"> ` : ''}${title}</label><span>${arr.length}</span></div>` +
       (arr.length ? arr.map(l => mlRow(l, now, today)).join('') : `<div class="card-sub" style="padding:8px 2px">Nothing due</div>`);
   }).join('');
-  const fuDue = lfuCounts(myFu, today).due;
-  const fuHtml = !f && myFu.length ? `<div class="ml-sec"><span>Follow up${fuDue ? ` · <span class="lfu-overdue">${fuDue} due</span>` : ''}</span><span>${myFu.length}</span></div>` + lfuListHtml(myFu, now, today, false) : '';
-  const lppHtml = !f && myPp.length ? `<div class="ml-sec"><span>Payment pending</span><span>${myPp.length}</span></div>` + myPp.map(l => {
-    const d = lppDaysPending(l, now), paid = l.pp_state && l.pp_state.paid;
+  const myFuV = leadArrApply(myFu), myPpV = leadArrApply(myPp);
+  const fuDue = lfuCounts(myFuV, today).due;
+  const fuHtml = !f && myFuV.length ? `<div class="ml-sec"><span>Follow up${fuDue ? ` · <span class="lfu-overdue">${fuDue} due</span>` : ''}</span><span>${myFuV.length}</span></div>` + lfuListHtml(myFuV, now, today, false) : '';
+  const lppHtml = !f && myPpV.length ? `<div class="ml-sec"><span>Payment pending</span><span>${myPpV.length}</span></div>` + myPpV.map(l => {
+    const d = lppDaysPending(l, now), paid = l.pp_state && l.pp_state.paid, chip = lmiChip(l, null, today);
     return `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')} ${paid ? lppPill('paid') : ''}</div>
-      <div class="name-sub"><span class="lpp-days ${lppAgeClass(d)}">waiting ${d} day${d === 1 ? '' : 's'}</span>${l.pp && l.pp.amount != null ? ' · ' + esc(mlMoney(l.pp.amount)) : ''}${paid ? ' · press Won to confirm' : ''}</div></div></div>`;
+      ${chip ? `<div class="name-sub ml-det">${chip}</div>` : ''}<div class="name-sub"><span class="lpp-days ${lppAgeClass(d)}">waiting ${d} day${d === 1 ? '' : 's'}</span>${l.pp && l.pp.amount != null ? ' · ' + esc(mlMoney(l.pp.amount)) : ''}${paid ? ' · press Won to confirm' : ''}</div></div></div>`;
   }).join('') : '';
   const closed = s ? s.recentClosed : [];
   const closedHtml = !f && closed.length ? `<div class="ml-sec"><span>Closed in ${esc(s.label)}</span><span>${closed.length}</span></div>` + closed.map(d => `
@@ -32452,7 +32630,7 @@ function renderMyLeads(){
       <button class="btn btn-mini" type="button" data-ml-bulk="clear" aria-label="Clear selection">✕</button>
     </div>` : '';
   box.innerHTML = viewing + `<div class="ml-head">${soldCard}${pipeCard}</div>` +
-    `<div class="card card-pad">${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${fuHtml}${lppHtml}${closedHtml}</div>` + bulk;
+    `<div class="card card-pad">${leadArrNote(shownOpen, open)}${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${fuHtml}${lppHtml}${closedHtml}</div>` + bulk;
 }
 
 async function mlAct(kind, id){
@@ -32761,7 +32939,8 @@ function renderPayPending(){
   const admin = leadsIsAdmin(), me = String((activeRole() || {}).email || '').toLowerCase(), now = Date.now();
   const mine = lppPendingLeads(leads, admin ? null : me);
   if(Date.now() - LPP_BOARD_AT > 60000) lppLoadBoard(false);
-  const rows = lppFilter(mine.map(l => ({ lead: l, board: LPP_BOARD[l.id] || null })), LPP_FILTERS, now);
+  const pf = lppFilter(mine.map(l => ({ lead: l, board: LPP_BOARD[l.id] || null })), LPP_FILTERS, now);
+  const rows = leadArrApply(pf.map(r => r.lead)).map(l => pf.find(r => r.lead === l));
   const unpaid = mine.filter(l => !(l.pp_state && l.pp_state.paid));
   const total = unpaid.reduce((s, l) => s + (Number(l.pp && l.pp.amount) || 0), 0);
   const reps = [...new Set(mine.map(l => String(l.claimed_by || '').toLowerCase()).filter(Boolean))].sort();
@@ -32775,7 +32954,7 @@ function renderPayPending(){
   const body = rows.map(({ lead: l, board: b }) => {
     const days = lppDaysPending(l, now), rs = lppReminderStatus(l, b), nx = b && b.next, lc = lppLastContact(l), pp = l.pp || {};
     return `<tr class="${lppAgeClass(days)}" data-lpp-row="${esc(l.id)}" style="cursor:pointer">
-      <td><div class="name-main">${esc(l.name || '—')}</div><div class="name-sub">${esc(l.email || '')}</div></td>
+      <td><div class="name-main">${esc(l.name || '—')}</div><div class="name-sub">${esc(l.email || '')}</div>${(c => c ? `<div class="name-sub">${c}</div>` : '')(lmiChip(l))}</td>
       <td>${esc(leadsRepName(l.claimed_by))}</td>
       <td class="right">${pp.amount != null ? esc(mlMoney(pp.amount)) : '—'}</td>
       <td>${pp.link && lppValidLink(pp.link) ? `<a class="lpp-link" href="${esc(pp.link)}" target="_blank" rel="noopener">${esc(pp.link.replace(/^https?:\/\//, ''))}</a>` : '—'}</td>
@@ -32787,7 +32966,7 @@ function renderPayPending(){
   }).join('');
   box.innerHTML = `<div class="card card-pad"><div class="card-head"><div><div class="card-title">Payment <em>pending</em></div>
     <div class="card-sub">${mine.length} lead${mine.length === 1 ? '' : 's'} · ${unpaid.length} not paid${total ? ' · ' + esc(mlMoney(total)) + ' pending' : ''} · not counted in the ${LEAD_CAP}-lead limit · tinted at 3, 5 and 7 days</div></div></div>
-    ${filters}
+    ${filters}${leadArrNote(rows.length, pf.length)}
     ${rows.length ? `<div style="overflow-x:auto"><table class="lpp-table"><thead><tr><th>Customer</th><th>Sales rep</th><th class="right">Amount pending</th><th>Payment link</th><th class="right">Days pending</th><th>Next reminder</th><th>Last contact</th><th>Reminder status</th></tr></thead><tbody>${body}</tbody></table></div>`
       : `<div class="card-sub" style="padding:8px 2px">${mine.length ? 'No leads match these filters.' : 'No leads in Payment pending. Move a lead here from its Status when the customer has the payment link.'}</div>`}
   </div>`;
@@ -32805,6 +32984,11 @@ function lfuOpenStage(l, onCancel){
   d.min = lfuAddDays(today, 1); d.max = lfuAddDays(today, 365);
   d.value = cur && cur > today ? cur : lfuDefaultDate(today);
   document.getElementById('lfu-reason').value = (l.fu && l.fu.reason) || '';
+  // The move-in the lead already has (the rep's, else the form's) is filled in; a month-only or
+  // free-text answer is shown as a hint instead, since it is not a day to pre-pick.
+  const a = leadArrOf(l), mi = document.getElementById('lfu-movein');
+  mi.value = a.day && !a.approx ? a.day : '';
+  document.getElementById('lfu-movein-hint').textContent = a.raw && (!a.day || a.approx) ? `Customer said: ${a.approx ? lmiShortMonth(a.day) : a.raw}` : '';
   document.getElementById('lfu-error').textContent = '';
   document.getElementById('lfu-backdrop').classList.add('open');
   setTimeout(() => d.focus(), 30);
@@ -32823,7 +33007,12 @@ async function lfuSaveStage(){
   btn.disabled = true;
   try {
     const now = new Date().toISOString(), since = l.status === LFU_STATUS && l.fu && l.fu.since ? l.fu.since : now;
-    const ok = await salesWriteLead(l, { status: LFU_STATUS, follow_up_at: date, fu: { since, reason, by: String((activeRole() || {}).email || '') }, last_touched_at: now });
+    const patch = { status: LFU_STATUS, follow_up_at: date, fu: { since, reason, by: String((activeRole() || {}).email || '') }, last_touched_at: now };
+    // Saved on the lead only when the rep changed it; clearing a rep-set date falls back to the form's.
+    const a = leadArrOf(l), mi = document.getElementById('lfu-movein').value;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(mi) && mi !== (a.approx ? '' : a.day)) patch.move_in = mi;
+    else if(!mi && a.edited) patch.move_in = null;
+    const ok = await salesWriteLead(l, patch);
     if(!ok){ err.textContent = 'Not saved. Check the lead is yours and try again.'; return; }
     LFU_STAGE.onCancel = null;
     lfuCloseStage(false);
@@ -32854,7 +33043,9 @@ function lfuRow(l, now, today, showRep){
     </div></div>`;
 }
 function lfuListHtml(list, now, today, showRep){
-  return lfuGroups(list, today).map(([key, title, arr]) =>
+  const arr = leadArrApply(list);
+  if(LEAD_ARR.sort) return arr.map(l => lfuRow(l, now, today, showRep)).join('');
+  return lfuGroups(arr, today).map(([key, title, arr]) =>
     `<div class="lfu-sub lfu-sub-${key}"><span>${title}</span><span>${arr.length}</span></div>` + arr.map(l => lfuRow(l, now, today, showRep)).join('')).join('');
 }
 
@@ -32863,7 +33054,7 @@ function renderFollowUp(){
   const box = document.getElementById('leads-fu'); if(!box) return;
   const admin = leadsIsAdmin(), me = String((activeRole() || {}).email || '').toLowerCase(), now = Date.now(), today = salesDay(new Date());
   const mine = lfuLeads(leads, admin ? null : me);
-  const rows = lfuFilter(mine, LFU_FILTERS, today), c = lfuCounts(mine, today);
+  const rows = lfuFilter(mine, LFU_FILTERS, today), c = lfuCounts(mine, today), shown = leadArrApply(rows).length;
   const reps = [...new Set(mine.map(l => String(l.claimed_by || '').toLowerCase()).filter(Boolean))].sort();
   const opt = (v, lab, cur) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`;
   const filters = `<div class="lpp-filters">
@@ -32872,8 +33063,8 @@ function renderFollowUp(){
   </div>`;
   box.innerHTML = `<div class="card card-pad"><div class="card-head"><div><div class="card-title">Follow <em>up</em></div>
     <div class="card-sub">${c.total} lead${c.total === 1 ? '' : 's'}${c.due ? ` · <b class="lfu-overdue">${c.due} due</b>` : ''} · customers who want to talk later · not counted in the ${LEAD_CAP}-lead limit · switch the status back to work one again</div></div></div>
-    ${filters}
-    ${rows.length ? lfuListHtml(rows, now, today, admin)
+    ${filters}${leadArrNote(shown, rows.length)}
+    ${shown ? lfuListHtml(rows, now, today, admin)
       : `<div class="card-sub" style="padding:8px 2px">${mine.length ? 'No leads match these filters.' : 'No leads in Follow up. Move a lead here from its Status when the customer wants to talk later.'}</div>`}
   </div>`;
 }
@@ -32907,7 +33098,7 @@ function renderLeads(){
   if(emptyEl) emptyEl.style.display = list.length ? 'none' : 'block';
   body.innerHTML = list.map(l => `
     <tr data-lead="${esc(l.id)}" style="cursor:pointer">
-      <td><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())}</div>${l.reply_waiting ? `<span class="badge" title="The lead replied to the last email and is waiting for an answer" style="margin-top:3px;background:var(--cream-2);border:1px solid var(--line, #E4DBC9);color:var(--ink, #2B211A)">Replied</span>` : ''}</td>
+      <td><div class="name-main">${esc(l.name || '—')}${leadTaylorChip(l, taylorTeam())}</div>${(c => c ? `<div class="name-sub">${c}</div>` : '')(lmiChip(l))}${l.reply_waiting ? `<span class="badge" title="The lead replied to the last email and is waiting for an answer" style="margin-top:3px;background:var(--cream-2);border:1px solid var(--line, #E4DBC9);color:var(--ink, #2B211A)">Replied</span>` : ''}</td>
       <td>${leadSourceLabel(l.source)}</td>
       <td>${leadContactCell(l)}</td>
       <td>${esc(l.city || '—')}</td>
@@ -34820,6 +35011,9 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     const t = e.target.closest('[data-lv]');
     if(t){ leadsSetMode(t.dataset.lv, '', ''); return; }
     if(e.target.closest('[data-lv-clear]')){ LEAD_VIEW.focus = ''; renderLeads(); return; }
+    if(e.target.closest('[data-lmi-menu]')){ LEAD_ARR_OPEN = !LEAD_ARR_OPEN; renderLeads(); return; }
+    if(e.target.closest('[data-lmi-clear]')){ Object.assign(LEAD_ARR, { months: [], from: '', to: '' }); LEAD_ARR_OPEN = false; leadArrSave(); renderLeads(); return; }
+    if(e.target.closest('.lmi-pick')) return;
     const lppGo = e.target.closest('[data-lpp-go]');
     if(lppGo){ LPP_FILTERS.rep = lppGo.dataset.lppGo; leadsSetMode('pp', '', ''); return; }
     const lfuGo = e.target.closest('[data-lfu-go]');
@@ -34851,9 +35045,21 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
     if(row) openLead(row.dataset.mlLead);
   });
   sec.addEventListener('change', e => {
+    if(e.target.id === 'leads-arr-sort'){ LEAD_ARR.sort = e.target.value; leadArrSave(); renderLeads(); return; }
+    const mo = e.target.closest('[data-lmi-month]');
+    if(mo){ const k = mo.dataset.lmiMonth; LEAD_ARR.months = LEAD_ARR.months.filter(m => m !== k).concat(mo.checked ? [k] : []).sort(); leadArrSave(); renderLeads(); return; }
+    const rg = e.target.closest('[data-lmi-range]');
+    if(rg){
+      LEAD_ARR[rg.dataset.lmiRange] = /^\d{4}-\d{2}-\d{2}$/.test(rg.value) ? rg.value : '';
+      if(LEAD_ARR.from && LEAD_ARR.to && LEAD_ARR.from > LEAD_ARR.to) [LEAD_ARR.from, LEAD_ARR.to] = [LEAD_ARR.to, LEAD_ARR.from];
+      leadArrSave(); renderLeads(); return;
+    }
     const st = e.target.closest('[data-ml-st]'); if(st){ mlStatusChange(st); return; }
     const f = e.target.closest('[data-ml-city],[data-ml-svc]'); if(f) mlFieldChange(f);
   });
+  // The arrival menu closes on a click anywhere else or Escape.
+  document.addEventListener('click', e => { if(LEAD_ARR_OPEN && !e.target.closest('.lmi-pick')){ LEAD_ARR_OPEN = false; renderLeads(); } });
+  document.addEventListener('keydown', e => { if(e.key === 'Escape' && LEAD_ARR_OPEN){ LEAD_ARR_OPEN = false; renderLeads(); } });
   const as = document.getElementById('leads-view-as');
   if(as) as.addEventListener('change', () => { if(as.value) leadsSetMode('mine', as.value, ''); else leadsSetMode('team', '', ''); });
 })();
@@ -44946,11 +45152,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-23-bldalias1"></script>
-<script src="extensions.js?v=2026-10-23-bldalias1"></script>
-<script src="retention.js?v=2026-10-23-bldalias1"></script>
-<script src="ap.js?v=2026-10-23-bldalias1"></script>
-<script src="properties.js?v=2026-10-23-bldalias1"></script>
-<script src="ar.js?v=2026-10-23-bldalias1"></script>
+<script src="room-changes.js?v=2026-10-24-leadarr1"></script>
+<script src="extensions.js?v=2026-10-24-leadarr1"></script>
+<script src="retention.js?v=2026-10-24-leadarr1"></script>
+<script src="ap.js?v=2026-10-24-leadarr1"></script>
+<script src="properties.js?v=2026-10-24-leadarr1"></script>
+<script src="ar.js?v=2026-10-24-leadarr1"></script>
 </body>
 </html>
