@@ -5,7 +5,7 @@ var CS_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 var CS_SOURCE_LABEL = { whatsapp_maya: 'WhatsApp Maya', line_maya: 'LINE Maya', japan_team: 'Japan team', cs_agent: 'Taken back by CS' };
 var CS_STATUS_LABEL = { new: 'New', open: 'Open', waiting_customer: 'Waiting for customer', waiting_internal: 'Waiting for internal team', resolved: 'Resolved' };
 var CS_OUTCOME_LABEL = { resolved_cs: 'Resolved by CS', returned_maya: 'Returned to Maya', returned_japan_team: 'Returned to Japan team', expired: 'Expired (unclaimed)' };
-var CS_ACCOUNT_LABEL = { '559783360556273': 'WhatsApp 672', '1016410864897572': 'WhatsApp 647', 'U17118aed7e39ff029163378e64195565': 'LINE' };
+var CS_ACCOUNT_LABEL = { '1454995407690914': 'WhatsApp 672', '559783360556273': 'WhatsApp 672', '1016410864897572': 'WhatsApp 647', 'U17118aed7e39ff029163378e64195565': 'LINE' };
 var CS_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function csT(iso) { var t = iso ? new Date(iso).getTime() : NaN; return isNaN(t) ? null : t; }
