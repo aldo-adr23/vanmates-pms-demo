@@ -50,16 +50,41 @@
     return list.slice().sort((a, b) => key(a).localeCompare(key(b)) || String(a.payee).localeCompare(String(b.payee)));
   }
   const periodText = (r) => r.period_start && r.period_end ? `${r.period_start} → ${r.period_end}` : (r.bill_date || '');
-  // What the drawer offers. Employee expenses are decided on Lu's Slack card.
+  // What the drawer offers. Employee expenses are decided on Lu's Slack card, but can be edited or deleted here (Lu follows).
+  // Once paid or in QuickBooks: details can still be fixed, the amount can't, and it can't be deleted.
   function actionsFor(r, canAct){
     const lu = r.type === 'employee_expense';
     const open = ['needs_review', 'flagged'].includes(r.status);
+    const settled = ['paid', 'recorded'].includes(r.status) || !!r.qb_object_id;
     return {
       approve: canAct && !lu && open, skip: canAct && !lu && !['paid', 'recorded', 'skipped'].includes(r.status),
       reopen: canAct && !lu && ['skipped', 'approved'].includes(r.status), markPaid: canAct && !lu && r.status === 'approved',
       setProperty: canAct && !lu, setEmail: canAct && r.type === 'cleaning' && !['paid', 'recorded'].includes(r.status),
-      setAmount: canAct && !lu && open, note: canAct,
+      edit: canAct, editAmount: canAct && !settled, remove: canAct && !settled, note: canAct,
     };
+  }
+  // Fields the edit form shows (ap_staff_edit allows the same). Employee expenses: what was on the receipt.
+  const EDIT_FIELDS = {
+    employee_expense: ['vendor', 'bill_date', 'amount_cents', 'property'],
+    other: ['payee', 'property', 'bill_date', 'period_start', 'period_end', 'due_date', 'amount_cents', 'tax_cents', 'payment_method'],
+  };
+  const editFields = (r) => EDIT_FIELDS[r.type === 'employee_expense' ? 'employee_expense' : 'other'];
+  // The edit form's values -> only what changed ({ patch }), or { error }. Amounts are typed in dollars.
+  function editPatch(r, v){
+    const patch = {};
+    const cur = (k) => k === 'vendor' ? ((r.data || {}).vendor || '') : String(r[k] == null ? '' : r[k]).slice(0, k.endsWith('_date') || k.startsWith('period_') ? 10 : undefined);
+    for (const k of editFields(r)) {
+      if (!(k in v)) continue;
+      const raw = String(v[k] == null ? '' : v[k]).trim();
+      if (k === 'amount_cents' || k === 'tax_cents') {
+        const c = raw === '' && k === 'tax_cents' ? 0 : parseAmount(raw);
+        if (c == null) return { error: `Type the ${k === 'tax_cents' ? 'tax' : 'amount'} like 1234.50` };
+        if (c !== Number(r[k] || 0)) patch[k] = c;
+      } else if (k === 'payee' && !raw) return { error: 'The payee cannot be empty.' };
+      else if (raw !== cur(k)) patch[k] = raw;
+    }
+    if ((patch.period_start || r.period_start) && (patch.period_end || r.period_end) && String(patch.period_end ?? r.period_end).slice(0, 10) < String(patch.period_start ?? r.period_start).slice(0, 10)) return { error: 'The period ends before it starts.' };
+    return { patch };
   }
   // E-transfer list for the bank: tab-separated, header first, cleaners only, approved, with an email.
   function etransferList(rows){
@@ -119,17 +144,9 @@
         units: [...new Set(mine.map(a => String(a.unit || '').replace(/C$/, '')).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
     }).sort((a, b) => (b.s.active === false ? 0 : 1) - (a.s.active === false ? 0 : 1) || String(a.s.name).localeCompare(String(b.s.name)));
   }
-  /** Add property form defaults from a bill: "1200 Rue Jeanne-Mance # 1609, MONTRÉAL QC H2X0E8" -> that street as the name
-   * (or the bill's property when it is not a portal property yet), the address, and the city when the form lists it. */
-  function newPropertyPrefill(r, names){
-    const addr = String(((r && r.data) || {}).serviceAddress || '').trim();
-    const city = /montr[eé]al/i.test(addr) ? 'Montréal' : /toronto/i.test(addr) ? 'Toronto' : /vancouver/i.test(addr) ? 'Vancouver' : '';
-    const street = addr.split(',')[0].replace(/\s*#\s*/, ' · ').trim();
-    return { name: r && r.property && !(names || []).includes(r.property) ? r.property : street, addr, city };
-  }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
   const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
-  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary, newPropertyPrefill };
+  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, editFields, editPatch, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'all', view: 'open', q: '', city: '', sel: new Set() };
@@ -226,7 +243,8 @@
       ${act ? `<button class="btn btn-primary" type="button" data-ap-bulk="approve">Approve</button>
       <input class="form-input" id="ap-bulk-ref" placeholder="Payment reference (optional)" style="max-width:220px">
       <button class="btn" type="button" data-ap-bulk="mark_paid">Mark paid</button>
-      <button class="btn btn-ghost" type="button" data-ap-bulk="skip">Skip</button>` : ''}
+      <button class="btn btn-ghost" type="button" data-ap-bulk="skip">Skip</button>
+      <button class="btn btn-ghost" type="button" data-ap-bulk="delete" style="color:var(--red,#b42318)">Delete</button>` : ''}
       <button class="btn btn-ghost" type="button" data-ap-bulk="copy">Copy e-transfer list</button>
       <button class="btn btn-ghost" type="button" data-ap-bulk="clear">Clear</button>`;
   }
@@ -243,6 +261,7 @@
     if (action === 'clear') { S.sel.clear(); render(); return; }
     if (action === 'copy') return copyList(picked);
     if (action === 'copy-visible') return copyList(sortRows(filtered()));
+    if (action === 'delete') return bulkDelete(picked);
     const eligible = picked.filter(r => { const a = actionsFor(r, true); return action === 'approve' ? a.approve : action === 'mark_paid' ? a.markPaid : a.skip; });
     if (!eligible.length) { toast(action === 'mark_paid' ? 'Only approved items can be marked paid.' : action === 'approve' ? 'Nothing selected can be approved here (employee expenses are approved on Lu\'s Slack card).' : 'Nothing selected can be skipped.'); return; }
     const ref = (document.getElementById('ap-bulk-ref') || {}).value || '';
@@ -253,6 +272,77 @@
       S.sel.clear();
       await load(true);
     } catch (err) { toast('Could not update: ' + (err && err.message || err)); }
+  }
+
+  // One at a time (each is its own event, so Lu sees every employee expense that goes).
+  async function bulkDelete(picked){
+    const ok = picked.filter(r => actionsFor(r, true).remove);
+    if (!ok.length) { toast('Paid items and items already in QuickBooks cannot be deleted.'); return; }
+    const lu = ok.filter(r => r.type === 'employee_expense').length;
+    if (!confirm(`Delete ${ok.length} item(s), ${money(ok.reduce((s, r) => s + Number(r.amount_cents || 0), 0))}?${lu ? `\n\n${lu} employee expense(s): Lu takes them out of payroll too.` : ''}${ok.length < picked.length ? `\n\n${picked.length - ok.length} paid item(s) stay.` : ''}`)) return;
+    let n = 0;
+    for (const r of ok) {
+      const res = await sb().rpc('ap_staff_delete', { p_id: r.id, p_reason: null });
+      if (res.error) { toast(`Deleted ${n}; ${r.payee} failed: ${res.error.message}`); break; }
+      n++;
+    }
+    if (n === ok.length) toast(`${n} item(s) deleted.`);
+    S.sel.clear();
+    await load(true);
+  }
+
+  async function saveEdit(id, patch){
+    try {
+      const r = await sb().rpc('ap_staff_edit', { p_id: id, p_patch: patch });
+      if (r.error) throw r.error;
+      const i = (rows || []).findIndex(x => x.id === id);
+      if (i >= 0 && r.data) rows[i] = Object.assign({}, rows[i], r.data);
+      toast('Saved.');
+      render();
+      await open(id);
+    } catch (err) { toast('Could not save: ' + (err && err.message || err)); }
+  }
+
+  async function removeItem(id, reason){
+    try {
+      const r = await sb().rpc('ap_staff_delete', { p_id: id, p_reason: reason || null });
+      if (r.error) throw r.error;
+      rows = (rows || []).filter(x => x.id !== id);
+      S.sel.delete(id);
+      closePanel();
+      render();
+      toast('Deleted.');
+    } catch (err) { toast('Could not delete: ' + (err && err.message || err)); }
+  }
+
+  function closePanel(){
+    const p = document.getElementById('detail-panel'); if (p) { p.classList.remove('open'); p.setAttribute('aria-hidden', 'true'); }
+    const b = document.getElementById('panel-backdrop'); if (b) b.classList.remove('open');
+  }
+
+  // The edit form, hidden until "Edit" is clicked.
+  function editForm(r, a){
+    const d = r.data || {};
+    const date = (v) => String(v || '').slice(0, 10);
+    const dollars = (c) => (Number(c || 0) / 100).toFixed(2);
+    const inp = (name, label, val, attrs) => `<label style="display:grid;gap:3px;min-width:0"><span class="name-sub">${e(label)}</span><input class="form-input" name="${name}" value="${e(val)}" style="width:100%;min-width:0;box-sizing:border-box" ${attrs || ''}></label>`;
+    const F = {
+      payee: () => inp('payee', 'Payee', r.payee, 'required'),
+      vendor: () => inp('vendor', 'Vendor', d.vendor || ''),
+      property: () => `<label style="display:grid;gap:3px;min-width:0;grid-column:1/-1"><span class="name-sub">Property</span><select class="form-input" name="property" style="width:100%;min-width:0;box-sizing:border-box">${propertyOptions(r.property)}</select></label>`,
+      bill_date: () => inp('bill_date', r.type === 'employee_expense' ? 'Receipt date' : 'Bill date', date(r.bill_date), 'type="date"'),
+      period_start: () => inp('period_start', 'Period from', date(r.period_start), 'type="date"'),
+      period_end: () => inp('period_end', 'Period to', date(r.period_end), 'type="date"'),
+      due_date: () => inp('due_date', 'Due', date(r.due_date), 'type="date"'),
+      amount_cents: () => inp('amount_cents', 'Amount ($)', dollars(r.amount_cents), `inputmode="decimal"${a.editAmount ? '' : ' disabled title="Paid or in QuickBooks: the amount is locked"'}`),
+      tax_cents: () => inp('tax_cents', 'Tax included ($)', dollars(r.tax_cents), `inputmode="decimal"${a.editAmount ? '' : ' disabled'}`),
+      payment_method: () => `<label style="display:grid;gap:3px;min-width:0"><span class="name-sub">Paid by</span><select class="form-input" name="payment_method" style="width:100%;min-width:0;box-sizing:border-box"><option value="">—</option>${Object.entries(METHOD).map(([k, l]) => `<option value="${k}" ${k === r.payment_method ? 'selected' : ''}>${e(l)}</option>`).join('')}</select></label>`,
+    };
+    return `<form data-ap-form="edit" style="display:none;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px">
+      ${editFields(r).map(k => F[k]()).join('')}
+      <div style="grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-ghost" type="button" data-ap-do="edit-cancel">Cancel</button><button class="btn btn-primary" type="submit">Save changes</button></div>
+      ${r.type === 'employee_expense' ? `<div class="name-sub" style="grid-column:1/-1">Lu updates the receipt within ~10 minutes, so payroll reimburses the new amount.</div>` : ''}
+    </form>`;
   }
 
   async function act(id, action, patch){
@@ -267,12 +357,10 @@
     } catch (err) { toast('Could not update: ' + (err && err.message || err)); return false; }
   }
 
-  function propertyOptions(current, withNew){
+  function propertyOptions(current){
     const names = [...new Set(((window.properties || [])).map(p => p && p.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    return `<option value="">— choose —</option>` + names.map(n => `<option ${n === current ? 'selected' : ''}>${e(n)}</option>`).join('') + (current && !names.includes(current) ? `<option selected>${e(current)}</option>` : '')
-      + (withNew && typeof window.openAddProperty === 'function' ? `<option value="${NEW_PROP}">+ Add new property…</option>` : '');
+    return `<option value="">— choose —</option>` + names.map(n => `<option ${n === current ? 'selected' : ''}>${e(n)}</option>`).join('') + (current && !names.includes(current) ? `<option selected>${e(current)}</option>` : '');
   }
-  const NEW_PROP = '__new_property__';
 
   async function open(id){
     const r = (rows || []).find(x => x.id === id);
@@ -310,18 +398,27 @@
         ${field('Source', r.doc_url ? `<a class="btn btn-ghost btn-mini" style="text-decoration:none" href="${e(r.doc_url)}" target="_blank" rel="noopener">${r.type === 'employee_expense' ? 'View receipt' : 'Open the original'} ↗</a>` : e(r.source))}
         ${d.recentAverageCents ? field('Usual amount', e(money(d.recentAverageCents))) : ''}
       </div>
+      ${a.edit || a.remove ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+        ${a.edit ? `<button class="btn" type="button" data-ap-do="edit-open">Edit</button>` : ''}
+        ${a.remove ? `<button class="btn btn-ghost" type="button" data-ap-do="delete-open" style="color:var(--red,#b42318)">Delete</button>` : ''}</div>
+        ${a.edit ? editForm(r, a) : ''}
+        ${a.remove ? `<form data-ap-form="delete" style="display:none;gap:8px;margin-top:10px;padding:12px;border:1px solid var(--line,#e5e2dc);border-radius:8px">
+          <b>Delete this ${e((TYPES[r.type] || 'item').toLowerCase())}?</b>
+          <span class="name-sub">${r.type === 'employee_expense' ? `It leaves this list and Lu takes it out of ${e(r.payee)}'s payroll reimbursement.` : 'It leaves this list. Use Skip instead if it is real but we are not paying it.'}</span>
+          <input class="form-input" name="reason" placeholder="Why (optional): duplicate, wrong amount…">
+          <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-ghost" type="button" data-ap-do="delete-cancel">Cancel</button><button class="btn btn-primary" type="submit" style="background:var(--red,#b42318);border-color:var(--red,#b42318)">Delete</button></div>
+        </form>` : ''}` : ''}
       ${days.length ? H('By day') + `<div style="display:grid;grid-template-columns:auto auto;gap:2px 16px;max-width:280px">${days.map(([k, v]) => `<span class="name-sub">${e(k)}</span><span style="text-align:right">${e(money(v))}</span>`).join('')}</div>` : ''}
-      ${r.type === 'employee_expense' ? `<p class="name-sub" style="margin-top:16px">Employee expenses are approved on Lu's card in Slack (#bookkeping-review) and paid through payroll; this list follows along.</p>` : ''}
+      ${r.type === 'employee_expense' ? `<p class="name-sub" style="margin-top:16px">Employee expenses are approved on Lu's card in Slack (#bookkeping-review) and paid through payroll. Edits and deletes made here reach Lu too.</p>` : ''}
       ${a.approve || a.skip || a.reopen ? H('Decision') + `<div style="display:flex;gap:8px;flex-wrap:wrap">
         ${a.approve ? `<button class="btn btn-primary" type="button" data-ap-do="approve">Approve</button>` : ''}
         ${a.reopen ? `<button class="btn" type="button" data-ap-do="reopen">Back to review</button>` : ''}
         ${a.skip ? `<button class="btn btn-ghost" type="button" data-ap-do="skip">Skip</button>` : ''}</div>` : ''}
       ${a.markPaid ? H('Mark paid') + `<form data-ap-form="mark_paid" style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" name="ref" placeholder="E-transfer reference / cheque # (optional)" style="max-width:280px"><button class="btn btn-primary" type="submit">Mark paid</button></form>` : ''}
       ${a.setEmail ? H('E-transfer email') + `<form data-ap-form="set_email" style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" name="email" type="email" value="${e(r.payee_email || '')}" placeholder="name@example.com" style="max-width:280px" required><button class="btn" type="submit">Save</button></form><div class="name-sub">Remembered for ${e(r.payee)}'s next pay period.</div>` : ''}
-      ${a.setProperty ? H('Property') + `<form data-ap-form="set_property" style="display:flex;gap:8px;flex-wrap:wrap"><select class="form-input" name="property" style="max-width:320px" data-ap-prop>${propertyOptions(r.property, true)}</select><button class="btn" type="submit">Save</button></form>${['utility', 'internet'].includes(r.type) && r.account_no ? `<div class="name-sub">Account ${e(r.account_no)} will use this property for future bills.</div>` : ''}` : ''}
-      ${a.setAmount ? H('Amount') + `<form data-ap-form="set_amount" style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" name="amount" inputmode="decimal" value="${e((Number(r.amount_cents) / 100).toFixed(2))}" style="max-width:160px"><button class="btn" type="submit">Save</button></form>` : ''}
+      ${a.setProperty ? H('Property') + `<form data-ap-form="set_property" style="display:flex;gap:8px;flex-wrap:wrap"><select class="form-input" name="property" style="max-width:320px">${propertyOptions(r.property)}</select><button class="btn" type="submit">Save</button></form>${['utility', 'internet'].includes(r.type) && r.account_no ? `<div class="name-sub">Account ${e(r.account_no)} will use this property for future bills.</div>` : ''}` : ''}
       ${a.note ? H('Note') + `<form data-ap-form="note" style="display:grid;gap:8px"><textarea class="form-input" name="note" rows="2">${e(r.notes || '')}</textarea><div style="display:flex;justify-content:flex-end"><button class="btn btn-ghost" type="submit">Save note</button></div></form>` : (r.notes ? H('Note') + `<div>${e(r.notes)}</div>` : '')}
-      ${H('History')}<div style="display:grid;gap:4px">${events.map(ev => `<div class="name-sub">${e(when(ev.created_at))} · ${e(ev.actor || '')} · ${e(String(ev.action).replace(/_/g, ' '))}${ev.detail && ev.detail.paid_ref ? ' · ' + e(ev.detail.paid_ref) : ''}${ev.detail && ev.detail.status ? ' → ' + e(ev.detail.status) : ''}</div>`).join('') || '<div class="name-sub">—</div>'}</div>
+      ${H('History')}<div style="display:grid;gap:4px">${events.map(ev => `<div class="name-sub">${e(when(ev.created_at))} · ${e(ev.actor || '')} · ${e(String(ev.action).replace(/_/g, ' '))}${ev.detail && ev.detail.paid_ref ? ' · ' + e(ev.detail.paid_ref) : ''}${ev.detail && ev.detail.status && ev.action !== 'delete' ? ' → ' + e(ev.detail.status) : ''}${ev.action === 'edit' && ev.detail && ev.detail.changes ? ' · ' + e(Object.keys(ev.detail.changes).map(k => k.replace(/_cents$/, '').replace(/_/g, ' ')).join(', ')) : ''}</div>`).join('') || '<div class="name-sub">—</div>'}</div>
     </div>`;
   }
 
@@ -814,22 +911,12 @@
     if (pb) pb.addEventListener('click', ev => {
       const b = ev.target.closest('[data-ap-do]'); if (!b) return;
       const host = ev.target.closest('[data-ap-id]'); if (!host) return;
+      const toggle = (sel, show) => { const f = host.querySelector(sel); if (f) { f.style.display = show ? 'grid' : 'none'; if (show) { const i = f.querySelector('input:not([disabled]),select'); if (i) i.focus(); } } };
+      if (b.dataset.apDo === 'edit-open') { toggle('[data-ap-form="delete"]', false); toggle('[data-ap-form="edit"]', true); return; }
+      if (b.dataset.apDo === 'edit-cancel') { toggle('[data-ap-form="edit"]', false); return; }
+      if (b.dataset.apDo === 'delete-open') { toggle('[data-ap-form="edit"]', false); toggle('[data-ap-form="delete"]', true); return; }
+      if (b.dataset.apDo === 'delete-cancel') { toggle('[data-ap-form="delete"]', false); return; }
       act(host.dataset.apId, b.dataset.apDo, {});
-    });
-    // "+ Add new property…": open the portal's Add property form; the new one is then picked here (Save still sets it).
-    if (pb) pb.addEventListener('focusin', ev => { const sel = ev.target.closest('[data-ap-prop]'); if (sel && sel.value !== NEW_PROP) sel.dataset.prev = sel.value; });
-    if (pb) pb.addEventListener('change', ev => {
-      const sel = ev.target.closest('[data-ap-prop]'); if (!sel || sel.value !== NEW_PROP) return;
-      const host = sel.closest('[data-ap-id]'), r = host && (rows || []).find(x => x.id === host.dataset.apId);
-      sel.value = sel.dataset.prev || '';
-      if (!r) return;
-      window.openAddProperty(newPropertyPrefill(r, ((window.properties || [])).map(p => p && p.name)), name => {
-        if (!sel.isConnected) return;
-        sel.innerHTML = propertyOptions(name, true);
-        sel.value = name;
-        sel.focus();
-        toast(`${name} added. Press Save to use it for this bill.`);
-      });
     });
     if (pb) pb.addEventListener('submit', ev => {
       const f = ev.target.closest('[data-ap-form]'); if (!f) return;
@@ -838,10 +925,15 @@
       const kind = f.dataset.apForm, fd = new FormData(f);
       if (kind === 'mark_paid') act(host.dataset.apId, 'mark_paid', { paid_ref: String(fd.get('ref') || '') });
       else if (kind === 'set_email') act(host.dataset.apId, 'set_email', { email: String(fd.get('email') || '') });
-      else if (kind === 'set_property' && fd.get('property') === NEW_PROP) return;
       else if (kind === 'set_property') act(host.dataset.apId, 'set_property', { property: String(fd.get('property') || '') });
       else if (kind === 'note') act(host.dataset.apId, 'note', { note: String(fd.get('note') || '') });
-      else if (kind === 'set_amount') { const c = parseAmount(fd.get('amount')); if (c == null) toast('Type an amount like 1234.50'); else act(host.dataset.apId, 'set_amount', { amount_cents: c }); }
+      else if (kind === 'delete') removeItem(host.dataset.apId, String(fd.get('reason') || ''));
+      else if (kind === 'edit') {
+        const r = (rows || []).find(x => x.id === host.dataset.apId); if (!r) return;
+        const v = {}; for (const k of editFields(r)) { const el = f.elements[k]; if (el && !el.disabled) v[k] = el.value; }
+        const x = editPatch(r, v);
+        if (x.error) toast(x.error); else if (!Object.keys(x.patch).length) toast('Nothing changed.'); else saveEdit(r.id, x.patch);
+      }
     });
     // Live: Lu adds items while the page is open.
     try {
