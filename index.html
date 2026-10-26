@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-26-apedit1"></script>
+<script src="pms-supabase.js?v=2026-10-26-apaddprop2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -17686,9 +17686,12 @@ function openEditProperty(prop){
 }
 
 /* Open the same modal in "add" mode — empty fields, save creates a new property */
-function openAddProperty(){
+// prefill / onAdded: AP bill drawer "+ Add new property…" (name + address from the bill, then picks the new property).
+let _onPropertyAdded = null;
+function openAddProperty(prefill, onAdded){
   _editingProperty = { name:"", city:"Vancouver", addr:"", type:"Co-living", rooms:1, rent:"" };
   _isAddingProperty = true;
+  _onPropertyAdded = typeof onAdded === "function" ? onAdded : null;
   const modal = document.getElementById("edit-property-backdrop");
   const form = document.getElementById("edit-property-form");
   if(!modal || !form) return;
@@ -17699,10 +17702,11 @@ function openAddProperty(){
   const saveBtn = document.getElementById("edit-property-save");
   if (saveBtn) saveBtn.querySelector("svg")?.parentElement.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = " Create property"; });
   const setVal = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.value = (val == null ? "" : val); };
+  const pf = prefill || {};
   setVal("originalName", "");
-  setVal("name",         "");
-  setVal("city",         "Vancouver");
-  setVal("addr",         "");
+  setVal("name",         pf.name || "");
+  setVal("city",         pf.city || "Vancouver");
+  setVal("addr",         pf.addr || "");
   setVal("type",         "Co-living");
   setVal("rooms",        1);
   setVal("rent",         "");
@@ -17716,8 +17720,10 @@ function closeEditProperty(){
   const modal = document.getElementById("edit-property-backdrop");
   modal.classList.remove("open");
   modal.setAttribute("aria-hidden","true");
-  document.body.style.overflow = "";
+  // The AP side panel stays open under the modal: keep its scroll lock.
+  document.body.style.overflow = document.querySelector(".panel-backdrop.open") ? "hidden" : "";
   _editingProperty = null;
+  _onPropertyAdded = null;
 }
 
 document.getElementById("edit-property-close")?.addEventListener("click", closeEditProperty);
@@ -17838,7 +17844,9 @@ document.getElementById("edit-property-form")?.addEventListener("submit", async 
     if(typeof refreshDashboard === "function") refreshDashboard();
     if(typeof updateSidebarCounts === "function") updateSidebarCounts();
     if(typeof showToast === "function") showToast(_isAddingProperty ? `Added ${name}` : `Updated ${name}`);
+    const onAdded = _isAddingProperty ? _onPropertyAdded : null;
     closeEditProperty();
+    if(onAdded){ try { onAdded(name); } catch(err){ console.error("[add-property] callback:", err); } }
   } catch(err){
     console.error("[edit-property] threw:", err);
     failEdit("Couldn't save: " + (err.message || err));
@@ -45210,11 +45218,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-26-apedit1"></script>
-<script src="extensions.js?v=2026-10-26-apedit1"></script>
-<script src="retention.js?v=2026-10-26-apedit1"></script>
-<script src="ap.js?v=2026-10-26-apedit1"></script>
-<script src="properties.js?v=2026-10-26-apedit1"></script>
-<script src="ar.js?v=2026-10-26-apedit1"></script>
+<script src="room-changes.js?v=2026-10-26-apaddprop2"></script>
+<script src="extensions.js?v=2026-10-26-apaddprop2"></script>
+<script src="retention.js?v=2026-10-26-apaddprop2"></script>
+<script src="ap.js?v=2026-10-26-apaddprop2"></script>
+<script src="properties.js?v=2026-10-26-apaddprop2"></script>
+<script src="ar.js?v=2026-10-26-apaddprop2"></script>
 </body>
 </html>
