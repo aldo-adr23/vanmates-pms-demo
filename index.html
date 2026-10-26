@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-24-leadarr1"></script>
+<script src="pms-supabase.js?v=2026-10-26-autopilot1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4037,6 +4037,7 @@ hello@vanmates.com · vanmates.com</textarea>
         <button class="btn btn-ghost hm-tab" data-hm-tab="profiles">Host profiles</button>
         <button class="btn btn-ghost hm-tab" data-hm-tab="offers" id="hm-offers-tab">Offers</button>
         <span style="flex:1"></span>
+        <span id="hm-autopilot-bar" class="card-sub" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"></span>
         <select id="hm-filter" class="form-input" style="max-width:220px">
           <option value="open">All open</option><option value="NEEDS_INFO">Needs info</option>
           <option value="SHORTLISTING">Ready to invite</option><option value="MANUAL_REVIEW">Manual review</option>
@@ -21888,6 +21889,23 @@ function hmNextAction(c, nowMs, invs){
   const ms = Date.parse(c.next_action_at) - nowMs;
   return ms <= 0 ? `${what} due now` : `${what} in ${hmElapsed(new Date(nowMs - ms).toISOString(), nowMs)}`;
 }
+// Homestay autopilot (matching Worker spec 2026-10-26). hm_settings rows → { city: "off" | "shadow" | "on" }; a missing column = off.
+function hmAutopilotMap(settings){
+  const out = {};
+  for (const r of settings || []) out[r.city] = r.autopilot === "on" || r.autopilot === "shadow" ? r.autopilot : "off";
+  return out;
+}
+// One line for the case's Next step card: what the autopilot does next, or "" when it is off for the city / the case is closed.
+function hmAutopilotLine(c, apByCity, nowMs){
+  const mode = (c && (apByCity || {})[c.city]) || "off";
+  if (!c || mode === "off" || HM_CLOSED.includes(c.status)) return "";
+  if (c.hands_off) return "Autopilot: off for this case (staff are handling it)";
+  if (mode === "shadow") return "Autopilot: shadow (posts to Slack what it would do)";
+  const what = { reask: "asks hosts again", auto_offer: "sends the offer", offer_expiry: "reminds or closes" }[c.next_action];
+  if (!what || !c.next_action_at) return "Autopilot: on";
+  const ms = Date.parse(c.next_action_at) - nowMs;
+  return ms <= 0 ? `Autopilot: ${what} now` : `Autopilot: ${what} in ${hmElapsed(new Date(nowMs - ms).toISOString(), nowMs)}`;
+}
 // Case page "Hosts" table: shortlist and invitations merged, one row per host. Shortlist order first (rank =
 // position), then invited hosts that are not on the shortlist (phone answers, matched by hand). Pure.
 function hmHostRows(ordered, invRows){
@@ -38088,7 +38106,8 @@ async function loadHomestayMatching(){
       sb.from("hm_cases").select("*").order("created_at", { ascending: false }).range(0, 999),
       sb.from("hm_host_profiles").select("*").range(0, 999),
       sb.from("hm_listings").select("host_id,status,approved,updated_at").range(0, 999),
-      sb.from("hm_settings").select("city,auto_release_partner,wave_size"),
+      // autopilot (2026-10-26): a missing column (SQL not applied yet) falls back to the old columns.
+      sb.from("hm_settings").select("city,auto_release_partner,wave_size,autopilot").then(r => r.error ? sb.from("hm_settings").select("city,auto_release_partner,wave_size") : r),
       // Website settings completeness only: a read error leaves these empty (reported as missing, never guessed).
       sb.from("hm_room_details").select("room_id,host_id,bathroom").range(0, 999),
       sb.from("hm_host_geo").select("host_id,neighbourhood,status").range(0, 999),
@@ -38109,6 +38128,8 @@ async function loadHomestayMatching(){
     // Listings are extra: a read error (e.g. the table not there yet) must not blank the cases page.
     HM.listings = l.error ? [] : (l.data || []);
     HM.settings = st.error ? [] : (st.data || []);
+    HM.autopilot = hmAutopilotMap(HM.settings);
+    hmRenderAutopilotBar();
     HM.roomDetails = rd.error ? [] : (rd.data || []);
     HM.geo = geo.error ? [] : (geo.data || []);
     HM.openCount = hmQueue(HM.cases, "open").length;
@@ -38223,6 +38244,33 @@ function hmOwnerLine(c){
     </select><span>${what}</span></div>`;
 }
 
+// Header: the autopilot switch per city (off / shadow / on), saved through the matching Worker (staff can't write hm_settings).
+function hmRenderAutopilotBar(){
+  const el = document.getElementById("hm-autopilot-bar");
+  if (!el) return;
+  const cities = Object.keys(HM.autopilot || {}).filter(x => (HM.settings || []).some(s => s.city === x && "autopilot" in s));
+  el.innerHTML = cities.length ? "Autopilot:" + cities.map(city => `<label style="display:inline-flex;gap:4px;align-items:center">${hmEsc(city.charAt(0).toUpperCase() + city.slice(1))}
+    <select class="form-input" style="padding:2px 6px;height:auto;width:auto" data-hm-ap-city="${hmEsc(city)}">${["off", "shadow", "on"].map(m =>
+      `<option value="${m}" ${HM.autopilot[city] === m ? "selected" : ""}>${m}</option>`).join("")}</select></label>`).join("") : "";
+}
+document.addEventListener("change", async ev => {
+  const sel = ev.target.closest && ev.target.closest("[data-hm-ap-city]");
+  if (!sel) return;
+  const city = sel.dataset.hmApCity, mode = sel.value, before = (HM.autopilot || {})[city] || "off";
+  if (mode === "on" && !(await hmNotice({ title: `Autopilot on for ${city}?`, lines: [
+      "Matching cases in this city then run by themselves: hosts are asked again every day, offers go out 4 h after a host says yes, owners or students get reminders, and Manual review cases it can handle are taken over.",
+      "Staff can still take any case over with “I'll handle this one”."],
+    buttons: [{ label: "Cancel", value: false }, { label: "Turn on", primary: true, value: true }] }))) { sel.value = before; return; }
+  sel.disabled = true;
+  try {
+    await hmWorker("/staff/settings/autopilot", { city, mode });
+    HM.autopilot[city] = mode;
+    hmRenderQueue();
+  } catch (e) {
+    sel.value = before;
+    await hmNotice({ title: "Autopilot not saved", lines: [String(e.message || e)] });
+  } finally { sel.disabled = false; }
+});
 function hmRenderQueue(){
   const now = Date.now();
   const gaps = hmAgencyGaps(HM.agencyRequests, HM.cases, now);
@@ -38234,7 +38282,7 @@ function hmRenderQueue(){
       <div class="list-main">
         <div class="list-title">${hmEsc(c.id)} · ${hmEsc(c.student_name || "No name")} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
         <div class="list-sub">${hmOwnerTag(c)} · ${c.source === "partner" ? `<span class="badge badge-blue">${hmEsc(hmAgencyLabel(c, HM.agencyNames))}</span>` : "Direct"} · ${hmEsc(c.city || "?")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmElapsed(c.created_at, now)} ago</div>
-      </div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${hmChip(c.status)}${hmCanDelete(c) ? `<button class="hm-del" type="button" data-hm-delete="${hmEsc(c.id)}" title="Cancel this case and take it off the list">Delete</button>` : ""}</div>
+      </div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${hmChip(c.status)}${(HM.autopilot || {})[c.city] === "on" && !c.hands_off && !HM_CLOSED.includes(c.status) ? '<span class="badge badge-grey" title="The autopilot moves this case on by itself">Autopilot</span>' : ""}${hmCanDelete(c) ? `<button class="hm-del" type="button" data-hm-delete="${hmEsc(c.id)}" title="Cancel this case and take it off the list">Delete</button>` : ""}</div>
     </div>`).join("") : `<div class="card-sub">No cases here.</div>`;
 }
 
@@ -38678,6 +38726,8 @@ async function hmOpenCase(id){
       ${framed ? '<div class="card-sub" style="text-transform:uppercase;letter-spacing:.06em;font-size:11px;margin-bottom:4px">Next step</div>' : ""}
       ${nextInner}
       <div id="hm-msg" class="card-sub" style="margin-top:8px;font-weight:600">${hmEsc(flash)}</div>
+      ${hmAutopilotLine(c, HM.autopilot, nowMs) ? `<div class="card-sub" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">${hmEsc(hmAutopilotLine(c, HM.autopilot, nowMs))}
+        <button class="btn btn-ghost btn-mini" type="button" data-hm-handsoff="${c.hands_off ? "0" : "1"}">${c.hands_off ? "Give back to the autopilot" : "I'll handle this one"}</button></div>` : ""}
     </div>`;
   // Hosts table: shortlist + invitations in one list.
   const hostRows = hmHostRows(ordered, invRows);
@@ -38899,7 +38949,7 @@ window.openHmCaseFromHash = openHmCaseFromHash;
 window.addEventListener("hashchange", openHmCaseFromHash);
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-hm-delete],[data-hm-delete-req],[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel]");
+  const t = ev.target.closest("[data-hm-delete],[data-hm-delete-req],[data-hmo-case],[data-hmo-refresh],[data-hm-case],[data-hm-act],[data-hm-up],[data-hm-remove],[data-hm-tab],#hm-refresh,[data-hm-save-profile],[data-hm-inv],[data-hm-offer-build],[data-hm-offer],[data-hm-offer-send],[data-hm-offer-price],[data-hm-undo-match],[data-hm-optset-build],[data-hm-optset-price],[data-hm-optset-send],[data-hm-edit-preview],[data-hm-edit-save],[data-hm-edit-cancel],[data-hm-handsoff]");
   if (!t) return;
   const c = HM.cases.find(x => x.id === HM.selected);
   const msg = m => { const el = document.getElementById("hm-msg"); if (el) el.textContent = m; };
@@ -38924,6 +38974,14 @@ document.addEventListener("click", async (ev) => {
     }
     if (t.dataset.hmSaveProfile) return await hmSaveProfile(t.dataset.hmSaveProfile);
     if (!c) return;
+    if (t.dataset.hmHandsoff) {
+      const on = t.dataset.hmHandsoff === "1";
+      t.disabled = true;
+      msg("Saving…");
+      await hmWorker(`/staff/cases/${c.id}/hands-off`, { on });
+      HM.flash = { id: c.id, text: on ? "The autopilot leaves this case to you." : "The autopilot moves this case on again." };
+      return await loadHomestayMatching();
+    }
     if (t.dataset.hmInv) {
       const a = t.dataset.hmInv;
       t.disabled = true; // double-click guard; cleared by the re-render below, or in the catch on error
@@ -45152,11 +45210,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-24-leadarr1"></script>
-<script src="extensions.js?v=2026-10-24-leadarr1"></script>
-<script src="retention.js?v=2026-10-24-leadarr1"></script>
-<script src="ap.js?v=2026-10-24-leadarr1"></script>
-<script src="properties.js?v=2026-10-24-leadarr1"></script>
-<script src="ar.js?v=2026-10-24-leadarr1"></script>
+<script src="room-changes.js?v=2026-10-26-autopilot1"></script>
+<script src="extensions.js?v=2026-10-26-autopilot1"></script>
+<script src="retention.js?v=2026-10-26-autopilot1"></script>
+<script src="ap.js?v=2026-10-26-autopilot1"></script>
+<script src="properties.js?v=2026-10-26-autopilot1"></script>
+<script src="ar.js?v=2026-10-26-autopilot1"></script>
 </body>
 </html>
