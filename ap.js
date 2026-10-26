@@ -119,9 +119,17 @@
         units: [...new Set(mine.map(a => String(a.unit || '').replace(/C$/, '')).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
     }).sort((a, b) => (b.s.active === false ? 0 : 1) - (a.s.active === false ? 0 : 1) || String(a.s.name).localeCompare(String(b.s.name)));
   }
+  /** Add property form defaults from a bill: "1200 Rue Jeanne-Mance # 1609, MONTRÉAL QC H2X0E8" -> that street as the name
+   * (or the bill's property when it is not a portal property yet), the address, and the city when the form lists it. */
+  function newPropertyPrefill(r, names){
+    const addr = String(((r && r.data) || {}).serviceAddress || '').trim();
+    const city = /montr[eé]al/i.test(addr) ? 'Montréal' : /toronto/i.test(addr) ? 'Toronto' : /vancouver/i.test(addr) ? 'Vancouver' : '';
+    const street = addr.split(',')[0].replace(/\s*#\s*/, ' · ').trim();
+    return { name: r && r.property && !(names || []).includes(r.property) ? r.property : street, addr, city };
+  }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
   const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
-  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary };
+  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary, newPropertyPrefill };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'all', view: 'open', q: '', city: '', sel: new Set() };
@@ -259,10 +267,12 @@
     } catch (err) { toast('Could not update: ' + (err && err.message || err)); return false; }
   }
 
-  function propertyOptions(current){
+  function propertyOptions(current, withNew){
     const names = [...new Set(((window.properties || [])).map(p => p && p.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    return `<option value="">— choose —</option>` + names.map(n => `<option ${n === current ? 'selected' : ''}>${e(n)}</option>`).join('') + (current && !names.includes(current) ? `<option selected>${e(current)}</option>` : '');
+    return `<option value="">— choose —</option>` + names.map(n => `<option ${n === current ? 'selected' : ''}>${e(n)}</option>`).join('') + (current && !names.includes(current) ? `<option selected>${e(current)}</option>` : '')
+      + (withNew && typeof window.openAddProperty === 'function' ? `<option value="${NEW_PROP}">+ Add new property…</option>` : '');
   }
+  const NEW_PROP = '__new_property__';
 
   async function open(id){
     const r = (rows || []).find(x => x.id === id);
@@ -308,7 +318,7 @@
         ${a.skip ? `<button class="btn btn-ghost" type="button" data-ap-do="skip">Skip</button>` : ''}</div>` : ''}
       ${a.markPaid ? H('Mark paid') + `<form data-ap-form="mark_paid" style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" name="ref" placeholder="E-transfer reference / cheque # (optional)" style="max-width:280px"><button class="btn btn-primary" type="submit">Mark paid</button></form>` : ''}
       ${a.setEmail ? H('E-transfer email') + `<form data-ap-form="set_email" style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" name="email" type="email" value="${e(r.payee_email || '')}" placeholder="name@example.com" style="max-width:280px" required><button class="btn" type="submit">Save</button></form><div class="name-sub">Remembered for ${e(r.payee)}'s next pay period.</div>` : ''}
-      ${a.setProperty ? H('Property') + `<form data-ap-form="set_property" style="display:flex;gap:8px;flex-wrap:wrap"><select class="form-input" name="property" style="max-width:320px">${propertyOptions(r.property)}</select><button class="btn" type="submit">Save</button></form>${['utility', 'internet'].includes(r.type) && r.account_no ? `<div class="name-sub">Account ${e(r.account_no)} will use this property for future bills.</div>` : ''}` : ''}
+      ${a.setProperty ? H('Property') + `<form data-ap-form="set_property" style="display:flex;gap:8px;flex-wrap:wrap"><select class="form-input" name="property" style="max-width:320px" data-ap-prop>${propertyOptions(r.property, true)}</select><button class="btn" type="submit">Save</button></form>${['utility', 'internet'].includes(r.type) && r.account_no ? `<div class="name-sub">Account ${e(r.account_no)} will use this property for future bills.</div>` : ''}` : ''}
       ${a.setAmount ? H('Amount') + `<form data-ap-form="set_amount" style="display:flex;gap:8px;flex-wrap:wrap"><input class="form-input" name="amount" inputmode="decimal" value="${e((Number(r.amount_cents) / 100).toFixed(2))}" style="max-width:160px"><button class="btn" type="submit">Save</button></form>` : ''}
       ${a.note ? H('Note') + `<form data-ap-form="note" style="display:grid;gap:8px"><textarea class="form-input" name="note" rows="2">${e(r.notes || '')}</textarea><div style="display:flex;justify-content:flex-end"><button class="btn btn-ghost" type="submit">Save note</button></div></form>` : (r.notes ? H('Note') + `<div>${e(r.notes)}</div>` : '')}
       ${H('History')}<div style="display:grid;gap:4px">${events.map(ev => `<div class="name-sub">${e(when(ev.created_at))} · ${e(ev.actor || '')} · ${e(String(ev.action).replace(/_/g, ' '))}${ev.detail && ev.detail.paid_ref ? ' · ' + e(ev.detail.paid_ref) : ''}${ev.detail && ev.detail.status ? ' → ' + e(ev.detail.status) : ''}</div>`).join('') || '<div class="name-sub">—</div>'}</div>
@@ -806,6 +816,21 @@
       const host = ev.target.closest('[data-ap-id]'); if (!host) return;
       act(host.dataset.apId, b.dataset.apDo, {});
     });
+    // "+ Add new property…": open the portal's Add property form; the new one is then picked here (Save still sets it).
+    if (pb) pb.addEventListener('focusin', ev => { const sel = ev.target.closest('[data-ap-prop]'); if (sel && sel.value !== NEW_PROP) sel.dataset.prev = sel.value; });
+    if (pb) pb.addEventListener('change', ev => {
+      const sel = ev.target.closest('[data-ap-prop]'); if (!sel || sel.value !== NEW_PROP) return;
+      const host = sel.closest('[data-ap-id]'), r = host && (rows || []).find(x => x.id === host.dataset.apId);
+      sel.value = sel.dataset.prev || '';
+      if (!r) return;
+      window.openAddProperty(newPropertyPrefill(r, ((window.properties || [])).map(p => p && p.name)), name => {
+        if (!sel.isConnected) return;
+        sel.innerHTML = propertyOptions(name, true);
+        sel.value = name;
+        sel.focus();
+        toast(`${name} added. Press Save to use it for this bill.`);
+      });
+    });
     if (pb) pb.addEventListener('submit', ev => {
       const f = ev.target.closest('[data-ap-form]'); if (!f) return;
       ev.preventDefault();
@@ -813,6 +838,7 @@
       const kind = f.dataset.apForm, fd = new FormData(f);
       if (kind === 'mark_paid') act(host.dataset.apId, 'mark_paid', { paid_ref: String(fd.get('ref') || '') });
       else if (kind === 'set_email') act(host.dataset.apId, 'set_email', { email: String(fd.get('email') || '') });
+      else if (kind === 'set_property' && fd.get('property') === NEW_PROP) return;
       else if (kind === 'set_property') act(host.dataset.apId, 'set_property', { property: String(fd.get('property') || '') });
       else if (kind === 'note') act(host.dataset.apId, 'note', { note: String(fd.get('note') || '') });
       else if (kind === 'set_amount') { const c = parseAmount(fd.get('amount')); if (c == null) toast('Type an amount like 1234.50'); else act(host.dataset.apId, 'set_amount', { amount_cents: c }); }
