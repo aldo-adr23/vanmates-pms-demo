@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-27-hrdel1"></script>
+<script src="pms-supabase.js?v=2026-10-27-jleadsja1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2794,8 +2794,8 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
         <div id="jleads-empty" style="display:none">
           <div class="empty">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.3 9 9 0 0 1-2.5-.3L5 21l1.4-4a8.1 8.1 0 0 1-2.4-5.5C4 6.9 7.8 3.2 12.5 3.2S21 6.9 21 11.5z"/></svg>
-            <div class="t">No LINE leads yet</div>
-            <div>Leads Maya captures on LINE appear here automatically.</div>
+            <div class="t">No Japanese leads yet</div>
+            <div>Leads Maya captures on LINE, and website forms, ads and phone calls in Japanese, appear here automatically.</div>
           </div>
         </div>
       </div>
@@ -31289,11 +31289,13 @@ function leadStatusFilterMatches(lead, filter){
 }
 // Lead cap (lead-cap-2026-10-10.sql is the real gate — claim_lead refuses past
 // it; this only lets the portal say so before the click). Counts the agent's
-// open leads outside LINE, which n8n assigns to the Japan team on its own.
+// open leads outside the Japan pipeline (LINE, or a lead in Japanese: JLeads), which the Japan team works.
 // Admins are exempt. Keep LEAD_CAP equal to vm_lead_cap() in the SQL.
 const LEAD_CAP = 200;
+// Mirrors vm_lead_is_japan (jleads-japanese-2026-10-27.sql). Literal: this core is tested on its own.
+function leadIsJapan(lead){ return !!lead && (String(lead.source || '') === 'line-maya' || /^(ja|jp)/i.test(String(lead.language || ''))); }
 function leadCountsTowardCap(lead){
-  return !!lead && !lead.deleted_at && String(lead.source || '') !== 'line-maya'
+  return !!lead && !lead.deleted_at && !leadIsJapan(lead)
     && LEAD_OPEN_STATUSES.indexOf((lead.status) || 'new') >= 0;
 }
 function leadOpenCount(all, email){
@@ -31304,7 +31306,7 @@ function leadOpenCount(all, email){
 // 'ok' | 'at-cap' for the viewer about to claim `lead`.
 function leadCapState(lead, viewer, all){
   if(!viewer || viewer.role === 'admin') return { state:'ok', open:0 };
-  if(!lead || String(lead.source || '') === 'line-maya') return { state:'ok', open:0 };
+  if(!lead || leadIsJapan(lead)) return { state:'ok', open:0 };
   const open = leadOpenCount(all, viewer.email);
   return { state: open >= LEAD_CAP ? 'at-cap' : 'ok', open };
 }
@@ -31315,7 +31317,8 @@ function leadCapState(lead, viewer, all){
 const LEAD_RELEASE_NEW_DAYS = 3, LEAD_RELEASE_OPEN_DAYS = 10;
 const ML_DAY_MS = 864e5;
 function mlTs(v){ const t = Date.parse(v || ''); return isNaN(t) ? null : t; }
-function mlRegular(l){ return !!l && !l.deleted_at && String(l.source || '') !== 'line-maya'; }
+// Not a Japan lead (LINE, or a lead in Japanese: those live in JLeads). Literal, as this core is tested on its own.
+function mlRegular(l){ return !!l && !l.deleted_at && String(l.source || '') !== 'line-maya' && !/^(ja|jp)/i.test(String(l.language || '')); }
 function leadLastActivity(l){
   const t = Math.max(mlTs(l && l.claimed_at) || 0, mlTs(l && l.last_touched_at) || 0, mlTs(l && l.last_emailed_at) || 0);
   return t || null;
@@ -31763,7 +31766,9 @@ function leadTaylorBlockHtml(l, opts, nowMs){
 // nothing in here may touch document, window or a global.
 const JLEAD_SOURCE = 'line-maya';
 
-function isJLead(l){ return !!l && String(l.source || '') === JLEAD_SOURCE; }
+// LINE leads, and any lead in Japanese (website /ja/ forms, Meta ads, phone calls to LINE Maya):
+// the Japan team works them here, not in Leads (jleads-japanese-2026-10-27.sql).
+function isJLead(l){ return !!l && (String(l.source || '') === JLEAD_SOURCE || /^(ja|jp)/i.test(String(l.language || ''))); }
 
 // The submission body as stored. Maya's extras (LINE id, tier, housing) live in
 // `raw`; older rows kept the whole payload in `data`.
@@ -31796,11 +31801,11 @@ function jleadTier(l){
 
 function jleadHousing(l){
   const p = jleadPayload(l);
-  return String(p.service_norm || p.service || p.intent || '').trim();
+  return String(p.service_norm || p.service || p.intent || p.accommodationType || (l && l.intent) || '').trim();
 }
 function jleadBudget(l){
   const p = jleadPayload(l);
-  return String(p.budget == null ? '' : p.budget).trim();
+  return String(p.budget == null ? ((l && l.budget) || '') : p.budget).trim();
 }
 function jleadMoveIn(l){
   const p = jleadPayload(l);
@@ -33222,6 +33227,10 @@ function jleadContactCell(l){
   if(l.email) parts.push(`<a href="${safeHref('mailto:'+l.email)}">${esc(l.email)}</a>`);
   const lid = jleadLineId(l);
   if(lid) parts.push(`<span class="name-sub" title="${esc(lid)}">LINE ${esc(jleadLineShort(lid))}</span>`);
+  // Website forms ask for a LINE ID (what the person typed, not a chat id); phone and Meta leads have a phone.
+  const typed = !lid && String(jleadPayload(l).lineId || '').trim();
+  if(typed) parts.push(`<span class="name-sub" title="LINE ID from the website form">LINE ID ${esc(typed.slice(0, 40))}</span>`);
+  if(!lid && l.phone) parts.push(`<a href="${safeHref('tel:'+l.phone)}">${esc(l.phone)}</a>`);
   return parts.join('<br>') || '—';
 }
 
@@ -33261,7 +33270,7 @@ function renderJLeads(){
   const countEl = document.getElementById('jleads-count');
   if(countEl) countEl.textContent = list.length;
   const labelEl = document.getElementById('jleads-count-label');
-  if(labelEl) labelEl.textContent = JLEAD_FILTERS.status === 'open' ? 'open LINE leads' : 'LINE leads';
+  if(labelEl) labelEl.textContent = JLEAD_FILTERS.status === 'open' ? 'open Japanese leads' : 'Japanese leads';
   const newEl = document.getElementById('jleads-new');
   if(newEl){ const n = list.filter(jleadIsNewForBadge).length; newEl.textContent = n ? `· ${n} new` : ''; }
   const dueEl = document.getElementById('jleads-due');
@@ -33294,8 +33303,8 @@ function renderJLeads(){
     // An empty follow-up list is the goal, not "no leads yet".
     const t = emptyEl.querySelector('.t'), d = emptyEl.querySelector('.t + div');
     const done = JLEAD_FILTERS.followup === 'due';
-    if(t) t.textContent = done ? 'Nobody to follow up today' : 'No LINE leads yet';
-    if(d) d.textContent = done ? 'Every quiet lead has been nudged. New ones come due as their cadence ticks over.' : 'Leads Maya captures on LINE appear here automatically.';
+    if(t) t.textContent = done ? 'Nobody to follow up today' : 'No Japanese leads yet';
+    if(d) d.textContent = done ? 'Every quiet lead has been nudged. New ones come due as their cadence ticks over.' : 'Leads Maya captures on LINE, and website forms, ads and phone calls in Japanese, appear here automatically.';
   }
   body.innerHTML = list.map(l => `
     <tr data-lead="${esc(l.id)}" style="cursor:pointer">
@@ -45218,11 +45227,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-27-hrdel1"></script>
-<script src="extensions.js?v=2026-10-27-hrdel1"></script>
-<script src="retention.js?v=2026-10-27-hrdel1"></script>
-<script src="ap.js?v=2026-10-27-hrdel1"></script>
-<script src="properties.js?v=2026-10-27-hrdel1"></script>
-<script src="ar.js?v=2026-10-27-hrdel1"></script>
+<script src="room-changes.js?v=2026-10-27-jleadsja1"></script>
+<script src="extensions.js?v=2026-10-27-jleadsja1"></script>
+<script src="retention.js?v=2026-10-27-jleadsja1"></script>
+<script src="ap.js?v=2026-10-27-jleadsja1"></script>
+<script src="properties.js?v=2026-10-27-jleadsja1"></script>
+<script src="ar.js?v=2026-10-27-jleadsja1"></script>
 </body>
 </html>
