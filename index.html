@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-27-jleadsja1"></script>
+<script src="pms-supabase.js?v=2026-10-27-jleadsja2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -31794,6 +31794,16 @@ function jleadLineShort(id){
 // pipeline. They answer different questions, so both are shown. 'hot' means she
 // sent a room or booking link, or heard explicit booking intent.
 const JLEAD_TIERS = ['new','qualified','hot'];
+// A Japanese lead from outside LINE that nobody has picked up yet.
+function jleadFreshOther(l){
+  return !!l && String(l.source || '') !== JLEAD_SOURCE && (l.status || 'new') === 'new' && !l.claimed_by;
+}
+// When the lead last came in: a repeat phone call refreshes an existing lead (data.phone_call.at).
+function jleadArrivedAt(l){
+  const pc = l && l.phone_call && typeof l.phone_call === 'object' ? l.phone_call.at : '';
+  return Math.max(jleadTs(l && l.created_at) || 0, jleadTs(pc) || 0, jleadTs(l && l.submittedAt) || 0);
+}
+
 function jleadTier(l){
   const t = String(jleadPayload(l).tier || '').toLowerCase();
   return JLEAD_TIERS.indexOf(t) >= 0 ? t : '';
@@ -32085,6 +32095,11 @@ function selectJLeads(all, filters, statusMatch, now, custIdx){
     const qa = ra.state === 'read', qb = rb.state === 'read';
     if(qa !== qb) return qa ? -1 : 1;
     if(qa) return rb.at - ra.at;
+    // Then new, unclaimed Japanese leads from outside LINE (phone calls, website forms, Meta ads):
+    // they have no LINE tier, so 'tier' would sink them, and nobody has answered them yet.
+    const fa = jleadFreshOther(a), fb = jleadFreshOther(b);
+    if(fa !== fb) return fa ? -1 : 1;
+    if(fa) return jleadArrivedAt(b) - jleadArrivedAt(a);
     // 'activity': most recent customer message first (Maya or staff chats alike).
     if(byActivity){ const x = jleadLastMessageAt(a) || 0, y = jleadLastMessageAt(b) || 0; if(x !== y) return y - x; }
     if(byTier && cust[a.id] !== cust[b.id]) return cust[a.id] ? 1 : -1;
@@ -45227,11 +45242,11 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-27-jleadsja1"></script>
-<script src="extensions.js?v=2026-10-27-jleadsja1"></script>
-<script src="retention.js?v=2026-10-27-jleadsja1"></script>
-<script src="ap.js?v=2026-10-27-jleadsja1"></script>
-<script src="properties.js?v=2026-10-27-jleadsja1"></script>
-<script src="ar.js?v=2026-10-27-jleadsja1"></script>
+<script src="room-changes.js?v=2026-10-27-jleadsja2"></script>
+<script src="extensions.js?v=2026-10-27-jleadsja2"></script>
+<script src="retention.js?v=2026-10-27-jleadsja2"></script>
+<script src="ap.js?v=2026-10-27-jleadsja2"></script>
+<script src="properties.js?v=2026-10-27-jleadsja2"></script>
+<script src="ar.js?v=2026-10-27-jleadsja2"></script>
 </body>
 </html>
