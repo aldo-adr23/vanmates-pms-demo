@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Phone Calls · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Same sign-in gate as whatsapp.html. Who may see calls is decided by the vanmates-voice Worker on every request.
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now() - 3600e3));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'calls.html' + location.hash); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root{
+  --cream:#FAF5ED; --cream-2:#F4ECDD; --red:#B94A3F; --red-dark:#A13A30; --red-soft:#F3DDD8; --ink:#2B211A; --muted:#7A6B5C;
+  --line:#E4DBC9; --green:#5C8A6B; --green-soft:#E2EDDF; --amber:#C8923A; --amber-soft:#F4E5C7; --blue:#3F6E94; --blue-soft:#DCE7F1;
+  --surface:#FFFFFF; --serif:"Playfair Display", Georgia, serif; --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05); --radius: 14px; --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e; --b-red:#8f2f26;
+  --toast:#2B211A; --toast-ink:#FAF5ED;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
+  --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --b-red:#F1C2BA; --toast:#F4ECDD; --toast-ink:#1F1A16;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A; --surface:#26201B;
+    --green-soft:#2C3E32; --amber-soft:#4A3C20; --blue-soft:#28394A; --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --b-red:#F1C2BA; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+button { font: inherit; cursor: pointer; color: inherit; }
+[hidden] { display: none !important; }
+a { color: var(--red); }
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none; font-family: var(--serif); font-style: italic; font-weight: 700; font-size: 15px; text-decoration: none; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; white-space: nowrap; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.sp { flex: 1; min-width: 0; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px; border: 1px solid transparent; white-space: nowrap; background: transparent; }
+.btn-primary { background: var(--red); color: var(--on-red); } .btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); } .btn-ghost:hover { background: var(--cream-2); }
+.btn-sm { min-height: 28px; padding: 2px 10px; font-size: 12px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn:focus-visible, .chip:focus-visible, .row:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.muted { color: var(--muted); } .small { font-size: 12px; }
+.chips { display: inline-flex; gap: 2px; background: var(--cream-2); border-radius: 999px; padding: 3px; flex-wrap: wrap; }
+.chip { border: 0; border-radius: 999px; background: transparent; padding: 0 12px; font-size: 12.5px; font-weight: 600; min-height: 30px; color: var(--muted); white-space: nowrap; }
+.chip.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.chip .n { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--red); color: var(--on-red); font-size: 11px; line-height: 18px; text-align: center; }
+input.inp, select.sel, textarea.inp { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 34px; padding: 6px 10px; font: inherit; font-size: 14px; outline: 0; min-width: 0; }
+input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+textarea.inp { width: 100%; min-height: 70px; resize: vertical; }
+.banner { margin: 0 16px 10px; padding: 9px 12px; border-radius: 10px; font-size: 13px; background: var(--amber-soft); color: var(--b-amber); }
+.wrap { padding: 0 16px 24px; padding-bottom: max(24px, env(safe-area-inset-bottom)); max-width: 1280px; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.pad { padding: 14px 16px; }
+h2 { font-family: var(--serif); font-size: 18px; margin: 0 0 10px; }
+h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; font-weight: 700; }
+
+/* overview */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.tile { padding: 12px 14px; }
+.tile .v { font-family: var(--serif); font-size: 28px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tile .l { font-size: 12px; color: var(--muted); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.brk { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.brk:last-child { border-bottom: 0; }
+.brk .k { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brk .bar-in { height: 6px; border-radius: 3px; background: var(--red); opacity: .75; }
+.brk .num { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 28px; text-align: right; }
+
+/* calls: list | detail */
+.split { display: grid; grid-template-columns: minmax(300px, 440px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.list { overflow: hidden; }
+.row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 10px 12px; }
+.row:last-child { border-bottom: 0; }
+.row:hover { background: var(--cream); } .row.on { background: var(--cream-2); }
+.row .l1 { display: flex; align-items: center; gap: 6px; } .row .who { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .l2 { color: var(--muted); font-size: 12.5px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.p-green { background: var(--green-soft); color: var(--b-green); } .p-amber { background: var(--amber-soft); color: var(--b-amber); }
+.p-blue { background: var(--blue-soft); color: var(--b-blue); } .p-red { background: var(--red-soft); color: var(--b-red); } .p-grey { background: var(--cream-2); color: var(--muted); }
+.detail { min-height: 200px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; margin: 0 0 12px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.tr { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.m { max-width: 80%; padding: 7px 11px; border-radius: 12px; font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.m .t { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.m.caller { align-self: flex-start; background: var(--cream-2); border-bottom-left-radius: 4px; }
+.m.ai { align-self: flex-end; background: var(--blue-soft); border-bottom-right-radius: 4px; }
+.m.system { align-self: center; background: transparent; color: var(--muted); font-size: 12px; font-style: italic; }
+.ev { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+.back { display: none; }
+
+/* callbacks */
+.cb { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; }
+.cb:last-child { border-bottom: 0; }
+.cb .acts { display: flex; gap: 6px; align-items: start; flex-wrap: wrap; justify-content: flex-end; }
+.overdue { color: var(--red); font-weight: 700; }
+
+/* settings */
+.set { display: grid; gap: 12px; }
+.chain { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; margin-bottom: 6px; }
+.hrs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.days label { font-size: 12px; margin-right: 6px; white-space: nowrap; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px; border-radius: 10px; opacity: 0; pointer-events: none; transition: .2s; font-size: 13px; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+@media (max-width: 759px) {
+  .top { padding: 10px 12px; } .page-title { font-size: 19px; }
+  .wrap { padding: 0 8px 16px; } .banner { margin: 0 8px 8px; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .split.open .list { display: none; } .split:not(.open) .detail { display: none; }
+  .back { display: inline-flex; } .m { max-width: 92%; }
+  .chain { grid-template-columns: 1fr; } .cb { grid-template-columns: 1fr; } .cb .acts { justify-content: flex-start; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
+  <div class="page-title">Phone <em>calls</em></div>
+  <div class="sp"></div>
+  <span class="small muted" id="me"></span>
+</header>
+<div class="banner" id="errBanner" hidden></div>
+<div class="wrap">
+  <div class="bar">
+    <div class="chips" role="tablist" id="tabs">
+      <button class="chip on" data-tab="overview">Overview</button>
+      <button class="chip" data-tab="calls">Calls</button>
+      <button class="chip" data-tab="callbacks">Callbacks<span class="n" id="nCb" hidden></span></button>
+      <button class="chip" data-tab="settings" id="setTab" hidden>Settings</button>
+    </div>
+    <div class="sp"></div>
+    <select class="sel" id="days" aria-label="Period"><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select>
+  </div>
+
+  <section id="tab-overview">
+    <div class="tiles" id="tiles"></div>
+    <div class="grid2" id="brk"></div>
+  </section>
+
+  <section id="tab-calls" hidden>
+    <div class="split" id="split">
+      <div class="card list" id="callList"><div class="empty">Loading…</div></div>
+      <div class="card detail pad" id="callDetail"><div class="empty">Choose a call on the left.</div></div>
+    </div>
+  </section>
+
+  <section id="tab-callbacks" hidden>
+    <div class="bar">
+      <div class="chips" id="cbFilter">
+        <button class="chip on" data-s="open">Open</button>
+        <button class="chip" data-s="done">Done</button>
+        <button class="chip" data-s="cancelled">Cancelled</button>
+      </div>
+    </div>
+    <div class="card" id="cbList"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <div class="set" id="settings"></div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var API = 'https://vanmates-voice.talatcan.workers.dev/api';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY, { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var S = { me: null, tab: 'overview', calls: [], open: null, cbStatus: 'open', settings: null };
+  var LANG = { en: 'English', es: 'Spanish', ja: 'Japanese' };
+  var DESK = { sales: 'Sales', homestay: 'Homestay', cs: 'Customer service', landlords: 'Landlords', finance: 'Billing', japanese: 'Japanese' };
+  var AGENT = { taylor: 'Taylor', ted: 'Ted', maya: 'Maya', 'line-maya': 'LINE Maya', desk: 'Assistant' };
+  var STATUS = {
+    ai_handled: ['AI handled', 'p-green'], transferred: ['Transferred', 'p-blue'], callback: ['Callback', 'p-amber'], voicemail: ['Voicemail', 'p-amber'],
+    no_input: ['No input', 'p-grey'], in_progress: ['Live now', 'p-red'], failed: ['Failed', 'p-red']
+  };
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 4000); }
+  function when(iso) {
+    if (!iso) return '';
+    var d = new Date(iso), now = new Date();
+    var t = d.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
+    if (d.toDateString() === now.toDateString()) return 'Today ' + t;
+    return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ' ' + t;
+  }
+  function phone(p) {
+    var d = String(p || '').replace(/\D/g, '');
+    if (d.length === 11 && d[0] === '1') return '+1 ' + d.slice(1, 4) + ' ' + d.slice(4, 7) + ' ' + d.slice(7);
+    return p || 'Withheld';
+  }
+  function dur(s) { s = Number(s || 0); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; }
+  function pill(status) { var x = STATUS[status] || [status || '—', 'p-grey']; return '<span class="pill ' + x[1] + '">' + esc(x[0]) + '</span>'; }
+
+  async function token() {
+    var sess = (await sb.auth.getSession()).data.session;
+    if (!sess) { location.replace('signin.html'); throw new Error('signed out'); }
+    return sess.access_token;
+  }
+  async function api(path, opts) {
+    opts = opts || {};
+    var r = await fetch(API + path, { method: opts.method || 'GET', headers: Object.assign({ Authorization: 'Bearer ' + (await token()) }, opts.body ? { 'Content-Type': 'application/json' } : {}), body: opts.body ? JSON.stringify(opts.body) : undefined });
+    var j = await r.json().catch(function () { return { error: 'failed' }; });
+    if (!r.ok) {
+      var msg = r.status === 401 ? 'You don’t have access to Phone calls. Ask an admin to tick “Phone calls” for you in Team.' : (j.error || ('HTTP ' + r.status));
+      throw new Error(msg);
+    }
+    return j;
+  }
+  function showErr(e) { var b = $('errBanner'); b.textContent = e.message; b.hidden = false; }
+
+  // ---------------------------------------------------------------- overview
+  async function loadOverview() {
+    var d = await api('/stats?days=' + $('days').value);
+    var by = {}; (d.by_status || []).forEach(function (r) { by[r.status] = r.n; });
+    var total = d.totals && d.totals.calls || 0;
+    var handled = (by.ai_handled || 0), transferred = by.transferred || 0;
+    var pct = function (n) { return total ? Math.round(n * 100 / total) + '%' : '—'; };
+    $('nCb').hidden = !d.callbacks_open; $('nCb').textContent = d.callbacks_open;
+    var tiles = [
+      [total, 'Calls'], [pct(handled), 'Handled by AI'], [transferred, 'Transferred to a person'],
+      [d.callbacks_open, 'Callbacks open'], [(by.voicemail || 0) + (by.no_input || 0), 'Voicemail / no input'],
+      [d.totals && d.totals.avg_duration_s ? dur(Math.round(d.totals.avg_duration_s)) : '—', 'Avg call length'],
+      [d.totals && d.totals.avg_latency_ms ? (Math.round(d.totals.avg_latency_ms / 100) / 10) + 's' : '—', 'Avg AI reply time']
+    ];
+    $('tiles').innerHTML = tiles.map(function (t) { return '<div class="card tile"><div class="v">' + esc(t[0]) + '</div><div class="l">' + esc(t[1]) + '</div></div>'; }).join('');
+    function block(title, rows, label) {
+      var max = Math.max.apply(null, rows.map(function (r) { return r.n; }).concat([1]));
+      return '<div class="card pad"><h3>' + esc(title) + '</h3>' + (rows.length ? rows.map(function (r) {
+        return '<div class="brk"><span class="k">' + esc(label(r)) + '</span><span style="width:90px"><span class="bar-in" style="display:block;width:' + Math.max(4, Math.round(r.n * 90 / max)) + 'px"></span></span><span class="num">' + r.n + '</span></div>';
+      }).join('') : '<div class="muted small">No calls yet.</div>') + '</div>';
+    }
+    $('brk').innerHTML = [
+      block('Outcome', d.by_status || [], function (r) { return (STATUS[r.status] || [r.status])[0]; }),
+      block('Language', d.by_language || [], function (r) { return LANG[r.language] || r.language || 'Unknown'; }),
+      block('Department · AI', d.by_intent || [], function (r) { return (DESK[r.intent] || 'Not routed') + ' · ' + (AGENT[r.agent] || r.agent || ''); }),
+      block('Number dialled', d.by_line || [], function (r) { return phone(r.to_e164) + ' (' + (r.line || '') + ')'; })
+    ].join('');
+  }
+
+  // ---------------------------------------------------------------- calls
+  async function loadCalls() {
+    var d = await api('/calls?limit=150');
+    S.calls = d.calls || [];
+    if (!S.calls.length) { $('callList').innerHTML = '<div class="empty">No calls yet.</div>'; return; }
+    $('callList').innerHTML = S.calls.map(function (c) {
+      return '<button class="row' + (c.id === S.open ? ' on' : '') + '" data-id="' + esc(c.id) + '"><div class="l1"><span class="who">' + esc(phone(c.from_e164)) + '</span>' + pill(c.status) + '</div>' +
+        '<div class="small muted">' + esc(when(c.started_at)) + ' · ' + esc(LANG[c.language] || '') + ' · ' + esc(DESK[c.intent] || 'Not routed') + (c.duration_s ? ' · ' + dur(c.duration_s) : '') + '</div>' +
+        (c.summary ? '<div class="l2">' + esc(c.summary) + '</div>' : '') + '</button>';
+    }).join('');
+  }
+  async function openCall(id) {
+    S.open = id;
+    $('split').classList.add('open');
+    [].forEach.call(document.querySelectorAll('#callList .row'), function (r) { r.classList.toggle('on', r.dataset.id === id); });
+    $('callDetail').innerHTML = '<div class="empty">Loading…</div>';
+    try { history.replaceState(null, '', '#' + id); } catch (e) {}
+    var d = await api('/calls/' + encodeURIComponent(id));
+    var c = d.call, slots = c.slots || {};
+    var kv = [
+      ['Caller', '<a href="tel:' + esc(c.from_e164) + '">' + esc(phone(c.from_e164)) + '</a>'],
+      ['When', esc(when(c.started_at)) + (c.duration_s ? ' · ' + dur(c.duration_s) : '')],
+      ['Line', esc(phone(c.to_e164)) + ' (' + esc(c.line) + ')'],
+      ['Language', esc(LANG[c.language] || c.language || '—')],
+      ['Department', esc(DESK[c.intent] || 'Not routed') + ' · ' + esc(AGENT[c.agent] || c.agent || '')],
+      ['Outcome', pill(c.status)]
+    ];
+    Object.keys(slots).forEach(function (k) { kv.push([k.replace(/_/g, ' '), esc(slots[k])]); });
+    if (c.lead_id) kv.push(['Lead', '<a href="index.html#lead=' + encodeURIComponent(c.lead_id) + '">Open lead</a>']);
+    if (c.avg_latency_ms) kv.push(['AI reply time', (Math.round(c.avg_latency_ms / 100) / 10) + 's average']);
+    var tr = (c.transcript || []).map(function (e) {
+      return '<div class="m ' + esc(e.role) + '">' + esc(e.text) + '<span class="t">' + (e.role === 'ai' ? esc(AGENT[e.agent] || 'AI') + ' · ' : '') + esc(new Date(e.at).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', second: '2-digit' })) + '</span></div>';
+    }).join('');
+    var transfers = (d.transfers || []).map(function (t) { return '<div class="small">Attempt ' + t.attempt_no + ': ' + esc(t.target_user) + ' — ' + esc(t.outcome || 'ringing') + '</div>'; }).join('');
+    var cbs = (d.callbacks || []).map(function (b) { return '<div class="small">' + pill(b.status === 'open' ? 'callback' : 'ai_handled').replace('Callback', b.priority === 'urgent' ? 'Urgent callback' : 'Callback').replace('AI handled', 'Done') + ' ' + esc(b.reason || '') + (b.preferred_time ? ' · best time: ' + esc(b.preferred_time) : '') + '</div>'; }).join('');
+    $('callDetail').innerHTML =
+      '<button class="btn btn-ghost btn-sm back" id="backBtn">← Calls</button>' +
+      '<h2>' + esc(slots.name || phone(c.from_e164)) + '</h2>' +
+      (c.summary ? '<p>' + esc(c.summary) + '</p>' : '') +
+      '<dl class="kv">' + kv.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' +
+      (transfers ? '<h3>Transfers</h3>' + transfers + '<br>' : '') +
+      (cbs ? '<h3>Callback</h3>' + cbs + '<br>' : '') +
+      '<h3>Transcript</h3>' + (tr ? '<div class="tr">' + tr + '</div>' : '<div class="muted small">' + (c.transcript === null ? 'Removed after the retention period.' : 'Nothing said.') + '</div>') +
+      '<details style="margin-top:14px"><summary class="small muted">Event log</summary>' + (d.events || []).map(function (e) { return '<div class="ev">' + esc(new Date(e.at).toLocaleTimeString('en-CA')) + ' ' + esc(e.event_type) + ' ' + esc(e.payload || '') + '</div>'; }).join('') + '</details>';
+    $('backBtn').onclick = function () { $('split').classList.remove('open'); };
+  }
+
+  // ---------------------------------------------------------------- callbacks
+  async function loadCallbacks() {
+    var d = await api('/callbacks?status=' + S.cbStatus);
+    var rows = d.callbacks || [];
+    if (!rows.length) { $('cbList').innerHTML = '<div class="empty">' + (S.cbStatus === 'open' ? 'No callbacks waiting.' : 'Nothing here.') + '</div>'; return; }
+    var now = Date.now();
+    $('cbList').innerHTML = rows.map(function (b) {
+      var late = b.status === 'open' && b.due_at && Date.parse(b.due_at) < now;
+      return '<div class="cb"><div>' +
+        '<div><strong>' + esc(b.name || phone(b.phone)) + '</strong> ' + (b.priority === 'urgent' ? '<span class="pill p-red">Urgent</span> ' : '') + '<span class="pill p-grey">' + esc(DESK[b.desk] || b.desk) + '</span> <span class="pill p-grey">' + esc(LANG[b.language] || '') + '</span></div>' +
+        '<div><a href="tel:' + esc(b.phone) + '">' + esc(phone(b.phone)) + '</a> · <span class="' + (late ? 'overdue' : 'muted') + '">due ' + esc(when(b.due_at)) + '</span></div>' +
+        '<div>' + esc(b.reason || '') + '</div>' +
+        (b.preferred_time ? '<div class="small muted">Best time: ' + esc(b.preferred_time) + '</div>' : '') +
+        (b.recording_url ? '<div class="small"><a href="' + esc(b.recording_url) + '" target="_blank" rel="noopener">Voicemail recording</a></div>' : '') +
+        (b.notes ? '<div class="small muted">Notes: ' + esc(b.notes) + '</div>' : '') +
+        '<div class="small"><a href="#' + esc(b.call_id) + '" data-call="' + esc(b.call_id) + '">Call details</a>' + (b.lead_id ? ' · <a href="index.html#lead=' + encodeURIComponent(b.lead_id) + '">Lead</a>' : '') + '</div>' +
+        '</div><div class="acts">' + (b.status === 'open'
+          ? '<button class="btn btn-primary btn-sm" data-cb="' + esc(b.id) + '" data-to="done">Called back</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="note">Add note</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="cancelled">Cancel</button>'
+          : '<button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="open">Reopen</button>') + '</div></div>';
+    }).join('');
+  }
+  async function updateCallback(id, to, btn) {
+    var body = {};
+    if (to === 'note') {
+      var row = btn.closest('.cb');
+      if (!row.querySelector('textarea')) {
+        row.insertAdjacentHTML('beforeend', '<div style="grid-column:1/-1;display:flex;gap:6px"><textarea class="inp" placeholder="What happened on the call back?"></textarea><button class="btn btn-primary btn-sm" data-cb="' + esc(id) + '" data-to="savenote">Save</button></div>');
+        row.querySelector('textarea').focus();
+      }
+      return;
+    }
+    if (to === 'savenote') body.notes = btn.parentNode.querySelector('textarea').value.trim();
+    else body.status = to;
+    btn.disabled = true;
+    await api('/callbacks/' + encodeURIComponent(id), { method: 'POST', body: body });
+    toast(to === 'done' ? 'Marked as called back.' : to === 'savenote' ? 'Note saved.' : 'Updated.');
+    await loadCallbacks();
+    loadOverview().catch(function () {});
+  }
+
+  // ---------------------------------------------------------------- settings (admins)
+  async function loadSettings() {
+    var s = S.settings = await api('/settings');
+    var desks = ['sales', 'homestay', 'cs', 'landlords', 'finance', 'japanese'];
+    var html = '<div class="card pad"><h2>Live transfers</h2><label><input type="checkbox" id="xfers"' + (s.transfersEnabled ? ' checked' : '') + '> Transfer callers to a person during office hours</label>' +
+      '<div class="small muted" style="margin:6px 0 10px">People are tried in order; an empty number is skipped. Numbers in +1… format. The teammate hears who is calling and presses 1 to take it, so a personal voicemail never “answers”.</div>' +
+      '<div class="hrs">Ring each person for <input class="inp" id="ring" type="number" min="10" max="60" style="width:70px" value="' + esc(s.ringTimeoutSec) + '"> seconds</div></div>';
+    html += desks.map(function (d) {
+      var h = s.hours[d] || {}, chain = s.chains[d] || [];
+      return '<div class="card pad" data-desk="' + d + '"><h2>' + esc(DESK[d]) + '</h2>' +
+        '<h3>Escalation (in order)</h3>' + chain.map(function (p, i) {
+          return '<div class="chain"><input class="inp" data-f="name" data-i="' + i + '" value="' + esc(p.name) + '" aria-label="Name"><input class="inp" data-f="phone" data-i="' + i + '" value="' + esc(p.phone) + '" placeholder="+1…" inputmode="tel" aria-label="Phone"><span></span></div>';
+        }).join('') + '<button class="btn btn-ghost btn-sm" data-add="' + d + '">+ Add person</button>' +
+        '<h3 style="margin-top:12px">Office hours</h3><div class="hrs"><input class="inp" data-h="open" type="time" value="' + esc(h.open) + '"> to <input class="inp" data-h="close" type="time" value="' + esc(h.close) + '">' +
+        '<select class="sel" data-h="tz"><option' + (h.tz === 'America/Vancouver' ? ' selected' : '') + '>America/Vancouver</option><option' + (h.tz === 'America/Toronto' ? ' selected' : '') + '>America/Toronto</option><option' + (h.tz === 'Asia/Tokyo' ? ' selected' : '') + '>Asia/Tokyo</option></select></div>' +
+        '<div class="days" style="margin-top:6px">' + DAYS.map(function (n, i) { return '<label><input type="checkbox" data-day="' + i + '"' + ((h.days || []).indexOf(i) >= 0 ? ' checked' : '') + '> ' + n + '</label>'; }).join('') + '</div>' +
+        '<h3 style="margin-top:12px">Callback emails go to</h3><input class="inp" data-cbto style="width:100%" value="' + esc(s.callbackTo[d] || '') + '">' +
+        '</div>';
+    }).join('');
+    html += '<div class="card pad"><h2>Holidays</h2><div class="small muted">No transfers on these days (YYYY-MM-DD, comma separated). The AI still answers.</div><input class="inp" id="hol" style="width:100%" value="' + esc((s.holidays || []).join(', ')) + '"></div>';
+    html += '<div class="card pad"><h2>Greetings</h2>' + ['en', 'es', 'ja'].map(function (l) { return '<h3>' + LANG[l] + '</h3><textarea class="inp" data-greet="' + l + '">' + esc(s.greetings[l] || '') + '</textarea>'; }).join('') +
+      '<div class="small muted">Every call opens with the English greeting (it mentions Spanish and Japanese); callers can answer in any of the three.</div></div>';
+    html += '<div><button class="btn btn-primary" id="saveSet">Save settings</button></div>';
+    $('settings').innerHTML = html;
+  }
+  function collectSettings() {
+    var s = JSON.parse(JSON.stringify(S.settings));
+    s.transfersEnabled = $('xfers').checked;
+    s.ringTimeoutSec = Math.max(10, Math.min(60, Number($('ring').value) || 20));
+    [].forEach.call(document.querySelectorAll('[data-desk]'), function (card) {
+      var d = card.dataset.desk, chain = [];
+      [].forEach.call(card.querySelectorAll('.chain'), function (row) {
+        var name = row.querySelector('[data-f=name]').value.trim(), ph = row.querySelector('[data-f=phone]').value.replace(/[^\d+]/g, '');
+        if (ph && ph[0] !== '+') ph = (ph.length === 10 ? '+1' : '+') + ph;
+        if (name || ph) chain.push({ name: name || 'Teammate', phone: ph });
+      });
+      s.chains[d] = chain;
+      var h = s.hours[d] = Object.assign({}, s.hours[d]);
+      h.open = card.querySelector('[data-h=open]').value; h.close = card.querySelector('[data-h=close]').value; h.tz = card.querySelector('[data-h=tz]').value;
+      h.days = [].map.call(card.querySelectorAll('[data-day]:checked'), function (x) { return Number(x.dataset.day); });
+      s.callbackTo[d] = card.querySelector('[data-cbto]').value.trim();
+    });
+    s.holidays = $('hol').value.split(',').map(function (x) { return x.trim(); }).filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x); });
+    [].forEach.call(document.querySelectorAll('[data-greet]'), function (t) { s.greetings[t.dataset.greet] = t.value.trim(); });
+    return s;
+  }
+
+  // ---------------------------------------------------------------- wiring
+  function setTab(t) {
+    S.tab = t;
+    [].forEach.call(document.querySelectorAll('#tabs .chip'), function (c) { c.classList.toggle('on', c.dataset.tab === t); });
+    ['overview', 'calls', 'callbacks', 'settings'].forEach(function (x) { $('tab-' + x).hidden = x !== t; });
+    $('days').hidden = t !== 'overview';
+    var p = t === 'overview' ? loadOverview() : t === 'calls' ? loadCalls() : t === 'callbacks' ? loadCallbacks() : loadSettings();
+    p.catch(showErr);
+  }
+  $('tabs').onclick = function (e) { var b = e.target.closest('.chip'); if (b) setTab(b.dataset.tab); };
+  $('days').onchange = function () { loadOverview().catch(showErr); };
+  $('callList').onclick = function (e) { var r = e.target.closest('.row'); if (r) openCall(r.dataset.id).catch(showErr); };
+  $('cbFilter').onclick = function (e) {
+    var b = e.target.closest('.chip'); if (!b) return;
+    S.cbStatus = b.dataset.s;
+    [].forEach.call(this.querySelectorAll('.chip'), function (c) { c.classList.toggle('on', c === b); });
+    loadCallbacks().catch(showErr);
+  };
+  $('cbList').onclick = function (e) {
+    var a = e.target.closest('[data-call]');
+    if (a) { e.preventDefault(); setTab('calls'); openCall(a.dataset.call).catch(showErr); return; }
+    var b = e.target.closest('[data-cb]'); if (b) updateCallback(b.dataset.cb, b.dataset.to, b).catch(function (err) { b.disabled = false; showErr(err); });
+  };
+  $('settings').onclick = function (e) {
+    var add = e.target.closest('[data-add]');
+    if (add) { add.insertAdjacentHTML('beforebegin', '<div class="chain"><input class="inp" data-f="name" placeholder="Name"><input class="inp" data-f="phone" placeholder="+1…" inputmode="tel"><span></span></div>'); return; }
+    if (e.target.id === 'saveSet') {
+      e.target.disabled = true;
+      api('/settings', { method: 'PUT', body: collectSettings() }).then(function () { toast('Settings saved. They apply to the next call.'); return loadSettings(); })
+        .catch(showErr).finally(function () { var b = $('saveSet'); if (b) b.disabled = false; });
+    }
+  };
+
+  (async function init() {
+    try {
+      S.me = await api('/me');
+      $('me').textContent = S.me.email;
+      $('setTab').hidden = !S.me.admin;
+      var hash = location.hash.slice(1);
+      if (/^CA[0-9a-f]{32}$/i.test(hash)) { setTab('calls'); openCall(hash).catch(showErr); }
+      else setTab('overview');
+      loadOverview().catch(function () {});
+    } catch (e) { showErr(e); }
+  })();
+})();
+</script>
+</body>
+</html>
