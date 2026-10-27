@@ -212,7 +212,7 @@ details.fold > summary { font-size: 11px; font-weight: 800; letter-spacing: .06e
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="hr-core.js?v=2026-10-26-apaddprop2"></script>
+<script src="hr-core.js?v=2026-10-27-hrdel1"></script>
 <script>
 (function () {
   'use strict';
@@ -402,7 +402,8 @@ details.fold > summary { font-size: 11px; font-weight: 800; letter-spacing: .06e
       ' · ' + esc(d.file_name) + '</div>' + (srcLine ? '<div class="meta">' + esc(srcLine) + '</div>' : '') + (d.match_note ? '<div class="meta">Note: ' + esc(d.match_note) + '</div>' : '') +
       '</div><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + (d.is_current_contract ? '<span class="st st-cur">Current contract</span>' : '') +
       '<span class="st st-' + esc(d.signed_status) + '">' + esc(SIGNED[d.signed_status]) + '</span></div></div>' +
-      '<div class="actions"><button type="button" class="btn btn-ghost" data-open-doc="' + esc(d.id) + '">Open</button></div>' +
+      '<div class="actions"><button type="button" class="btn btn-ghost" data-open-doc="' + esc(d.id) + '">Open</button>' +
+      '<button type="button" class="btn btn-ghost" data-del-doc="' + esc(d.id) + '">Delete</button></div>' +
       '<details' + (inQueue ? ' open' : '') + '><summary>' + (inQueue ? 'Assign' : 'Edit details') + '</summary><form class="grid2 docForm" data-doc="' + esc(d.id) + '" style="margin-top:8px">' +
       '<label class="f full">Employee<select class="sel" name="employee_id">' + empSel + '</select></label>' +
       field('Title', 'title', d.title, 'text', { full: true }) +
@@ -802,6 +803,21 @@ details.fold > summary { font-size: 11px; font-weight: 800; letter-spacing: .06e
       if (w) { w.opener = null; w.location = r.data.signedUrl; } else location.href = r.data.signedUrl;
     } catch (e) { if (w) w.close(); toast('Could not open: ' + errText(e)); }
   }
+  // Delete needs a second click within 4 s, so a stray click never removes a file.
+  async function delDoc(btn) {
+    var d = S.docs.filter(function (x) { return x.id === btn.dataset.delDoc; })[0]; if (!d) return;
+    if (btn.dataset.armed !== '1') {
+      btn.dataset.armed = '1'; btn.textContent = 'Click again to delete'; btn.classList.add('btn-warn');
+      setTimeout(function () { if (btn.isConnected) { btn.dataset.armed = ''; btn.textContent = 'Delete'; btn.classList.remove('btn-warn'); } }, 4000);
+      return;
+    }
+    await guarded(async function () {
+      var r = await call('hr_delete_document', { doc_id: d.id, expected_version: d.version });
+      var rm = await sb.storage.from(BUCKET).remove([r.storage_path || d.storage_path]);
+      toast(rm.error ? 'Deleted from the hub (the stored file could not be removed: ' + errText(rm.error) + ').' : 'Deleted.');
+      await refresh(true);
+    });
+  }
   function safeName(n) { return String(n || 'file').normalize('NFKD').replace(/[^\w.-]+/g, '_').replace(/^[._]+/, '').slice(-120) || 'file'; }
   async function sha256Hex(buf) {
     var h = await crypto.subtle.digest('SHA-256', buf);
@@ -970,6 +986,7 @@ details.fold > summary { font-size: 11px; font-weight: 800; letter-spacing: .06e
     if (t.dataset.emp) { openEmployee(t.dataset.emp); return; }
     if (t.dataset.review) { review(t.dataset.review); return; }
     if (t.dataset.openDoc) { openDoc(t.dataset.openDoc); return; }
+    if (t.dataset.delDoc) { delDoc(t); return; }
     if (t.dataset.hub) { setHub(t.dataset.hub === 'on'); return; }
     if (t.dataset.decide) { decide(t.dataset.req, t.dataset.decide); return; }
     if (t.dataset.reply) { reply(t.dataset.reply, true); return; }
