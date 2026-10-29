@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-29-appt2"></script>
+<script src="pms-supabase.js?v=2026-10-29-reloc1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -18977,8 +18977,8 @@ function hbAgreementState(booking, contract){
 function hcAgreementsFor(client, contracts, withVoid){
   if(!client || !Array.isArray(contracts)) return [];
   const id = String(client.id || ''), email = String(client.email || '').toLowerCase();
-  // Homestay agreements only: co-living subleases share the contracts table.
-  const live = contracts.filter(c => c && (withVoid || String(c.status || '') !== 'void') && String(c.kind || '') !== 'coliving-sublease');
+  // Homestay agreements only: co-living subleases and relocation agreements share the contracts table.
+  const live = contracts.filter(c => c && (withVoid || String(c.status || '') !== 'void') && !['coliving-sublease', 'relocation'].includes(String(c.kind || '')));
   let rows = id ? live.filter(c => String(c.client_id || '') === id) : [];
   if(!rows.length && email) rows = live.filter(c => String(c.client_email || '').toLowerCase() === email);
   return rows.slice().sort((a, b) => String(b.signed_at || '').localeCompare(String(a.signed_at || '')));
@@ -21274,7 +21274,7 @@ const SALES_LOST_REASONS = [
   ['price','Price'], ['timing','Timing'], ['competitor','Chose competitor'],
   ['no_response','No response'], ['no_availability','No availability'], ['other','Other']
 ];
-const SALES_PRODUCTS = [['room','Room'], ['homestay','Homestay'], ['other','Other']];
+const SALES_PRODUCTS = [['room','Room'], ['homestay','Homestay'], ['relocation','Relocation'], ['other','Other']];
 const SALES_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function salesPad2(n){ return (n < 10 ? '0' : '') + n; }
@@ -42321,7 +42321,8 @@ function ctBooking(row) { const r = row || {}; return r.booking || (r.data && r.
 function ctTenants(row) {
   const r = row || {};
   const signed = (r.signer && Array.isArray(r.signer.tenants)) ? r.signer.tenants : [];
-  const booked = Array.isArray(ctBooking(r).tenants) ? ctBooking(r).tenants : [];
+  // A relocation agreement has one signer, its client.
+  const booked = Array.isArray(ctBooking(r).tenants) ? ctBooking(r).tenants : (ctBooking(r).client ? [ctBooking(r).client] : []);
   const n = Math.max(signed.length, booked.length);
   const out = [];
   for (let i = 0; i < n; i++) {
@@ -42348,10 +42349,60 @@ function ctOrdinal(n) {
   return v + (t >= 11 && t <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th');
 }
 
+// The fourth contract type, with its own kind: the Relocation Services
+// Agreement (SPEC 2026-10-29, Worker relocation-template.js). Not a sublease:
+// no room, rent, deposit, arrival or countersign. Yuhei Shimada signs for
+// Vanmates automatically when the client signs, so it goes sent → completed
+// and never waits for Vanmates. data.booking: client {name, email, phone},
+// city, start, fee, card, addons [], lead_id, payment_note (+ the Worker's
+// derived end / card_fee / total when present).
+const CT_RELOC_KIND = 'relocation';
+const CT_KINDS = [CT_KIND, CT_RELOC_KIND];   // what the Contracts page lists
+const CT_RELOC_TITLE = 'Relocation Services Agreement';
+const CT_RELOC_CITIES = [['vancouver', 'Vancouver'], ['toronto', 'Toronto']];
+const CT_RELOC_PROVINCE = { vancouver: 'bc', toronto: 'on' };
+// [key, label, Vancouver price, Toronto price] — mirrors the Worker's ADDONS.
+const CT_RELOC_ADDONS = [
+  ['airport_1', 'Airport pickup – 1 car', 100, 200],
+  ['airport_2', 'Airport pickup – 2 cars', 200, 250],
+  ['furniture', 'Furniture receipt', 200, 300],
+];
+const CT_RELOC_CARD_RATE = 0.03;
+function ctIsReloc(row) { return !!row && row.kind === CT_RELOC_KIND; }
+// A row the Contracts page lists: a co-living contract or a relocation agreement.
+function ctIsListed(row) { return !!row && CT_KINDS.includes(row.kind) && !row.deleted_at; }
+function ctRelocCity(v) { const c = ctStr(v).toLowerCase(); return CT_RELOC_PROVINCE[c] ? c : ''; }
+function ctCents(n) { return Math.round(Number(n) * 100) / 100; }
+// The derived terms: service end (start + 29 days = 30 calendar days), the
+// priced add-ons, the 3% card fee and the total. The Worker's stored end,
+// card_fee and total win when present: they are what the PDF printed.
+function ctRelocTerms(booking) {
+  const b = booking || {};
+  const city = ctRelocCity(b.city);
+  const fee = Number(b.fee) > 0 ? Number(b.fee) : 0;
+  const addons = [];
+  for (const a of Array.isArray(b.addons) ? b.addons : []) {
+    const key = ctStr(a && typeof a === 'object' ? (a.key || a.id) : a);
+    const def = CT_RELOC_ADDONS.find(([k]) => k === key);
+    const given = a && typeof a === 'object' && a.price != null && a.price !== '' ? Number(a.price) : null;
+    const price = given != null && isFinite(given) ? given : def && city ? def[city === 'toronto' ? 3 : 2] : null;
+    const label = ctStr(a && typeof a === 'object' ? a.label : '') || (def ? def[1] : key);
+    if (label) addons.push({ key, label, price });
+  }
+  const addonsTotal = addons.reduce((s, a) => s + (a.price || 0), 0);
+  const num = (v) => (v == null || v === '' || !isFinite(Number(v)) ? null : Number(v));
+  const cardFee = num(b.card_fee) != null ? num(b.card_fee) : (b.card ? ctCents(CT_RELOC_CARD_RATE * (fee + addonsTotal)) : 0);
+  const total = num(b.total) != null ? num(b.total) : ctCents(fee + addonsTotal + cardFee);
+  const start = ctIsDate(ctStr(b.start)) ? ctStr(b.start) : '';
+  const end = ctIsDate(ctStr(b.end)) ? ctStr(b.end) : (start ? ctAddDays(start, 29) : '');
+  return { city, cityLabel: (CT_RELOC_CITIES.find(([k]) => k === city) || [, ''])[1], fee, card: !!b.card, addons, addonsTotal, cardFee, total, start, end };
+}
+
 // Status → tab. customer_signed is the one that needs Vanmates.
 function ctBucket(row) {
   const s = ctStr(row && row.status);
-  if (s === 'customer_signed') return 'waiting';
+  // A relocation agreement is auto-signed for Vanmates: it never waits for Vanmates.
+  if (s === 'customer_signed') return ctIsReloc(row) ? 'sent' : 'waiting';
   if (s === 'sent' || s === 'draft' || s === 'completed' || s === 'void') return s;
   return null;
 }
@@ -42410,6 +42461,8 @@ function ctMissingLabel(field) {
     deposit: 'Deposit', deposit_due: 'Deposit due date', utilities: 'Utilities included',
     rent_due_day: 'Rent due day', vacate_reason: 'Reason the tenant must move out', pet_deposit: 'Pet damage deposit',
     pet_deposit_due: 'Pet damage deposit due date',
+    'client.name': 'Client name', 'client.email': 'Client email', 'client.phone': 'Client phone', client: 'Client',
+    city: 'City', fee: 'Service fee', addons: 'Add-ons',
     id_doc: 'ID document', cash_receiver: 'Cash receiver', occupant2: 'Occupant 2', occupants: 'Occupants', payment: 'Payment',
     cleaning_fee: 'Cleaning fee', services: 'Services', services_included: 'Services included',
   })[f] || f;
@@ -42509,7 +42562,8 @@ function ctSummary(row, now) {
   const pet = b.pet_deposit == null || b.pet_deposit === '' ? null : Number(b.pet_deposit);
   const t0 = (Array.isArray(b.tenants) ? b.tenants : [])[0] || {};
   const occ = Number(b.occupants) === 2 ? 2 : 1;
-  return {
+  const out = {
+    isReloc: false,
     isRta: rta,
     isMx: mx,
     country: mx ? 'MX' : 'CA',
@@ -42572,6 +42626,44 @@ function ctSummary(row, now) {
     voidReason: ctStr(r.void_reason),
     createdAt: r.created_at || null,
   };
+  return ctIsReloc(r) ? Object.assign(out, ctRelocSummary(r, out)) : out;
+}
+// A relocation agreement's own words over ctSummary's: the client, city,
+// service period and money instead of a room, rent and deposit.
+function ctRelocSummary(r, base) {
+  const b = ctBooking(r);
+  const t = ctRelocTerms(b);
+  const c = b.client || {};
+  const addonsText = t.addons.map((a) => a.label + (a.price != null ? ' ' + ctMoney(a.price) : '')).join(', ');
+  return {
+    isReloc: true, isRta: false, isMx: false, country: 'CA', currency: 'CAD',
+    docTitle: CT_RELOC_TITLE,
+    tenantNames: base.tenantNames !== '—' ? base.tenantNames : (ctStr(c.name) || ctStr(c.email) || '—'),
+    phone: ctStr(c.phone),
+    city: t.city, cityLabel: t.cityLabel,
+    place: t.cityLabel || '—',
+    address: '',
+    start: t.start, end: t.end,
+    datesText: (ctDay(t.start) || '—') + ' → ' + (ctDay(t.end) || '—'),
+    months: 0,
+    province: CT_RELOC_PROVINCE[t.city] || base.province,
+    provinceName: '',
+    leaseType: '', leaseTypeText: '',
+    rent: null, rentText: '', rentShort: t.fee ? ctMoney(t.fee) : '',
+    deposit: null, depositText: '', depositDueText: '', utilities: '',
+    isExtension: false, extensionText: '',
+    fee: t.fee, feeText: t.fee ? ctMoney(t.fee) : '',
+    card: t.card, cardFee: t.cardFee, cardFeeText: t.cardFee ? ctMoney(t.cardFee) : '',
+    addons: t.addons, addonsText,
+    total: t.total, totalText: t.total ? ctMoney(t.total) : '',
+    paymentNote: ctStr(b.payment_note),
+    leadId: ctStr(b.lead_id || r.lead_id),
+    // One signer: the client's signature completes it (Vanmates is auto-signed).
+    statusLine: base.bucket === 'completed' ? 'Signed by ' + (ctStr(c.name) || 'the client') + ' · ' + ctDay(r.customer_signed_at || r.signed_at || r.countersigned_at) : base.statusLine,
+    // Only the executed copy exists, and only once completed.
+    customerPdf: '',
+    executedPdf: ctStr(r.status) === 'completed' ? ctStr(r.pdf_path) : '',
+  };
 }
 
 // Who may act on contracts at all: an admin, or a page grant of 'contracts'.
@@ -42582,12 +42674,19 @@ function ctCanAct(me) {
   return Array.isArray(u.allowed_pages) && u.allowed_pages.includes('contracts');
 }
 function ctIsCountersigner(me) { return !!me && ctStr(me.email).trim().toLowerCase() === CT_COUNTERSIGNER.email; }
-function ctCanSign(row, me) { return !!row && ctStr(row.status) === 'customer_signed' && ctCanAct(me) && ctIsCountersigner(me); }
+function ctCanSign(row, me) { return !!row && !ctIsReloc(row) && ctStr(row.status) === 'customer_signed' && ctCanAct(me) && ctIsCountersigner(me); }
 // The drawer's buttons, in order.
 function ctActions(row, me) {
   if (!row || !ctCanAct(me)) return [];
   const s = ctStr(row.status);
   const out = [];
+  // Relocation: no countersign (auto-signed) and no extension; fix or void while open.
+  if (ctIsReloc(row)) {
+    if (s === 'draft') out.push('send');
+    if (s === 'sent') out.push('resend');
+    if (s === 'draft' || s === 'sent') out.push('replace', 'void');
+    return out;
+  }
   if (s === 'customer_signed' && ctIsCountersigner(me)) out.push('sign');
   if (s === 'draft') out.push('send');
   if (s === 'sent') out.push('resend');
@@ -42603,7 +42702,7 @@ function ctCanFix(row, me) { return ctActions(row, me).includes('replace'); }
 function ctTabs(rows) {
   const lists = { waiting: [], sent: [], draft: [], completed: [], void: [] };
   for (const r of rows || []) {
-    if (!ctIsColiving(r)) continue;
+    if (!ctIsListed(r)) continue;
     const k = ctBucket(r);
     if (k) lists[k].push(r);
   }
@@ -42626,7 +42725,8 @@ function ctMatches(row, q) {
   if (!s) return true;
   const b = ctBooking(row);
   const hay = [row && row.id, b.house, b.room, b.address, row && row.client_name, row && row.client_email, ctIsRta(row) ? 'rta residential tenancy agreement' : '',
-    ctIsMx(row) ? 'mx méxico mexico contrato arrendamiento ' + ctStr(ctBooking(row).id_doc) : '']
+    ctIsMx(row) ? 'mx méxico mexico contrato arrendamiento ' + ctStr(ctBooking(row).id_doc) : '',
+    ctIsReloc(row) ? 'relocation services agreement ' + ctStr(b.city) + ' ' + ctStr(b.client && b.client.name) + ' ' + ctStr(b.client && b.client.email) + ' ' + ctStr(b.client && b.client.phone) : '']
     .concat(ctTenants(row).map((t) => t.name + ' ' + t.email)).map((x) => ctStr(x).toLowerCase()).join(' \u0001 ');
   return s.split(/\s+/).every((w) => hay.includes(w));
 }
@@ -42697,7 +42797,7 @@ function ctForPerson(rows, who) {
   const gid = ctStr(w.asanaGid), lead = ctStr(w.leadId), tid = ctStr(w.tenantId);
   if (!emails.size && !gid && !lead && !tid) return [];
   return (rows || []).filter((r) => {
-    if (!ctIsColiving(r)) return false;
+    if (!ctIsListed(r)) return false;
     if (gid && ctStr(r.asana_tenant_gid || ctBooking(r).asana_tenant_gid) === gid) return true;
     if (tid && ctStr(ctBooking(r).portal_tenant_id) === tid) return true;   // Mexico: no Asana, the portal tenant
     if (lead && ctStr(r.lead_id || ctBooking(r).lead_id) === lead) return true;
@@ -43078,6 +43178,80 @@ function ctFormPreview(booking) {
     dates,
   ].filter(Boolean).join(' · ');
 }
+
+/* ---- Relocation form ----
+   Flat values keyed like the inputs: r_name, r_email, r_phone, city, start,
+   fee, card (checked box → ['yes']), addons (the checked keys), payment_note,
+   lead_id. ctRelocToBooking turns them into the `booking` the Worker's
+   POST /relocation takes; it always sends, so missing is refused too. */
+function ctRelocDefaults(src) {
+  const x = src || {};
+  const v = { form: 'relocation', r_name: '', r_email: '', r_phone: '', city: '', start: '', fee: '', card: [], addons: [], payment_note: '', lead_id: '' };
+  if (x.contract) {
+    const b = ctBooking(x.contract), c = b.client || {};
+    v.r_name = ctStr(c.name || x.contract.client_name); v.r_email = ctStr(c.email || x.contract.client_email).toLowerCase(); v.r_phone = ctStr(c.phone);
+    v.city = ctRelocCity(b.city); v.start = ctIsDate(ctStr(b.start)) ? ctStr(b.start) : '';
+    v.fee = Number(b.fee) > 0 ? String(Number(b.fee)) : '';
+    v.card = b.card ? ['yes'] : [];
+    v.addons = (Array.isArray(b.addons) ? b.addons : []).map((a) => ctStr(a && typeof a === 'object' ? (a.key || a.id) : a))
+      .filter((k) => CT_RELOC_ADDONS.some(([key]) => key === k));
+    v.payment_note = ctStr(b.payment_note);
+    v.lead_id = ctStr(b.lead_id || x.contract.lead_id);
+    return v;
+  }
+  if (x.tenant) { v.r_name = ctStr(x.tenant.name); v.r_email = ctStr(x.tenant.email).toLowerCase(); v.r_phone = ctStr(x.tenant.phone); v.city = ctRelocCity(x.tenant.city); }
+  if (x.lead) {
+    const l = x.lead;
+    v.r_name = v.r_name || ctStr(l.name); v.r_email = v.r_email || ctStr(l.email).toLowerCase();
+    v.r_phone = v.r_phone || ctStr(l.phone || l.whatsapp); v.city = v.city || ctRelocCity(l.city);
+    v.lead_id = ctStr(l.id);
+  }
+  return v;
+}
+// Form values → { booking, errors: [{field, text}] }.
+function ctRelocToBooking(values) {
+  const x = values || {};
+  const v = {};
+  for (const k of ['r_name', 'r_email', 'r_phone', 'city', 'start', 'fee', 'payment_note', 'lead_id']) v[k] = ctStr(x[k]);
+  const errors = [];
+  const err = (field, text) => errors.push({ field, text });
+  const client = { name: v.r_name, email: v.r_email.toLowerCase() };
+  if (v.r_phone) client.phone = v.r_phone;
+  if (!client.name) err('r_name', 'Client name is missing.');
+  if (!client.email) err('r_email', 'Client email is missing.');
+  else if (!ctIsEmail(client.email)) err('r_email', 'Client email is not a valid email.');
+  const booking = { client };
+  const city = ctRelocCity(v.city);
+  if (city) booking.city = city; else err('city', 'Choose the city (Vancouver or Toronto).');
+  if (ctIsDate(v.start)) booking.start = v.start;
+  else err('start', v.start ? 'Service start is not a valid date.' : 'Service start is missing.');
+  const fee = Number(v.fee.replace(/[$,\s]/g, ''));
+  if (v.fee === '') err('fee', 'Service fee is missing.');
+  else if (!isFinite(fee) || fee <= 0) err('fee', 'Service fee must be a number of dollars, more than 0.');
+  else booking.fee = ctCents(fee);
+  const has = (k) => (Array.isArray(x[k]) ? x[k] : ctStr(x[k]).split(',')).map(ctStr);
+  booking.card = has('card').some((c) => c === 'yes' || c === 'true' || c === 'on');
+  const picked = has('addons');
+  booking.addons = CT_RELOC_ADDONS.map(([k]) => k).filter((k) => picked.includes(k));
+  if (v.lead_id) booking.lead_id = v.lead_id;
+  if (v.payment_note) booking.payment_note = v.payment_note;
+  return { booking, errors };
+}
+// The live total line in the form's footer.
+function ctRelocPreview(booking) {
+  const b = booking || {};
+  const t = ctRelocTerms(b);
+  const email = ctStr(b.client && b.client.email);
+  const parts = [t.fee ? 'fee ' + ctMoney(t.fee) : ''];
+  for (const a of t.addons) parts.push(a.label + (a.price != null ? ' ' + ctMoney(a.price) : ''));
+  if (t.cardFee) parts.push('card fee ' + ctMoney(t.cardFee));
+  return [
+    email ? 'Sends to ' + email : '',
+    t.cityLabel,
+    t.start ? ctDay(t.start).replace(',', '') + ' → ' + ctDay(t.end).replace(',', '') : '',
+    t.total ? 'Total ' + ctMoney(t.total) + (parts.filter(Boolean).length > 1 ? ' (' + parts.filter(Boolean).join(' + ') + ')' : '') : '',
+  ].filter(Boolean).join(' · ');
+}
 /* CONTRACTS-CORE-END */
 
 /* ---- Contracts page: thin over CONTRACTS-CORE ----
@@ -43099,6 +43273,7 @@ function ctRows() {
   return window.vmCountry && typeof window.vmCountry.current === 'function' ? ctForCountry(all, window.vmCountry.current()) : all;
 }
 function ctMxTag() { return '<span class="ct-tag" title="Contrato de arrendamiento (México)">MX</span>'; }
+function ctRelocTag() { return '<span class="ct-tag" title="Relocation Services Agreement">Relocation</span>'; }
 function ctFind(id) { return ctRows().find((r) => r && String(r.id) === String(id)) || null; }
 
 async function ctToken(refresh) {
@@ -43139,18 +43314,18 @@ async function ctReloadRow(id) {
     if (k >= 0) arr[k] = fresh; else arr.push(fresh);
   } catch (e) { console.warn('[contracts] reload row', e); }
 }
-// Refresh button: every co-living row, paged like hydrate.
+// Refresh button: every co-living and relocation row, paged like hydrate.
 async function ctReloadAll() {
   const sb = window.vmDb && window.vmDb.sb; if (!sb) return false;
   const got = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.from('contracts').select('id,data').eq('kind', CT_KIND).is('deleted_at', null).range(from, from + 999);
+    const { data, error } = await sb.from('contracts').select('id,data').in('kind', CT_KINDS).is('deleted_at', null).range(from, from + 999);
     if (error) throw new Error(error.message);
     got.push(...(data || []));
     if (!data || data.length < 1000) break;
   }
   const arr = window.contracts; if (!Array.isArray(arr)) return false;
-  for (let k = arr.length - 1; k >= 0; k--) if (arr[k] && arr[k].kind === CT_KIND) arr.splice(k, 1);
+  for (let k = arr.length - 1; k >= 0; k--) if (arr[k] && CT_KINDS.includes(arr[k].kind)) arr.splice(k, 1);
   for (const r of got) arr.push(Object.assign({ id: r.id }, r.data || {}));
   return true;
 }
@@ -43197,11 +43372,12 @@ function renderContracts() {
       const need = s.bucket === 'waiting' || (s.bucket === 'draft' && s.missing.length);
       return '<tr class="ct-row" tabindex="0" data-ct-open="' + esc(s.id) + '">' +
         '<td><div class="ct-name">' + esc(s.tenantNames) + '</div><div class="ct-sub">' + esc(s.emails.join(', ')) + '</div></td>' +
-        '<td>' + esc(s.place) + (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') + (s.isMx ? ctMxTag() : '') +
+        '<td>' + esc(s.place) + (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') + (s.isMx ? ctMxTag() : '') + (s.isReloc ? ctRelocTag() : '') +
           (s.provinceName ? '<div class="ct-sub">' + esc(s.provinceName) + '</div>' : '') +
           (s.isExtension ? '<div class="ct-sub">' + esc(s.extensionText) + '</div>' : '') + '</td>' +
-        '<td style="white-space:nowrap">' + esc(s.datesText) + (s.leaseTypeText ? '<div class="ct-sub">' + esc(s.leaseTypeText) + '</div>' : '') + '</td>' +
-        '<td style="white-space:nowrap">' + esc(s.rentShort || '—') + '</td>' +
+        '<td style="white-space:nowrap">' + esc(s.datesText) + (s.leaseTypeText ? '<div class="ct-sub">' + esc(s.leaseTypeText) + '</div>' : '') +
+          (s.isReloc ? '<div class="ct-sub">Service period</div>' : '') + '</td>' +
+        '<td style="white-space:nowrap">' + esc(s.rentShort || '—') + (s.isReloc ? '<div class="ct-sub">fee' + (s.total && s.total !== s.fee ? ' · total ' + esc(s.totalText) : '') + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap">' + esc(s.depositText || '—') + '</td>' +
         '<td>' + (need ? '<span class="ct-need-dot">' + esc(s.statusLine) + '</span>' : esc(s.statusLine)) +
           (ctCanFix(r, me) ? '<div><button type="button" class="btn btn-ghost btn-mini ct-fix-btn" data-ct-fix="' + esc(s.id) + '" title="' + esc(ctT('Correct a mistake: void this contract and send a fixed one')) + '">' + esc(ctT('Fix & resend')) + '</button></div>' : '') + '</td></tr>';
@@ -43236,22 +43412,23 @@ function ctRenderPanel(row) {
   document.getElementById('panel-title').textContent = s.tenantNames;
   document.getElementById('panel-sub').textContent = [s.place, s.id].filter(Boolean).join(' · ');
   document.getElementById('panel-meta').innerHTML = '<span class="ct-meta' + (s.bucket === 'waiting' ? ' ct-need' : '') + '">' + esc(ctT(s.statusText)) + '</span>' +
-    (s.isRta ? ' <span class="ct-meta">Residential Tenancy Agreement</span>' : '') + (s.isMx ? ' <span class="ct-meta">' + esc(CT_MX.title) + '</span>' : '');
+    (s.isRta ? ' <span class="ct-meta">Residential Tenancy Agreement</span>' : '') + (s.isMx ? ' <span class="ct-meta">' + esc(CT_MX.title) + '</span>' : '') +
+    (s.isReloc ? ' <span class="ct-meta">' + esc(CT_RELOC_TITLE) + '</span>' : '');
 
   const emailProblem = ctEmailProblem(row);
   const mxv = ctMxView(), L = (en, es) => (mxv ? es : en);
   const tenantsHtml = s.tenants.map((t, n) =>
-    ctKv('Tenant ' + (n + 1), esc(t.name || '—') + '<div class="ct-sub">' + esc(t.email || L('no email', 'sin correo')) + ' · ' +
+    ctKv(s.isReloc ? 'Client' : 'Tenant ' + (n + 1), esc(t.name || '—') + '<div class="ct-sub">' + esc(t.email || L('no email', 'sin correo')) + ' · ' +
       (t.signed_at ? L('signed ', 'firmó el ') + esc(ctWhen(t.signed_at)) : (s.bucket === 'draft' ? L('not sent yet', 'aún no se envía') : L('not signed', 'sin firmar'))) + '</div>')).join('') || ctKv('Tenants', dash);
   const pdfs = [];
-  if (s.executedPdf) pdfs.push('<button class="btn btn-primary btn-mini" type="button" data-ct-pdf="' + esc(s.executedPdf) + '">' + esc(ctT('Open signed contract')) + '</button>');
+  if (s.executedPdf) pdfs.push('<button class="btn btn-primary btn-mini" type="button" data-ct-pdf="' + esc(s.executedPdf) + '">' + esc(ctT(s.isReloc ? 'Download PDF' : 'Open signed contract')) + '</button>');
   if (s.customerPdf) pdfs.push('<button class="btn btn-ghost btn-mini" type="button" data-ct-pdf="' + esc(s.customerPdf) + '">' + esc(ctT(s.executedPdf ? 'Tenant-signed copy' : 'Open contract (tenant signed)')) + '</button>');
   const acts = ctActions(row, me);
   const btn = (k, label, primary) => acts.includes(k) ? '<button class="btn ' + (primary ? 'btn-primary' : 'btn-ghost') + ' btn-mini" type="button" data-ct-act="' + k + '">' + esc(ctT(label)) + '</button>' : '';
   const actionsHtml = acts.length
     ? '<div class="ct-actions">' + btn('sign', 'Sign as Vanmates', true) + btn('send', 'Send to tenant', true) + btn('resend', 'Resend link', false) + btn('replace', 'Fix & resend…', true) + btn('extend', 'Extend…', false) + btn('void', 'Void…', false) + '</div>'
     : (ctCanAct(me) ? '' : '<div class="ct-sub">' + esc(ctT('Only admins and people with the Contracts page can sign, send or void.')) + '</div>');
-  const signerNote = ctStr(row.status) === 'customer_signed' && !ctIsCountersigner(me)
+  const signerNote = ctStr(row.status) === 'customer_signed' && !s.isReloc && !ctIsCountersigner(me)
     ? '<div class="ct-sub">' + esc(CT_COUNTERSIGNER.name) + ' (' + esc(CT_COUNTERSIGNER.title) + ')' + L(' signs for Vanmates.', ' firma por Vanmates.') + '</div>' : '';
   const timeline = ctTimeline(row);
 
@@ -43264,7 +43441,7 @@ function ctRenderPanel(row) {
     (emailProblem ? '<div class="ct-note ct-need">' + esc(emailProblem) + '</div>' : '') +
     (s.bucket === 'draft' && s.missing.length ? ctSection(L('Needs <em>you</em>', 'Falta <em>completar</em>'), '<div class="ct-need-dot">' + L('Missing: ', 'Falta: ') + esc(s.missing.map((m) => m.label).join(', ')) + '</div>') : '') +
     (acts.length || !ctCanAct(me) || signerNote ? ctSection(esc(ctT('Actions')), actionsHtml + signerNote + '<div id="ct-form"></div>') : '') +
-    ctSection(esc(ctT('Booking')),
+    (s.isReloc ? ctSection('Service', ctRelocPanelHtml(s, dash)) : ctSection(esc(ctT('Booking')),
       (s.isExtension ? ctKv('Type', esc(s.extensionText) + '<div class="ct-sub">Continues a current tenancy; no new deposit</div>') : '') +
       ctKv('Contract', esc(s.docTitle) + (s.isRta ? '<div class="ct-sub">BC form RTB-1 · Vanmates is the landlord</div>' : '')) +
       ctKv(s.isRta ? 'Unit' : 'Room', esc(s.place) + (s.address ? '<div class="ct-sub">' + esc(s.address) + '</div>' : '')) +
@@ -43282,9 +43459,10 @@ function ctRenderPanel(row) {
             ctKv('Services included', esc(s.servicesText)) + ctKv('Bedding', esc(s.beddingText || '—')) +
             ctKv('Common-area cleaning', esc(s.commonCleaningText || '—')) + ctKv('Cleaning fee', s.cleaningFeeText ? esc(s.cleaningFeeText) : dash) +
             ctKv('Payment', esc(s.paymentText)) + ctKv('Occupants', esc(s.occupantsText))
-          : ctKv('Utilities included', s.utilities ? esc(s.utilities) : dash))) +
+          : ctKv('Utilities included', s.utilities ? esc(s.utilities) : dash)))) +
     ctSection(esc(ctT('Signatures')), tenantsHtml +
-      ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash : '<span class="ct-sub">' + esc(ctT('not signed yet')) + '</span>')) +
+      ctKv('Vanmates', s.countersignedText ? esc(s.countersignedText) : (s.bucket === 'void' ? dash
+        : '<span class="ct-sub">' + esc(s.isReloc ? 'signs automatically when the client signs' : ctT('not signed yet')) + '</span>')) +
       (s.voidReason ? ctKv('Void reason', esc(s.voidReason)) : '') +
       (pdfs.length ? '<div class="ct-actions">' + pdfs.join('') + '</div>' : '')) +
     ctSection(esc(ctT('History')), timeline.length
@@ -43300,6 +43478,19 @@ function ctRenderPanel(row) {
     const err = document.querySelector('#ct-form .ct-form-err');
     if (err) err.textContent = CT_STATE.bad ? CT_STATE.msg : '';
   }
+}
+
+// The drawer's Service section for a relocation agreement.
+function ctRelocPanelHtml(s, dash) {
+  return ctKv('Contract', esc(s.docTitle) + '<div class="ct-sub">Vanmates Consulting Corporation · signed for by Yuhei Shimada automatically</div>') +
+    ctKv('Client', esc(s.tenantNames) + '<div class="ct-sub">' + esc([s.emails.join(', '), s.phone].filter(Boolean).join(' · ') || '—') + '</div>') +
+    ctKv('City', s.cityLabel ? esc(s.cityLabel) : dash) +
+    ctKv('Service period', esc(s.datesText) + '<div class="ct-sub">30 days</div>') +
+    ctKv('Service fee', s.feeText ? esc(s.feeText) : dash) +
+    ctKv('Add-ons', s.addons.length ? s.addons.map((a) => '<div>' + esc(a.label) + (a.price != null ? ' · ' + esc(ctMoney(a.price)) : '') + '</div>').join('') : dash) +
+    ctKv('Card processing fee', s.card || s.cardFee ? esc(ctMoney(s.cardFee) || '$0') + '<div class="ct-sub">3% · paid by card</div>' : dash) +
+    ctKv('Total paid', s.totalText ? '<b>' + esc(s.totalText) + '</b> CAD' : dash) +
+    (s.paymentNote ? ctKv('Payment note', esc(s.paymentNote) + '<div class="ct-sub">not printed on the agreement</div>') : '');
 }
 
 function ctOpenPanel(id) {
@@ -43350,7 +43541,8 @@ function ctShowForm(kind, row, fields) {
   }
   if (kind === 'send') {
     const s = ctSummary(row);
-    const list = fields && fields.length ? fields : s.missing.map((m) => m.field);
+    // A relocation agreement's terms are fixed only by Fix & resend: Send just sends.
+    const list = s.isReloc ? [] : fields && fields.length ? fields : s.missing.map((m) => m.field);
     CT_STATE.form = { kind, fields: list };
     const b = ctBooking(row);
     const input = (f) => {
@@ -43561,7 +43753,7 @@ async function ctSignGo() {
    Send now (send:true), or Replace & send (replaces + reason; the Worker voids
    the old contract only once the new one validates). A manual Extend does not
    hold the room in Asana; that stays Hugo's. */
-const CT_NEW = { mode: 'new', contract: null, busy: false, rooms: null, who: '', mx: false };
+const CT_NEW = { mode: 'new', contract: null, busy: false, rooms: null, who: '', mx: false, reloc: false, src: null };
 const CT_NEW_TITLES = { new: 'New <em>contract</em>', replace: 'Fix &amp; resend <em>contract</em>', extend: 'Extend <em>contract</em>' };
 // Inventory rooms for the picker (the Vacancies model: every Asana room with
 // its house, address and rent). Loaded on first use; typing by hand always works.
@@ -43629,7 +43821,13 @@ function ctEnsureContractModal() {
     if (el.getAttribute && el.getAttribute('aria-invalid')) el.removeAttribute('aria-invalid');
     ctPreviewContractForm();
   });
-  wrap.addEventListener('change', (e) => { if (['lease_type', 'form', 'fixed_end', 'payment', 'occupants'].includes(e.target.name)) ctLeaseTypeShown(); ctPreviewContractForm(); });
+  wrap.addEventListener('change', (e) => {
+    // The relocation agreement is its own form: switching to or from it redraws the modal (same person).
+    if (e.target.name === 'form' && CT_NEW.mode === 'new' && (e.target.value === 'relocation') !== CT_NEW.reloc) {
+      ctOpenContractForm('new', Object.assign({}, CT_NEW.src || {}, { form: e.target.value })); return;
+    }
+    if (['lease_type', 'form', 'fixed_end', 'payment', 'occupants'].includes(e.target.name)) ctLeaseTypeShown(); ctPreviewContractForm();
+  });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wrap.classList.contains('open') && !CT_NEW.busy) ctCloseContractForm(); });
 }
 function ctPickRoom(label) {
@@ -43645,7 +43843,7 @@ function ctPickRoom(label) {
 // Show what the chosen contract type and lease type ask for. An RTA is BC
 // only (the province is locked), has no utilities question and may have no room.
 function ctLeaseTypeShown() {
-  const f = document.getElementById('ct-new-form'); if (!f) return;
+  const f = document.getElementById('ct-new-form'); if (!f || CT_NEW.reloc) return;
   const open = f.querySelector('[name="lease_type"]').value === 'open';
   const end = f.querySelector('[data-ct-end]'); if (end) end.style.display = open ? 'none' : '';
   const typeEl = f.querySelector('[name="form"]');
@@ -43679,6 +43877,7 @@ function ctContractFormValues() {
 }
 function ctPreviewContractForm() {
   const el = document.getElementById('ct-new-preview'); if (!el) return;
+  if (CT_NEW.reloc) { el.textContent = ctRelocPreview(ctRelocToBooking(ctContractFormValues()).booking); return; }
   el.textContent = ctFormPreview(ctFormToBooking(ctContractFormValues(), CT_NEW.mode, CT_NEW.contract, true).booking);
 }
 // mode 'new' | 'replace' | 'extend'; src as ctFormDefaults takes it.
@@ -43687,9 +43886,14 @@ function ctOpenContractForm(mode, src) {
   ctEnsureContractModal();
   // The Mexico view makes only Mexican leases; the Canada view never offers one.
   const x = Object.assign({}, src || {}, mode === 'new' && ctMxView() ? { country: 'MX' } : {});
-  CT_NEW.mode = mode; CT_NEW.contract = x.contract || null; CT_NEW.busy = false;
+  CT_NEW.mode = mode; CT_NEW.contract = x.contract || null; CT_NEW.busy = false; CT_NEW.src = x;
+  // A relocation agreement (Canada only) is replaced as one; a new one when the type picker says so.
+  const reloc = mode === 'extend' ? false : x.contract ? ctIsReloc(x.contract) : (mode === 'new' && !ctMxView() && x.form === 'relocation');
+  CT_NEW.reloc = reloc;
+  if (reloc) { CT_NEW.mx = false; CT_NEW.who = x.contract ? 'contract' : x.tenant ? 'tenant' : x.lead ? 'lead' : ''; ctRelocForm(mode, x); return; }
   const v = ctFormDefaults(mode, x);
   if (mode === 'new' && !ctMxView() && v.form === 'mx') { v.form = 'sublease'; v.province = ''; }
+  if (mode === 'new' && !ctMxView() && x.form === 'rta') v.form = 'rta';
   const mx = v.form === 'mx';
   CT_NEW.mx = mx;
   const L = (t) => (mx ? ctTr(t, 'es') : t);
@@ -43714,7 +43918,7 @@ function ctOpenContractForm(mode, src) {
   const row2 = (a, b) => '<div class="form-row">' + a + b + '</div>';
   // Replace and Extend keep the contract's type; only a new one can switch.
   const typeSel = fld('form', 'Contract type', 'select', { options: mx ? [['mx', CT_MX.title]]
-    : [['sublease', 'Sublease agreement (co-living room)'], ['rta', 'Residential Tenancy Agreement (BC, RTB-1)']] });
+    : [['sublease', 'Sublease agreement (co-living room)'], ['rta', 'Residential Tenancy Agreement (BC, RTB-1)']].concat(mode === 'new' ? [['relocation', CT_RELOC_TITLE]] : []) });
   const includes = '<div class="form-row single" data-ct-rta><div class="form-field"><label>Included in the rent</label><div class="ct-includes">' +
     CT_RTA_INCLUDES.map(([k, l]) => '<label><input type="checkbox" name="includes" value="' + esc(k) + '"' + (v.includes.includes(k) ? ' checked' : '') + '>' + esc(l) + '</label>').join('') +
     '</div></div></div>';
@@ -43784,6 +43988,75 @@ function ctOpenContractForm(mode, src) {
   setTimeout(() => { const f = document.querySelector('#ct-new-form select, #ct-new-form input:not([type=hidden])'); if (f) f.focus(); }, 50);
 }
 window.ctOpenContractForm = ctOpenContractForm;
+// The Relocation Services Agreement form (New or Fix & resend). It always
+// sends: no draft. Lead: from the lead it was opened on, or picked here.
+function ctRelocLeads() {
+  return (window.leads || []).filter((l) => l && l.id && (ctStr(l.name) || ctStr(l.email)))
+    .slice().sort((a, b) => ctStr(b.created_at || b.createdAt).localeCompare(ctStr(a.created_at || a.createdAt))).slice(0, 2000);
+}
+function ctRelocLeadLabel(l) { return [ctStr(l.name), ctStr(l.email)].filter(Boolean).join(' · ') + ' (' + ctStr(l.id) + ')'; }
+function ctRelocForm(mode, x) {
+  const v = ctRelocDefaults(x);
+  const s = x.contract ? ctSummary(x.contract) : null;
+  document.getElementById('ct-new-title').innerHTML = mode === 'replace' ? CT_NEW_TITLES.replace : 'New <em>relocation agreement</em>';
+  document.getElementById('ct-new-sub').textContent = s ? 'Relocation · ' + s.tenantNames + ' · ' + s.place + ' · ' + s.datesText
+    : (x.tenant ? 'For ' + ctStr(x.tenant.name) + ' · ' : x.lead ? 'For ' + ctStr(x.lead.name || x.lead.email) + ' · ' : '') + CT_RELOC_TITLE;
+  const id = (n) => 'ct-n-' + n;
+  const input = (name, label, type, o) => '<div class="form-field"><label for="' + id(name) + '">' + esc(label) + '</label>' +
+    '<input class="form-input" id="' + id(name) + '" name="' + name + '" type="' + type + '"' + (type === 'number' ? ' min="0" step="0.01" inputmode="decimal"' : '') +
+    ((o && o.ph) ? ' placeholder="' + esc(o.ph) + '"' : '') + ' value="' + esc(v[name]) + '"></div>';
+  const row2 = (a, b) => '<div class="form-row">' + a + b + '</div>';
+  const typeSel = '<div class="form-field"><label for="ct-n-form">Contract type</label><select class="form-input" id="ct-n-form" name="form">' +
+    [['sublease', 'Sublease agreement (co-living room)'], ['rta', 'Residential Tenancy Agreement (BC, RTB-1)'], ['relocation', CT_RELOC_TITLE]]
+      .map(([k, l]) => '<option value="' + k + '"' + (k === 'relocation' ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select></div>';
+  const citySel = '<div class="form-field"><label for="ct-n-city">City</label><select class="form-input" id="ct-n-city" name="city"><option value="">Choose…</option>' +
+    CT_RELOC_CITIES.map(([k, l]) => '<option value="' + k + '"' + (k === v.city ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select></div>';
+  const addons = '<div class="form-row single"><div class="form-field"><label>Add-ons</label><div class="ct-includes" id="ct-n-addons">' +
+    CT_RELOC_ADDONS.map(([k, l, van, tor]) => '<label><input type="checkbox" name="addons" value="' + esc(k) + '"' + (v.addons.includes(k) ? ' checked' : '') + '>' +
+      esc(l) + ' <span class="ct-sub">(' + ctMoney(van) + ' Vancouver / ' + ctMoney(tor) + ' Toronto)</span></label>').join('') + '</div></div></div>';
+  const card = '<div class="form-row single"><div class="form-field"><label><input type="checkbox" name="card" value="yes"' + (v.card.includes('yes') ? ' checked' : '') + '> ' +
+    'Paid by card (3% fee)</label></div></div>';
+  const leadName = (() => { const l = (window.leads || []).find((y) => y && String(y.id) === v.lead_id); return l ? ctRelocLeadLabel(l) : v.lead_id; })();
+  const lead = '<div class="form-row single"><div class="form-field"><label for="ct-n-r_lead">Lead (optional)</label>' +
+    '<input class="form-input" id="ct-n-r_lead" list="ct-n-leads" placeholder="Search leads by name or email…" autocomplete="off" value="' + esc(leadName) + '">' +
+    '<datalist id="ct-n-leads">' + ctRelocLeads().map((l) => '<option value="' + esc(ctRelocLeadLabel(l)) + '"></option>').join('') + '</datalist>' +
+    '<input type="hidden" name="lead_id" value="' + esc(v.lead_id) + '"></div></div>';
+  const note = mode === 'replace'
+    ? '<div class="ct-sub" style="margin-bottom:12px">The current agreement is voided and this one is sent in its place. If anything below is missing, nothing changes.</div>'
+    : '<div class="ct-sub" style="margin-bottom:12px">Vanmates Consulting Corporation, signed for by Yuhei Shimada automatically: the agreement is complete when the client signs. Service runs 30 days from the start date.</div>';
+  document.getElementById('ct-new-form').innerHTML = note +
+    (mode === 'new' ? '<div class="form-row single">' + typeSel + '</div>' : '') +
+    row2(input('r_name', 'Client name', 'text'), input('r_email', 'Client email', 'email')) +
+    row2(input('r_phone', 'Client phone', 'tel', { ph: '+1 604 …' }), citySel) +
+    row2(input('start', 'Service start', 'date'), input('fee', 'Service fee (CAD)', 'number')) +
+    card + addons +
+    '<div class="form-row single">' + input('payment_note', 'Payment note (not printed)', 'text', { ph: 'e.g. e-Transfer CAD 1,236 on 2026-10-29' }) + '</div>' +
+    lead +
+    (mode === 'replace' ? '<div class="form-row single"><div class="form-field"><label for="ct-n-reason">Reason for replacing *</label>' +
+      '<textarea class="form-input" id="ct-n-reason" rows="2" maxlength="300" placeholder="e.g. fee corrected to $1,100"></textarea></div></div>' : '') +
+    '<div class="form-error" id="ct-new-err" role="alert"></div>';
+  const leadIn = document.getElementById('ct-n-r_lead');
+  leadIn.addEventListener('input', () => {
+    const hid = document.querySelector('#ct-new-form [name="lead_id"]');
+    const t = ctStr(leadIn.value);
+    const l = t ? ctRelocLeads().find((y) => ctRelocLeadLabel(y) === t) : null;
+    if (l) {
+      hid.value = ctStr(l.id);
+      const f = document.getElementById('ct-new-form');
+      const fill = (n, val) => { const el = f.querySelector('[name="' + n + '"]'); if (el && !el.value && val) el.value = val; };
+      fill('r_name', ctStr(l.name)); fill('r_email', ctStr(l.email).toLowerCase()); fill('r_phone', ctStr(l.phone || l.whatsapp)); fill('city', ctRelocCity(l.city));
+    } else if (!t) hid.value = '';
+  });
+  const foot = document.querySelector('#ct-new-backdrop .modal-foot');
+  foot.querySelectorAll('[data-ct-new-act]').forEach((b) => { if (!b.dataset.en) b.dataset.en = b.textContent; b.textContent = b.dataset.en; b.disabled = false; });
+  foot.querySelector('[data-ct-new-act="draft"]').hidden = true;
+  foot.querySelector('[data-ct-new-act="send"]').hidden = mode === 'replace';
+  foot.querySelector('[data-ct-new-act="replace"]').hidden = mode !== 'replace';
+  ctPreviewContractForm();
+  const bk = document.getElementById('ct-new-backdrop');
+  bk.classList.add('open'); bk.setAttribute('aria-hidden', 'false');
+  setTimeout(() => { const f = document.querySelector('#ct-new-form input:not([type=hidden])'); if (f) f.focus(); }, 50);
+}
 // Fix & resend = Replace, from anywhere. `typed` (ctContractFormValues of a
 // New form the Worker refused) carries over what was already typed, so a
 // blocked New becomes a Replace of the person's existing contract.
@@ -43819,7 +44092,8 @@ async function ctSubmitContractForm(k) {
   const form = document.getElementById('ct-new-form');
   form.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
   const send = k !== 'draft';
-  const { booking, errors } = ctFormToBooking(ctContractFormValues(), CT_NEW.mode, CT_NEW.contract, !send);
+  if (CT_NEW.reloc && !send) return;   // relocation agreements always send
+  const { booking, errors } = CT_NEW.reloc ? ctRelocToBooking(ctContractFormValues()) : ctFormToBooking(ctContractFormValues(), CT_NEW.mode, CT_NEW.contract, !send);
   const reasonEl = document.getElementById('ct-n-reason');
   const reason = reasonEl ? String(reasonEl.value || '').trim() : '';
   if (k === 'replace' && !reason) errors.push({ field: 'reason', text: 'Say why the contract is being replaced.' });
@@ -43838,7 +44112,7 @@ async function ctSubmitContractForm(k) {
   const was = label ? label.textContent : '';
   if (label) label.textContent = (CT_NEW.mx ? (t) => ctTr(t, 'es') : (t) => t)(k === 'draft' ? 'Saving…' : 'Sending… (making the PDF)');
   let d = null, failure = '', fixId = '';
-  try { d = await ctCall('/coliving', body); }
+  try { d = await ctCall(CT_NEW.reloc ? '/relocation' : '/coliving', body); }
   catch (e) {
     failure = (e && e.message) || String(e);
     if (CT_NEW.mx) {
@@ -43849,6 +44123,8 @@ async function ctSubmitContractForm(k) {
         : ctTr(failure, 'es');
     }
     if (k === 'replace' && e && e.body && e.body.error === 'missing') failure += CT_NEW.mx ? ' El contrato anterior no se anuló.' : ' The old contract was not voided.';
+    // A signed relocation agreement is final, so there is nothing to fix and resend.
+    if (CT_NEW.reloc && e && e.body && e.body.error === 'already_signed') failure = 'This client already signed a relocation agreement for this start date, and a signed agreement cannot be changed. Use a different service start date for a new one.';
     // Blocked by a contract the person already has: offer to fix that one with what was typed here.
     let blocker = null;
     if (e && e.body && e.body.error === 'already_signed' && e.body.contract_id) {
@@ -43870,6 +44146,7 @@ async function ctSubmitContractForm(k) {
   }
   const id = ctStr(d.contract_id);
   const to = CT_NEW.mx ? (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' y ') || 'el arrendatario'
+    : CT_NEW.reloc ? ctStr(booking.client && booking.client.email) || 'the client'
     : (booking.tenants || []).map((t) => t.email).filter(Boolean).join(' and ') || 'the tenant';
   const missing = Array.isArray(d.missing) ? d.missing : [];
   let msg;
@@ -43918,7 +44195,7 @@ function ctPersonListHtml(list) {
   return list.map((r) => {
     const s = ctSummary(r, new Date());
     return '<div class="ct-person-row"><div style="min-width:0"><div class="ct-name">' + esc(s.place) + ' · ' + esc(s.datesText) +
-      (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') + (s.isMx ? ctMxTag() : '') + '</div>' +
+      (s.isRta ? '<span class="ct-tag" title="Residential Tenancy Agreement (RTB-1)">RTA</span>' : '') + (s.isMx ? ctMxTag() : '') + (s.isReloc ? ctRelocTag() : '') + '</div>' +
       '<div class="ct-sub">' + esc(ctT(s.statusText)) + (s.statusLine ? ' · ' + esc(s.statusLine) : '') + '</div></div>' +
       '<div style="display:flex;gap:6px;flex-shrink:0">' +
       (ctCanFix(r, me) ? '<button type="button" class="btn btn-ghost btn-mini" data-ct-fix="' + esc(s.id) + '">' + esc(ctT('Fix & resend')) + '</button>' : '') +
@@ -45375,12 +45652,12 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-29-appt2"></script>
-<script src="extensions.js?v=2026-10-29-appt2"></script>
-<script src="retention.js?v=2026-10-29-appt2"></script>
-<script src="ap.js?v=2026-10-29-appt2"></script>
-<script src="properties.js?v=2026-10-29-appt2"></script>
-<script src="ar.js?v=2026-10-29-appt2"></script>
-<script src="mx-finance.js?v=2026-10-29-appt2"></script>
+<script src="room-changes.js?v=2026-10-29-reloc1"></script>
+<script src="extensions.js?v=2026-10-29-reloc1"></script>
+<script src="retention.js?v=2026-10-29-reloc1"></script>
+<script src="ap.js?v=2026-10-29-reloc1"></script>
+<script src="properties.js?v=2026-10-29-reloc1"></script>
+<script src="ar.js?v=2026-10-29-reloc1"></script>
+<script src="mx-finance.js?v=2026-10-29-reloc1"></script>
 </body>
 </html>
