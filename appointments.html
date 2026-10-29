@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Appointments · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Same sign-in gate as whatsapp.html. What each person may see or change is decided by the Worker on every call.
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now() - 3600e3));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'appointments.html' + location.search); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root{
+  --cream:#FAF5ED; --cream-2:#F4ECDD; --red:#B94A3F; --red-dark:#A13A30; --red-soft:#F3DDD8; --ink:#2B211A; --muted:#7A6B5C;
+  --line:#E4DBC9; --green:#5C8A6B; --green-soft:#E2EDDF; --amber:#C8923A; --amber-soft:#F4E5C7; --blue:#3F6E94; --blue-soft:#DCE7F1;
+  --surface:#FFFFFF; --serif:"Playfair Display", Georgia, serif; --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05); --radius: 14px; --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e;
+  --toast:#2B211A; --toast-ink:#FAF5ED;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
+  --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --toast:#F4ECDD; --toast-ink:#1F1A16;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+[hidden] { display: none !important; }
+a { color: var(--red); }
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none; font-family: var(--serif); font-style: italic; font-weight: 700; text-decoration: none; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; white-space: nowrap; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.sp { flex: 1; min-width: 0; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px; border: 1px solid transparent; text-decoration: none; white-space: nowrap; }
+.btn-primary { background: var(--red); color: var(--on-red); } .btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); color: var(--ink); } .btn-ghost:hover { background: var(--cream-2); }
+.btn:disabled { opacity: .55; cursor: default; }
+.chips { display: inline-flex; gap: 2px; background: var(--cream-2); border-radius: 999px; padding: 3px; flex-wrap: wrap; }
+.chip { border: 0; border-radius: 999px; background: transparent; padding: 0 12px; font-size: 12.5px; font-weight: 600; min-height: 30px; color: var(--muted); white-space: nowrap; }
+.chip.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px 40px; }
+.banner { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: var(--amber-soft); color: var(--b-amber); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.banner.err { background: var(--red-soft); color: var(--red); }
+.bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.pane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.day { padding: 10px 14px 4px; font-weight: 800; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-top: 1px solid var(--line); }
+.day:first-child { border-top: 0; }
+.ap { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 4px 14px; align-items: start; padding: 10px 14px; border-top: 1px solid var(--line); }
+.day + .ap { border-top: 0; }
+.ap .t { font-weight: 800; font-size: 15px; } .ap .t small { display: block; font-weight: 500; font-size: 12px; color: var(--muted); }
+.ap .who { font-weight: 700; } .ap .meta { color: var(--muted); font-size: 12.5px; word-break: break-word; }
+.ap .notes { font-size: 12.5px; background: var(--cream); border-radius: 8px; padding: 6px 8px; margin-top: 6px; white-space: pre-wrap; }
+.ap .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; font-weight: 700; margin-left: 6px; vertical-align: 1px; }
+.p-ok { background: var(--green-soft); color: var(--b-green); } .p-warn { background: var(--amber-soft); color: var(--b-amber); } .p-bad { background: var(--red-soft); color: var(--red); } .p-info { background: var(--blue-soft); color: var(--b-blue); } .p-mute { background: var(--cream-2); color: var(--muted); }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+.card { padding: 16px; }
+.card h3 { margin: 0 0 10px; font-family: var(--serif); font-size: 18px; }
+label.f { display: block; font-weight: 700; font-size: 12.5px; margin: 10px 0 4px; }
+.inp, .sel { width: 100%; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 36px; padding: 6px 10px; font: inherit; font-size: 14px; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.wk { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 6px 10px; align-items: center; }
+.wk label { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; } @media (max-width: 560px) { .row3 { grid-template-columns: 1fr 1fr; } }
+.check { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0; } .check input { margin-top: 3px; }
+.linkbox { display: flex; gap: 6px; align-items: center; background: var(--cream); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; margin: 6px 0; }
+.linkbox code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 13px; } table.reps th { color: var(--muted); font-size: 12px; border-top: 0; }
+.modal { position: fixed; inset: 0; background: rgba(20,14,10,.45); display: grid; place-items: center; z-index: 40; padding: 16px; }
+.modal .box { background: var(--surface); border-radius: 14px; padding: 18px; width: 100%; max-width: 440px; max-height: 92vh; overflow: auto; }
+.modal h3 { margin: 0 0 8px; font-family: var(--serif); }
+.toast { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--toast); color: var(--toast-ink); padding: 9px 14px; border-radius: 10px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50; max-width: calc(100% - 32px); }
+.toast.show { opacity: 1; }
+@media (max-width: 640px) {
+  .ap { grid-template-columns: 70px minmax(0, 1fr); } .ap .acts { grid-column: 1 / -1; justify-content: flex-start; }
+  .page-title { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
+  <div class="page-title">Sales <em>appointments</em></div>
+  <div class="sp"></div>
+  <span class="muted" id="me" style="color:var(--muted);font-size:12.5px"></span>
+</header>
+<div class="wrap">
+  <div id="banners"></div>
+  <div class="bar">
+    <div class="chips" role="tablist" id="tabs">
+      <button class="chip on" data-tab="upcoming">Upcoming</button>
+      <button class="chip" data-tab="past">Past</button>
+      <button class="chip" data-tab="settings">My booking page</button>
+      <button class="chip" data-tab="team" hidden id="teamTab">Team</button>
+    </div>
+    <div class="sp"></div>
+    <label id="scopeWrap" hidden style="display:flex;gap:6px;align-items:center;font-size:12.5px;font-weight:600"><input type="checkbox" id="scopeAll" /> Whole team</label>
+  </div>
+  <section id="view"><div class="pane empty">Loading…</div></section>
+</div>
+<div id="modal"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var WORKER = 'https://vanmates-lead-mail.talatcan.workers.dev';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY, { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var S = { tab: 'upcoming', all: false, me: null, list: null, reps: null, edit: null };
+  var DAYS = [['1', 'Monday'], ['2', 'Tuesday'], ['3', 'Wednesday'], ['4', 'Thursday'], ['5', 'Friday'], ['6', 'Saturday'], ['0', 'Sunday']];
+  var TZS = ['America/Vancouver', 'America/Edmonton', 'America/Toronto', 'America/Montreal', 'America/Halifax', 'America/Mexico_City'];
+  var OUTCOMES = { interested: 'Interested', follow_up: 'Follow-up required', payment_pending: 'Payment pending', booked: 'Booked', not_interested: 'Not interested' };
+  var ERR = {
+    unauthorized: 'Your session expired. Reload the page to sign in again.', forbidden: 'You can’t change that.',
+    bad_slug: 'The link name can use a–z, 0–9 and dashes (2–40 characters).', slug_taken: 'Someone already uses that link name.',
+    bad_weekly: 'Check the hours: each day needs a start before its end.', bad_timezone: 'Pick a timezone from the list.',
+    not_active: 'This meeting is no longer active.', not_started: 'You can set the outcome once the meeting has started.',
+    follow_up_date_required: 'Pick the follow-up date.', changed: 'Someone changed this meeting. Reload.',
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 4500); }
+  async function token(refresh) {
+    if (refresh) { try { await sb.auth.refreshSession(); } catch (e) {} }
+    var sess = (await sb.auth.getSession()).data.session;
+    if (!sess) { location.replace('signin.html'); throw new Error('signed out'); }
+    return sess.access_token;
+  }
+  async function api(method, path, body) {
+    var go = async function (tok) {
+      return fetch(WORKER + path, { method: method, headers: Object.assign({ Authorization: 'Bearer ' + tok }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined });
+    };
+    var r = await go(await token(false));
+    if (r.status === 401) r = await go(await token(true));
+    var j = await r.json().catch(function () { return { error: 'failed' }; });
+    if (!r.ok) { var e = new Error(ERR[j.error] || j.message || j.error || ('HTTP ' + r.status)); e.code = j.error; throw e; }
+    return j;
+  }
+  function day(iso) { return new Date(iso).toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }); }
+  function clock(iso) { return new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }); }
+  function custTime(a) {
+    var mine = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!a.timezone || a.timezone === mine) return '';
+    return new Date(a.start_at).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', timeZone: a.timezone }) + ' ' + a.timezone.split('/').pop().replace(/_/g, ' ');
+  }
+
+  // ---------------------------------------------------------------- banners
+  function banners() {
+    var m = S.me, out = [];
+    if (!m) { $('banners').innerHTML = ''; return; }
+    var c = m.calendar;
+    if (!c.connected || c.needs_reconnect || !c.can_calendar) {
+      var why = !c.connected ? (c.needs_reconnect ? 'Your Google connection stopped working.' : 'Connect your Google account so customers can book you.')
+        : 'Your Google account is connected for email only. Connect again to add Google Calendar (busy times + Meet links).';
+      out.push('<div class="banner">' + esc(why) + ' <button class="btn btn-primary" data-act="connect">Connect Google Calendar</button></div>');
+    } else if (m.settings && !m.settings.active) {
+      out.push('<div class="banner">Your booking page is off. Turn it on in <b>My booking page</b> to take bookings.</div>');
+    } else if (!m.settings) {
+      out.push('<div class="banner">Set up your booking page (hours, link) in <b>My booking page</b>.</div>');
+    }
+    $('banners').innerHTML = out.join('');
+  }
+  async function connect() {
+    var win = window.open('', 'vm-gmail-connect', 'width=520,height=700');
+    try {
+      var r = await api('POST', '/api/gmail/start');
+      if (!win) { location.href = r.url; return; }
+      win.location.href = r.url;
+      var timer = setInterval(function () { var closed = true; try { closed = win.closed; } catch (e) {} if (!closed) return; clearInterval(timer); loadMe().then(render); }, 600);
+    } catch (e) { if (win) win.close(); toast(e.message); }
+  }
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== WORKER || !ev.data || ev.data.source !== 'vm-lead-mail') return;
+    if (ev.data.ok) toast('Google connected: ' + ev.data.email);
+    loadMe().then(render);
+  });
+
+  // ---------------------------------------------------------------- list
+  function statusPill(a) {
+    var p = { CONFIRMED: ['p-ok', 'Confirmed'], PENDING_EXTERNAL: ['p-warn', 'Creating…'], COMPLETED: ['p-info', 'Completed'], NO_SHOW: ['p-bad', 'No-show'], CANCELLED: ['p-mute', 'Cancelled'] }[a.status] || ['p-mute', a.status];
+    var out = '<span class="pill ' + p[0] + '">' + p[1] + '</span>';
+    if (a.outcome) out += '<span class="pill p-info">' + esc(OUTCOMES[a.outcome] || a.outcome) + '</span>';
+    if (a.conflict) out += '<span class="pill p-bad" title="The Google Calendar event was changed outside the portal. Check the time with the customer.">' + (a.conflict === 'deleted_in_google' ? 'Deleted in Google' : a.conflict === 'moved_in_google' ? 'Moved in Google' : 'Check Google') + '</span>';
+    if (a.status === 'CONFIRMED' && !a.meet_url && S.me && (a.rep_id === S.me.member_id)) out += '<span class="pill p-warn">Meet link pending</span>';
+    return out;
+  }
+  function renderList() {
+    var rows = S.list;
+    if (!rows) return '<div class="pane empty">Loading…</div>';
+    if (!rows.length) return '<div class="pane empty">' + (S.tab === 'upcoming' ? 'No upcoming meetings. Share your booking link to get some.' : 'No past meetings yet.') + '</div>';
+    var html = [], last = '', now = Date.now();
+    rows.forEach(function (a) {
+      var d = day(a.start_at);
+      if (d !== last) { html.push('<div class="day">' + esc(d) + '</div>'); last = d; }
+      var started = Date.parse(a.start_at) <= now;
+      var acts = [];
+      if (a.status === 'CONFIRMED' && a.meet_url) acts.push('<a class="btn btn-primary" href="' + esc(a.meet_url) + '" target="_blank" rel="noopener">Join</a>');
+      if (a.lead_id) acts.push('<a class="btn btn-ghost" href="index.html#lead=' + encodeURIComponent(a.lead_id) + '">Lead</a>');
+      if (started && ['CONFIRMED', 'COMPLETED', 'NO_SHOW'].indexOf(a.status) >= 0) acts.push('<button class="btn btn-ghost" data-act="outcome" data-id="' + esc(a.id) + '">' + (a.status === 'CONFIRMED' ? 'Set outcome' : 'Edit outcome') + '</button>');
+      if (!started && a.status === 'CONFIRMED') acts.push('<button class="btn btn-ghost" data-act="cancel" data-id="' + esc(a.id) + '">Cancel</button>');
+      var ct = custTime(a);
+      html.push('<div class="ap"><div class="t">' + esc(clock(a.start_at)) + '<small>' + Math.round((Date.parse(a.end_at) - Date.parse(a.start_at)) / 60000) + ' min</small></div>' +
+        '<div><div class="who">' + esc(a.name) + statusPill(a) + '</div>' +
+        '<div class="meta">' + [esc(a.email), esc(a.phone || ''), esc(a.city || ''), a.arrival ? 'Arrives ' + esc(a.arrival) : '', ({ en: 'English', es: 'Español', ja: '日本語' })[a.lang] || ''].filter(Boolean).join(' · ') + '</div>' +
+        '<div class="meta">' + esc(a.ref) + (S.all ? ' · with ' + esc(a.rep_name) : '') + (ct ? ' · their time ' + esc(ct) : '') + (a.cancel_reason ? ' · reason: ' + esc(a.cancel_reason) : '') + '</div>' +
+        (a.notes ? '<div class="notes">' + esc(a.notes) + '</div>' : '') +
+        (a.outcome_notes ? '<div class="notes"><b>Outcome:</b> ' + esc(a.outcome_notes) + (a.follow_up_on ? ' · follow up ' + esc(a.follow_up_on) : '') + '</div>' : '') +
+        '</div><div class="acts">' + acts.join('') + '</div></div>');
+    });
+    return '<div class="pane">' + html.join('') + '</div>';
+  }
+  async function loadList() {
+    S.list = null; render();
+    try {
+      var j = await api('GET', '/api/appt/list?when=' + (S.tab === 'past' ? 'past' : 'upcoming') + '&scope=' + (S.all ? 'team' : 'mine'));
+      S.list = j.appointments;
+    } catch (e) { S.list = []; toast(e.message); }
+    render();
+  }
+
+  // ---------------------------------------------------------------- outcome / cancel
+  function modal(html) { $('modal').innerHTML = html ? '<div class="modal" id="mbg"><div class="box" role="dialog" aria-modal="true">' + html + '</div></div>' : ''; }
+  function openOutcome(a) {
+    var opts = Object.keys(OUTCOMES).map(function (k) { return '<option value="' + k + '"' + (a.outcome === k ? ' selected' : '') + '>' + OUTCOMES[k] + '</option>'; }).join('');
+    modal('<h3>How did it go?</h3><div class="meta" style="color:var(--muted)">' + esc(a.name) + ' · ' + esc(day(a.start_at)) + ' ' + esc(clock(a.start_at)) + '</div>' +
+      '<label class="f">Meeting</label><select class="sel" id="oStatus"><option value="COMPLETED"' + (a.status !== 'NO_SHOW' ? ' selected' : '') + '>Completed</option><option value="NO_SHOW"' + (a.status === 'NO_SHOW' ? ' selected' : '') + '>No-show</option></select>' +
+      '<div id="oWrap"><label class="f">Result</label><select class="sel" id="oOutcome">' + opts + '</select>' +
+      '<div class="hint">Moves the lead’s stage. Payment pending does not send anything: set up the reminders from the lead.</div></div>' +
+      '<label class="f">Follow-up date <span style="font-weight:500;color:var(--muted)">(needed for Follow-up required)</span></label><input class="inp" type="date" id="oFu" value="' + esc(a.follow_up_on || '') + '" />' +
+      '<label class="f">Notes</label><textarea class="inp" id="oNotes" rows="3">' + esc(a.outcome_notes || '') + '</textarea>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost" data-act="close">Close</button><button class="btn btn-primary" id="oSave">Save</button></div>');
+    var sync = function () { $('oWrap').hidden = $('oStatus').value !== 'COMPLETED'; };
+    $('oStatus').addEventListener('change', sync); sync();
+    $('oSave').addEventListener('click', async function () {
+      this.disabled = true;
+      try {
+        var r = await api('POST', '/api/appt/outcome', { id: a.id, version: a.version, status: $('oStatus').value, outcome: $('oStatus').value === 'COMPLETED' ? $('oOutcome').value : '', notes: $('oNotes').value, follow_up_on: $('oFu').value });
+        modal(''); toast(r.lead_stage ? 'Saved. Lead moved to ' + r.lead_stage.replace('_', ' ') + '.' : 'Saved.'); loadList();
+      } catch (e) { this.disabled = false; toast(e.message); }
+    });
+  }
+  function openCancel(a) {
+    modal('<h3>Cancel this meeting?</h3><p>' + esc(a.name) + ' gets an email from you saying it’s cancelled, with a link to book a new time. The Google Calendar event is removed.</p>' +
+      '<label class="f">Reason (internal)</label><input class="inp" id="cReason" maxlength="300" />' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn btn-ghost" data-act="close">Keep it</button><button class="btn btn-primary" id="cGo">Cancel meeting</button></div>');
+    $('cGo').addEventListener('click', async function () {
+      this.disabled = true;
+      try { await api('POST', '/api/appt/cancel', { id: a.id, reason: $('cReason').value }); modal(''); toast('Cancelled.'); loadList(); }
+      catch (e) { this.disabled = false; toast(e.message); }
+    });
+  }
+
+  // ---------------------------------------------------------------- settings
+  function settingsForm(s, view, forName) {
+    var w = s.weekly || {};
+    var wk = DAYS.map(function (d) {
+      var win = (w[d[0]] || [])[0];
+      return '<label><input type="checkbox" data-wd="' + d[0] + '"' + (win ? ' checked' : '') + ' /> ' + d[1] + '</label>' +
+        '<input class="inp" type="time" step="900" data-ws="' + d[0] + '" value="' + esc(win ? win[0] : '09:00') + '" aria-label="' + d[1] + ' start" />' +
+        '<input class="inp" type="time" step="900" data-we="' + d[0] + '" value="' + esc(win ? win[1] : '17:00') + '" aria-label="' + d[1] + ' end" />';
+    }).join('');
+    var tzs = TZS.indexOf(s.timezone) < 0 ? [s.timezone].concat(TZS) : TZS;
+    var url = view ? view.book_url : '';
+    return '<div class="grid2">' +
+      '<div class="pane card"><h3>' + (forName ? esc(forName) + '’s booking page' : 'Your booking page') + '</h3>' +
+      '<div class="check"><input type="checkbox" id="sActive"' + (s.active ? ' checked' : '') + ' /><label for="sActive"><b>Take bookings</b><div class="hint">Off: your page says booking is unavailable and you are left out of the team page.</div></label></div>' +
+      '<div class="check"><input type="checkbox" id="sPool"' + (s.in_pool !== false ? ' checked' : '') + ' /><label for="sPool"><b>Take new leads from the team page</b><div class="hint">The team page shares new people out in turn. Leads you already own always book with you.</div></label></div>' +
+      '<label class="f" for="sSlug">Link name</label><input class="inp" id="sSlug" value="' + esc(s.slug || '') + '" maxlength="40" />' +
+      (url ? '<div class="linkbox"><code>' + esc(url) + '</code><button class="btn btn-ghost" data-copy="' + esc(url) + '">Copy</button><a class="btn btn-ghost" href="' + esc(url) + '" target="_blank" rel="noopener">Open</a></div>' : '') +
+      (S.me && S.me.team_url ? '<div class="hint">Team page (shared out to everyone taking bookings):</div><div class="linkbox"><code>' + esc(S.me.team_url) + '</code><button class="btn btn-ghost" data-copy="' + esc(S.me.team_url) + '">Copy</button></div>' : '') +
+      '<label class="f" for="sTz">Your timezone</label><select class="sel" id="sTz">' + tzs.map(function (z) { return '<option' + (z === s.timezone ? ' selected' : '') + '>' + esc(z) + '</option>'; }).join('') + '</select>' +
+      '<div class="row3"><div><label class="f" for="sDur">Meeting length</label><select class="sel" id="sDur">' + [15, 30, 45, 60].map(function (n) { return '<option value="' + n + '"' + (n === s.duration_min ? ' selected' : '') + '>' + n + ' min</option>'; }).join('') + '</select></div>' +
+      '<div><label class="f" for="sBuf">Gap between</label><select class="sel" id="sBuf">' + [0, 5, 10, 15, 30].map(function (n) { return '<option value="' + n + '"' + (n === s.buffer_min ? ' selected' : '') + '>' + n + ' min</option>'; }).join('') + '</select></div>' +
+      '<div><label class="f" for="sMax">Max per day</label><input class="inp" id="sMax" type="number" min="1" max="30" value="' + esc(s.daily_max) + '" /></div>' +
+      '<div><label class="f" for="sNotice">Book at least</label><select class="sel" id="sNotice">' + [[0, 'Any time'], [60, '1 hour ahead'], [120, '2 hours ahead'], [240, '4 hours ahead'], [1440, '1 day ahead'], [2880, '2 days ahead']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === s.min_notice_min ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
+      '<div><label class="f" for="sHorizon">Up to</label><select class="sel" id="sHorizon">' + [7, 14, 30, 60, 90].map(function (n) { return '<option value="' + n + '"' + (n === s.horizon_days ? ' selected' : '') + '>' + n + ' days out</option>'; }).join('') + '</select></div></div>' +
+      '</div>' +
+      '<div class="pane card"><h3>Hours</h3><div class="hint" style="margin-bottom:8px">Customers only see times inside these hours that are also free in your Google Calendar.</div><div class="wk">' + wk + '</div>' +
+      '<label class="f" for="sOff">Days off</label><textarea class="inp" id="sOff" rows="3" placeholder="2026-12-24, 2026-12-25">' + esc((s.days_off || []).join(', ')) + '</textarea><div class="hint">Dates as YYYY-MM-DD, separated by commas. Holidays in your Google Calendar already count as busy if they are marked busy.</div>' +
+      '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">' + (forName ? '<button class="btn btn-ghost" data-act="backteam">Back to team</button>' : '') + '<button class="btn btn-primary" id="sSave">Save</button></div></div>' +
+      '</div>';
+  }
+  function readSettings() {
+    var weekly = {};
+    DAYS.forEach(function (d) {
+      if (!document.querySelector('[data-wd="' + d[0] + '"]').checked) return;
+      weekly[d[0]] = [[document.querySelector('[data-ws="' + d[0] + '"]').value, document.querySelector('[data-we="' + d[0] + '"]').value]];
+    });
+    return {
+      active: $('sActive').checked, in_pool: $('sPool').checked, slug: $('sSlug').value.trim().toLowerCase(), timezone: $('sTz').value,
+      duration_min: +$('sDur').value, buffer_min: +$('sBuf').value, daily_max: +$('sMax').value, min_notice_min: +$('sNotice').value, horizon_days: +$('sHorizon').value,
+      weekly: weekly, days_off: $('sOff').value.split(/[\s,]+/).filter(Boolean),
+    };
+  }
+  function wireSettings(memberId) {
+    $('sSave').addEventListener('click', async function () {
+      var body = readSettings(); if (memberId) body.member_id = memberId;
+      this.disabled = true;
+      try {
+        await api('POST', '/api/appt/settings', body);
+        toast('Saved.');
+        await loadMe();
+        if (memberId) { await loadReps(); S.edit = null; S.tab = 'team'; }
+        render();
+      } catch (e) { this.disabled = false; toast(e.message); }
+    });
+  }
+
+  // ---------------------------------------------------------------- team (admin)
+  async function loadReps() { try { S.reps = (await api('GET', '/api/appt/reps')).reps; } catch (e) { S.reps = []; toast(e.message); } }
+  function renderTeam() {
+    if (!S.reps) return '<div class="pane empty">Loading…</div>';
+    if (!S.reps.length) return '<div class="pane empty">No one has set up a booking page yet. Each rep opens Appointments, connects Google Calendar and saves their page.</div>';
+    var cal = { ok: ['p-ok', 'Connected'], needs_calendar: ['p-warn', 'Email only, reconnect'], reconnect: ['p-bad', 'Reconnect needed'], not_connected: ['p-bad', 'Not connected'] };
+    return '<div class="pane" style="overflow-x:auto"><table class="reps"><thead><tr><th>Rep</th><th>Google Calendar</th><th>Page</th><th>Team page</th><th>Link</th><th></th></tr></thead><tbody>' +
+      S.reps.map(function (r) {
+        var c = cal[r.calendar] || ['p-mute', r.calendar];
+        return '<tr><td><b>' + esc(r.name) + '</b><div style="color:var(--muted);font-size:12px">' + esc(r.email) + '</div></td>' +
+          '<td><span class="pill ' + c[0] + '" style="margin:0">' + c[1] + '</span></td>' +
+          '<td>' + (r.active ? (r.schedulable ? '<span class="pill p-ok" style="margin:0">Taking bookings</span>' : '<span class="pill p-warn" style="margin:0">On, not bookable</span>') : '<span class="pill p-mute" style="margin:0">Off</span>') + '</td>' +
+          '<td>' + (r.in_pool ? 'Yes' : 'No') + '</td>' +
+          '<td><button class="btn btn-ghost" data-copy="' + esc(r.book_url) + '">Copy link</button></td>' +
+          '<td><button class="btn btn-ghost" data-act="editrep" data-id="' + esc(r.member_id) + '">Edit</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  // ---------------------------------------------------------------- shell
+  async function loadMe() {
+    try { S.me = await api('GET', '/api/appt/me'); } catch (e) { $('banners').innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; return; }
+    $('teamTab').hidden = !S.me.admin;
+    $('scopeWrap').hidden = !S.me.admin || S.tab === 'settings' || S.tab === 'team';
+  }
+  function render() {
+    banners();
+    document.querySelectorAll('#tabs .chip').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === S.tab); });
+    $('scopeWrap').hidden = !(S.me && S.me.admin) || S.tab === 'settings' || S.tab === 'team';
+    var v = $('view');
+    if (S.tab === 'settings') {
+      if (!S.me) { v.innerHTML = '<div class="pane empty">Loading…</div>'; return; }
+      v.innerHTML = settingsForm(S.me.settings || S.me.defaults, S.me.rep, ''); wireSettings(null); return;
+    }
+    if (S.tab === 'team') {
+      if (S.edit) { var r = S.reps.find(function (x) { return x.member_id === S.edit; }); v.innerHTML = settingsForm(r.settings, r, r.name); wireSettings(r.member_id); return; }
+      v.innerHTML = renderTeam(); return;
+    }
+    v.innerHTML = renderList();
+  }
+  $('tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-tab]'); if (!b) return;
+    S.tab = b.dataset.tab; S.edit = null;
+    if (S.tab === 'upcoming' || S.tab === 'past') loadList();
+    else if (S.tab === 'team') { render(); loadReps().then(render); }
+    else render();
+  });
+  $('scopeAll').addEventListener('change', function () { S.all = this.checked; loadList(); });
+  document.addEventListener('click', function (e) {
+    var c = e.target.closest('[data-copy]');
+    if (c) { navigator.clipboard.writeText(c.dataset.copy).then(function () { toast('Link copied'); }, function () { toast(c.dataset.copy); }); return; }
+    var a = e.target.closest('[data-act]'); if (!a) { if (e.target.id === 'mbg') modal(''); return; }
+    var act = a.dataset.act;
+    if (act === 'connect') connect();
+    else if (act === 'close') modal('');
+    else if (act === 'backteam') { S.edit = null; render(); }
+    else if (act === 'editrep') { S.edit = a.dataset.id; render(); }
+    else if (act === 'outcome' || act === 'cancel') {
+      var ap = (S.list || []).find(function (x) { return x.id === a.dataset.id; }); if (!ap) return;
+      act === 'outcome' ? openOutcome(ap) : openCancel(ap);
+    }
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal(''); });
+
+  sb.auth.getSession().then(function (r) { var s = r.data.session; $('me').textContent = s && s.user ? s.user.email : ''; });
+  var start = new URLSearchParams(location.search).get('tab');
+  if (start === 'settings' || start === 'past') S.tab = start;
+  loadMe().then(function () { if (S.tab === 'settings') render(); else loadList(); });
+})();
+</script>
+</body>
+</html>
