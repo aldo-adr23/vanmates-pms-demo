@@ -85,7 +85,17 @@ label.f { display: block; font-weight: 700; font-size: 12.5px; margin: 10px 0 4p
 .check { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0; } .check input { margin-top: 3px; }
 .linkbox { display: flex; gap: 6px; align-items: center; background: var(--cream); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; margin: 6px 0; }
 .linkbox code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 13px; } table.reps th { color: var(--muted); font-size: 12px; border-top: 0; }
+table.reps { width: 100%; border-collapse: collapse; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; } @media (max-width: 760px) { .kpis { grid-template-columns: 1fr 1fr; } }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.kpi b { font-family: var(--serif); font-size: 30px; line-height: 1.05; color: var(--ink); } .kpi b i { font-style: normal; font-size: 18px; color: var(--muted); font-weight: 600; }
+.kpi > span { font-weight: 700; font-size: 13px; } .kpi small { color: var(--muted); font-size: 12px; }
+.meter { display: block; height: 6px; border-radius: 99px; background: var(--cream-2); margin-top: 6px; overflow: hidden; } .meter span { display: block; height: 100%; background: var(--green); border-radius: 99px; }
+.team .tm { display: flex; align-items: center; gap: 10px; } .team .sub { color: var(--muted); font-size: 12px; }
+.tav { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: none; background: var(--cream-2); color: var(--red); display: inline-grid; place-items: center; font-family: var(--serif); font-weight: 700; font-size: 13px; }
+.team td.num, .team th.num { text-align: right; font-weight: 700; } .team .z { color: var(--line); }
+.team td.acts { text-align: right; white-space: nowrap; } .team td.acts .btn { margin-left: 6px; }
+.team tr.dim .tav { opacity: .7; } table.reps th, table.reps td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); font-size: 13px; } table.reps th { color: var(--muted); font-size: 12px; border-top: 0; }
 .modal { position: fixed; inset: 0; background: rgba(20,14,10,.45); display: grid; place-items: center; z-index: 40; padding: 16px; }
 .modal .box { background: var(--surface); border-radius: 14px; padding: 18px; width: 100%; max-width: 440px; max-height: 92vh; overflow: auto; }
 .modal h3 { margin: 0 0 8px; font-family: var(--serif); }
@@ -337,21 +347,43 @@ table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps
   }
 
   // ---------------------------------------------------------------- team (admin)
-  async function loadReps() { try { S.reps = (await api('GET', '/api/appt/reps')).reps; } catch (e) { S.reps = []; toast(e.message); } }
+  async function loadReps() {
+    try { var j = await api('GET', '/api/appt/reps'); S.reps = j.reps; S.members = j.members || null; S.totals = j.totals || null; }
+    catch (e) { S.reps = []; toast(e.message); }
+  }
   function renderTeam() {
     if (!S.reps) return '<div class="pane empty">Loading…</div>';
-    if (!S.reps.length) return '<div class="pane empty">No one has set up a booking page yet. Each rep opens Meets, connects Google Calendar and saves their page.</div>';
-    var cal = { ok: ['p-ok', 'Connected'], needs_calendar: ['p-warn', 'Email only, reconnect'], reconnect: ['p-bad', 'Reconnect needed'], not_connected: ['p-bad', 'Not connected'] };
-    return '<div class="pane" style="overflow-x:auto"><table class="reps"><thead><tr><th>Rep</th><th>Google Calendar</th><th>Page</th><th>Team page</th><th>Link</th><th></th></tr></thead><tbody>' +
-      S.reps.map(function (r) {
-        var c = cal[r.calendar] || ['p-mute', r.calendar];
-        return '<tr><td><b>' + esc(r.name) + '</b><div style="color:var(--muted);font-size:12px">' + esc(r.email) + '</div></td>' +
-          '<td><span class="pill ' + c[0] + '" style="margin:0">' + c[1] + '</span></td>' +
-          '<td>' + (r.active ? (r.schedulable ? '<span class="pill p-ok" style="margin:0">Taking bookings</span>' : '<span class="pill p-warn" style="margin:0">On, not bookable</span>') : '<span class="pill p-mute" style="margin:0">Off</span>') + '</td>' +
-          '<td>' + (r.in_pool ? 'Yes' : 'No') + '</td>' +
-          '<td><button class="btn btn-ghost" data-copy="' + esc(r.book_url) + '">Copy link</button></td>' +
-          '<td><button class="btn btn-ghost" data-act="editrep" data-id="' + esc(r.member_id) + '">Edit</button></td></tr>';
-      }).join('') + '</tbody></table></div>';
+    var ms = S.members, T = S.totals;
+    if (!ms) return '<div class="pane empty">Reload the page to see the team.</div>';
+    var CAL = { ok: ['p-ok', 'Connected'], needs_calendar: ['p-warn', 'Reconnect for calendar'], reconnect: ['p-bad', 'Reconnect needed'], not_connected: ['p-mute', 'Not connected'] };
+    var PAGE = { live: ['p-ok', 'Taking bookings'], blocked: ['p-warn', 'On, not bookable'], off: ['p-mute', 'Off'], none: ['p-mute', 'Not set up'] };
+    // Who is furthest along first, then by name.
+    var rank = { live: 0, blocked: 1, off: 2, none: 3 };
+    ms = ms.slice().sort(function (a, b) { return (rank[a.page] - rank[b.page]) || a.name.localeCompare(b.name); });
+    function kpi(n, label, sub) { return '<div class="kpi"><b>' + n + '</b><span>' + label + '</span>' + (sub ? '<small>' + sub + '</small>' : '') + '</div>'; }
+    var pct = T.members ? Math.round(T.live / T.members * 100) : 0;
+    var head = '<div class="kpis">' +
+      kpi(T.live + '<i>/' + T.members + '</i>', 'Taking bookings', '<span class="meter"><span style="width:' + pct + '%"></span></span>') +
+      kpi(T.connected, 'Calendars connected', (T.members - T.connected) + ' still to connect') +
+      kpi(T.week, 'Meets next 7 days', T.upcoming + ' upcoming in total') +
+      kpi(T.booked30, 'Booked last 30 days', '') + '</div>';
+    var todo = ms.filter(function (m) { return m.page !== 'live'; });
+    var nudge = todo.length ? '<div class="banner" style="margin-top:14px"><b>' + todo.length + ' still to set up:</b> ' + todo.map(function (m) { return esc(m.name.split(/\s+/)[0]); }).join(', ') +
+      '<span class="sp"></span><button class="btn btn-ghost" data-copy="' + esc(todo.map(function (m) { return m.email; }).join(', ')) + '">Copy their emails</button></div>' : '';
+    function av(m) {
+      var ini = m.name.split(/\s+/).filter(Boolean).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join('');
+      return m.photo ? '<img class="tav" src="' + esc(String(m.photo).replace(/=s\d+-c$/, '=s128-c')) + '" alt="" referrerpolicy="no-referrer" />' : '<span class="tav">' + esc(ini) + '</span>';
+    }
+    var rows = ms.map(function (m) {
+      var c = CAL[m.calendar] || ['p-mute', m.calendar], p = PAGE[m.page] || ['p-mute', m.page];
+      return '<tr class="' + (m.page === 'live' ? '' : 'dim') + '"><td><div class="tm">' + av(m) + '<div><b>' + esc(m.name) + '</b><div class="sub">' + esc(m.title || m.email) + '</div></div></div></td>' +
+        '<td><span class="pill ' + c[0] + '" style="margin:0">' + c[1] + '</span></td>' +
+        '<td><span class="pill ' + p[0] + '" style="margin:0">' + p[1] + '</span></td>' +
+        '<td class="num">' + (m.week || '<span class="z">0</span>') + '</td><td class="num">' + (m.booked30 || '<span class="z">0</span>') + '</td>' +
+        '<td class="acts">' + (m.book_url ? '<button class="btn btn-ghost" data-copy="' + esc(m.book_url) + '">Copy link</button><button class="btn btn-ghost" data-act="editrep" data-id="' + esc(m.member_id) + '">Edit</button>'
+          : '<button class="btn btn-ghost" data-copy="' + esc(m.email) + '">Copy email</button>') + '</td></tr>';
+    }).join('');
+    return head + nudge + '<div class="pane" style="overflow-x:auto;margin-top:14px"><table class="reps team"><thead><tr><th>Teammate</th><th>Google Calendar</th><th>Booking page</th><th class="num">Next 7 days</th><th class="num">Booked 30 days</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   // ---------------------------------------------------------------- shell
