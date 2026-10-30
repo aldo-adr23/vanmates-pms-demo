@@ -138,6 +138,8 @@ label.cb { display: inline-flex; gap: 6px; align-items: center; font-size: 13px;
 .cal .ev.st-none { background: var(--cream-2); color: var(--muted); } .cal .ev.st-warn { background: var(--amber-soft); color: var(--b-amber); }
 @media (max-width: 640px) { .cal .dc { min-height: 48px; } .cal .ev { font-size: 0; height: 6px; padding: 0; } }
 .blk { border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin-bottom: 8px; background: var(--cream); }
+.blk .mthumb { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; margin: 0 0 8px; border: 1px solid var(--line); background: #fff; }
+.blk .upr { display: flex; flex-wrap: wrap; gap: 6px; } .blk .upbtn { cursor: pointer; margin-bottom: 8px; }
 .blk .bh { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .pv-frame { width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 10px; background: #FAF5ED; }
 .pv-frame.mobile { width: 390px; max-width: 100%; }
@@ -419,7 +421,7 @@ details.ab { grid-column: 1 / -1; }
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="marketing-core.js?v=2026-10-29-reloc1"></script>
+<script src="marketing-core.js?v=2026-10-30-mkmedia1"></script>
 <script>
 (function () {
   'use strict';
@@ -916,7 +918,7 @@ details.ab { grid-column: 1 / -1; }
       (kind === 'email' && camp.kind === 'broadcast' ? '<label class="f">Send date (' + esc(camp.timezone) + ')<input class="inp" type="date" id="eDate" value="' + esc(m.local_date || '') + '"' + (ro ? ' disabled' : '') + '></label><label class="f">Time<input class="inp" type="time" id="eTime" value="' + esc(m.local_time || '10:00') + '"' + (ro ? ' disabled' : '') + '></label>' : '') +
       (kind === 'email' && camp.kind === 'sequence' ? '<label class="f">Days after the previous step<input class="inp" type="number" min="0" max="365" id="eDelay" value="' + esc(m.delay_days) + '"' + (ro ? ' disabled' : '') + '></label>' : '') +
       '</div><details class="tips"><summary>Writing tips</summary><p class="note" style="margin:6px 0 0">Personal fields: {{first_name|there}}, {{name|…}}, {{city|your city}}. Always give a fallback after the bar. Links: [label](https://…), bold: **text**.' + (S.scope === 'homestay_hosts' ? ' The availability button uses https://hosts.vanmates.com/m/a (each host gets their own form link).' : '') + '</p></details>' +
-      '<div id="eBlocks"></div>' + (ro ? '' : '<div class="toolbar">Add: ' + ['heading', 'text', 'list', 'button', 'notice', 'image', 'divider'].map(function (t) { return '<button class="btn btn-ghost btn-sm" data-add="' + t + '">' + t + '</button>'; }).join('') + '</div>') +
+      '<div id="eBlocks"></div>' + (ro ? '' : '<div class="toolbar">Add: ' + ['heading', 'text', 'list', 'button', 'notice', 'image', 'video', 'divider'].map(function (t) { return '<button class="btn btn-ghost btn-sm" data-add="' + t + '">' + (t === 'image' ? 'picture' : t) + '</button>'; }).join('') + '</div>') +
       '<div class="actions">' + (ro || kind === 'email' ? '' : '<button class="btn btn-primary" data-x="tpl-save">Save as new version</button>') +
       (kind === 'email' ? '' : '<button class="btn btn-ghost" data-x="preview" data-mode="desktop">Preview</button><button class="btn btn-ghost" data-x="preview" data-mode="mobile">Mobile preview</button>') +
       (kind === 'email' ? '<button class="btn btn-ghost" data-x="email-test">Send me a test</button>' : '') +
@@ -935,19 +937,107 @@ details.ab { grid-column: 1 / -1; }
     $('eBlocks').innerHTML = E.blocks.map(function (b, i) {
       var body = b.type === 'list' ? '<textarea class="inp" data-b="' + i + '" data-k="items"' + dis + ' placeholder="One item per line">' + esc((b.items || []).join('\n')) + '</textarea>'
         : b.type === 'button' ? '<div class="grid2"><input class="inp" data-b="' + i + '" data-k="label" value="' + esc(b.label) + '"' + dis + ' placeholder="Button text"><input class="inp" data-b="' + i + '" data-k="url" value="' + esc(b.url) + '"' + dis + ' placeholder="https://"></div>'
-        : b.type === 'image' ? '<div class="grid2"><input class="inp" data-b="' + i + '" data-k="url" value="' + esc(b.url) + '"' + dis + ' placeholder="https:// image address"><input class="inp" data-b="' + i + '" data-k="alt" value="' + esc(b.alt) + '"' + dis + ' placeholder="Description"></div>'
+        : b.type === 'image' ? mediaThumb(b.url) + (E.ro ? '' : upBtn(i, 'image', b.url ? 'Replace picture' : 'Upload picture', 'image/jpeg,image/png,image/gif,image/webp,image/heic')) +
+          '<div class="grid2"><input class="inp" data-b="' + i + '" data-k="url" value="' + esc(b.url) + '"' + dis + ' placeholder="…or paste an https:// picture address"><input class="inp" data-b="' + i + '" data-k="alt" value="' + esc(b.alt) + '"' + dis + ' placeholder="Description (shown if pictures are off)"></div>'
+        : b.type === 'video' ? mediaThumb(b.thumb) + (E.ro ? '' : '<div class="upr">' + upBtn(i, 'video', /\/m\/v\//.test(b.url) ? 'Replace video' : 'Upload video', 'video/mp4,video/quicktime,video/webm') +
+            upBtn(i, 'cover', 'Upload cover picture', 'image/jpeg,image/png,image/webp,image/heic') + (MK.youtubeId(b.url) ? '<button class="btn btn-ghost btn-sm upbtn" data-ytcover="' + i + '">Use YouTube picture</button>' : '') + '</div>') +
+          '<div class="grid2"><input class="inp" data-b="' + i + '" data-k="url" value="' + esc(b.url) + '"' + dis + ' placeholder="…or paste a YouTube / Vimeo / video link"><input class="inp" data-b="' + i + '" data-k="alt" value="' + esc(b.alt) + '"' + dis + ' placeholder="Description, e.g. Tour of the house"></div>' +
+          '<p class="note" style="margin:6px 0 0">Email apps can\'t play video, so readers see the cover picture with a play button and tap it to watch. MP4 up to 50 MB plays everywhere.</p>'
         : b.type === 'divider' ? ''
         : b.type === 'heading' ? '<input class="inp" data-b="' + i + '" data-k="text" value="' + esc(b.text) + '"' + dis + '>'
         : '<textarea class="inp" data-b="' + i + '" data-k="text"' + dis + ' rows="' + (b.type === 'text' ? 4 : 2) + '">' + esc(b.text) + '</textarea>';
-      return '<div class="blk"><div class="bh"><span style="flex:1">' + esc(b.type) + '</span>' + (E.ro ? '' : '<button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="-1" aria-label="Move up">↑</button><button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="1" aria-label="Move down">↓</button><button class="btn btn-ghost btn-sm" data-rm="' + i + '" aria-label="Remove">✕</button>') + '</div>' + body + '</div>'; }).join('');
+      return '<div class="blk"><div class="bh"><span style="flex:1">' + esc(b.type === 'image' ? 'picture' : b.type) + '</span>' + (E.ro ? '' : '<button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="-1" aria-label="Move up">↑</button><button class="btn btn-ghost btn-sm" data-mv="' + i + '" data-d="1" aria-label="Move down">↓</button><button class="btn btn-ghost btn-sm" data-rm="' + i + '" aria-label="Remove">✕</button>') + '</div>' + body + '</div>'; }).join('');
     if ($('livePv') && S._edDirty) livePv(300);
     $('eBlocks').querySelectorAll('[data-b]').forEach(function (el) {
-      el.addEventListener('input', function () { var b = E.blocks[+el.dataset.b]; b[el.dataset.k] = el.dataset.k === 'items' ? el.value.split('\n') : el.value; });
+      el.addEventListener('input', function () {
+        var b = E.blocks[+el.dataset.b]; b[el.dataset.k] = el.dataset.k === 'items' ? el.value.split('\n') : el.value;
+        // A pasted YouTube link brings its own cover picture (once per video).
+        var yt = b.type === 'video' && el.dataset.k === 'url' && MK.youtubeId(el.value);
+        if (yt && b._yt !== yt && (!b.thumb || b._cover !== 'upload')) { b._yt = yt; youtubeCover(+el.dataset.b); }
+      });
     });
   }
+  // Pictures and videos: files go to the Worker (POST /mk/media), which answers a lasting https link for the email.
+  function mediaThumb(url) { return url && /^https:\/\//.test(url) ? '<img class="mthumb" src="' + esc(url) + '" alt="">' : ''; }
+  function upBtn(i, kind, label, accept) {
+    return '<label class="btn btn-ghost btn-sm upbtn">' + esc(label) + '<input type="file" hidden data-up="' + i + '" data-upk="' + kind + '" accept="' + accept + '"></label>';
+  }
+  async function uploadFile(blob) {
+    var sess = (await sb.auth.getSession()).data.session;
+    if (!sess) { location.replace('signin.html'); throw new Error('signed out'); }
+    var r = await fetch(HM + '/mk/media?scope=' + encodeURIComponent(S.scope), { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream', Authorization: 'Bearer ' + sess.access_token }, body: blob });
+    var j = await r.json().catch(function () { return { error: 'failed' }; });
+    if (!r.ok) throw new Error(j.detail && typeof j.detail === 'string' ? j.detail : r.status === 413 ? 'That file is too big.' : MK.errorText(j.error, j.detail));
+    return j;
+  }
+  function canvasBlob(c, type, q) { return new Promise(function (res, rej) { c.toBlob(function (b) { b ? res(b) : rej(new Error('Could not read that picture.')); }, type, q); }); }
+  // Emails show pictures at 528 px; 1200 px keeps them sharp on retina screens and light to download. Re-drawing
+  // also drops the phone's location data. GIFs stay as they are so animations keep playing.
+  async function shrinkImage(file) {
+    if (file.type === 'image/gif') return file;
+    var bmp = await createImageBitmap(file).catch(function () { throw new Error('This picture format can\'t be read here. Save it as JPG or PNG and try again.'); });
+    var k = Math.min(1, 1200 / bmp.width), c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return canvasBlob(c, file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.85);
+  }
+  // A video's cover: a picture (a frame of the video, an uploaded image or YouTube's still) with a play button on it.
+  async function coverFrom(src) {
+    var w = Math.min(1200, src.width || src.videoWidth), h = Math.round(w * (src.height || src.videoHeight) / (src.width || src.videoWidth));
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var g = c.getContext('2d'); g.drawImage(src, 0, 0, w, h);
+    var r = Math.round(Math.min(w, h) * 0.11), cx = w / 2, cy = h / 2;
+    g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(0, 0, w, h);
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = 'rgba(185,74,63,.95)'; g.fill();
+    g.beginPath(); g.moveTo(cx - r * 0.32, cy - r * 0.45); g.lineTo(cx - r * 0.32, cy + r * 0.45); g.lineTo(cx + r * 0.5, cy); g.closePath(); g.fillStyle = '#FFFDF8'; g.fill();
+    return canvasBlob(c, 'image/jpeg', 0.85);
+  }
+  function videoFrame(file) {
+    return new Promise(function (res, rej) {
+      var v = document.createElement('video'), u = URL.createObjectURL(file);
+      v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = u;
+      var fail = setTimeout(function () { rej(new Error('Could not read a frame of this video. Upload a cover picture instead.')); }, 15000);
+      v.onloadedmetadata = function () { v.currentTime = Math.min(1, (v.duration || 2) / 3); };
+      v.onseeked = function () { clearTimeout(fail); coverFrom(v).then(res, rej).finally(function () { URL.revokeObjectURL(u); }); };
+      v.onerror = function () { clearTimeout(fail); URL.revokeObjectURL(u); rej(new Error('This browser can\'t open that video (try MP4). You can still upload it with a cover picture.')); };
+    });
+  }
+  function loadImg(url) {
+    return new Promise(function (res, rej) { var im = new Image(); im.crossOrigin = 'anonymous'; im.onload = function () { res(im); }; im.onerror = function () { rej(new Error('Could not load that picture.')); }; im.src = url; });
+  }
+  async function mediaChange(el) {
+    var E = S._ed, i = +el.dataset.up, kind = el.dataset.upk, file = el.files && el.files[0], b = E && E.blocks[i];
+    if (!file || !b) return;
+    toast(kind === 'video' ? 'Uploading the video… (big files take a minute)' : 'Uploading…');
+    try {
+      if (kind === 'image') { b.url = (await uploadFile(await shrinkImage(file))).url; if (!b.alt) b.alt = file.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').slice(0, 120); }
+      else if (kind === 'cover') { var bmp = await createImageBitmap(file); b.thumb = (await uploadFile(await coverFrom(bmp))).url; b._cover = 'upload'; }
+      else {
+        if (file.size > 50 * 1024 * 1024) throw new Error('Videos can be up to 50 MB. Upload it to YouTube and paste the link instead.');
+        var cover = !b.thumb || b._cover !== 'upload' ? await videoFrame(file).catch(function (e) { toast(e.message); return null; }) : null;
+        var up = await uploadFile(file);
+        b.url = up.page || up.url;
+        if (cover) { b.thumb = (await uploadFile(cover)).url; b._cover = 'frame'; }
+      }
+      edDirty(); drawBlocks(); toast(kind === 'video' && !b.thumb ? 'Video uploaded. Add a cover picture so readers can see it.' : 'Uploaded.');
+    } catch (e) { toast(e.message); }
+  }
+  async function youtubeCover(i) {
+    var b = S._ed.blocks[i], id = MK.youtubeId(b.url);
+    if (!id) return;
+    toast('Getting the YouTube picture…');
+    try {
+      var im = await loadImg('https://i.ytimg.com/vi/' + id + '/hqdefault.jpg');
+      b.thumb = (await uploadFile(await coverFrom(im))).url;
+    } catch (e) { b.thumb = 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg'; } // canvas blocked: YouTube's still, without the play button
+    b._cover = 'yt';
+    edDirty(); drawBlocks(); toast('Cover picture set.');
+  }
+  document.addEventListener('change', function (e) { if (e.target.dataset && e.target.dataset.up !== undefined) mediaChange(e.target); });
+
   function edValues() {
     var E = S._ed;
-    return { subject: $('eSubj').value, preheader: $('ePre').value, blocks: E.blocks.map(function (b) { return b.type === 'list' ? Object.assign({}, b, { items: (b.items || []).filter(function (x) { return String(x).trim(); }) }) : b; }) };
+    return { subject: $('eSubj').value, preheader: $('ePre').value, blocks: E.blocks.map(function (b) { return b.type === 'list' ? Object.assign({}, b, { items: (b.items || []).filter(function (x) { return String(x).trim(); }) }) : b.type === 'video' ? { type: 'video', url: b.url, thumb: b.thumb, alt: b.alt } : b; }) };
   }
   async function preview(mode) {
     var v = edValues(), E = S._ed;
@@ -1382,6 +1472,7 @@ details.ab { grid-column: 1 / -1; }
     if (d.list !== undefined) { S.listId = d.list ? +d.list : null; return loadContacts(); }
     if (d.contact) return contactDrawer(+d.contact);
     if (d.tpl) { S.tpl = null; return openTemplate(+d.tpl); }
+    if (d.ytcover !== undefined) return youtubeCover(+d.ytcover);
     if (d.add) { S._ed.blocks.push(MK.newBlock(d.add)); S._edDirty = true; edDirty(); return drawBlocks(); }
     if (d.mv) { S._ed.blocks = MK.moveBlock(S._ed.blocks, +d.mv, +d.d); if ($('livePv')) edDirty(); return drawBlocks(); }
     if (d.rm) { S._ed.blocks.splice(+d.rm, 1); if ($('livePv')) edDirty(); return drawBlocks(); }
