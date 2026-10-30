@@ -243,6 +243,7 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
     no_input: ['No input', 'p-grey'], in_progress: ['Live now', 'p-red'], failed: ['Failed', 'p-red']
   };
   var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var TZ = { 'America/Vancouver': 'PT', 'America/Toronto': 'ET', 'Asia/Tokyo': 'JST' };
 
   function $(id) { return document.getElementById(id); }
   function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -406,7 +407,9 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
       var h = s.hours[d] || {}, chain = s.chains[d] || [];
       return '<div class="card pad" data-desk="' + d + '"><h2>' + esc(DESK[d]) + '</h2>' +
         '<h3>Escalation (in order)</h3>' + chain.map(function (p, i) {
-          return '<div class="chain"><input class="inp" data-f="name" data-i="' + i + '" value="' + esc(p.name) + '" aria-label="Name"><input class="inp" data-f="phone" data-i="' + i + '" value="' + esc(p.phone) + '" placeholder="+1…" inputmode="tel" aria-label="Phone"><span></span></div>';
+          // Own hours (e.g. Saturday cover) replace the desk's office hours for this person; kept as is on save.
+          var own = p.hours ? '<div class="small muted" style="grid-column:1/-1;margin-top:-2px">Only ' + esc((p.hours.days || []).map(function (x) { return DAYS[x]; }).join(', ')) + ' ' + esc(p.hours.open) + '–' + esc(p.hours.close) + ' ' + esc(TZ[p.hours.tz] || p.hours.tz) + ' (own hours, not the office hours below)</div>' : '';
+          return '<div class="chain"' + (p.hours ? ' data-hours="' + esc(JSON.stringify(p.hours)) + '"' : '') + '><input class="inp" data-f="name" data-i="' + i + '" value="' + esc(p.name) + '" aria-label="Name"><input class="inp" data-f="phone" data-i="' + i + '" value="' + esc(p.phone) + '" placeholder="+1…" inputmode="tel" aria-label="Phone"><span></span>' + own + '</div>';
         }).join('') + '<button class="btn btn-ghost btn-sm" data-add="' + d + '">+ Add person</button>' +
         '<h3 style="margin-top:12px">Office hours</h3><div class="hrs"><input class="inp" data-h="open" type="time" value="' + esc(h.open) + '"> to <input class="inp" data-h="close" type="time" value="' + esc(h.close) + '">' +
         '<select class="sel" data-h="tz"><option' + (h.tz === 'America/Vancouver' ? ' selected' : '') + '>America/Vancouver</option><option' + (h.tz === 'America/Toronto' ? ' selected' : '') + '>America/Toronto</option><option' + (h.tz === 'Asia/Tokyo' ? ' selected' : '') + '>Asia/Tokyo</option></select></div>' +
@@ -429,7 +432,9 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
       [].forEach.call(card.querySelectorAll('.chain'), function (row) {
         var name = row.querySelector('[data-f=name]').value.trim(), ph = row.querySelector('[data-f=phone]').value.replace(/[^\d+]/g, '');
         if (ph && ph[0] !== '+') ph = (ph.length === 10 ? '+1' : '+') + ph;
-        if (name || ph) chain.push({ name: name || 'Teammate', phone: ph });
+        var person = { name: name || 'Teammate', phone: ph };
+        if (row.dataset.hours) person.hours = JSON.parse(row.dataset.hours);
+        if (name || ph) chain.push(person);
       });
       s.chains[d] = chain;
       var h = s.hours[d] = Object.assign({}, s.hours[d]);
