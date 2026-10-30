@@ -138,15 +138,17 @@
   }
 
   /* A Zoho deal that is the same sale as a partner booking: the reps still log CES students in Zoho as
-     "<Student name> - CES". Same student name (Zoho's name contains the portal's full name) within 60 days. */
+     "<Student name> - CES". Same student name (Zoho's name contains the portal's full name) within 60 days.
+     Name only, never email: CES puts its coordinator's address on every student's deal (found live 2026-10-30,
+     "Jana Lieblang" matched "Jana Röllin"). Only a standing partner booking replaces anything: a cancelled one
+     must never drop a deal that was really closed. */
   const SAME_DAYS = 60;
   function daysApart(a, b) {
     const t = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
     return Math.abs(Math.round((t(a) - t(b)) / 864e5));
   }
   function sameSale(zoho, p) {
-    if (!zoho || !p || zoho.sourceSystem === 'partner' || !zoho.closedAt || !p.closedAt) return false;
-    if (zoho.email && p.email && zoho.email === p.email) return daysApart(zoho.closedAt, p.closedAt) <= SAME_DAYS;
+    if (!zoho || !p || zoho.sourceSystem === 'partner' || !zoho.closedAt || !p.closedAt || p.status !== 'closed') return false;
     // German umlauts are written both ways ("Röllin" / "Roellin" / "Rollin"): try each spelling.
     const spell = s => [norm(s), norm(String(s || '').replace(/ä/gi, 'ae').replace(/ö/gi, 'oe').replace(/ü/gi, 'ue'))];
     const pns = spell(p.customer), zns = spell(zoho.customer);
