@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-30-aprefund1"></script>
+<script src="pms-supabase.js?v=2026-10-30-acctmgr1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2533,6 +2533,46 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
               <th class="right">Refunded</th><th class="right">Commission</th>
             </tr></thead><tbody id="cd-mgr-rows"></tbody></table>
           </div>
+        </div>
+
+        <!-- ============ PARTNER SALES ============
+             Placement fees from partner bookings (CES, CEL, agencies, room links), credited to each partner's
+             account manager. Rows from vm_partner_sales(); logic in partner-sales.js (PTS_CORE). The same fees are
+             also in the closed-deal ledger above, so they count in the manager's targets and rollups. -->
+        <div class="card card-pad" id="sales-ptn" style="margin-bottom:18px">
+          <div class="card-head">
+            <div><div class="card-title">Partner <em>sales</em></div>
+                 <div class="card-sub" id="ptn-sales-sub">Placement fees from partner bookings, credited to each partner's account manager</div></div>
+            <div style="margin-left:auto;display:flex;gap:8px">
+              <button class="btn btn-ghost btn-mini" id="ptns-export" type="button">Export CSV</button>
+            </div>
+          </div>
+          <div class="kpi-grid sl-kpis" id="ptns-tiles" style="margin-bottom:6px"></div>
+          <div class="card-sub" id="ptns-compare" style="margin:4px 0 10px"></div>
+          <div class="filter-bar" id="ptns-filters" style="margin:10px 0;flex-wrap:wrap">
+            <select id="ptns-manager" title="Account manager"></select>
+            <select id="ptns-agency" title="Partner"></select>
+            <select id="ptns-city" title="City"></select>
+            <select id="ptns-status" title="Fee status"></select>
+            <input id="ptns-from" type="date" title="Booked on or after">
+            <input id="ptns-to" type="date" title="Booked on or before">
+            <select id="ptns-groupby" title="Group by"></select>
+            <button class="btn btn-ghost btn-mini" id="ptns-clear" type="button">Clear</button>
+          </div>
+          <div style="overflow-x:auto;margin-bottom:14px">
+            <table><thead><tr>
+              <th id="ptns-key">Account manager</th><th class="right">Confirmed bookings</th><th class="right">Booked fees</th>
+              <th class="right">Collected</th><th class="right">Outstanding</th><th class="right">Collection rate</th>
+            </tr></thead><tbody id="ptns-groups"></tbody></table>
+          </div>
+          <div class="card-sub" id="ptns-count" style="margin-bottom:8px"></div>
+          <div style="overflow-x:auto">
+            <table><thead><tr>
+              <th>Booked</th><th>Student</th><th>Partner</th><th>Booking</th><th>City</th><th>Account manager</th>
+              <th class="right">Fee</th><th class="right">Collected</th><th class="right">Outstanding</th><th>Fee status</th><th>Invoices</th>
+            </tr></thead><tbody id="ptns-rows"></tbody></table>
+          </div>
+          <div id="ptns-admin"></div>
         </div>
 
         <div class="sl-row">
@@ -23883,6 +23923,11 @@ function ptnRepOptionList(reps){
     (reps || []).slice().sort((a, b) => String((a && a.name) || '').localeCompare(String((b && b.name) || '')))
       .map(r => [String(r.id), (r && (r.name || r.email)) || String(r.id)]));
 }
+// Agencies table filter by account manager (partner_agencies.rep_id): '' all, '(none)' only the unmanaged ones.
+function ptnFilterByManager(agencies, f){
+  if (!f) return agencies || [];
+  return (agencies || []).filter(a => f === '(none)' ? !a.rep_id : String(a.rep_id || '') === f);
+}
 // The rep's name for the Agencies table; '—' when none or unknown (reps not loaded yet).
 function ptnRepName(reps, repId){
   if (!repId) return '—';
@@ -24095,7 +24140,7 @@ function ptnDuplicateInsertExtras(draft){
    team_members.role = 'admin'. Cancel goes through partner_cancel_booking, which
    also releases the room and queues the Asana write-back. */
 const PARTNERS_APP = 'https://partners.vanmates.com';
-const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, dupFrom: null, editUser: null, cancelId: null, confirmRemoveLogo: null, filters: { agency: '', city: '', status: '' } };
+const PTN_STATE = { tab: 'agencies', agencyId: '', editAgency: null, dupFrom: null, editUser: null, cancelId: null, confirmRemoveLogo: null, filters: { agency: '', city: '', status: '' }, amFilter: '' };
 let ptnData = null, ptnLoading = null, ptnLoadedAt = 0;
 // Admins, and anyone an admin gave the Partners page (allowed_pages), the same rule
 // as vm_partners_member() in partners-page-access-2026-10-05.sql.
@@ -24783,10 +24828,14 @@ function ptnLinksFieldsHtml(a){
   ptnLoadReps();
   const logoUrl = ptnLogoUrl(a);
   const removing = a.id && PTN_STATE.confirmRemoveLogo === a.id;
-  return `<strong style="grid-column:1/-1;margin-top:6px">Room link</strong>
-    ${ptnField('ruf_ref', 'Room link tag', a.ruf_ref, ` maxlength="40" style="text-transform:lowercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}
-    <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Vanmates rep
+  return `<strong style="grid-column:1/-1;margin-top:6px">Account manager</strong>
+    <label class="name-sub" style="display:flex;flex-direction:column;gap:4px">Vanmates person
       <select class="form-input" name="rep_id">${ptnOptions(ptnRepOptionList(PTN_REPS || []), a.rep_id || '')}</select></label>
+    <p class="name-sub" style="grid-column:1/-1;margin:0">The account manager gets this partner's placement fees in Sales, automatically, from every booking confirmed from now on (and its room-link emails). Changing it does not move bookings already made${a.id ? ', unless you tick the box below' : ''}.</p>
+    ${a.id ? `<label style="display:flex;gap:6px;align-items:center;grid-column:1/-1"><input type="checkbox" name="am_retro"> Also move this partner's existing bookings to the new account manager <span class="name-sub">(retroactive — changes past sales figures)</span></label>
+    ${ptnField('am_reason', 'Reason for moving existing bookings', '', ' maxlength="300" placeholder="Required if the box is ticked"')}` : ''}
+    <strong style="grid-column:1/-1;margin-top:6px">Room link</strong>
+    ${ptnField('ruf_ref', 'Room link tag', a.ruf_ref, ` maxlength="40" style="text-transform:lowercase"${a.id ? '' : ' placeholder="Made from the name if blank"'}`)}
     <label style="display:flex;gap:6px;align-items:center;grid-column:1/-1"><input type="checkbox" name="links_only"${a.links_only ? ' checked' : ''}> Links only
       <span class="name-sub">(hide Book: this agency only shares room links; students pay by card)</span></label>
     <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -24858,21 +24907,27 @@ function ptnAgenciesHtml(){
   const dupSrc = PTN_STATE.editAgency === 'new' && PTN_STATE.dupFrom && d.agencies.find(a => a.id === PTN_STATE.dupFrom);
   const edit = PTN_STATE.editAgency === 'new' ? (dupSrc ? ptnDuplicateDraft(dupSrc) : {}) : (PTN_STATE.editAgency && d.agencies.find(a => a.id === PTN_STATE.editAgency));
   const count = (list, id) => list.filter(x => x.agency_id === id).length;
-  return `<div style="margin-bottom:12px"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button></div>
+  const shown = linksOn ? ptnFilterByManager(d.agencies, PTN_STATE.amFilter) : d.agencies;
+  const unmanaged = d.agencies.filter(a => !a.rep_id && a.status === 'active').length;
+  const amIds = Array.from(new Set(d.agencies.map(a => a.rep_id).filter(Boolean)));
+  const amOpt = (v, l) => `<option value="${esc(v)}"${PTN_STATE.amFilter === v ? ' selected' : ''}>${esc(l)}</option>`;
+  return `<div style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" type="button" data-ptn-agency-new>New agency</button>
+      ${linksOn ? `<select class="form-input" style="width:auto" data-ptn-am-filter title="Account manager">${amOpt('', 'All account managers')}${amOpt('(none)', 'No account manager')}${amIds.map(id => amOpt(id, ptnRepName(PTN_REPS || [], id) === '—' ? id : ptnRepName(PTN_REPS || [], id))).join('')}</select>
+      ${unmanaged ? `<span class="badge badge-red" style="cursor:pointer" data-ptn-am-none>${unmanaged} active partner${unmanaged === 1 ? '' : 's'} without an account manager</span>` : ''}` : ''}</div>
     ${edit ? ptnAgencyFormHtml(edit) : ''}
-    ${d.agencies.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Contact</th><th>Status</th>${fin ? '<th>Billing</th>' : ''}${linksOn ? '<th>Rep</th>' : ''}<th>Users</th><th>Bookings</th><th class="ptn-act-col"></th></tr></thead>
-      <tbody>${d.agencies.map(a => `<tr class="ptn-agency-row" data-ptn-agency-row="${esc(a.id)}" title="Edit ${esc(a.name)}" style="border-top:1px solid var(--line)">
+    ${shown.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Agency</th><th>Contact</th><th>Status</th>${fin ? '<th>Billing</th>' : ''}${linksOn ? '<th>Account manager</th>' : ''}<th>Users</th><th>Bookings</th><th class="ptn-act-col"></th></tr></thead>
+      <tbody>${shown.map(a => `<tr class="ptn-agency-row" data-ptn-agency-row="${esc(a.id)}" title="Edit ${esc(a.name)}" style="border-top:1px solid var(--line)">
         <td style="padding:8px;min-width:150px"><button type="button" class="ptn-name-link" data-ptn-agency-edit="${esc(a.id)}" title="Edit ${esc(a.name)}"><strong>${esc(a.name)}</strong></button>${a.legal_name && a.legal_name !== a.name ? `<br><span class="name-sub">${esc(a.legal_name)}</span>` : ''}<br><span class="name-sub">${esc([a.country, (a.language || '').toUpperCase()].filter(Boolean).join(' · '))}</span></td>
         <td>${esc(a.contact_name || '')}${a.contact_email ? `<br><span class="name-sub">${esc(a.contact_email)}</span>` : ''}${a.billing_email && a.billing_email !== a.contact_email ? `<br><span class="name-sub">Invoices: ${esc(a.billing_email)}</span>` : ''}</td>
         <td style="white-space:nowrap">${ptnPill({ label: a.status, tone: ptnAgencyTone(a.status) })}${ptnAgencyRowActionHtml(a)}</td>
         ${fin ? `<td style="min-width:180px">${ptnBillingLine(a)}</td>` : ''}
-        ${linksOn ? `<td>${esc(ptnRepName(PTN_REPS || [], a.rep_id))}</td>` : ''}
+        ${linksOn ? `<td>${a.rep_id ? esc(ptnRepName(PTN_REPS || [], a.rep_id)) : a.status === 'active' ? '<span class="badge badge-red" title="No account manager: this partner\'s placement fees count for nobody in Sales">None</span>' : '—'}</td>` : ''}
         <td>${count(d.users, a.id)}${count(d.users, a.id) ? '' : ptnNoUsersHtml(a, true)}</td><td>${count(d.bookings, a.id)}</td>
         <td class="ptn-act-col"><div><button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-edit="${esc(a.id)}">Edit</button>
           <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-users="${esc(a.id)}">Users</button>
           <button class="btn btn-ghost btn-mini" type="button" data-ptn-agency-dup="${esc(a.id)}" title="New agency with ${esc(a.name)}'s settings, without its name, contacts, tag or logo">Duplicate</button></div></td>
-      </tr>`).join('')}</tbody></table></div>` : '<p class="name-sub">No agencies yet.</p>'}`;
+      </tr>`).join('')}</tbody></table></div>` : `<p class="name-sub">${d.agencies.length ? 'No agencies with this account manager.' : 'No agencies yet.'}</p>`}`;
 }
 // Activate / Resend button under an agency's status pill (see ptnAgencyRowAction); the
 // actions column is off-screen on a laptop, so it lives where staff already look.
@@ -25033,6 +25088,8 @@ function ptnWire(root){
   on('[data-ptn-agency-cancel]', 'click', () => { PTN_STATE.editAgency = null; PTN_STATE.dupFrom = null; renderPartners(); });
   on('[data-ptn-agency-users]', 'click', b => { PTN_STATE.agencyId = b.dataset.ptnAgencyUsers; PTN_STATE.editUser = null; PTN_STATE.tab = 'users'; renderPartners(); window.scrollTo(0, 0); });
   on('[data-ptn-agency-form]', 'submit', (f, e) => { e.preventDefault(); ptnSaveAgency(f); });
+  on('[data-ptn-am-filter]', 'change', s => { PTN_STATE.amFilter = s.value; renderPartners(); });
+  on('[data-ptn-am-none]', 'click', () => { PTN_STATE.amFilter = '(none)'; renderPartners(); });
   on('[data-ptn-agency-form] select[name="commission_model"]', 'change', s => {
     s.form.querySelectorAll('[data-cmm-amount]').forEach(d => { d.hidden = d.dataset.cmmAmount !== s.value; });
   });
@@ -25114,6 +25171,9 @@ async function ptnSaveAgency(form){
     : { ok: true, errors: [], patch: {} };
   if (links.ok && Object.keys(links.patch).length) Object.assign(bill.patch, links.patch);
   if (!r.ok || !bill.ok || !comm.ok || !links.ok) { msg.textContent = r.errors.concat(bill.errors, comm.errors, links.errors).join('. '); return; }
+  if (id && el.am_retro && el.am_retro.checked && !String((el.am_reason && el.am_reason.value) || '').trim()) {
+    msg.textContent = 'Give a reason for moving the existing bookings (or untick the box).'; return;
+  }
   if (!sb) { msg.textContent = 'Not connected to the database.'; return; }
   const dupSrc = !id && PTN_STATE.dupFrom && ptnData.agencies.find(a => a.id === PTN_STATE.dupFrom);
   const extras = dupSrc ? ptnDuplicateInsertExtras(ptnDuplicateDraft(dupSrc)) : {};
@@ -25151,7 +25211,20 @@ async function ptnSaveAgency(form){
       return;
     }
   }
-  showToast((id ? 'Agency saved' : 'Agency created' + userNote) + invited);
+  let retroNote = '';
+  if (id && el.am_retro && el.am_retro.checked) {
+    try {
+      const { data, error } = await sb.rpc('vm_partner_restamp_account_manager', { p_agency: id, p_reason: (el.am_reason && el.am_reason.value) || '' });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error(data && data.code === 'REASON_REQUIRED' ? 'give a reason for moving existing bookings' : (data && data.code) || 'refused');
+      retroNote = ` · ${data.moved} existing booking${data.moved === 1 ? '' : 's'} moved to the account manager`;
+    } catch (e) {
+      const m = `Agency saved${invited}; existing bookings were NOT moved: ${e.message || e}`;
+      showToast(m); msg.textContent = m; if (btn) btn.disabled = false; return;
+    }
+  }
+  if (typeof window.ptnsReload === 'function' && (links.patch.rep_id !== undefined || retroNote)) window.ptnsReload();
+  showToast((id ? 'Agency saved' : 'Agency created' + userNote) + invited + retroNote);
   PTN_STATE.editAgency = null;
   // A new agency lands on its Users view, where the next step (activate / send link) is shown.
   if (!id) PTN_STATE.tab = 'users';
@@ -30763,7 +30836,7 @@ async function ckoCreateSubmit(){
    'YYYY-MM-DD' throughout, same convention as SALES-CORE. */
 
 const CD_STATUS_LABELS = { closed: 'Closed', refunded: 'Refunded', cancelled: 'Cancelled' };
-const CD_PAYMENT_LABELS = { paid: 'Paid', pending: 'Pending', refunded: 'Refunded', cancelled: 'Cancelled' };
+const CD_PAYMENT_LABELS = { paid: 'Paid', partial: 'Part paid', pending: 'Pending', refunded: 'Refunded', cancelled: 'Cancelled' };
 const CD_GROUPS = [
   ['rep', 'Sales rep'], ['month', 'Month'], ['quarter', 'Quarter'], ['year', 'Year'],
   ['city', 'Market / city'], ['source', 'Lead source']
@@ -31124,7 +31197,7 @@ function cdDealDetail(deal){
     ['Service type', or(d.serviceType)],
     ['Stage (source)', or(d.stage)],
     ['Close date taken from', or(d.closedAtFrom)],
-    ['Record', d.sourceSystem === 'zoho' ? 'Zoho ' + d.id : 'Portal ' + d.id]
+    ['Record', d.sourceSystem === 'zoho' ? 'Zoho ' + d.id : d.sourceSystem === 'partner' ? 'Partner booking ' + d.room : 'Portal ' + d.id]
   ];
 }
 
@@ -41337,7 +41410,13 @@ window.HM = HM;
   // whatever month was picked.
   const CD_STATE = { q: '', city: '', source: '', payment: '', status: '', from: '', to: '', by: 'rep', ym: '' };
 
-  function cdLedger(){ return cdDeals(window.closedDeals || [], window.leads || []); }
+  // Partner placement fees (vm_partner_sales, PTS_CORE) join the ledger as deals of the partner's account manager,
+  // so they count in that person's targets, KPIs and rollups with no manual entry.
+  function cdLedger(){
+    const base = cdDeals(window.closedDeals || [], window.leads || []);
+    const P = window.PTS_CORE;
+    return P && window.partnerSales ? P.mergeLedger(base, P.rows(window.partnerSales)) : base;
+  }
 
   // Which deals the current rep/team switcher is looking at. '*' is everyone;
   // 'team:<key>' is the team's members plus anything booked to the team login.
@@ -41497,7 +41576,9 @@ window.HM = HM;
     if(d.sourceUrl){
       bits.push(`<a class="btn btn-ghost btn-mini" target="_blank" rel="noopener" href="${esc(d.sourceUrl)}">Open in Zoho →</a>`);
     }
-    const note = leadId
+    const note = d.sourceSystem === 'partner'
+      ? `Partner booking ${esc(d.room)} (${esc(d.property)}): booked ${fmt(d.partner.booked)}, collected ${fmt(d.partner.collected)}, outstanding ${fmt(d.partner.outstanding)}${d.partner.invoices.length ? ' · ' + esc(d.partner.invoices.join(', ')) : ''}. Credited to the partner's account manager; it updates by itself from Partners.${d.mergedFrom ? ' Replaces the duplicate ' + esc(d.mergedFrom) + '.' : ''}`
+      : leadId
       ? (cdMayEdit(d) ? '' : `Only ${esc(d.rep || 'the rep who closed it')} or an admin can edit this deal.`)
       : 'Imported from Zoho — this one is corrected in Zoho, not here.';
     if(!bits.length && !note) return '';
@@ -41515,7 +41596,7 @@ window.HM = HM;
       `<span class="badge ${d.status === 'closed' ? 'badge-green' : 'badge-red'}">${esc(d.statusLabel)}</span>` +
       cdPayBadge(d) +
       (d.segment ? `<span class="badge badge-grey">${esc(d.segment.toUpperCase())}</span>` : '') +
-      `<span class="badge badge-grey">${esc(d.sourceSystem === 'zoho' ? 'From Zoho' : 'Portal')}</span>`;
+      `<span class="badge badge-grey">${esc(d.sourceSystem === 'zoho' ? 'From Zoho' : d.sourceSystem === 'partner' ? 'Partner booking' : 'Portal')}</span>`;
     const rows = cdDealDetail(d).map(([k, v]) =>
       `<tr><td style="color:var(--muted);white-space:nowrap">${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('');
     $('panel-body').innerHTML =
@@ -41579,6 +41660,147 @@ window.HM = HM;
     $('sales-cd').__rows = rows;
   }
 
+  /* ---- Partner sales (DOM side of PTS_CORE) -------------------------------
+     Loaded once per visit from vm_partner_sales() and refreshed every 5 minutes while the page is open, so a booking
+     confirmed, a payment recorded, a refund or a cancellation shows up without anyone touching the numbers. */
+  const PTNS_STATE = { manager: '', agency: '', city: '', status: '', from: '', to: '', by: 'manager', ym: '' };
+  let ptnsLoading = null, ptnsLoadedAt = 0;
+  function ptnsLoad(force){
+    if(ptnsLoading) return ptnsLoading;
+    if(!force && ptnsLoadedAt && Date.now() - ptnsLoadedAt < 5 * 60 * 1000) return Promise.resolve();
+    const sb = window.vmDb && vmDb.sb;
+    if(!sb || !sb.rpc) return Promise.resolve();
+    ptnsLoading = (async () => {
+      try {
+        const { data, error } = await sb.rpc('vm_partner_sales');
+        if(error) throw error;
+        window.partnerSales = data || { rows: [] }; window.partnerSalesError = '';
+      } catch(e) {
+        window.partnerSalesError = /vm_partner_sales|function|schema cache/i.test(String(e && e.message || e))
+          ? 'Partner sales are switched on once the 2026-10-30 account-manager SQL is applied.'
+          : 'Partner sales could not be loaded: ' + (e && e.message || e);
+        console.warn('[sales] partner sales', e);
+      }
+      ptnsLoadedAt = Date.now(); ptnsLoading = null;
+      renderSales();
+    })();
+    return ptnsLoading;
+  }
+  setInterval(() => {
+    const sec = document.querySelector('.view[data-view="sales"]');
+    if(sec && sec.classList.contains('active') && !document.hidden) ptnsLoad(true);
+  }, 5 * 60 * 1000);
+
+  function ptnsRepName(email){
+    const e = String(email || '').toLowerCase();
+    if(!e || e === PTS_CORE.NO_MANAGER) return 'No account manager';
+    const r = (window.salesReps || []).find(x => x && String(x.email || x.id).toLowerCase() === e);
+    return r ? String(r.name || e) : e;
+  }
+  // Whose partner sales the top switcher is looking at; null = everyone.
+  function ptnsScopeManagers(repKey){
+    const key = String(repKey || '').toLowerCase();
+    if(key === '*') return null;
+    if(key.indexOf('team:') === 0){
+      const team = key.slice(5);
+      return new Set((window.salesReps || []).filter(r => r && String(r.team || '') === team && !salesIsTeamRow(r))
+        .map(r => String(r.email || r.id).toLowerCase()));
+    }
+    return new Set([key]);
+  }
+
+  function renderPartnerSales(){
+    const card = $('sales-ptn'); if(!card) return;
+    const P = window.PTS_CORE;
+    if(!P){ card.style.display = 'none'; return; }
+    if(!window.partnerSales){
+      $('ptns-tiles').innerHTML = ''; $('ptns-groups').innerHTML = ''; $('ptns-rows').innerHTML = ''; $('ptns-admin').innerHTML = '';
+      $('ptns-compare').textContent = window.partnerSalesError || 'Loading partner sales…';
+      ptnsLoad(); return;
+    }
+    ptnsLoad();
+    const ym = salesCurrentYm();
+    if(PTNS_STATE.ym !== ym){ const p = salesPeriod(ym, salesToday()); PTNS_STATE.ym = ym; PTNS_STATE.from = p.month.start; PTNS_STATE.to = p.month.end; }
+    const repKey = salesCurrentRep();
+    const managers = ptnsScopeManagers(repKey);
+    const all = P.rows(window.partnerSales);
+    const scoped = P.filter(all, { managers });
+    const f = { manager: PTNS_STATE.manager, agency: PTNS_STATE.agency, city: PTNS_STATE.city, status: PTNS_STATE.status, from: PTNS_STATE.from, to: PTNS_STATE.to };
+    const rows = P.filter(scoped, f);
+    const t = P.totals(rows);
+
+    // filters (options from the data in scope)
+    const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+    const mgrs = Array.from(new Set(scoped.map(r => r.manager || P.NO_MANAGER))).sort();
+    $('ptns-manager').innerHTML = opt('', 'All account managers', PTNS_STATE.manager) + mgrs.map(m => opt(m, ptnsRepName(m), PTNS_STATE.manager)).join('');
+    $('ptns-manager').style.display = mgrs.length > 1 || PTNS_STATE.manager ? '' : 'none';
+    const ags = Array.from(new Map(scoped.map(r => [r.agencyId, r.agency])).entries()).sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+    $('ptns-agency').innerHTML = opt('', 'All partners', PTNS_STATE.agency) + ags.map(([id, n]) => opt(id, n, PTNS_STATE.agency)).join('');
+    const cities = Array.from(new Set(scoped.map(r => r.city).filter(Boolean))).sort();
+    $('ptns-city').innerHTML = opt('', 'All cities', PTNS_STATE.city) + cities.map(c => opt(c, c[0].toUpperCase() + c.slice(1), PTNS_STATE.city)).join('');
+    $('ptns-status').innerHTML = opt('', 'Any fee status', PTNS_STATE.status) + Object.keys(P.FEE_STATUS_LABELS).map(k => opt(k, P.FEE_STATUS_LABELS[k], PTNS_STATE.status)).join('');
+    $('ptns-groupby').innerHTML = P.GROUPS.map(([k, l]) => opt(k, 'By ' + l.toLowerCase(), PTNS_STATE.by)).join('');
+    $('ptns-from').value = PTNS_STATE.from; $('ptns-to').value = PTNS_STATE.to;
+
+    const tile = (label, value, sub) => `<div class="kpi"><div class="kpi-deco"></div><div class="kpi-label">${esc(label)}</div><div class="kpi-value">${value}</div><div class="sl-kpi-sub">${sub || '&nbsp;'}</div></div>`;
+    $('ptns-tiles').innerHTML =
+      tile('Confirmed bookings', String(t.bookings), t.cancelled ? `${t.cancelled} cancelled` : '') +
+      tile('Booked fees', fmt(t.booked), 'placement fees only') +
+      tile('Collected', fmt(t.collected), t.refunded ? `${fmt(t.refunded)} refunded` : 'net of refunds') +
+      tile('Outstanding', fmt(t.outstanding), 'still to collect') +
+      tile('Collection rate', t.rate == null ? '—' : t.rate + '%', 'collected ÷ booked');
+    const dv = P.directVsPartner(cdLedger(), { managers, from: PTNS_STATE.from, to: PTNS_STATE.to });
+    $('ptns-compare').innerHTML = `Same people and dates · <b>Direct sales</b> ${dv.direct.deals} deal${dv.direct.deals === 1 ? '' : 's'}, ${fmt(dv.direct.fees)} · <b>Partner sales</b> ${dv.partner.deals} booking${dv.partner.deals === 1 ? '' : 's'}, ${fmt(dv.partner.fees)}`;
+
+    const groups = P.group(rows, PTNS_STATE.by, ptnsRepName);
+    $('ptns-key').textContent = (P.GROUPS.find(g => g[0] === PTNS_STATE.by) || ['', 'Group'])[1];
+    $('ptns-groups').innerHTML = groups.length ? groups.map(g => `<tr>
+        <td><b>${esc(g.label)}</b></td><td class="right num">${g.totals.bookings}</td><td class="right num">${fmt(g.totals.booked)}</td>
+        <td class="right num">${fmt(g.totals.collected)}</td><td class="right num">${fmt(g.totals.outstanding)}</td>
+        <td class="right num">${g.totals.rate == null ? '—' : g.totals.rate + '%'}</td></tr>`).join('')
+      : `<tr><td colspan="6" class="sl-empty">No partner bookings in this period.</td></tr>`;
+
+    $('ptns-count').textContent = rows.length ? `${rows.length} partner booking${rows.length === 1 ? '' : 's'} · newest first` : '';
+    const badge = r => `<span class="badge ${r.feeStatus === 'paid' ? 'badge-green' : /refund|cancel/.test(r.feeStatus) ? 'badge-red' : 'badge-grey'}">${esc(r.feeStatusLabel)}</span>`;
+    $('ptns-rows').innerHTML = rows.length ? rows.slice(0, 500).map(r => `<tr>
+        <td>${esc(r.bookedOn)}</td><td><b>${esc(r.student || '—')}</b></td><td>${esc(r.agency)}</td>
+        <td>${esc(r.ref)} <span class="name-sub">${esc(r.kindLabel)}</span></td><td>${esc(r.city || '—')}</td>
+        <td>${r.manager ? esc(ptnsRepName(r.manager)) : '<span class="badge badge-red">None</span>'}</td>
+        <td class="right num">${fmt(r.fee)}${r.cancelled && r.listFee && r.fee !== r.listFee ? ` <span class="name-sub">of ${fmt(r.listFee)}</span>` : ''}</td>
+        <td class="right num">${fmt(r.collected)}</td><td class="right num">${r.outstanding ? fmt(r.outstanding) : '—'}</td>
+        <td>${badge(r)}</td><td class="name-sub">${esc(r.invoices.join(', ') || '—')}</td></tr>`).join('')
+      : `<tr><td colspan="11" class="sl-empty">No partner bookings match these filters.</td></tr>`;
+    card.__rows = rows;
+
+    // Admin: what needs a human — partners without a manager, money on no invoice, the reassignment log, and the
+    // historical Zoho deals of managed schools sitting with someone else.
+    let admin = '';
+    if(salesIsAdmin()){
+      const pay = window.partnerSales.unallocated || [];
+      const none = P.unmanaged(window.partnerSales.agencies || []).filter(a => a.status === 'active');
+      const log = (window.partnerSales.log || []).slice(0, 10);
+      if(none.length) admin += `<div class="card-sub" style="margin-top:14px"><span class="badge badge-red">${none.length} active partner${none.length === 1 ? '' : 's'} without an account manager</span> ${esc(none.slice(0, 12).map(a => a.name).join(', '))}${none.length > 12 ? '…' : ''} — set one in <a href="#" data-ptns-go-partners>Partners</a>.</div>`;
+      if(pay.length) admin += `<div style="margin-top:14px"><div class="card-sub" style="font-weight:700">Payments not matched to an invoice — not credited to anyone until allocated in Partners › Receivables</div>
+        <table><tbody>${pay.map(u => `<tr><td>${esc(u.received_on)}</td><td>${esc(u.agency)}</td><td>${esc(u.method)}${u.reference ? ' · ' + esc(u.reference) : ''}</td><td class="right num">${fmt((u.unallocated_cents || 0) / 100)} <span class="name-sub">of ${fmt((u.amount_cents || 0) / 100)}</span></td></tr>`).join('')}</tbody></table></div>`;
+      if(log.length) admin += `<div style="margin-top:14px"><div class="card-sub" style="font-weight:700">Account manager changes</div>
+        <table><tbody>${log.map(l => `<tr><td>${esc(String(l.changed_at || '').slice(0, 10))}</td><td>${esc(l.agency)}</td><td>${esc(ptnsRepName(l.old_rep) )} → ${esc(ptnsRepName(l.new_rep))}${l.retroactive ? ` <span class="badge badge-grey">existing bookings moved (${l.bookings_moved})</span>` : ''}</td><td class="name-sub">${esc(String(l.changed_by || '').replace(/^staff:/, ''))}${l.reason ? ' · ' + esc(l.reason) : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    $('ptns-admin').innerHTML = admin;
+  }
+
+  function ptnsExport(rows){
+    const head = ['Booked', 'Student', 'Student email', 'Partner', 'Kind', 'Booking', 'City', 'Check-in', 'Account manager',
+                  'Fee', 'Invoiced', 'Collected', 'Refunded', 'Outstanding', 'Fee status', 'Invoices', 'Record'];
+    const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const body = rows.map(r => [r.bookedOn, r.student, r.studentEmail, r.agency, r.kindLabel, r.ref, r.city, r.checkIn,
+      r.manager || '(none)', r.fee, r.invoiced, r.collected, r.refunded, r.outstanding, r.feeStatusLabel, r.invoices.join(' '), r.id].map(cell).join(','));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([head.map(cell).join(',') + '\n' + body.join('\n')], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'vanmates-partner-sales-' + salesToday() + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
   function renderSales(){
     const sec = document.querySelector('.view[data-view="sales"]');
     if(!sec || !sec.classList.contains('active')) return;
@@ -41594,8 +41816,10 @@ window.HM = HM;
     if(ps) ps.textContent = `${v.period.month.label} · CAD`;
     renderTarget(v); renderNext(v); renderKpis(v); renderByRep(v); renderAttention(v); renderOpen(v); renderCharts(v); renderClosed(v); renderLost(v);
     renderClosedDeals();
+    renderPartnerSales();
   }
   window.renderSales = renderSales;
+  window.ptnsReload = () => ptnsLoad(true);
   // One rep's (or '*' = whole team's) numbers for this month, exactly as the
   // Sales page computes them — used by Leads → My leads and the team grid.
   window.salesMonthFor = function(email){
@@ -41638,6 +41862,18 @@ window.HM = HM;
     if(edit && typeof openDealModal === 'function') openDealModal(edit.dataset.cdEdit, 'won');
   });
   $('sales-period').addEventListener('change', e => { SALES_STATE.ym = e.target.value; renderSales(); });
+  [['ptns-manager', 'manager'], ['ptns-agency', 'agency'], ['ptns-city', 'city'], ['ptns-status', 'status'],
+   ['ptns-from', 'from'], ['ptns-to', 'to'], ['ptns-groupby', 'by']].forEach(([id, key]) => {
+    const el = $(id); if(el) el.addEventListener('change', e => { PTNS_STATE[key] = e.target.value; renderPartnerSales(); });
+  });
+  if($('ptns-clear')) $('ptns-clear').addEventListener('click', () => {
+    PTNS_STATE.manager = PTNS_STATE.agency = PTNS_STATE.city = PTNS_STATE.status = PTNS_STATE.from = PTNS_STATE.to = '';
+    renderPartnerSales();
+  });
+  if($('ptns-export')) $('ptns-export').addEventListener('click', () => ptnsExport(($('sales-ptn') && $('sales-ptn').__rows) || []));
+  if($('sales-ptn')) $('sales-ptn').addEventListener('click', e => {
+    if(e.target.closest('[data-ptns-go-partners]')){ e.preventDefault(); if(typeof goToView === 'function') goToView('partners'); }
+  });
   /* ---- "Sales closed" breakdown: the exact deals the KPI card adds up ---- */
   function openSalesClosedList(){
     const v = SALES_STATE.view;
@@ -45682,12 +45918,13 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-30-aprefund1"></script>
-<script src="extensions.js?v=2026-10-30-aprefund1"></script>
-<script src="retention.js?v=2026-10-30-aprefund1"></script>
-<script src="ap.js?v=2026-10-30-aprefund1"></script>
-<script src="properties.js?v=2026-10-30-aprefund1"></script>
-<script src="ar.js?v=2026-10-30-aprefund1"></script>
-<script src="mx-finance.js?v=2026-10-30-aprefund1"></script>
+<script src="room-changes.js?v=2026-10-30-acctmgr1"></script>
+<script src="extensions.js?v=2026-10-30-acctmgr1"></script>
+<script src="retention.js?v=2026-10-30-acctmgr1"></script>
+<script src="ap.js?v=2026-10-30-acctmgr1"></script>
+<script src="properties.js?v=2026-10-30-acctmgr1"></script>
+<script src="partner-sales.js?v=2026-10-30-acctmgr1"></script>
+<script src="ar.js?v=2026-10-30-acctmgr1"></script>
+<script src="mx-finance.js?v=2026-10-30-acctmgr1"></script>
 </body>
 </html>
