@@ -142,17 +142,10 @@
     if (j < 0 || j >= b.length) return b;
     var t = b[i]; b[i] = b[j]; b[j] = t; return b;
   }
-  // A YouTube / Vimeo / direct link the video block can point at; the id gives YouTube's own still.
-  function youtubeId(url) {
-    var m = /^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/.exec(String(url || "").trim());
-    return m ? m[1] : "";
-  }
-
   function newBlock(type) {
     return type === "button" ? { type: "button", label: "Update my availability", url: "https://hosts.vanmates.com/m/a" }
       : type === "list" ? { type: "list", items: [""] }
-      : type === "image" ? { type: "image", url: "", alt: "" }
-      : type === "video" ? { type: "video", url: "", thumb: "", alt: "" }
+      : type === "image" ? { type: "image", url: "https://", alt: "" }
       : type === "divider" ? { type: "divider" }
       : { type: type, text: "" };
   }
@@ -174,5 +167,5 @@
 
   return { parseCsv: parseCsv, guessMapping: guessMapping, monthGrid: monthGrid, monthsOf: monthsOf, addMonth: addMonth, pct: pct, num: num, when: when,
     statusLabel: statusLabel, statusTone: statusTone, ruleFromRows: ruleFromRows, rowsFromRule: rowsFromRule, describeRule: describeRule,
-    moveBlock: moveBlock, newBlock: newBlock, youtubeId: youtubeId, errorText: errorText, RULE_FIELDS: RULE_FIELDS, FACTS: FACTS };
+    moveBlock: moveBlock, newBlock: newBlock, errorText: errorText, RULE_FIELDS: RULE_FIELDS, FACTS: FACTS };
 });
