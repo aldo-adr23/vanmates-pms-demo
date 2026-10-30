@@ -123,6 +123,21 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 .chain { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; margin-bottom: 6px; }
 .hrs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .days label { font-size: 12px; margin-right: 6px; white-space: nowrap; }
+/* dial + call bar */
+.dial { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.dial .num { width: 100%; font-size: 20px; font-variant-numeric: tabular-nums; letter-spacing: .02em; min-height: 44px; }
+.pad-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.pad-keys button { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; min-height: 48px; font-size: 19px; font-weight: 600; }
+.pad-keys button:hover { background: var(--cream-2); }
+.pad-keys button small { display: block; font-size: 9.5px; color: var(--muted); letter-spacing: .08em; font-weight: 600; }
+.btn-call { width: 100%; min-height: 44px; font-size: 14px; background: var(--green); color: #fff; } .btn-call:hover { filter: brightness(.95); }
+.btn-call.btn-sm { width: auto; min-height: 28px; font-size: 12px; }
+.callbar { position: fixed; right: 16px; bottom: 16px; z-index: 50; width: 300px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(43,33,26,.18); }
+.callbar .who { font-weight: 700; font-size: 15px; } .callbar .st { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.callbar .row-acts { display: flex; gap: 6px; margin-top: 10px; } .callbar .row-acts .btn { flex: 1; }
+.btn-hang { background: var(--red); color: var(--on-red); } .btn-hang:hover { background: var(--red-dark); }
+.callbar .pad-keys { margin: 10px 0 0; gap: 6px; } .callbar .pad-keys button { min-height: 38px; font-size: 16px; }
+.btn.on { background: var(--amber-soft); border-color: var(--amber); }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px; border-radius: 10px; opacity: 0; pointer-events: none; transition: .2s; font-size: 13px; max-width: calc(100vw - 32px); }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (max-width: 759px) {
@@ -132,6 +147,7 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
   .split.open .list { display: none; } .split:not(.open) .detail { display: none; }
   .back { display: inline-flex; } .m { max-width: 92%; }
   .chain { grid-template-columns: 1fr; } .cb { grid-template-columns: 1fr; } .cb .acts { justify-content: flex-start; }
+  .dial { grid-template-columns: minmax(0, 1fr); } .callbar { left: 8px; right: 8px; bottom: 8px; width: auto; }
 }
 </style>
 </head>
@@ -149,6 +165,7 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
       <button class="chip on" data-tab="overview">Overview</button>
       <button class="chip" data-tab="calls">Calls</button>
       <button class="chip" data-tab="callbacks">Callbacks<span class="n" id="nCb" hidden></span></button>
+      <button class="chip" data-tab="dial">Dial</button>
       <button class="chip" data-tab="settings" id="setTab" hidden>Settings</button>
     </div>
     <div class="sp"></div>
@@ -178,11 +195,37 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
     <div class="card" id="cbList"><div class="empty">Loading…</div></div>
   </section>
 
+  <section id="tab-dial" hidden>
+    <div class="dial">
+      <div class="card pad">
+        <h2>Make a call</h2>
+        <input class="inp num" id="dialNum" type="tel" inputmode="tel" autocomplete="off" placeholder="+1 604 555 0123" aria-label="Number to call">
+        <div class="pad-keys" id="dialKeys"></div>
+        <button class="btn btn-call" id="dialGo">Call</button>
+        <div class="small muted" style="margin-top:10px" id="dialNote"></div>
+      </div>
+      <div class="card">
+        <div class="pad" style="padding-bottom:0"><h3>Recent calls from the portal</h3></div>
+        <div id="outList"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-settings" hidden>
     <div class="set" id="settings"></div>
   </section>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="callbar" id="callBar" hidden role="region" aria-label="Current call">
+  <div class="who" id="cbWho"></div>
+  <div class="st" id="cbSt" aria-live="polite"></div>
+  <div class="row-acts">
+    <button class="btn btn-ghost" id="cbMute">Mute</button>
+    <button class="btn btn-ghost" id="cbPad">Keypad</button>
+    <button class="btn btn-hang" id="cbHang">Hang up</button>
+  </div>
+  <div class="pad-keys" id="cbKeys" hidden></div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
@@ -326,10 +369,10 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
         '<div>' + esc(b.reason || '') + '</div>' +
         (b.preferred_time ? '<div class="small muted">Best time: ' + esc(b.preferred_time) + '</div>' : '') +
         (b.recording_url ? '<div class="small"><a href="' + esc(b.recording_url) + '" target="_blank" rel="noopener">Voicemail recording</a></div>' : '') +
-        (b.notes ? '<div class="small muted">Notes: ' + esc(b.notes) + '</div>' : '') +
+        (b.notes ? '<div class="small muted" style="white-space:pre-line">Notes: ' + esc(b.notes) + '</div>' : '') +
         '<div class="small"><a href="#' + esc(b.call_id) + '" data-call="' + esc(b.call_id) + '">Call details</a>' + (b.lead_id ? ' · <a href="index.html#lead=' + encodeURIComponent(b.lead_id) + '">Lead</a>' : '') + '</div>' +
         '</div><div class="acts">' + (b.status === 'open'
-          ? '<button class="btn btn-primary btn-sm" data-cb="' + esc(b.id) + '" data-to="done">Called back</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="note">Add note</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="cancelled">Cancel</button>'
+          ? '<button class="btn btn-call btn-sm" data-dial="' + esc(b.phone) + '" data-dialcb="' + esc(b.id) + '" data-dialname="' + esc(b.name || '') + '">Call</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="done">Called back</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="note">Add note</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="cancelled">Cancel</button>'
           : '<button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="open">Reopen</button>') + '</div></div>';
     }).join('');
   }
@@ -399,13 +442,115 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
     return s;
   }
 
+  // ---------------------------------------------------------------- dial (browser softphone, Twilio Voice SDK)
+  // Calls go out from the Vanmates number through the laptop's mic/headset, so staff abroad can call
+  // without a Canadian phone. The SDK is only loaded the first time someone calls.
+  var KEYS = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
+  var P = { device: null, call: null, cb: null, t0: 0, timer: null, sdk: null };
+  function keysHtml() { return KEYS.map(function (k) { return '<button type="button" data-k="' + k[0] + '">' + k[0] + (k[1] ? '<small>' + k[1] + '</small>' : '') + '</button>'; }).join(''); }
+  $('dialKeys').innerHTML = keysHtml();
+  $('cbKeys').innerHTML = keysHtml();
+  var OUT = { completed: ['Answered', 'p-green'], busy: ['Busy', 'p-amber'], 'no-answer': ['No answer', 'p-amber'], failed: ['Failed', 'p-red'], canceled: ['Cancelled', 'p-grey'], dialling: ['Dialling', 'p-blue'] };
+
+  async function loadDial() {
+    var ph = (S.me && S.me.phone) || {};
+    $('dialNote').innerHTML = ph.ready
+      ? 'Customers see <strong>' + esc(phone(ph.callerId)) + '</strong>. Uses your computer’s microphone — a headset sounds best. Allowed: ' + esc((ph.allowPrefixes || []).join(', ')) + '.'
+      : '<span class="overdue">Calling isn’t switched on yet.</span> An admin needs to run the softphone setup.';
+    var d = await api('/phone/calls');
+    var rows = d.calls || [];
+    $('outList').innerHTML = rows.length ? rows.map(function (c) {
+      var x = OUT[c.status] || [c.status, 'p-grey'];
+      return '<div class="cb"><div><strong>' + esc(phone(c.to_e164)) + '</strong> <span class="pill ' + x[1] + '">' + esc(x[0]) + '</span>' + (c.duration_s ? ' <span class="small muted">' + esc(dur(c.duration_s)) + '</span>' : '') +
+        '<div class="small muted">' + esc(when(c.started_at)) + ' · ' + esc(String(c.staff_email || '').split('@')[0]) + (c.callback_id ? ' · callback' : '') + '</div></div>' +
+        '<div class="acts"><button class="btn btn-ghost btn-sm" data-dial="' + esc(c.to_e164) + '">Call again</button></div></div>';
+    }).join('') : '<div class="empty">No calls yet.</div>';
+  }
+  function loadSdk() {
+    if (window.Twilio && window.Twilio.Device) return Promise.resolve();
+    if (P.sdk) return P.sdk;
+    P.sdk = new Promise(function (ok, no) {
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/@twilio/voice-sdk@2.18.5/dist/twilio.min.js';
+      s.onload = function () { ok(); }; s.onerror = function () { P.sdk = null; no(new Error('Couldn’t load the phone. Check your connection and try again.')); };
+      document.head.appendChild(s);
+    });
+    return P.sdk;
+  }
+  async function device() {
+    if (P.device) return P.device;
+    await loadSdk();
+    var t = await api('/phone/token');
+    var dev = new window.Twilio.Device(t.token, { codecPreferences: ['opus', 'pcmu'], closeProtection: 'A call is in progress. Leave anyway?' });
+    dev.on('tokenWillExpire', function () { api('/phone/token').then(function (n) { dev.updateToken(n.token); }).catch(function () {}); });
+    dev.on('error', function (err) { if (!P.call) showErr(new Error('Phone: ' + (err && err.message || err))); });
+    P.device = dev;
+    return dev;
+  }
+  function setBar(who, st) { $('callBar').hidden = false; if (who !== null) $('cbWho').textContent = who; $('cbSt').textContent = st; }
+  function tick() { var s = Math.floor((Date.now() - P.t0) / 1000); $('cbSt').textContent = 'Connected · ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function endCall(msg) {
+    clearInterval(P.timer); P.timer = null; P.call = null;
+    $('cbMute').classList.remove('on'); $('cbMute').textContent = 'Mute'; $('cbKeys').hidden = true; $('cbPad').classList.remove('on');
+    $('dialGo').disabled = false;
+    setBar(null, msg);
+    setTimeout(function () { if (!P.call) $('callBar').hidden = true; }, 2500);
+    var cb = P.cb; P.cb = null;
+    // Twilio's done-callback writes the result a moment after hang-up.
+    setTimeout(function () {
+      if (S.tab === 'dial') loadDial().catch(function () {});
+      if (cb && S.tab === 'callbacks') loadCallbacks().catch(function () {});
+    }, 2000);
+  }
+  async function startCall(num, name, cbId) {
+    num = String(num || '').trim();
+    if (!num) { toast('Type a number first.'); return; }
+    if (P.call) { toast('Hang up the current call first.'); return; }
+    if (!(S.me && S.me.phone && S.me.phone.ready)) { showErr(new Error('Calling from the portal isn’t switched on yet.')); return; }
+    $('dialGo').disabled = true;
+    P.cb = cbId || null;
+    setBar(name ? name + ' · ' + phone(num) : phone(num), 'Starting…');
+    try {
+      var dev = await device();
+      var params = { To: num };
+      if (cbId) params.cb = cbId;
+      var call = await dev.connect({ params: params });
+      P.call = call;
+      setBar(null, 'Ringing…');
+      call.on('ringing', function () { setBar(null, 'Ringing…'); });
+      // answerOnBridge: the call only "accepts" once the customer picks up, so start the clock on their audio.
+      call.on('accept', function () { P.t0 = Date.now(); clearInterval(P.timer); P.timer = setInterval(tick, 1000); tick(); });
+      call.on('disconnect', function () { endCall('Call ended'); });
+      call.on('cancel', function () { endCall('Call cancelled'); });
+      call.on('reject', function () { endCall('Call rejected'); });
+      call.on('error', function (err) { endCall('Call failed: ' + (err && err.message || 'error')); });
+    } catch (e) {
+      P.call = null; $('dialGo').disabled = false;
+      var m = String(e && e.message || e);
+      if (/permission|NotAllowed|31208|31401/i.test(m)) m = 'Allow the microphone for portal.vanmates.com (the icon in the address bar), then try again.';
+      endCall(m);
+      showErr(new Error(m));
+    }
+  }
+  $('dialGo').onclick = function () { startCall($('dialNum').value); };
+  $('dialNum').onkeydown = function (e) { if (e.key === 'Enter') startCall(this.value); };
+  $('dialKeys').onclick = function (e) {
+    var k = e.target.closest('[data-k]'); if (!k) return;
+    var i = $('dialNum'); i.value += k.dataset.k; i.focus();
+  };
+  $('cbKeys').onclick = function (e) { var k = e.target.closest('[data-k]'); if (k && P.call) P.call.sendDigits(k.dataset.k); };
+  $('cbPad').onclick = function () { var h = !$('cbKeys').hidden; $('cbKeys').hidden = h; this.classList.toggle('on', !h); };
+  $('cbMute').onclick = function () { if (!P.call) return; var m = !P.call.isMuted(); P.call.mute(m); this.classList.toggle('on', m); this.textContent = m ? 'Unmute' : 'Mute'; };
+  $('cbHang').onclick = function () { if (P.call) P.call.disconnect(); else $('callBar').hidden = true; };
+  $('outList').onclick = function (e) { var b = e.target.closest('[data-dial]'); if (b) startCall(b.dataset.dial); };
+
   // ---------------------------------------------------------------- wiring
   function setTab(t) {
     S.tab = t;
     [].forEach.call(document.querySelectorAll('#tabs .chip'), function (c) { c.classList.toggle('on', c.dataset.tab === t); });
-    ['overview', 'calls', 'callbacks', 'settings'].forEach(function (x) { $('tab-' + x).hidden = x !== t; });
+    ['overview', 'calls', 'callbacks', 'dial', 'settings'].forEach(function (x) { $('tab-' + x).hidden = x !== t; });
     $('days').hidden = t !== 'overview';
-    var p = t === 'overview' ? loadOverview() : t === 'calls' ? loadCalls() : t === 'callbacks' ? loadCallbacks() : loadSettings();
+    var p = t === 'overview' ? loadOverview() : t === 'calls' ? loadCalls() : t === 'callbacks' ? loadCallbacks() : t === 'dial' ? loadDial() : loadSettings();
     p.catch(showErr);
   }
   $('tabs').onclick = function (e) { var b = e.target.closest('.chip'); if (b) setTab(b.dataset.tab); };
@@ -418,6 +563,8 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
     loadCallbacks().catch(showErr);
   };
   $('cbList').onclick = function (e) {
+    var dl = e.target.closest('[data-dial]');
+    if (dl) { startCall(dl.dataset.dial, dl.dataset.dialname, dl.dataset.dialcb); return; }
     var a = e.target.closest('[data-call]');
     if (a) { e.preventDefault(); setTab('calls'); openCall(a.dataset.call).catch(showErr); return; }
     var b = e.target.closest('[data-cb]'); if (b) updateCallback(b.dataset.cb, b.dataset.to, b).catch(function (err) { b.disabled = false; showErr(err); });
