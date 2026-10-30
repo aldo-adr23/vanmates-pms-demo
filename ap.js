@@ -5,8 +5,8 @@
    Loaded by index.html after the main script (uses esc, showToast, CURRENT_USER, window.properties, window.vmDb.sb
    and the shared detail panel). */
 (function(){
-  const TYPES = { cleaning: 'Cleaning', utility: 'Utilities', internet: 'Internet', employee_expense: 'Employee expense', vendor: 'Vendor', b2b: 'B2B', landlord_rent: 'Landlord rent', other: 'Other' };
-  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['vendor', 'Vendors'], ['b2b', 'B2B'], ['landlord_rent', 'Landlords'], ['school', 'School properties']];
+  const TYPES = { cleaning: 'Cleaning', utility: 'Utilities', internet: 'Internet', employee_expense: 'Employee expense', vendor: 'Vendor', b2b: 'B2B', refund: 'Refund', landlord_rent: 'Landlord rent', other: 'Other' };
+  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['vendor', 'Vendors'], ['b2b', 'B2B'], ['refund', 'Refunds'], ['landlord_rent', 'Landlords'], ['school', 'School properties']];
   const VIEWS = [['open', 'Open'], ['review', 'To review'], ['approved', 'Approved · to pay'], ['paid', 'Paid'], ['skipped', 'Skipped'], ['everything', 'Everything']];
   const STATUS = { needs_review: ['Needs review', 'red'], flagged: ['Flagged', 'red'], approved: ['Approved', 'blue'], paid: ['Paid', ''], recorded: ['In QuickBooks', ''], skipped: ['Skipped', ''] };
   const FLAGS = {
@@ -15,6 +15,8 @@
     over_reimbursement_cap: 'Over reimbursement cap',
     no_cheque: 'No cheque this month', cheque_bounced: 'Cheque bounced', pad_missing: 'PAD not seen in the bank', amount_mismatch: "Amount doesn't match", landlord_says_unpaid: 'Landlord says unpaid',
   };
+  // Refunds (ap-refunds-2026-10-30.sql): any service except checkout deposits, which run through Checkouts.
+  const REFUND_KIND = { relocation: 'Relocation', homestay: 'Homestay', rent: 'Rent', special_housing: 'Special housing', coliving: 'Co-living', other: 'Other' };
   const METHOD = { etransfer: 'E-transfer', pad: 'PAD', payroll: 'Payroll', cheque: 'Cheque', card: 'Card', other: 'Other' };
   const COLS = 8;
 
@@ -173,7 +175,7 @@
   }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
   const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
-  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, editFields, editPatch, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary, newPropertyPrefill, vendorSummary, parseAliases };
+  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, editFields, editPatch, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary, newPropertyPrefill, vendorSummary, parseAliases, REFUND_KIND };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'all', view: 'open', q: '', city: '', sel: new Set() };
@@ -217,7 +219,7 @@
     const q = S.q.trim().toLowerCase();
     return (rows || []).filter(r => inTab(r, S.tab) && inView(r, S.view)
       && (!S.city || String(r.city || '').toLowerCase().startsWith(S.city.toLowerCase().slice(0, 3)))
-      && (!q || [r.payee, r.payee_email, r.property, r.account_no, r.paid_ref, r.notes, (r.data || {}).vendor].some(v => String(v || '').toLowerCase().includes(q))));
+      && (!q || [r.payee, r.payee_email, r.property, r.account_no, r.paid_ref, r.notes, (r.data || {}).vendor, (r.data || {}).reason, REFUND_KIND[(r.data || {}).refundKind]].some(v => String(v || '').toLowerCase().includes(q))));
   }
 
   function render(){
@@ -242,7 +244,7 @@
     const body = document.getElementById('ap-body');
     if (body) body.innerHTML = list.map(r => `<tr class="clickable" data-ap-open="${e(r.id)}" tabindex="0" style="cursor:pointer">
         <td onclick="event.stopPropagation()"><input type="checkbox" data-ap-sel="${e(r.id)}" ${S.sel.has(r.id) ? 'checked' : ''} aria-label="Select ${e(r.payee)}"></td>
-        <td>${e(TYPES[r.type] || r.type)}<div class="name-sub">${e(METHOD[r.payment_method] || '')}</div></td>
+        <td>${e(TYPES[r.type] || r.type)}<div class="name-sub">${e([r.type === 'refund' ? REFUND_KIND[(r.data || {}).refundKind] : '', METHOD[r.payment_method]].filter(Boolean).join(' · '))}</div></td>
         <td><b>${e(r.payee)}</b>${r.payee_email ? `<div class="name-sub">${e(r.payee_email)}</div>` : r.account_no ? `<div class="name-sub">Acct ${e(r.account_no)}</div>` : (r.data || {}).vendor ? `<div class="name-sub">${e(r.data.vendor)}</div>` : ''}</td>
         <td>${e(r.property || '—')}<div class="name-sub">${e(r.city || '')}</div></td>
         <td>${e(periodText(r) || '—')}${r.due_date ? `<div class="name-sub">Due ${e(r.due_date)}</div>` : ''}</td>
@@ -421,6 +423,7 @@
         ${field('Property', e(r.property || ''))}
         ${field('City', e(r.city || ''))}
         ${field('Service address', e(d.serviceAddress || ''))}
+        ${r.type === 'refund' ? field('Refund for', e(REFUND_KIND[d.refundKind] || d.refundKind || '')) + field('Reason', e(d.reason || '')) : ''}
         ${field('Vendor', e(d.vendor || ''))}
         ${d.vendorId ? field('On the list', `${e(d.vendorName || '')} <span class="tag-pill" style="font-size:11px">${d.vendorKind === 'b2b' ? 'B2B' : 'Vendor'}</span>`) : ''}
         ${field('Paid', r.paid_at ? e(when(r.paid_at)) + (r.paid_ref ? ' · ' + e(r.paid_ref) : '') : '')}
@@ -429,7 +432,7 @@
         ${d.recentAverageCents ? field('Usual amount', e(money(d.recentAverageCents))) : ''}
       </div>
       ${a.edit || a.remove ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-        ${a.edit ? `<button class="btn" type="button" data-ap-do="edit-open">Edit</button>` : ''}
+        ${a.edit ? `<button class="btn" type="button" data-ap-do="${r.type === 'refund' ? 'refund-edit' : 'edit-open'}" ${r.type === 'refund' && !a.editAmount ? 'disabled title="Paid: a paid refund cannot change"' : ''}>Edit</button>` : ''}
         ${a.remove ? `<button class="btn btn-ghost" type="button" data-ap-do="delete-open" style="color:var(--red,#b42318)">Delete</button>` : ''}</div>
         ${a.edit ? editForm(r, a) : ''}
         ${a.remove ? `<form data-ap-form="delete" style="display:none;gap:8px;margin-top:10px;padding:12px;border:1px solid var(--line,#e5e2dc);border-radius:8px">
@@ -503,6 +506,8 @@
     if (list) list.style.display = on || school ? 'none' : '';
     if (bar) bar.style.display = on || school ? 'none' : '';
     if (card) card.style.display = acc ? '' : 'none';
+    const addRf = document.getElementById('ap-add-refund');
+    if (addRf) addRf.style.display = S.tab === 'refund' && canAct(me()) ? '' : 'none';
     const ven = ['vendor', 'b2b'].includes(S.tab), vcard = document.getElementById('ap-ven');
     if (vcard) vcard.style.display = ven ? '' : 'none';
     if (on) { if (!LL.terms) llLoad(); else renderLL(); }
@@ -909,6 +914,51 @@
     } catch (_) {}
   }
 
+  // ───────────── AP → Refunds: add / change one ─────────────
+  function openRefund(id){
+    const r = id ? (rows || []).find(x => x.id === id) : { payment_method: 'etransfer', data: { refundKind: 'relocation' } };
+    if (!r) return;
+    const d = r.data || {};
+    const inp = (name, label, val, extra) => `<label class="name-sub">${e(label)} <input class="form-input" name="${name}" value="${e(val == null ? '' : val)}" ${extra || ''}></label>`;
+    openPanel(r.payee || '+', id ? `Change refund · ${r.payee}` : 'New refund', id ? `${REFUND_KIND[d.refundKind] || 'Refund'} · ${money(r.amount_cents)}` : 'Money Vanmates owes back for a service (not checkout deposits: those are in Checkouts)', id ? pill(r.status) : '');
+    document.getElementById('panel-body').innerHTML = `<form data-rf-form data-rf-id="${e(id || '')}" style="display:grid;gap:8px;max-width:440px">
+      <label class="name-sub">Refund for <select class="form-input" name="kind">${Object.entries(REFUND_KIND).map(([k, l]) => `<option value="${k}" ${d.refundKind === k ? 'selected' : ''}>${e(l)}</option>`).join('')}</select></label>
+      ${inp('payee', 'Who gets it', r.payee, 'required placeholder="Full name (or company)"')}
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('amount', 'Amount ($)', r.amount_cents ? (Number(r.amount_cents) / 100).toFixed(2) : '', 'required inputmode="decimal" placeholder="1200.00"')}</div>
+        <div style="flex:1"><label class="name-sub">Pay by <select class="form-input" name="payment_method">${['etransfer', 'cheque', 'card', 'other'].map(k => `<option value="${k}" ${r.payment_method === k ? 'selected' : ''}>${e(METHOD[k])}</option>`).join('')}</select></label></div></div>
+      ${inp('payee_email', 'E-transfer email', r.payee_email, 'type="email" placeholder="name@example.com"')}
+      ${inp('reason', 'Reason', d.reason, 'placeholder="Relocation cancelled, never found a host, overpaid rent…"')}
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('due_date', 'Pay by date', String(r.due_date || '').slice(0, 10), 'type="date"')}</div><div style="flex:1">${inp('city', 'City', r.city)}</div></div>
+      <label class="name-sub">Property (if any) <select class="form-input" name="property">${propertyOptions(r.property)}</select></label>
+      <label class="name-sub">Notes <textarea class="form-input" name="notes" rows="2">${e(r.notes || '')}</textarea></label>
+      <div style="display:flex;gap:8px">${id ? `<button class="btn btn-ghost" type="button" data-rf-back="${e(id)}">Cancel</button>` : ''}<button class="btn btn-primary" type="submit">${id ? 'Save' : 'Add refund'}</button></div>
+      <div class="name-sub">It goes to review, then Approve → Mark paid, like any AP item.</div>
+    </form>`;
+  }
+
+  async function refundSubmit(f){
+    const fd = new FormData(f), id = f.dataset.rfId || '', str = (k) => String(fd.get(k) || '').trim();
+    const cents = parseAmount(str('amount'));
+    if (cents == null || cents <= 0) return toast('Type the amount like 1200.00');
+    try {
+      const r = await sb().rpc('ap_refund_save', { p: { id, kind: str('kind'), payee: str('payee'), amount_cents: cents, payment_method: str('payment_method'), payee_email: str('payee_email'),
+        reason: str('reason'), due_date: str('due_date'), city: str('city'), property: str('property'), notes: String(fd.get('notes') || '') } });
+      if (r.error) throw r.error;
+      toast(id ? 'Refund saved.' : 'Refund added for review.');
+      await load(true);
+      open(r.data.id);
+    } catch (err) { toast('Could not save: ' + (err && err.message || err)); }
+  }
+
+  function wireRefunds(){
+    const btn = document.getElementById('ap-add-refund');
+    if (btn) btn.addEventListener('click', () => openRefund(null));
+    const pb = document.getElementById('panel-body');
+    if (!pb) return;
+    pb.addEventListener('submit', ev => { const f = ev.target.closest('[data-rf-form]'); if (!f) return; ev.preventDefault(); ev.stopImmediatePropagation(); refundSubmit(f); }, true);
+    pb.addEventListener('click', ev => { const b = ev.target.closest('[data-rf-back]'); if (b) open(b.dataset.rfBack); });
+  }
+
   // ───────────── AP → Vendors / B2B list ─────────────
   const VEN = { list: null, loading: null, q: '' };
   const VEN_KIND = { vendor: ['Vendor', 'Vendors', 'Suppliers we pay: accounting, laundry, bedding, appliances…'], b2b: ['B2B partner', 'B2B partners', 'Agencies and partners we pay a commission to'] };
@@ -1046,6 +1096,7 @@
       const b = ev.target.closest('[data-ap-do]'); if (!b) return;
       const host = ev.target.closest('[data-ap-id]'); if (!host) return;
       const toggle = (sel, show) => { const f = host.querySelector(sel); if (f) { f.style.display = show ? 'grid' : 'none'; if (show) { const i = f.querySelector('input:not([disabled]),select'); if (i) i.focus(); } } };
+      if (b.dataset.apDo === 'refund-edit') { openRefund(host.dataset.apId); return; }
       if (b.dataset.apDo === 'edit-open') { toggle('[data-ap-form="delete"]', false); toggle('[data-ap-form="edit"]', true); return; }
       if (b.dataset.apDo === 'edit-cancel') { toggle('[data-ap-form="edit"]', false); return; }
       if (b.dataset.apDo === 'delete-open') { toggle('[data-ap-form="edit"]', false); toggle('[data-ap-form="delete"]', true); return; }
@@ -1092,6 +1143,7 @@
     wireLL();
     wireAcc();
     wireVen();
+    wireRefunds();
     fromHash();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
