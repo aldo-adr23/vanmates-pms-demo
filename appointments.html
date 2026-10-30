@@ -285,7 +285,6 @@ table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps
     var url = view ? view.book_url : '';
     return '<div class="grid2">' +
       '<div class="pane card"><h3>' + (forName ? esc(forName) + '’s booking page' : 'Your booking page') + '</h3>' +
-      photoRow(forName ? (view && view.photo) : (S.pic || (view && view.photo)), forName) +
       '<div class="check"><input type="checkbox" id="sActive"' + (s.active ? ' checked' : '') + ' /><label for="sActive"><b>Take bookings</b><div class="hint">Off: your page says booking is unavailable and you are left out of the team page.</div></label></div>' +
       '<div class="check"><input type="checkbox" id="sPool"' + (s.in_pool !== false ? ' checked' : '') + ' /><label for="sPool"><b>Take new leads from the team page</b><div class="hint">The team page shares new people out in turn. Leads you already own always book with you.</div></label></div>' +
       '<label class="f" for="sSlug">Link name</label><input class="inp" id="sSlug" value="' + esc(s.slug || '') + '" maxlength="40" />' +
@@ -303,13 +302,6 @@ table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps
       '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">' + (forName ? '<button class="btn btn-ghost" data-act="backteam">Back to team</button>' : '') + '<button class="btn btn-primary" id="sSave">Save</button></div></div>' +
       '</div>';
   }
-  function photoRow(pic, forName) {
-    var img = pic ? '<img src="' + esc(pic) + '" alt="" referrerpolicy="no-referrer" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none" />'
-      : '<span style="width:56px;height:56px;border-radius:50%;background:#F3ECE0;flex:none"></span>';
-    var hint = forName ? (pic ? 'Their Google photo is shown on their booking page.' : 'No photo yet: it is added when they save their own booking page.')
-      : (pic ? 'Your Google photo is shown on your booking page. Press Save to update it.' : 'No Google photo found: your page shows your initials.');
-    return '<div style="display:flex;align-items:center;gap:12px;margin:4px 0 12px">' + img + '<div class="hint">' + hint + '</div></div>';
-  }
   function readSettings() {
     var weekly = {};
     DAYS.forEach(function (d) {
@@ -324,7 +316,7 @@ table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps
   }
   function wireSettings(memberId) {
     $('sSave').addEventListener('click', async function () {
-      var body = readSettings(); if (memberId) body.member_id = memberId; else if (S.pic) body.photo = S.pic;
+      var body = readSettings(); if (memberId) body.member_id = memberId;
       this.disabled = true;
       try {
         await api('POST', '/api/appt/settings', body);
@@ -399,11 +391,7 @@ table.reps { width: 100%; border-collapse: collapse; } table.reps th, table.reps
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal(''); });
 
-  sb.auth.getSession().then(function (r) {
-    var s = r.data.session; $('me').textContent = s && s.user ? s.user.email : '';
-    var m = (s && s.user && s.user.user_metadata) || {};
-    S.pic = m.avatar_url || m.picture || ''; // Google sign-in photo; saved as the booking-page photo
-  });
+  sb.auth.getSession().then(function (r) { var s = r.data.session; $('me').textContent = s && s.user ? s.user.email : ''; });
   var start = new URLSearchParams(location.search).get('tab');
   if (start === 'settings' || start === 'past') S.tab = start;
   loadMe().then(function () { if (S.tab === 'settings') render(); else loadList(); });
