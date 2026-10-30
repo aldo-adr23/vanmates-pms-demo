@@ -5,8 +5,8 @@
    Loaded by index.html after the main script (uses esc, showToast, CURRENT_USER, window.properties, window.vmDb.sb
    and the shared detail panel). */
 (function(){
-  const TYPES = { cleaning: 'Cleaning', utility: 'Utilities', internet: 'Internet', employee_expense: 'Employee expense', landlord_rent: 'Landlord rent', other: 'Other' };
-  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['landlord_rent', 'Landlords'], ['school', 'School properties']];
+  const TYPES = { cleaning: 'Cleaning', utility: 'Utilities', internet: 'Internet', employee_expense: 'Employee expense', vendor: 'Vendor', b2b: 'B2B', landlord_rent: 'Landlord rent', other: 'Other' };
+  const TABS = [['all', 'All'], ['cleaning', 'Cleaning'], ['utility', 'Utilities'], ['internet', 'Internet'], ['employee_expense', 'Employee expenses'], ['vendor', 'Vendors'], ['b2b', 'B2B'], ['landlord_rent', 'Landlords'], ['school', 'School properties']];
   const VIEWS = [['open', 'Open'], ['review', 'To review'], ['approved', 'Approved · to pay'], ['paid', 'Paid'], ['skipped', 'Skipped'], ['everything', 'Everything']];
   const STATUS = { needs_review: ['Needs review', 'red'], flagged: ['Flagged', 'red'], approved: ['Approved', 'blue'], paid: ['Paid', ''], recorded: ['In QuickBooks', ''], skipped: ['Skipped', ''] };
   const FLAGS = {
@@ -19,7 +19,8 @@
   const COLS = 8;
 
   // ── pure helpers (window.AP_CORE, tested in test/ap.test.js) ──
-  const inTab = (r, tab) => tab === 'all' || r.type === tab;
+  // Vendors / B2B also show employee receipts from a listed vendor (data.vendorKind, set by the database); they stay payroll items.
+  const inTab = (r, tab) => tab === 'all' || r.type === tab || (['vendor', 'b2b'].includes(tab) && (r.data || {}).vendorKind === tab);
   function inView(r, view){
     if (view === 'everything') return true;
     if (view === 'open') return ['needs_review', 'flagged', 'approved'].includes(r.status);
@@ -144,6 +145,24 @@
         units: [...new Set(mine.map(a => String(a.unit || '').replace(/C$/, '')).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
     }).sort((a, b) => (b.s.active === false ? 0 : 1) - (a.s.active === false ? 0 : 1) || String(a.s.name).localeCompare(String(b.s.name)));
   }
+  // ── vendors and B2B partners (ap-vendors-2026-10-30.sql) ──
+  // One row per list entry of a kind: its items (by data.vendorId), what is still open, what was paid in the last 12 months.
+  function vendorSummary(vendors, rows, kind, today, q){
+    const since = new Date(new Date((today || new Date().toISOString().slice(0, 10)) + 'T12:00:00Z').getTime() - 365 * 864e5).toISOString().slice(0, 10);
+    const t = String(q || '').trim().toLowerCase();
+    return vendors.filter(v => v.kind === kind && (!t || [v.name, v.category, v.email, v.city, v.notes, ...(v.aliases || [])].some(x => String(x || '').toLowerCase().includes(t))))
+      .map(v => {
+        const mine = rows.filter(r => (r.data || {}).vendorId === v.id);
+        const open = mine.filter(r => ['needs_review', 'flagged', 'approved'].includes(r.status));
+        const paid = mine.filter(r => ['paid', 'recorded'].includes(r.status) && String(r.paid_at || r.bill_date || '').slice(0, 10) >= since);
+        const sum = (l) => l.reduce((s, r) => s + Number(r.amount_cents || 0), 0);
+        return { v, items: mine.length, open: open.length, openCents: sum(open), paidCents: sum(paid),
+          last: mine.map(r => String(r.bill_date || r.created_at || '').slice(0, 10)).filter(Boolean).sort().pop() || null };
+      })
+      .sort((a, b) => (b.v.active === false ? 0 : 1) - (a.v.active === false ? 0 : 1) || b.open - a.open || String(a.v.name).localeCompare(String(b.v.name)));
+  }
+  // Aliases typed in the form: "Obox, Obox Solutions" -> ['Obox', 'Obox Solutions'] (trimmed, no blanks, no repeats).
+  const parseAliases = (s) => [...new Set(String(s || '').split(',').map(x => x.trim()).filter(Boolean))];
   /** Add property form defaults from a bill: "1200 Rue Jeanne-Mance # 1609, MONTRÉAL QC H2X0E8" -> that street as the name
    * (or the bill's property when it is not a portal property yet), the address, and the city when the form lists it. */
   function newPropertyPrefill(r, names){
@@ -154,7 +173,7 @@
   }
   // Same rule as vm_ap_approver(): admins, accountants, and anyone granted the AP page.
   const canAct = (u) => !!u && (['admin', 'accountant'].includes(String(u.role || '')) || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes('ap')));
-  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, editFields, editPatch, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary, newPropertyPrefill };
+  window.AP_CORE = { TYPES, TABS, VIEWS, STATUS, FLAGS, METHOD, inTab, inView, money, parseAmount, summarize, sortRows, actionsFor, editFields, editPatch, etransferList, canAct, periodText, batchPreview, chequesLeft, landlordSummary, ACC_STATUS, accountPlace, accountsFor, schoolSummary, newPropertyPrefill, vendorSummary, parseAliases };
   if (typeof document === 'undefined') return;
 
   const S = { tab: 'all', view: 'open', q: '', city: '', sel: new Set() };
@@ -403,6 +422,7 @@
         ${field('City', e(r.city || ''))}
         ${field('Service address', e(d.serviceAddress || ''))}
         ${field('Vendor', e(d.vendor || ''))}
+        ${d.vendorId ? field('On the list', `${e(d.vendorName || '')} <span class="tag-pill" style="font-size:11px">${d.vendorKind === 'b2b' ? 'B2B' : 'Vendor'}</span>`) : ''}
         ${field('Paid', r.paid_at ? e(when(r.paid_at)) + (r.paid_ref ? ' · ' + e(r.paid_ref) : '') : '')}
         ${field('Approved', r.approved_at ? e(when(r.approved_at)) + ' · ' + e(r.approved_by || '') : '')}
         ${field('Source', r.doc_url ? `<a class="btn btn-ghost btn-mini" style="text-decoration:none" href="${e(r.doc_url)}" target="_blank" rel="noopener">${r.type === 'employee_expense' ? 'View receipt' : 'Open the original'} ↗</a>` : e(r.source))}
@@ -483,8 +503,11 @@
     if (list) list.style.display = on || school ? 'none' : '';
     if (bar) bar.style.display = on || school ? 'none' : '';
     if (card) card.style.display = acc ? '' : 'none';
+    const ven = ['vendor', 'b2b'].includes(S.tab), vcard = document.getElementById('ap-ven');
+    if (vcard) vcard.style.display = ven ? '' : 'none';
     if (on) { if (!LL.terms) llLoad(); else renderLL(); }
     if (acc) { if (!ACC.accounts) accLoad(); else renderAcc(); }
+    if (ven) { if (!VEN.list) venLoad(); else renderVen(); }
   }
 
   function renderLL(){
@@ -886,6 +909,107 @@
     } catch (_) {}
   }
 
+  // ───────────── AP → Vendors / B2B list ─────────────
+  const VEN = { list: null, loading: null, q: '' };
+  const VEN_KIND = { vendor: ['Vendor', 'Vendors', 'Suppliers we pay: accounting, laundry, bedding, appliances…'], b2b: ['B2B partner', 'B2B partners', 'Agencies and partners we pay a commission to'] };
+
+  async function venLoad(force){
+    if (VEN.loading) return VEN.loading;
+    if (VEN.list && !force) { renderVen(); return; }
+    VEN.loading = (async () => {
+      try {
+        const r = await sb().from('ap_vendors').select('*').order('name');
+        if (r.error) throw r.error;
+        VEN.list = r.data || [];
+        renderVen();
+      } catch (err) {
+        console.error('[ap] vendors load failed', err);
+        const msg = String(err && err.message || err);
+        const note = document.getElementById('ap-ven-note');
+        if (note) note.textContent = /ap_vendors/.test(msg) && /exist|schema cache/i.test(msg) ? 'Vendors are not set up in the database yet (run ap-vendors-2026-10-30.sql).' : 'Could not load vendors: ' + msg;
+      } finally { VEN.loading = null; }
+    })();
+    return VEN.loading;
+  }
+
+  function renderVen(){
+    const kind = S.tab;
+    if (!['vendor', 'b2b'].includes(kind) || !VEN.list) return;
+    const title = document.getElementById('ap-ven-title'), tools = document.getElementById('ap-ven-tools'), note = document.getElementById('ap-ven-note'),
+      head = document.getElementById('ap-ven-head'), body = document.getElementById('ap-ven-body'), empty = document.getElementById('ap-ven-empty');
+    if (!body) return;
+    const act = canAct(me()), [one, many, what] = VEN_KIND[kind];
+    const list = vendorSummary(VEN.list, rows || [], kind, today(), VEN.q);
+    title.innerHTML = `<b>${e(many)}</b> <span class="name-sub">${e(VEN.list.filter(v => v.kind === kind && v.active !== false).length)}</span>`;
+    tools.innerHTML = `<input class="form-input" id="ap-ven-q" placeholder="Name, alias, category" value="${e(VEN.q)}" style="max-width:220px">`
+      + (act ? `<button class="btn btn-primary" type="button" data-ven-do="add">Add ${e(one.toLowerCase())}</button>` : '');
+    note.textContent = `${what}. A bill sent to rent@ or a receipt sent to Lu lands in this tab when it names one of these (name or alias). Receipts an employee paid themselves stay in Employee expenses too, so payroll pays them back.`;
+    head.innerHTML = '<tr><th>Name</th><th>Category</th><th>Also called</th><th>Items</th><th style="text-align:right">Open</th><th style="text-align:right">Paid · 12 months</th><th>Last</th></tr>';
+    body.innerHTML = list.map(x => `<tr class="clickable" data-ven-open="${e(x.v.id)}" tabindex="0" style="cursor:pointer${x.v.active === false ? ';opacity:.6' : ''}">
+        <td><b>${e(x.v.name)}</b>${x.v.active === false ? ' <span class="tag-pill" style="font-size:11px">Inactive</span>' : ''}<div class="name-sub">${e(x.v.email || x.v.city || '')}</div></td>
+        <td>${e(x.v.category || '—')}</td><td class="name-sub">${e((x.v.aliases || []).join(', ') || '—')}</td><td>${e(x.items)}</td>
+        <td style="text-align:right">${x.open ? `<b>${e(money(x.openCents))}</b><div class="name-sub">${e(x.open)} open</div>` : '—'}</td>
+        <td style="text-align:right">${x.paidCents ? e(money(x.paidCents)) : '—'}</td><td>${e(x.last || '—')}</td></tr>`).join('');
+    empty.style.display = list.length ? 'none' : '';
+  }
+
+  function openVendor(id, kind){
+    const v = id ? (VEN.list || []).find(x => x.id === id) : { kind: kind || 'vendor', active: true, aliases: [] };
+    if (!v) return;
+    const act = canAct(me()), dis = act ? '' : 'disabled';
+    const inp = (name, label, val, extra) => `<label class="name-sub">${e(label)} <input class="form-input" name="${name}" value="${e(val == null ? '' : val)}" ${dis} ${extra || ''}></label>`;
+    const mine = id ? sortRows((rows || []).filter(r => (r.data || {}).vendorId === id)).reverse() : [];
+    openPanel(v.name || '+', id ? v.name : `New ${VEN_KIND[v.kind][0].toLowerCase()}`, id ? `${VEN_KIND[v.kind][0]}${v.category ? ' · ' + v.category : ''} · ${mine.length} item(s)` : 'Bills and receipts that name it go to its tab',
+      id && v.active === false ? chip(['Inactive', '']) : '');
+    document.getElementById('panel-body').innerHTML = `<form data-ven-form="vendor" data-ven-id="${e(id || '')}" style="display:grid;gap:8px;max-width:440px">
+      <label class="name-sub">List <select class="form-input" name="kind" ${dis}>${Object.entries(VEN_KIND).map(([k, [l]]) => `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${e(l)}</option>`).join('')}</select></label>
+      ${inp('name', 'Name', v.name, 'required placeholder="Obox Solution"')}
+      ${inp('aliases', 'Also called (comma separated)', (v.aliases || []).join(', '), 'placeholder="Obox, Obox Solutions Inc"')}
+      <div class="name-sub">A bill or receipt goes to this tab when its payee or vendor contains the name or one of these words.</div>
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('category', 'Category', v.category, 'placeholder="Accounting, Laundry, Agency commission…"')}</div><div style="flex:1">${inp('city', 'City', v.city)}</div></div>
+      <div style="display:flex;gap:8px"><div style="flex:1">${inp('email', 'Email / e-transfer', v.email)}</div><div style="flex:1">${inp('payment_method', 'Usually paid by', v.payment_method, 'placeholder="E-transfer, cheque, card…"')}</div></div>
+      <label class="name-sub">Notes <textarea class="form-input" name="notes" rows="3" ${dis}>${e(v.notes || '')}</textarea></label>
+      <label class="name-sub"><input type="checkbox" name="active" ${v.active !== false ? 'checked' : ''} ${dis}> Active</label>
+      ${act ? `<div><button class="btn btn-primary" type="submit">${id ? 'Save' : 'Add'}</button></div>` : ''}
+      ${id && v.updated_by ? `<div class="name-sub">Last change ${e(when(v.updated_at))} · ${e(v.updated_by)}</div>` : ''}
+    </form>
+    ${id ? H(`Bills and receipts (${mine.length})`) + `<div style="display:grid;gap:4px">${mine.map(r => `<div style="display:flex;gap:10px;align-items:center;cursor:pointer" data-ven-item="${e(r.id)}">
+        <span class="name-sub" style="min-width:84px">${e(String(r.bill_date || r.created_at || '').slice(0, 10))}</span><span style="flex:1;min-width:0">${e(r.payee)}${r.type === 'employee_expense' ? ' <span class="name-sub">(employee)</span>' : ''}</span>
+        <span style="min-width:80px;text-align:right">${e(money(r.amount_cents))}</span>${pill(r.status)}</div>`).join('') || '<div class="name-sub">Nothing yet.</div>'}</div>` : ''}`;
+  }
+
+  async function venSubmit(f){
+    const fd = new FormData(f), id = f.dataset.venId || '', str = (k) => String(fd.get(k) || '').trim();
+    try {
+      const r = await sb().rpc('ap_vendor_save', { p: { id, kind: str('kind'), name: str('name'), aliases: parseAliases(fd.get('aliases')), category: str('category'),
+        email: str('email'), payment_method: str('payment_method'), city: str('city'), notes: String(fd.get('notes') || ''), active: !!fd.get('active') } });
+      if (r.error) throw r.error;
+      toast(id ? 'Saved. Matching bills and receipts moved to its tab.' : 'Added. Matching bills and receipts moved to its tab.');
+      await Promise.all([venLoad(true), load(true)]);
+      openVendor(r.data.id);
+    } catch (err) { toast('Could not save: ' + (/ap_vendors_name_uq|duplicate/i.test(String(err && err.message)) ? 'that name is already on the list.' : (err && err.message || err))); }
+  }
+
+  function wireVen(){
+    const card = document.getElementById('ap-ven');
+    if (!card) return;
+    card.addEventListener('click', ev => {
+      if (ev.target.closest('[data-ven-do="add"]')) { openVendor(null, S.tab); return; }
+      const r = ev.target.closest('[data-ven-open]'); if (r) openVendor(r.dataset.venOpen);
+    });
+    card.addEventListener('keydown', ev => { if (ev.key !== 'Enter') return; const r = ev.target.closest('[data-ven-open]'); if (r) r.click(); });
+    let t = null;
+    card.addEventListener('input', ev => { if (ev.target.id === 'ap-ven-q') { VEN.q = ev.target.value; clearTimeout(t); t = setTimeout(() => { renderVen(); const q = document.getElementById('ap-ven-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250); } });
+    const pb = document.getElementById('panel-body');
+    if (pb) {
+      pb.addEventListener('click', ev => { const it = ev.target.closest('[data-ven-item]'); if (it) open(it.dataset.venItem); });
+      pb.addEventListener('submit', ev => { const f = ev.target.closest('[data-ven-form]'); if (!f) return; ev.preventDefault(); venSubmit(f); });
+    }
+    try {
+      if (sb() && sb().channel) sb().channel('ap_vendors_live').on('postgres_changes', { event: '*', schema: 'public', table: 'ap_vendors' }, () => { if (VEN.list) { clearTimeout(wireVen._t); wireVen._t = setTimeout(() => venLoad(true), 800); } }).subscribe();
+    } catch (_) {}
+  }
+
   function fromHash(){
     const m = (location.hash || '').match(/^#ap(?:=(ap-[0-9a-f]+))?$/);
     if (!m) return false;
@@ -967,6 +1091,7 @@
     } catch (_) {}
     wireLL();
     wireAcc();
+    wireVen();
     fromHash();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
