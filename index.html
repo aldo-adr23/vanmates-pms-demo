@@ -1878,7 +1878,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-10-30-acctmgr2"></script>
+<script src="pms-supabase.js?v=2026-10-31-hmprof1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -13266,6 +13266,9 @@ const HH_ROOMS = { state: "idle", byHost: new Map() };
 function hhInvalidateHostCaches(){
   HH_PAYOUT.state = "idle";
   HH_ROOMS.state = "idle";
+  // Matching (Host profiles readiness, case room pickers) caches the same rooms-list: drop it too, so a room
+  // switched on or priced on the host card stops reading "No bookable room" without a page reload (hmprof1).
+  try { hmRoomsStale(); } catch (e) { /* matching not set up yet */ }
 }
 
 async function loadHostRooms(){
@@ -40143,13 +40146,32 @@ function hmReadiness(h){
   return { payouts: !!h.payable, room, matching: !!(p && p.matching_active),
     listing: !!(l && (l.status === "approved" || l.approved)) };
 }
+// Per room, what stops matching from using it. Prices alone are not enough: the room must also be switched on
+// with "Take public bookings" on the host card (rooms.bookable), which the host card shows separately (hmprof1).
+function hmRoomProblems(h){
+  const rooms = (HM.rooms || []).filter(r => String(r.host_id) === String(h.host_id) && !r.archived_at);
+  if (!rooms.length) return "This host has no rooms: add one on the host card.";
+  return rooms.map(r => {
+    const miss = [];
+    if (!(Math.round(Number(r.weekly_rate) || 0) > 0)) miss.push("no student price");
+    if (!(Math.round(Number(r.host_weekly_rate) || 0) > 0)) miss.push("no host price");
+    if (r.bookable !== true) miss.push("not taking bookings: press <b>Take public bookings</b> on the host card");
+    return `<div style="margin:2px 0 0 10px">– ${hmEsc(r.label || "Room")}: ${miss.length ? miss.join("; ") : "ready"}</div>`;
+  }).join("");
+}
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hm-rooms-recheck]");
+  if (!t) return;
+  HM.roomsLoaded = false;
+  hmReadyEnsureRooms();
+});
 function hmReadyChips(h){
   const r = hmReadiness(h);
   const chip = (ok, label, why) => `<span class="badge ${ok === true ? "badge-green" : ok === null ? "badge-grey" : "badge-amber"}" title="${hmEsc(why)}"><span class="dot"></span>${hmEsc(label)}</span>`;
   const ready = r.payouts && r.room === true && r.matching && r.listing;
   return (ready ? '<span class="badge badge-green"><span class="dot"></span>Ready to match</span> ' : "")
     + [chip(r.payouts, "Payouts", r.payouts ? "Stripe payouts set up" : "Stripe payouts not set up"),
-       chip(r.room, "Room", r.room === null ? (HM.roomsLoading ? "Loading rooms…" : "Rooms not loaded") : r.room ? "Has a bookable room with both prices" : "No bookable room with student and host prices"),
+       chip(r.room, "Room", r.room === null ? (HM.roomsLoading ? "Loading rooms…" : "Rooms not loaded") : r.room ? "Has a bookable room with both prices" : "No room with both prices that is taking bookings (host card: Take public bookings)"),
        chip(r.matching, "Matching", r.matching ? "Active for matching" : "Not active for matching"),
        chip(r.listing, "Listing", r.listing ? "Listing approved" : "Listing not approved")].join(" ");
 }
@@ -40160,8 +40182,9 @@ function hmReadyList(h){
   const items = [];
   if (!r.payouts) items.push("<b>Payouts:</b> finish the host's Stripe payout setup.");
   if (r.room === null) items.push("<b>Room:</b> " + (HM.roomsLoading ? "checking rooms…" : "rooms could not be loaded; open this tab again to retry."));
-  else if (!r.room) items.push("<b>Room:</b> no bookable room with a student price and a host price. "
-    + (card ? `<button class="btn btn-ghost btn-mini" type="button" data-hm-open-host="${hmEsc(card.id)}">Open host card</button>` : "No host card with this email."));
+  else if (!r.room) items.push("<b>Room:</b> no room matching can use yet. " + hmRoomProblems(h)
+    + (card ? ` <button class="btn btn-ghost btn-mini" type="button" data-hm-open-host="${hmEsc(card.id)}">Open host card</button>` : " No host card with this email.")
+    + ` <button class="btn btn-ghost btn-mini" type="button" data-hm-rooms-recheck>Check again</button>`);
   if (!r.matching) items.push("<b>Matching:</b> Tick Active for matching below and Save profile.");
   if (!r.listing) items.push("<b>Listing:</b> approve it in the Listing section below.");
   return `<div class="card-sub" style="margin-bottom:4px"><b>Not ready to match yet.</b> To fix:</div>`
@@ -40179,6 +40202,13 @@ function hmReadyUpdate(hostId){
     hmWebRefresh(h.host_id);
   }
 }
+// The rooms changed somewhere else (host card): forget the cached list; refetch now if Host profiles is on screen.
+function hmRoomsStale(){
+  if (typeof HM === "undefined") return;
+  HM.roomsLoaded = false;
+  const pane = document.getElementById("hm-profiles-pane");
+  if (pane && pane.style.display !== "none" && document.querySelector("#hm-profiles [data-hm-ready-chips]")) hmReadyEnsureRooms();
+}
 // rooms-list is an n8n execution: loaded (once, cached) only when the Host profiles tab is shown.
 function hmReadyEnsureRooms(){
   if (HM.roomsLoaded) return;
@@ -40192,7 +40222,71 @@ document.addEventListener("click", (ev) => {
   if (typeof openHost === "function") openHost(t.dataset.hmOpenHost);
 });
 
+/* ---- Unsaved Host profile edits (hmprof1, 2026-10-31). The ticks and fields of a profile are saved only by
+   Save profile; Save text / Approve listing save the listing. Edits were lost two ways: staff pressed a listing
+   button instead, or any case action re-rendered this list (loadHomestayMatching) and wiped the open rows.
+   Now: an "Unsaved changes" badge, the listing buttons save a changed profile first, and a re-render keeps
+   open rows open and puts unsaved values back. */
+function hmProfField(el){
+  return !!(el && el.closest && el.closest("[data-hm-profile]") && !el.closest("[data-hml-box],[data-hm-crc]")
+    && (el.name || (el.hasAttribute && el.hasAttribute("data-hm-web-photo"))));
+}
+function hmProfDirtySet(){ return HM.profileDirty || (HM.profileDirty = new Set()); }
+function hmProfMarkDirty(hostId, on){
+  const set = hmProfDirtySet();
+  if (on) set.add(hostId); else set.delete(hostId);
+  const html = on ? '<span class="badge badge-amber" title="Press Save profile to keep these changes"><span class="dot"></span>Unsaved changes</span>' : "";
+  document.querySelectorAll(`[data-hm-dirty="${CSS.escape(String(hostId))}"]`).forEach(el => { el.innerHTML = html; });
+}
+for (const evName of ["input", "change"]) document.addEventListener(evName, (ev) => {
+  const t = ev.target;
+  if (!hmProfField(t)) return;
+  hmProfMarkDirty(t.closest("[data-hm-profile]").dataset.hmProfile, true);
+});
+window.addEventListener("beforeunload", (ev) => {
+  if (!HM.profileDirty || !HM.profileDirty.size) return;
+  if (!document.querySelector("#hm-profiles [data-hm-profile]")) return;
+  ev.preventDefault(); ev.returnValue = "";
+});
+function hmProfSnapshot(){
+  const open = new Set(), vals = new Map();
+  document.querySelectorAll("#hm-profiles details[open] [data-hm-profile]").forEach(el => open.add(el.dataset.hmProfile));
+  for (const id of hmProfDirtySet()) {
+    const root = document.querySelector(`[data-hm-profile="${CSS.escape(id)}"]`);
+    if (!root) continue;
+    const v = {};
+    root.querySelectorAll("input[name],select[name],textarea[name]").forEach(el => {
+      if (el.closest("[data-hml-box],[data-hm-crc]")) return;
+      v[el.name] = { value: el.type === "checkbox" ? el.checked : el.value, auto: el.dataset.auto };
+    });
+    const ph = root.querySelector("[data-hm-web-photos]");
+    vals.set(id, { v, photos: ph && ph.dataset.touched ? hmWebPicked(id) : null });
+  }
+  return { open, vals };
+}
+function hmProfRestore(snap){
+  for (const [id, s] of snap.vals) {
+    const root = document.querySelector(`[data-hm-profile="${CSS.escape(id)}"]`);
+    if (!root) { hmProfDirtySet().delete(id); continue; }
+    for (const [name, x] of Object.entries(s.v)) {
+      const el = [...root.querySelectorAll(`[name="${CSS.escape(name)}"]`)].find(e => !e.closest("[data-hml-box],[data-hm-crc]"));
+      if (!el) continue;
+      if (el.type === "checkbox") el.checked = !!x.value; else el.value = x.value;
+      if (x.auto !== undefined) el.dataset.auto = x.auto;
+    }
+    const ph = root.querySelector("[data-hm-web-photos]");
+    if (ph && s.photos) { ph.dataset.touched = "1"; ph.innerHTML = hmWebPhotosHtml(id, s.photos); }
+    hmWebRefresh(id);
+    hmProfMarkDirty(id, true);
+  }
+  for (const id of snap.open) {
+    const root = document.querySelector(`[data-hm-profile="${CSS.escape(id)}"]`);
+    const det = root && root.closest("details");
+    if (det) det.open = true;
+  }
+}
 function hmRenderProfiles(){
+  const snap = hmProfSnapshot();
   const byId = new Map(HM.profiles.map(p => [p.host_id, p]));
   const rows = HM.hosts.filter(h => h.payable);
   const box = document.getElementById("hm-profiles");
@@ -40203,7 +40297,7 @@ function hmRenderProfiles(){
     const card = hmHostCard(h);
     return `<details class="list-row" style="display:block"><summary><b>${hmEsc(h.display_name)}</b>
         <span class="card-sub">${hmEsc(p.city || "no profile")}${p.area ? " · " + hmEsc(p.area) : ""}${p.matching_active ? " · active" : ""}${p.sms_opted_out_at ? " · SMS opted out" : p.sms_consent_at ? " · SMS consent" : ""}${p.crc_path ? " · criminal record check on file" : ""}</span>
-        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span><span data-hm-web-badge="${k}">${hmWebBadges(p)}</span>
+        <span data-hml-badge="${k}">${hmlBadge(h.host_id)}</span> <span data-hm-dirty="${k}"></span><span data-hm-web-badge="${k}">${hmWebBadges(p)}</span>
         ${p.application_id != null ? `<button type="button" class="hb-link" style="font-size:12.5px" data-ha-open-app="${hmEsc(p.application_id)}">Application ${hmEsc((HM.appRefs && HM.appRefs.get(Number(p.application_id))) || "#" + p.application_id)}</button>` : ""}
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px" data-hm-ready-chips="${k}">${hmReadyChips(h)}</div>
         ${card && lc(card.name).trim() !== lc(h.display_name).trim() ? `<div class="card-sub">Host card: ${hmEsc(card.name)} · Payout account: ${hmEsc(h.display_name)}</div>` : ""}</summary>
@@ -40235,7 +40329,9 @@ function hmRenderProfiles(){
         <label style="grid-column:1/-1">Notes <textarea class="form-input" name="notes">${hmEsc(p.notes)}</textarea></label>
         ${hmWebBox(h, p)}
         <div style="grid-column:1/-1"><button class="btn" type="button" data-hm-save-profile="${k}">Save profile</button>
-          <span class="card-sub" id="hm-pmsg-${k}"></span></div>
+          <span data-hm-dirty="${k}"></span>
+          <span class="card-sub" id="hm-pmsg-${k}"></span>
+          <div class="card-sub" style="font-size:12px;margin-top:2px">Saves everything above, including Website settings. The Listing below has its own buttons.</div></div>
         <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px">
           <div class="card-title" style="font-size:15px">Criminal record check <span class="card-sub">(optional)</span></div>
           <div data-hm-crc="${k}">${hmCrcBox(h.host_id)}</div>
@@ -40259,6 +40355,7 @@ function hmRenderProfiles(){
     if (det.open && b && !b.dataset.loaded) hmlLoad(b.dataset.hmlBox);
   }));
   for (const h of rows) hmWebRefresh(h.host_id);
+  hmProfRestore(snap);
   const pane = document.getElementById("hm-profiles-pane");
   if (pane && pane.style.display !== "none") hmReadyEnsureRooms();
 }
@@ -40274,7 +40371,11 @@ async function hmSaveProfile(hostId){
     out.textContent = "Saving phone…";
     phoneMsg = await hmSavePhone(host, phone);
   }
-  const done = m => { out.textContent = [phoneMsg, m].filter(Boolean).join(" "); };
+  const done = m => {
+    out.textContent = [phoneMsg, m].filter(Boolean).join(" ");
+    out.style.color = /not saved|^check |cannot|incomplete|error|failed|denied|violates|need/i.test(out.textContent) ? "var(--red)" : "";
+  };
+  const phoneOk = !/^Phone not saved/.test(phoneMsg);
   const f = { host_id: hostId };
   ["city","area","max_students","languages","pets_detail","unavailable_until","notes","student_genders","min_age","max_age","transit"].forEach(n => f[n] = get(n).value);
   ["has_pets","accepts_minors","smoking_household","email_only","matching_active","has_children"].forEach(n => f[n] = get(n).checked);
@@ -40304,7 +40405,7 @@ async function hmSaveProfile(hostId){
   const isNew = !HM.profiles.some(p => p.host_id === hostId);
   const same = (a, b) => JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b);
   const changed = isNew || !!prev.sms_consent_at !== consent || Object.keys(r.value).some(k => !same(r.value[k], prev[k]));
-  if (!changed) { done(phoneMsg ? "" : "Nothing changed."); return; }
+  if (!changed) { done(phoneMsg ? "" : "Nothing changed."); if (phoneOk) hmProfMarkDirty(hostId, false); return; }
   const now = new Date().toISOString();
   // The database stamps consent (trigger hm_profile_consent: now() + the signed-in staff email, kept while
   // ticked) and never lets staff change sms_opted_out_at; what the browser sends here only says on/off.
@@ -40340,6 +40441,7 @@ async function hmSaveProfile(hostId){
     const badge = document.querySelector(`[data-hm-web-badge="${CSS.escape(hostId)}"]`);
     if (badge) badge.innerHTML = hmWebBadges(fresh);
     hmReadyUpdate(hostId);
+    if (phoneOk) hmProfMarkDirty(hostId, false);
   }
 }
 
@@ -41149,6 +41251,12 @@ document.addEventListener("click", async (ev) => {
   if (msg) msg.textContent = "Working…";
   try {
     let flash = "Saved.";
+    // The profile ticks above are not part of the listing: save them too, so they don't look saved and vanish (hmprof1).
+    let profNote = "";
+    if (t.dataset.hmlAct && hmProfDirtySet().has(hostId)) {
+      await hmSaveProfile(hostId);
+      profNote = hmProfDirtySet().has(hostId) ? " The profile above was NOT saved: see the message next to Save profile." : " Profile saved too.";
+    }
     if (t.dataset.hmlRemove) await hmlCall(hostId, "photo-remove", { id: Number(t.dataset.hmlRemove) });
     else if (t.dataset.hmlMove !== undefined) {
       // The Worker takes the full list of photo ids in the new order.
@@ -41170,7 +41278,7 @@ document.addEventListener("click", async (ev) => {
       const r = await hmlCall(hostId, "send-link");
       flash = r && r.texted ? "Listing link sent by email and text." : "Listing link sent by email.";
     }
-    await hmlLoad(hostId, flash);
+    await hmlLoad(hostId, flash + profNote);
     // Only the listing statuses: loadHomestayMatching() would re-render the list and close this row.
     await hmlRefreshStatuses();
   } catch (e) {
@@ -45918,13 +46026,13 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-10-30-acctmgr2"></script>
-<script src="extensions.js?v=2026-10-30-acctmgr2"></script>
-<script src="retention.js?v=2026-10-30-acctmgr2"></script>
-<script src="ap.js?v=2026-10-30-acctmgr2"></script>
-<script src="properties.js?v=2026-10-30-acctmgr2"></script>
-<script src="partner-sales.js?v=2026-10-30-acctmgr2"></script>
-<script src="ar.js?v=2026-10-30-acctmgr2"></script>
-<script src="mx-finance.js?v=2026-10-30-acctmgr2"></script>
+<script src="room-changes.js?v=2026-10-31-hmprof1"></script>
+<script src="extensions.js?v=2026-10-31-hmprof1"></script>
+<script src="retention.js?v=2026-10-31-hmprof1"></script>
+<script src="ap.js?v=2026-10-31-hmprof1"></script>
+<script src="properties.js?v=2026-10-31-hmprof1"></script>
+<script src="partner-sales.js?v=2026-10-31-hmprof1"></script>
+<script src="ar.js?v=2026-10-31-hmprof1"></script>
+<script src="mx-finance.js?v=2026-10-31-hmprof1"></script>
 </body>
 </html>
