@@ -138,6 +138,14 @@
         const row = { ef_id: cellStr(g('ef_id')), name: name.replace(/\s+/g, ' '), email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : '',
           building: cellStr(g('building')) || fileBuilding, unit: unitRaw || lastUnit, bed: cellStr(g('bed')),
           move_in: readDate(g('move_in'), 'DMY', swap), move_out: readDate(g('move_out'), 'DMY', swap) };
+        // EF Toronto mixes real serials with day/month-swapped ones (7 Nov typed as 7/11 into an M/D Excel = 11 Jul).
+        // A stay that ends before it starts: try the other reading of an ambiguous serial (day <= 12, day != month).
+        if (efToronto && row.move_in && row.move_out && row.move_in > row.move_out) {
+          const alt = v => typeof v === 'number' && v > 20000 ? readDate(v, 'DMY', !swap) : '';
+          const o2 = alt(g('move_out')), i2 = alt(g('move_in'));
+          if (o2 && o2 !== row.move_out && o2 >= row.move_in) row.move_out = o2;
+          else if (i2 && i2 !== row.move_in && i2 <= row.move_out) row.move_in = i2;
+        }
         if (!row.move_out) { problems.push(`${sh.name} row ${h.row + i + 2}: no readable check-out date (${cellStr(g('move_out')) ? 'not a date' : 'empty'})`); return; }
         if (row.move_in && row.move_in > row.move_out) { problems.push(`${sh.name} row ${h.row + i + 2}: check-out before check-in`); return; }
         const key = (row.ef_id || row.email || row.name.toLowerCase()) + '|' + row.move_in;
