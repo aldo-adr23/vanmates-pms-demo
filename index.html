@@ -1130,6 +1130,9 @@
   .hb-view .hb-table{width:100%;border-collapse:collapse}
   .hb-view .hb-table th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);padding:14px 16px 10px;white-space:nowrap}
   .hb-view .hb-table td{padding:14px 16px;border-top:1px solid var(--cream-2);vertical-align:top;font-size:13.5px}
+  .hb-view .hb-table td.hb-row-acts{white-space:nowrap;text-align:right;cursor:default}
+  .hb-view .hb-table td.hb-row-acts .btn + .btn,.hb-view .hb-table td.hb-row-acts .hb-sub + .btn{margin-left:6px}
+  .hb-view .hb-table td.hb-row-acts .hb-sub{display:inline}
   .hb-view .hb-row{cursor:pointer}
   .hb-view .hb-row:hover td,.hb-view .hb-row:focus td{background:var(--cream)}
   .hb-view .hb-row:focus{outline:none}
@@ -1884,7 +1887,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-03-efdep2"></script>
+<script src="pms-supabase.js?v=2026-11-03-hbrowact1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -36724,7 +36727,7 @@ function ahsArrivalText(row, city){
   const HB_TABS = ['waiting', 'arriving', 'ongoing', 'ended', 'needs', 'new'];
   const HB_STAGE_WORDS = { waiting: 'Waiting on payment', arriving: 'Arriving', ongoing: 'Ongoing', ended: 'Ended' };
   const HB_COLS = {
-    waiting: ['Student', 'Host', 'Stay', 'Weekly', 'Fees due', 'Status'],
+    waiting: ['Student', 'Host', 'Stay', 'Weekly', 'Fees due', 'Status', ''],
     arriving: ['Student', 'Host', 'Move-in', 'Weekly', 'Letter', 'Agreement'],
     ongoing: ['Student', 'Host', 'Stay', 'Weekly', 'Status'],
     ended: ['Student', 'Host', 'Stay', 'Moved out', 'Deposit', 'Final payout'],
@@ -36806,7 +36809,7 @@ function ahsArrivalText(row, city){
       const s = hbStatusLine(b, today);
       const sub = [s.sub, ahsReminderWords(b, Date.now())].filter(Boolean).join(' · ');
       cells = [who, host, hbCell(dates, hbStayLength(b.lease_days) === '—' ? '' : hbStayLength(b.lease_days)), weekly,
-        hbCell(hbFeesWords(b) || '—'), hbCell(s.text, sub, s.need)];
+        hbCell(hbFeesWords(b) || '—'), hbCell(s.text, sub, s.need), hbRowActs(b)];
     } else if (hbTab === 'arriving') {
       const l = hbLetterWords(b), a = hbAgreementWords(b);
       cells = [who, host, hbCell(b.move_in_date || '—', hbStayProgress(b, today)), weekly,
@@ -36824,6 +36827,49 @@ function ahsArrivalText(row, city){
     }
     return '<tr class="hb-row' + (stale ? ' hb-stale' : '') + '" data-ref="' + esc(b.booking_ref) + '" tabindex="0">' +
       cells.join('') + '</tr>';
+  }
+
+  // 2026-11-03 (Aldo: "an option here to cancel and reminders individually"):
+  // Remind / Cancel on each Waiting row, so one booking doesn't need the panel.
+  // Same calls as the panel (hbRemindOne, booking-cancel); Cancel still asks first.
+  function hbRowActs(b) {
+    const ref = esc(b.booking_ref);
+    const remind = ahsCanPayLink(b) && b.student_email
+      ? '<button type="button" class="btn btn-ghost btn-mini hb-row-remind" data-ref="' + ref + '" title="Email ' + esc(b.student_email) + ' their payment link from hello@">Remind</button>' : '';
+    const cancel = hbCanCancel(b)
+      ? (hbCanWrite()
+        ? '<button type="button" class="btn btn-ghost btn-mini hb-row-cancel" title="Cancel this booking — the payment link stops working">Cancel</button>'
+        : '<button type="button" class="btn btn-ghost btn-mini hb-row-token" title="Cancelling needs the full staff token">Cancel</button>') : '';
+    return '<td class="hb-row-acts" data-ref="' + ref + '">' + remind + cancel + '</td>';
+  }
+  async function hbRowRemind(btn) {
+    const ref = btn.getAttribute('data-ref');
+    if (!ref || btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const msg = await hbRemindOne(ref);
+    hbStatusFor(null, ref + ': ' + msg.message, !msg.ok);
+    if (typeof showToast === 'function') showToast(ref + ': ' + msg.message);
+    hbRenderList();
+    hbRefreshPanel(true);
+  }
+  function hbRowCancelAsk(cell) {
+    cell.innerHTML = '<span class="hb-sub">Cancel booking?</span>' +
+      '<button type="button" class="btn btn-primary btn-mini hb-row-cancel-go">Yes, cancel</button>' +
+      '<button type="button" class="btn btn-ghost btn-mini hb-row-cancel-keep">Keep</button>';
+  }
+  async function hbRowCancel(cell) {
+    const ref = cell.getAttribute('data-ref');
+    cell.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+    hbStatusFor(null, 'Cancelling ' + ref + '…');
+    try {
+      const d = await hbPost('booking-cancel', { booking_ref: ref });
+      const m = d.already ? ref + ' was already cancelled.' : ref + ' cancelled — the payment link no longer works. It is under Ended.';
+      hbStatusFor(null, m);
+      if (typeof showToast === 'function') showToast(m);
+    } catch (e) {
+      hbStatusFor(null, e.message, true);
+    }
+    try { await hbLoadBookings(hbPanelRef); } catch (e) { hbStatus(e.message, true); hbRenderList(); }
   }
 
   // "Send payment reminders (N)": Waiting tab only, and only when someone is due one.
@@ -38245,11 +38291,22 @@ function ahsArrivalText(row, city){
     if (hbList) {
       hbList.addEventListener('click', (e) => {
         if (e.target.closest('#hb-stale-toggle')) { hbShowStale = !hbShowStale; hbRenderList(); return; }
+        const acts = e.target.closest('.hb-row-acts');
+        if (acts) {
+          const rb = e.target.closest('.hb-row-remind');
+          if (rb) return hbRowRemind(rb);
+          if (e.target.closest('.hb-row-cancel')) return hbRowCancelAsk(acts);
+          if (e.target.closest('.hb-row-cancel-go')) return hbRowCancel(acts);
+          if (e.target.closest('.hb-row-cancel-keep')) return hbRenderList();
+          if (e.target.closest('.hb-row-token')) return hbAskForToken('Cancelling a booking needs the full staff token, not the view-only one.');
+          return; // clicks in the actions cell never open the panel
+        }
         const tr = e.target.closest('.hb-row');
         if (tr) hbOpenPanel(tr.getAttribute('data-ref'));
       });
       hbList.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.target.closest('.hb-row-acts')) return;
         const tr = e.target.closest('.hb-row');
         if (tr) { e.preventDefault(); hbOpenPanel(tr.getAttribute('data-ref')); }
       });
@@ -46347,14 +46404,14 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-11-03-efdep2"></script>
-<script src="extensions.js?v=2026-11-03-efdep2"></script>
-<script src="retention.js?v=2026-11-03-efdep2"></script>
-<script src="ap.js?v=2026-11-03-efdep2"></script>
-<script src="properties.js?v=2026-11-03-efdep2"></script>
-<script src="partner-sales.js?v=2026-11-03-efdep2"></script>
-<script src="ar.js?v=2026-11-03-efdep2"></script>
-<script src="mx-finance.js?v=2026-11-03-efdep2"></script>
-<script src="ef-deposits.js?v=2026-11-03-efdep2"></script>
+<script src="room-changes.js?v=2026-11-03-hbrowact1"></script>
+<script src="extensions.js?v=2026-11-03-hbrowact1"></script>
+<script src="retention.js?v=2026-11-03-hbrowact1"></script>
+<script src="ap.js?v=2026-11-03-hbrowact1"></script>
+<script src="properties.js?v=2026-11-03-hbrowact1"></script>
+<script src="partner-sales.js?v=2026-11-03-hbrowact1"></script>
+<script src="ar.js?v=2026-11-03-hbrowact1"></script>
+<script src="mx-finance.js?v=2026-11-03-hbrowact1"></script>
+<script src="ef-deposits.js?v=2026-11-03-hbrowact1"></script>
 </body>
 </html>
