@@ -1887,7 +1887,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-03-hbrowact1"></script>
+<script src="pms-supabase.js?v=2026-11-03-jpleads1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1932,9 +1932,9 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       Meets
       <span class="nav-count">↗</span>
     </a>
-    <button class="nav-item" data-view="jleads">
+    <button class="nav-item" data-view="jpleads">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.3 9 9 0 0 1-2.5-.3L5 21l1.4-4a8.1 8.1 0 0 1-2.4-5.5C4 6.9 7.8 3.2 12.5 3.2S21 6.9 21 11.5z"/></svg>
-      JLeads
+      JP Leads
       <span class="nav-count">—</span>
     </button>
     <button class="nav-item" data-view="sales">
@@ -2789,8 +2789,8 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       </div>
     </section>
 
-    <!-- ============ JLEADS (LINE MAYA) ============ -->
-    <section class="view" data-view="jleads">
+    <!-- ============ JP LEADS (Japanese leads: LINE + email, Maya) ============ -->
+    <section class="view" data-view="jpleads">
       <div class="filter-bar">
         <div class="filter-search">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -2801,6 +2801,12 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
           <option value="new">New (untouched)</option>
           <option value="ongoing">Ongoing (in conversation)</option>
           <option value="customer">Existing customers</option>
+        </select>
+        <select id="jleads-filter-channel" class="form-input" style="max-width:170px" title="LINE = a LINE chat Maya can write to · Email = an email address · updates as contacts arrive">
+          <option value="">All channels</option>
+          <option value="line">LINE</option>
+          <option value="email">Email</option>
+          <option value="both">LINE + Email</option>
         </select>
         <select id="jleads-filter-tier" class="form-input" style="max-width:200px">
           <option value="">All tiers</option>
@@ -2846,7 +2852,8 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       <div class="card">
         <div class="card-head" style="justify-content:space-between;padding:14px 18px">
           <div class="card-title"><b id="jleads-count">0</b> <span id="jleads-count-label">LINE leads</span> <span id="jleads-new" class="name-sub"></span> <span id="jleads-due" class="name-sub"></span></div>
-          <div class="name-sub">Captured by Maya on LINE · updates as she learns more</div>
+          <div style="display:flex;align-items:center;gap:10px"><span class="name-sub">LINE and email · Maya and the Japan team</span>
+            <button type="button" class="btn btn-ghost btn-mini" id="jp-transfers-btn" hidden title="Japanese leads still in other reps' pipelines, and the notices to those reps">Transfers <span id="jp-transfers-count" class="nav-count" style="margin-left:4px"></span></button></div>
         </div>
         <!-- The table scrolls inside the card instead of spilling past its edge. -->
         <div style="overflow-x:auto">
@@ -4916,6 +4923,17 @@ button.lm-tool{background:none;border:0;padding:0;font:inherit;font-size:12.5px}
       <button class="modal-close" id="rcv-modal-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <form class="modal-body" id="rcv-modal-form" autocomplete="off" novalidate></form>
+  </div>
+</div>
+<!-- ============ JP LEADS › TRANSFERS (admin) ============ -->
+<div class="modal-backdrop" id="jpt-backdrop" aria-hidden="true">
+  <div class="modal-dialog" role="dialog" aria-labelledby="jpt-title" style="max-width:980px;width:96vw">
+    <div class="modal-head">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg></div>
+      <div><div class="modal-title" id="jpt-title">JP Leads transfers</div><div class="modal-sub" id="jpt-sub">Japanese leads in other reps' pipelines, the notices to those reps, and every move</div></div>
+      <button class="modal-close" id="jpt-close" aria-label="Close" type="button"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body" id="jpt-body" style="max-height:74vh;overflow:auto"></div>
   </div>
 </div>
 <!-- ============ AFFILIATES & PROMO CODES MODAL ============ -->
@@ -9221,9 +9239,9 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","retention","team","settings"]},
+                nav:["dashboard","leads","jpleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","retention","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
-                nav:["dashboard","leads","jleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
+                nav:["dashboard","leads","jpleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
                 nav:["dashboard","tenants","properties","maintenance"]},
   accountant:  {label:"Accountant",         color:"#C8923A", desc:"Financials, portfolio, and landlord contracts",
@@ -9492,10 +9510,15 @@ function showToast(msg){
 // Affiliates & promo codes (2026-10-10) is the Partners page's people, the same rule as
 // vm_partners_member() on its tables. test/page-access.test.js reads this.
 const PAGE_ALIASES = {"affiliates": "partners", "host-recruitment": "homestay-hosts", "appointments": "leads"};
+// Renamed page keys (old -> new). Saved allowed_pages and links may still carry the old key: vmNormPages maps them.
+const PAGE_RENAMES = {"jleads": "jpleads"};
+function vmNormPages(pages){
+  return Array.isArray(pages) ? pages.map(p => PAGE_RENAMES[p] || p).filter((p, i, a) => a.indexOf(p) === i) : pages;
+}
 const ALL_PAGES = [
   ["dashboard",        "Dashboard"],
   ["leads",            "Leads"],
-  ["jleads",           "JLeads"],
+  ["jpleads",          "JP Leads"],
   ["sales",            "Sales"],
   ["cs",               "Customer Service"],
   ["phone-calls",      "Phone calls"],
@@ -9726,7 +9749,7 @@ function buildEditRolePicker(currentRole, currentPages){
   const pages = document.getElementById("edit-member-pages");
   const checkedSet = new Set(
     Array.isArray(currentPages) && currentPages.length > 0
-      ? currentPages
+      ? vmNormPages(currentPages)
       : (roles[currentRole]?.nav || [])
   );
   pages.innerHTML = ALL_PAGES.map(([k, label]) =>
@@ -10250,7 +10273,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
   const roleLabel = (typeof roles === "object" && roles[role]?.label) || role;
 
   const pageLabels = {
-    "dashboard":"Dashboard","leads":"Leads","jleads":"JLeads","sales":"Sales","cs":"Customer Service","phone-calls":"Phone calls","arrivals":"Arrivals",
+    "dashboard":"Dashboard","leads":"Leads","jpleads":"JP Leads","sales":"Sales","cs":"Customer Service","phone-calls":"Phone calls","arrivals":"Arrivals",
     "assistants":"Assistants","tenants":"Tenants","properties":"Properties & rooms",
     "partner-inventory":"Partner inventory","partners":"Partners",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
@@ -12019,7 +12042,7 @@ const titles = {
   dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
-  jleads: ["<em>JLeads</em>", "Japanese-market leads captured by Maya on LINE — triage, claim, and track"],
+  jpleads: ["<em>JP Leads</em>", "Every Japanese lead in one place — LINE and email, worked by Maya and the Japan team"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap: review, quote with the tenant, confirm, complete"],
   retention: ["Customer <em>retention</em>", "Tenants who sent a checkout form or whose lease ends soon: contact, offer an extension or room change, track the outcome"],
   extensions: ["<em>Extensions</em>", "Requests from vanmates.com/extend-stay: co-living accept sends the extension contract; homestay accept emails a payment link"],
@@ -12052,6 +12075,7 @@ const titles = {
 };
 
 function goToView(v, savedView){
+  if(typeof PAGE_RENAMES === "object" && PAGE_RENAMES[v]) v = PAGE_RENAMES[v];   // old links / saved views (jleads -> jpleads)
   // Update sidebar active state
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));
   const navBtn = document.querySelector(`.nav-item[data-view="${v}"]`);
@@ -17541,7 +17565,7 @@ function updateSidebarCounts(){
   if(typeof teamMembers !== "undefined")       set("team",              teamMembers.length);
   if(typeof ctTabs === "function" && typeof contracts !== "undefined") set("contracts", ctTabs(contracts).counts.waiting);
   if(typeof leads !== "undefined")             set("leads",             leads.filter(leadIsNewForBadge).length, "New leads — nobody has contacted them yet");
-  if(typeof leads !== "undefined")             set("jleads",            leads.filter(jleadIsNewForBadge).length, "New LINE leads — nobody has contacted them yet");
+  if(typeof leads !== "undefined")             set("jpleads",           leads.filter(jleadIsNewForBadge).length, "New Japanese leads — nobody has contacted them yet");
 }
 updateSidebarCounts();
 
@@ -21122,7 +21146,7 @@ if(_origGoToView){
           city:     row.city || existing?.city || null,
           color:    row.color || existing?.color || "#8A7B6C",
           avatar_url: row.avatar_url || existing?.avatar_url || null,
-          allowed_pages: row.allowed_pages,  // NULL or array
+          allowed_pages: vmNormPages(row.allowed_pages),  // NULL or array (renamed page keys mapped)
           can_approve_refunds: row.can_approve_refunds === true,  // checkout money steps (vm_is_finance)
           can_approve_refund_step: tmApproveStep[row.id] === true,  // checkout approve_refund only
           can_decide_short_notice: tmDecide[row.id] === true,  // checkout short-notice review decisions
@@ -31687,6 +31711,8 @@ const JLEAD_KEEPERS = ['nae@vanmates.com', 'catherine@vanmates.com', 'akane@vanm
 function leadIsJapan(lead){
   if(!lead) return false;
   if(String(lead.source || '') === 'line-maya') return true;
+  // Moved to JP Leads by the Japan-lead transfer (jp-leads-2026-11-03.sql): Japan for good, whatever its language.
+  if(lead.jpLead === true || lead.jpLead === 'true') return true;
   if(!/^(ja|jp)/i.test(String(lead.language || ''))) return false;
   const by = String(lead.claimed_by || '').toLowerCase();
   return !by || JLEAD_KEEPERS.indexOf(by) >= 0;
@@ -32199,6 +32225,7 @@ const JLEAD_KEEPER_EMAILS = ['nae@vanmates.com', 'catherine@vanmates.com', 'akan
 function isJLead(l){
   if(!l) return false;
   if(String(l.source || '') === JLEAD_SOURCE) return true;
+  if(l.jpLead === true || l.jpLead === 'true') return true;   // transferred to JP Leads (keep equal to leadIsJapan)
   if(!/^(ja|jp)/i.test(String(l.language || ''))) return false;
   const by = String(l.claimed_by || '').toLowerCase();
   return !by || JLEAD_KEEPER_EMAILS.indexOf(by) >= 0;
@@ -32222,6 +32249,25 @@ function jleadLineId(l){
 function jleadLineShort(id){
   const s = String(id || '');
   return s.length > 14 ? s.slice(0, 10) + '…' + s.slice(-4) : s;
+}
+
+// Communication channel (JP Leads filter). LINE = a LINE chat Maya can write to (a LINE lead, or a lead
+// with a linked LINE user id); a LINE ID typed into a website form is not a chat, so it does not count.
+// Email = a usable email address. Recomputed on every render, so it follows the lead as contacts arrive.
+const JLEAD_CHANNELS = [['', 'All channels'], ['line', 'LINE'], ['email', 'Email'], ['both', 'LINE + Email']];
+function jleadHasLine(l){ return !!l && (String(l.source || '') === JLEAD_SOURCE || !!jleadLineId(l)); }
+function jleadEmailAddr(l){
+  const m = String((l && (l.email || jleadPayload(l).email)) || '').toLowerCase().match(/[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+  return m ? m[0] : '';
+}
+function jleadChannel(l){
+  const line = jleadHasLine(l), email = !!jleadEmailAddr(l);
+  return line && email ? 'both' : line ? 'line' : email ? 'email' : 'none';
+}
+function jleadChannelCounts(list){
+  const c = { '': 0, line: 0, email: 0, both: 0, none: 0 };
+  (list || []).forEach(l => { c[''] += 1; c[jleadChannel(l)] += 1; });
+  return c;
 }
 
 // Maya's tier is her read of the conversation; the portal `status` is the sales
@@ -32257,6 +32303,8 @@ function jleadMoveIn(l){
 }
 
 function jleadMatches(l, f){
+  const ch = (f && f.channel) || '';
+  if(ch && jleadChannel(l) !== ch) return false;
   const tier = (f && f.tier) || '';
   const housing = String((f && f.housing) || '').toLowerCase();
   const q = String((f && f.search) || '').trim().toLowerCase();
@@ -32582,6 +32630,95 @@ function jleadCsCell(cs){
 }
 /* JLEADS-CORE-END */
 
+/* JP-TRANSFER-CORE-START */
+// Japanese leads held by reps outside the Japan team, for the admin's JP Leads › Transfers review
+// (jp-leads-2026-11-03.sql does the move, the audit and the per-rep notice drafts). Pure: no DOM, no globals.
+// Keep JP_TEAM equal to vm_jp_team() and JP_TRANSFER_OPEN to the statuses jp_transfer_leads moves.
+const JP_TEAM = ['nae@vanmates.com', 'catherine@vanmates.com', 'akane@vanmates.com'];
+const JP_TRANSFER_OPEN = ['new', 'contacted', 'qualified', 'follow_up'];
+const JP_KEEPERS = ['nae@vanmates.com', 'catherine@vanmates.com', 'akane@vanmates.com', 'taylor@vanmates.com', 'maya@vanmates.com', 'aldo@vanmates.com'];
+// Same test as vm_name_is_japanese / the n8n intake's jaName: Japanese script, or every word Hepburn romaji.
+// A name with no letters counts as Japanese there; here it proves nothing, so it returns false.
+const JP_ROMAJI = /^(?:(?:(?:kk|k|g|pp|p|b|m|r|n)y?|hy|(?:tt|t|d)(?=[aeo])|h(?=[aeio])|s(?=[aeuo])|ssh|sh|tch|ch|tts|ts|z|j|f|w|y)?[aeiou]|n|m(?=[bp]))+$/;
+function jpHasJapaneseScript(s){ return /[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]/.test(String(s || '')); }
+// Hiragana or kanji. Katakana alone is also how Japanese write FOREIGN names (アサド = Asad), so it is weaker.
+function jpHasKanaOrKanji(s){ return /[\u3040-\u309f\u3400-\u9fff]/.test(String(s || '')); }
+function jpLatinPartsJapanese(n){
+  const words = String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  return words.every(w => JP_ROMAJI.test(w));
+}
+function jpNameIsJapanese(n){
+  if(jpHasJapaneseScript(n)) return true;
+  const words = String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  return words.length > 0 && words.every(w => JP_ROMAJI.test(w));
+}
+// Strong signal, mirrors vm_lead_japan_signal (the automatic transfer uses only these).
+function jpLeadSignal(l){
+  if(!l) return '';
+  if(String(l.source || '') === 'line-maya') return 'LINE lead';
+  const raw = (l.raw && typeof l.raw === 'object') ? l.raw : {};
+  if(String((raw.line && raw.line.user_id) || l.line_user_id || '').trim()) return 'LINE chat linked';
+  if(/^(ja|jp)/i.test(String(l.language || ''))) return 'Japanese language';
+  return '';
+}
+// -> [{ lead, reasons:[...], strong, preselect, dupOf }] for open leads a non-JP rep holds.
+// preselect (ticked by default) = a strong signal AND a Japanese name, or Japanese script in the name.
+// Weak-only matches (romaji-looking name, +81 phone, .jp email) are listed unticked for a human to judge:
+// the Japan Page's ads reach non-Japanese people in Japan (the 10-29 incident).
+function jpTransferCandidates(all, now){
+  const list = (all || []).filter(l => l && !l.deleted_at);
+  const jpEmails = {};
+  list.forEach(l => { if(leadIsJapanLike(l)){ const e = String(l.email || '').trim().toLowerCase(); if(e) jpEmails[e] = l.id; } });
+  const out = [];
+  list.forEach(l => {
+    if(l.jpLead === true || l.jpLead === 'true') return;
+    const by = String(l.claimed_by || '').toLowerCase();
+    if(!by || JP_KEEPERS.indexOf(by) >= 0) return;
+    if(JP_TRANSFER_OPEN.indexOf(l.status || 'new') < 0) return;
+    if(String(l.source || '') === 'line-maya') return;   // already JP Leads whoever holds it
+    const reasons = [];
+    const sig = jpLeadSignal(l);
+    if(sig) reasons.push(sig);
+    const script = jpHasJapaneseScript(l.name);
+    const nameJa = jpNameIsJapanese(l.name);
+    if(script) reasons.push('Japanese script in name');
+    else if(nameJa) reasons.push('Japanese-looking name');
+    const phone = String(l.phone || '').replace(/[^\d+]/g, '');
+    if(/^(\+|00)81/.test(phone)) reasons.push('Japan phone (+81)');
+    if(/\.jp$/i.test(String(l.email || '').trim())) reasons.push('.jp email');
+    if(!reasons.length) return;
+    // A Japanese-looking name alone (Anna, Mina, Ken) or a +81 phone alone is not enough to list.
+    if(!sig && !script && !(nameJa && reasons.length >= 2)) return;
+    const e = String(l.email || '').trim().toLowerCase();
+    // Ticked: hiragana/kanji in the name; katakana with no non-Japanese Latin word beside it; or a strong signal + a Japanese name.
+    const scriptSure = script && (jpHasKanaOrKanji(l.name) || jpLatinPartsJapanese(l.name));
+    out.push({ lead: l, reasons, strong: !!sig, preselect: scriptSure || (!!sig && !script && nameJa), dupOf: (e && jpEmails[e] && jpEmails[e] !== l.id) ? jpEmails[e] : '' });
+  });
+  return out.sort((a, b) => (b.preselect - a.preselect) || String(a.lead.claimed_by || '').localeCompare(String(b.lead.claimed_by || ''))
+    || String(b.lead.created_at || '').localeCompare(String(a.lead.created_at || '')));
+}
+// In JP Leads, or would be (unclaimed Japanese): what the duplicate check compares against.
+function leadIsJapanLike(l){
+  if(!l) return false;
+  if(String(l.source || '') === 'line-maya' || l.jpLead === true || l.jpLead === 'true') return true;
+  const by = String(l.claimed_by || '').toLowerCase();
+  return /^(ja|jp)/i.test(String(l.language || '')) && (!by || JP_KEEPERS.indexOf(by) >= 0);
+}
+// Candidates grouped by the rep who holds them: [{ rep, items }] (what each notice will list).
+function jpGroupByRep(items){
+  const m = {};
+  (items || []).forEach(c => { const r = String(c.lead.claimed_by || '').toLowerCase(); (m[r] = m[r] || []).push(c); });
+  return Object.keys(m).sort().map(rep => ({ rep, items: m[rep] }));
+}
+// Lines of a notice body that list leads ("• Name — email — Stage"), parsed for the preview table.
+function jpNoticeLeadLines(body){
+  return String(body || '').split('\n').filter(x => /^•\s/.test(x)).map(x => {
+    const p = x.replace(/^•\s*/, '').split(' — ');
+    return { name: p[0] || '', email: p[1] || '', stage: p.slice(2).join(' — ') || '' };
+  });
+}
+/* JP-TRANSFER-CORE-END */
+
 function leadSourceLabelText(s){ return LEAD_SOURCES[s] || (s ? leadTermText(s) : 'Lead'); }
 function leadSourceLabel(s){ return esc(leadSourceLabelText(s)); }
 function leadCap(s){ return s ? (s.charAt(0).toUpperCase() + s.slice(1)).replace(/_/g, ' ') : '—'; }
@@ -32741,6 +32878,7 @@ function leadOwnerHistoryHtml(l){
   const line = (e) => e.how === 'released' ? `Released from <b>${esc(nm(e.from))}</b> (no activity) — back to Unassigned`
     : e.how === 'took' ? `<b>${esc(nm(e.to))}</b> took it from ${esc(nm(e.from))}`
     : e.how === 'reassigned' ? `${esc(nm(e.by))} reassigned it from ${esc(nm(e.from) || 'nobody')} to <b>${esc(nm(e.to))}</b>`
+    : e.how === 'jp_transfer' ? `Moved to <b>JP Leads</b> from ${esc(nm(e.from))} to <b>${esc(nm(e.to))}</b>${e.by && e.by !== 'auto' ? ' by ' + esc(nm(e.by)) : ' (automatic)'}`
     : `Claimed by <b>${esc(nm(e.to))}</b>`;
   return `<details style="margin-top:6px" ${h.length <= 4 ? 'open' : ''}><summary class="name-sub" style="cursor:pointer;font-size:12px">Owner history (${h.length})</summary>
     <div style="padding:4px 2px 0 14px;display:flex;flex-direction:column;gap:2px">${h.slice().reverse().map(e => `<div class="name-sub" style="font-size:12px">${when(e.at)} · ${line(e)}</div>`).join('')}</div></details>`;
@@ -33609,7 +33747,7 @@ function renderLeads(){
   renderJLeads();
 }
 
-const JLEAD_FILTERS = { search:'', stage:'', tier:'', housing:'', status:'open', followup:'', sort:'' };
+const JLEAD_FILTERS = { search:'', stage:'', tier:'', housing:'', status:'open', followup:'', sort:'', channel:'' };
 
 // When this viewer last opened each lead's LINE chat (per browser). A customer
 // reply newer than that shows as unread.
@@ -33673,8 +33811,13 @@ function jleadTierBadge(t){
 
 // LINE gives no e-mail for many prospects and never a phone, so the contact
 // cell falls back to the LINE id — that is genuinely how sales reaches them.
+const JLEAD_CHANNEL_BADGE = { line: ['LINE', '#06c755'], email: ['Email', '#2563eb'], both: ['LINE + Email', '#0e7490'], none: ['No contact', '#9aa0a6'] };
+function jleadChannelBadge(l){
+  const b = JLEAD_CHANNEL_BADGE[jleadChannel(l)];
+  return `<span class="badge" style="background:${b[1]}1a;color:${b[1]};border-color:${b[1]}33;margin-bottom:3px">${b[0]}</span>`;
+}
 function jleadContactCell(l){
-  const parts = [];
+  const parts = [jleadChannelBadge(l)];
   if(l.email) parts.push(`<a href="${safeHref('mailto:'+l.email)}">${esc(l.email)}</a>`);
   const lid = jleadLineId(l);
   if(lid) parts.push(`<span class="name-sub" title="${esc(lid)}">LINE ${esc(jleadLineShort(lid))}</span>`);
@@ -33682,7 +33825,7 @@ function jleadContactCell(l){
   const typed = !lid && String(jleadPayload(l).lineId || '').trim();
   if(typed) parts.push(`<span class="name-sub" title="LINE ID from the website form">LINE ID ${esc(typed.slice(0, 40))}</span>`);
   if(!lid && l.phone) parts.push(`<a href="${safeHref('tel:'+l.phone)}">${esc(l.phone)}</a>`);
-  return parts.join('<br>') || '—';
+  return parts.join('<br>');
 }
 
 // LINE leads Customer Service holds (jleads_cs_state RPC), refreshed at most once a minute while
@@ -33718,6 +33861,12 @@ function renderJLeads(){
   JLEAD_FILTERS.seen = jleadSeenMap();
   JLEAD_FILTERS.cs = _jleadCs;
   const list = selectJLeads(typeof leads !== 'undefined' ? leads : [], JLEAD_FILTERS, leadStatusFilterMatches, now, custIdx);
+  // Channel option counts: the list as filtered by everything except the channel itself.
+  const chSel = document.getElementById('jleads-filter-channel');
+  if(chSel){
+    const cnt = jleadChannelCounts(selectJLeads(typeof leads !== 'undefined' ? leads : [], Object.assign({}, JLEAD_FILTERS, { channel:'' }), leadStatusFilterMatches, now, custIdx));
+    JLEAD_CHANNELS.forEach(([v, label]) => { const o = chSel.querySelector(`option[value="${v}"]`); if(o) o.textContent = `${label} (${cnt[v] || 0})`; });
+  }
   const countEl = document.getElementById('jleads-count');
   if(countEl) countEl.textContent = list.length;
   const labelEl = document.getElementById('jleads-count-label');
@@ -33768,12 +33917,13 @@ function renderJLeads(){
       <td>${jleadTierBadge(jleadTier(l))}</td>
       <td style="max-width:220px;min-width:180px">${jleadWithCs(l) ? jleadCsCell(_jleadCs[l.id]) : jleadFollowUpCell(l, now)}</td>
       <td>${leadStatusBadge(l.status || 'new')}</td>
-      <td>${leadAssigneeCell(l)}</td>
+      <td>${leadAssigneeCell(l)}${jptFromCell(l)}</td>
       <td>${fmtDate(l.created_at)}</td>
     </tr>`).join('');
   body.querySelectorAll('tr[data-lead]').forEach(row => {
     row.addEventListener('click', e => { if(e.target.closest('a') || e.target.closest('button')) return; openLead(row.dataset.lead); });
   });
+  jptUpdateButton();
   body.querySelectorAll('button[data-jlead-followed]').forEach(b => {
     b.addEventListener('click', e => { e.stopPropagation(); markJLeadFollowedUp(b.dataset.jleadFollowed, b); });
   });
@@ -33781,6 +33931,244 @@ function renderJLeads(){
     b.addEventListener('click', e => { e.stopPropagation(); markJLeadHandled(b.dataset.jleadHandled, b); });
   });
 }
+
+/* ---- JP Leads › Transfers (admin) -------------------------------------------------------------
+   Review the Japanese leads still in other reps' pipelines, move the ticked ones to a JP owner
+   (jp_transfer_leads: audit row per lead + one draft notice per original rep), edit each draft and send
+   it from your own Gmail (lead-mail Worker POST /api/leads/jp-notice), and read every move. Leads that
+   become Japanese later move by themselves (trigger leads_jp_auto) and their drafts show up here too.
+   Nothing is emailed until an admin presses Send. */
+var JPT = { tab: 'review', sel: null, to: '', reason: '', notices: [], transfers: [], loadedAt: 0, missing: false, busy: false, confirm: false, open: false };
+function jptIsAdmin(){ return ((typeof activeRole === 'function' ? activeRole() : null) || {}).role === 'admin'; }
+function jptName(email){
+  const e = String(email || '').toLowerCase();
+  if(e === 'auto') return 'automatic';
+  const m = (typeof teamMembers !== 'undefined' ? teamMembers : []).find(x => String(x.email || '').toLowerCase() === e);
+  return m ? (m.name || m.email) : e.split('@')[0];
+}
+function jptWhen(iso){ const d = new Date(iso || ''); return isNaN(d) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+function jptFromCell(l){
+  const t = l && l.jpTransfer;
+  if(!t || !t.from) return '';
+  return `<div class="name-sub" style="font-size:11.5px" title="${esc((t.reason || '') + (t.at ? ' · ' + jptWhen(t.at) : ''))}">from ${esc(jptName(t.from))}</div>`;
+}
+// Who a transfer may go to: the Japan team members who are teammates, and Maya once she is one.
+function jptOwners(){
+  const team = (typeof teamMembers !== 'undefined' ? teamMembers : []).map(m => String(m.email || '').toLowerCase());
+  return JP_TEAM.concat(['maya@vanmates.com']).filter(e => team.indexOf(e) >= 0);
+}
+function jptCandidates(){ return jpTransferCandidates(typeof leads !== 'undefined' ? leads : []); }
+async function jptLoad(force){
+  if(!(window.vmDb && vmDb.sb) || !jptIsAdmin()) return;
+  if(!force && Date.now() - JPT.loadedAt < 60000) return;
+  JPT.loadedAt = Date.now();
+  const [n, t] = await Promise.all([
+    vmDb.sb.from('lead_transfer_notices').select('*').order('created_at', { ascending: false }).limit(300),
+    vmDb.sb.from('lead_transfers').select('*').order('transferred_at', { ascending: false }).limit(1000),
+  ]);
+  const miss = (r) => r.error && /does not exist|schema cache|not find/i.test(r.error.message || '');
+  JPT.missing = miss(n) || miss(t);
+  JPT.notices = n.data || [];
+  JPT.transfers = t.data || [];
+  jptUpdateButton();
+  if(JPT.open) jptRender();
+}
+function jptUpdateButton(){
+  const b = document.getElementById('jp-transfers-btn');
+  if(!b || typeof JPT === 'undefined' || !JPT) return;   // renderJLeads may run before this script line has (TDZ-safe)
+  b.hidden = !jptIsAdmin();
+  if(b.hidden) return;
+  if(!JPT.loadedAt) jptLoad(false);
+  const c = jptCandidates().length, d = JPT.notices.filter(x => x.status === 'draft').length;
+  const el = document.getElementById('jp-transfers-count');
+  if(el) el.textContent = (c || d) ? String(c + d) : '';
+  b.title = `${c} Japanese lead${c === 1 ? '' : 's'} in other reps' pipelines · ${d} notice draft${d === 1 ? '' : 's'} to review`;
+}
+function openJpTransfers(tab){
+  if(!jptIsAdmin()) return;
+  if(tab) JPT.tab = tab;
+  JPT.open = true; JPT.confirm = false;
+  if(!JPT.sel){ JPT.sel = {}; jptCandidates().forEach(c => { JPT.sel[c.lead.id] = c.preselect; }); }
+  const bd = document.getElementById('jpt-backdrop');
+  bd.classList.add('open'); bd.setAttribute('aria-hidden', 'false');
+  jptRender();
+  jptLoad(true);
+}
+function closeJpTransfers(){
+  JPT.open = false;
+  const bd = document.getElementById('jpt-backdrop');
+  bd.classList.remove('open'); bd.setAttribute('aria-hidden', 'true');
+}
+function jptTabs(){
+  const c = jptCandidates().length, d = JPT.notices.filter(x => x.status === 'draft').length;
+  const tab = (k, label) => `<button type="button" class="btn ${JPT.tab === k ? 'btn-primary' : 'btn-ghost'} btn-mini" data-jpt-tab="${k}">${label}</button>`;
+  return `<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">${tab('review', `Review (${c})`)}${tab('notices', `Notices${d ? ' · ' + d + ' draft' + (d === 1 ? '' : 's') : ''}`)}${tab('history', `History (${JPT.transfers.length})`)}</div>`;
+}
+function jptRender(){
+  const box = document.getElementById('jpt-body');
+  if(!box) return;
+  let html = jptTabs();
+  if(JPT.missing) html += `<div class="card-sub" style="color:#B94A3F;margin-bottom:12px">The transfer tables are not in the database yet: apply <b>jp-leads-2026-11-03.sql</b> in the Supabase SQL editor.</div>`;
+  html += JPT.tab === 'notices' ? jptNoticesHtml() : JPT.tab === 'history' ? jptHistoryHtml() : jptReviewHtml();
+  box.innerHTML = html;
+  jptWire(box);
+}
+function jptReviewHtml(){
+  const cands = jptCandidates();
+  if(!cands.length) return `<div class="empty"><div class="t">No Japanese leads in other reps' pipelines</div><div>Leads that become Japanese later (a Japanese form, a linked LINE chat) move here by themselves and their rep gets a draft notice.</div></div>`;
+  Object.keys(JPT.sel).forEach(id => { if(!cands.some(c => c.lead.id === id)) delete JPT.sel[id]; });
+  cands.forEach(c => { if(!(c.lead.id in JPT.sel)) JPT.sel[c.lead.id] = c.preselect; });
+  const owners = jptOwners();
+  if(!JPT.to || owners.indexOf(JPT.to) < 0) JPT.to = owners[0] || '';
+  const picked = cands.filter(c => JPT.sel[c.lead.id]);
+  const reps = new Set(picked.map(c => String(c.lead.claimed_by || '').toLowerCase()));
+  const groups = jpGroupByRep(cands);
+  const chip = (t, strong) => `<span class="badge" style="background:${strong ? '#B94A3F1a' : '#9aa0a61a'};color:${strong ? '#B94A3F' : '#6b7280'};border-color:${strong ? '#B94A3F33' : '#9aa0a633'};margin:0 3px 3px 0">${esc(t)}</span>`;
+  const rows = groups.map(g => {
+    const all = g.items.every(c => JPT.sel[c.lead.id]);
+    return `<tr><td colspan="6" style="background:var(--bg-soft,#f7f7f8);font-weight:600;padding:8px 10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" data-jpt-rep="${esc(g.rep)}" ${all ? 'checked' : ''}/> ${esc(jptName(g.rep))} <span class="name-sub">${esc(g.rep)} · ${g.items.length} lead${g.items.length === 1 ? '' : 's'}</span></label></td></tr>`
+      + g.items.map(c => `<tr>
+        <td style="width:28px"><input type="checkbox" data-jpt-lead="${esc(c.lead.id)}" ${JPT.sel[c.lead.id] ? 'checked' : ''}/></td>
+        <td><a href="#" data-jpt-open="${esc(c.lead.id)}"><b>${esc(c.lead.name || '—')}</b></a>${c.dupOf ? `<div class="name-sub" style="color:#b8860b">Same email as a JP lead already — merge duplicates after moving</div>` : ''}</td>
+        <td style="max-width:220px;overflow-wrap:anywhere">${esc(c.lead.email || '—')}${c.lead.phone ? `<div class="name-sub">${esc(c.lead.phone)}</div>` : ''}</td>
+        <td>${leadStatusBadge(c.lead.status || 'new')}</td>
+        <td>${c.reasons.map((r, i) => chip(r, i === 0 && c.strong)).join('')}</td>
+        <td class="name-sub">${fmtDate(c.lead.created_at)}</td></tr>`).join('');
+  }).join('');
+  const confirmTxt = `Move ${picked.length} lead${picked.length === 1 ? '' : 's'} from ${reps.size} rep${reps.size === 1 ? '' : 's'} to ${esc(jptName(JPT.to))}`;
+  return `<div class="card-sub" style="margin-bottom:10px">Open leads (new · contacted · qualified · follow up) held by reps outside the Japan team that look Japanese. <b>Ticked by default:</b> a Japanese form or LINE chat <i>and</i> a Japanese name, or Japanese script in the name. The rest are listed for you to judge — the Japan Page's ads also reach non-Japanese people living in Japan. Won and payment-pending leads never move, so deal credit and commissions stay where they are.</div>
+    <div style="overflow-x:auto"><table><thead><tr><th></th><th>Lead</th><th>Contact</th><th>Stage</th><th>Why it looks Japanese</th><th>Received</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--line,#eee)">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">New owner
+        <select class="form-input" id="jpt-to" style="min-width:200px">${owners.map(e => `<option value="${esc(e)}" ${e === JPT.to ? 'selected' : ''}>${esc(jptName(e))}${e === 'maya@vanmates.com' ? ' (AI)' : ''}</option>`).join('') || '<option value="">No Japan-team teammate found</option>'}</select></label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1;min-width:240px">Reason (kept in the audit log)
+        <input class="form-input" id="jpt-reason" value="${esc(JPT.reason || 'Identified as a Japanese lead (JP Leads migration)')}" maxlength="200"/></label>
+      ${JPT.confirm
+        ? `<button type="button" class="btn btn-primary" id="jpt-go" ${JPT.busy ? 'disabled' : ''}>${JPT.busy ? 'Moving…' : 'Confirm: ' + confirmTxt}</button><button type="button" class="btn btn-ghost" id="jpt-cancel">Cancel</button>`
+        : `<button type="button" class="btn btn-primary" id="jpt-ask" ${picked.length && JPT.to ? '' : 'disabled'}>Transfer ${picked.length} to JP Leads</button>`}
+    </div>
+    <div class="name-sub" style="margin-top:8px">Nothing is emailed: each original rep gets one draft notice listing their leads, in Notices, for you to review and send.</div>`;
+}
+function jptNoticesHtml(){
+  const drafts = JPT.notices.filter(n => n.status === 'draft' || n.status === 'sending');
+  const done = JPT.notices.filter(n => n.status === 'sent' || n.status === 'dismissed');
+  const card = (n) => {
+    const lines = jpNoticeLeadLines(n.body);
+    return `<div class="card" style="padding:14px 16px;margin-bottom:12px" data-jpt-notice="${n.id}">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div><b>To ${esc(n.rep_name || jptName(n.rep_email))}</b> <span class="name-sub">&lt;${esc(n.rep_email)}&gt; · ${n.lead_ids.length} lead${n.lead_ids.length === 1 ? '' : 's'} · ${n.kind === 'auto' ? 'automatic moves' : 'batch ' + esc(n.batch_id)} · ${esc(jptWhen(n.created_at))}${n.edited_by ? ' · edited by ' + esc(jptName(n.edited_by)) : ''}</span></div>
+        ${n.status === 'sending' ? '<span class="badge">Sending…</span>' : ''}
+      </div>
+      <input class="form-input" data-jpt-subject value="${esc(n.subject)}" maxlength="300" style="width:100%;margin-bottom:8px"/>
+      <textarea class="form-input" data-jpt-text rows="${Math.min(22, 12 + lines.length)}" style="width:100%;font-family:inherit;line-height:1.45">${esc(n.body)}</textarea>
+      <div class="name-sub" style="margin:4px 0 10px">Lines starting with “•” (Name — email — Stage) are sent as the Transferred Leads table.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary btn-mini" data-jpt-act="send">Send from my Gmail</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-jpt-act="save">Save edits</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-jpt-act="reset" title="Back to the generated text, with the current lead list">Reset text</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-jpt-act="sent" title="You told them another way">Mark as sent</button>
+        <button type="button" class="btn btn-ghost btn-mini" data-jpt-act="dismiss">Dismiss</button>
+      </div></div>`;
+  };
+  const doneRows = done.map(n => `<tr><td>${esc(n.rep_name || jptName(n.rep_email))}</td><td>${n.lead_ids.length}</td>
+      <td>${n.status === 'sent' ? `Sent ${esc(jptWhen(n.sent_at))} by ${esc(jptName(n.sent_by))}${n.sent_via === 'manual' ? ' (marked by hand)' : ' (Gmail)'}` : 'Dismissed'}</td>
+      <td class="name-sub">${n.kind === 'auto' ? 'automatic' : esc(n.batch_id)}</td>
+      <td>${n.status === 'dismissed' ? `<button type="button" class="btn btn-ghost btn-mini" data-jpt-reopen="${n.id}">Reopen</button>` : ''}</td></tr>`).join('');
+  return (drafts.length ? drafts.map(card).join('') : `<div class="empty"><div class="t">No drafts to review</div><div>Transferring leads creates one draft per original rep.</div></div>`)
+    + (done.length ? `<h4 style="margin:18px 0 6px">Sent and dismissed</h4><div style="overflow-x:auto"><table><thead><tr><th>Rep</th><th>Leads</th><th>Status</th><th>Batch</th><th></th></tr></thead><tbody>${doneRows}</tbody></table></div>` : '');
+}
+function jptHistoryHtml(){
+  if(!JPT.transfers.length) return `<div class="empty"><div class="t">No transfers yet</div></div>`;
+  const nById = {}; JPT.notices.forEach(n => { nById[n.id] = n; });
+  const rows = JPT.transfers.map(t => {
+    const n = nById[t.notice_id];
+    const ns = !n ? '—' : n.status === 'sent' ? `Sent ${esc(jptWhen(n.sent_at))}` : n.status === 'dismissed' ? 'Dismissed' : 'Draft';
+    return `<tr><td class="name-sub">${esc(jptWhen(t.transferred_at))}</td>
+      <td><a href="#" data-jpt-open="${esc(t.lead_id)}">${esc(t.lead_name || t.lead_id)}</a><div class="name-sub">${esc(t.lead_email || '')}</div></td>
+      <td>${esc(t.from_name || jptName(t.from_email))}</td><td>${esc(jptName(t.to_email))}</td>
+      <td>${leadStatusBadge(t.lead_stage || 'new')}</td>
+      <td class="name-sub">${t.kind === 'auto' ? 'Automatic' : 'By ' + esc(jptName(t.transferred_by))} · ${esc(t.reason || '')}</td>
+      <td class="name-sub">${ns}</td></tr>`;
+  }).join('');
+  return `<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Lead</th><th>From</th><th>To</th><th>Stage then</th><th>How · why</th><th>Notice</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function jptWire(box){
+  box.querySelectorAll('[data-jpt-tab]').forEach(b => b.addEventListener('click', () => { JPT.tab = b.dataset.jptTab; JPT.confirm = false; jptRender(); }));
+  box.querySelectorAll('[data-jpt-open]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); closeJpTransfers(); openLead(a.dataset.jptOpen); }));
+  box.querySelectorAll('input[data-jpt-lead]').forEach(cb => cb.addEventListener('change', () => { JPT.sel[cb.dataset.jptLead] = cb.checked; JPT.confirm = false; jptRender(); }));
+  box.querySelectorAll('input[data-jpt-rep]').forEach(cb => cb.addEventListener('change', () => {
+    jptCandidates().filter(c => String(c.lead.claimed_by || '').toLowerCase() === cb.dataset.jptRep).forEach(c => { JPT.sel[c.lead.id] = cb.checked; });
+    JPT.confirm = false; jptRender();
+  }));
+  const to = box.querySelector('#jpt-to'); if(to) to.addEventListener('change', () => { JPT.to = to.value; JPT.confirm = false; jptRender(); });
+  const rs = box.querySelector('#jpt-reason'); if(rs) rs.addEventListener('input', () => { JPT.reason = rs.value; });
+  const ask = box.querySelector('#jpt-ask'); if(ask) ask.addEventListener('click', () => { JPT.confirm = true; jptRender(); });
+  const cancel = box.querySelector('#jpt-cancel'); if(cancel) cancel.addEventListener('click', () => { JPT.confirm = false; jptRender(); });
+  const go = box.querySelector('#jpt-go'); if(go) go.addEventListener('click', jptTransfer);
+  box.querySelectorAll('[data-jpt-act]').forEach(b => b.addEventListener('click', () => jptNoticeAct(Number(b.closest('[data-jpt-notice]').dataset.jptNotice), b.dataset.jptAct, b)));
+  box.querySelectorAll('[data-jpt-reopen]').forEach(b => b.addEventListener('click', () => jptNoticeAct(Number(b.dataset.jptReopen), 'reopen', b)));
+}
+async function jptTransfer(){
+  if(JPT.busy) return;
+  const ids = jptCandidates().filter(c => JPT.sel[c.lead.id]).map(c => c.lead.id);
+  if(!ids.length || !JPT.to) return;
+  JPT.busy = true; jptRender();
+  const { data, error } = await vmDb.sb.rpc('jp_transfer_leads', { p_lead_ids: ids, p_to: JPT.to, p_reason: JPT.reason || 'Identified as a Japanese lead (JP Leads migration)' });
+  JPT.busy = false; JPT.confirm = false;
+  if(error){ showToast('Transfer failed: ' + (error.message || 'error')); jptRender(); return; }
+  // Read the moved rows back (realtime also delivers them) so both lists are right at once.
+  await Promise.all(ids.map(async id => {
+    const fresh = await vmDb.fetchLead(id);
+    const j = leads.findIndex(x => String(x.id) === String(id));
+    if(fresh && j >= 0) leads[j] = fresh;
+  }));
+  const skipped = (data && data.skipped) || [];
+  showToast(`Moved ${data.moved} lead${data.moved === 1 ? '' : 's'} to JP Leads · ${(data.notices || []).length} draft notice${(data.notices || []).length === 1 ? '' : 's'} to review` + (skipped.length ? ` · ${skipped.length} skipped` : ''));
+  JPT.tab = 'notices';
+  await jptLoad(true);
+  jptRender();
+  if(typeof renderLeads === 'function') renderLeads();
+  renderJLeads();
+  if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
+}
+const JPT_NOTICE_ERR = {
+  'admins-only': 'Only admins can do this.', 'not-a-draft': 'This notice is no longer a draft.', empty: 'Subject and message cannot be empty.',
+  not_a_draft: 'This notice is no longer a draft (someone sent or dismissed it).', not_a_teammate: 'The rep is not a portal teammate.',
+  gmail_not_connected: 'Connect your Gmail first (Leads › any lead › Email).', admins_only: 'Only admins can send notices.',
+};
+async function jptNoticeAct(id, act, btn){
+  const card = btn && btn.closest('[data-jpt-notice]');
+  const subject = card ? card.querySelector('[data-jpt-subject]').value : '';
+  const body = card ? card.querySelector('[data-jpt-text]').value : '';
+  const n = JPT.notices.find(x => x.id === id);
+  if(btn){ btn.disabled = true; }
+  const rpc = (action, extra) => vmDb.sb.rpc('jp_notice_save', Object.assign({ p_id: id, p_action: action }, extra || {}));
+  const errText = (m) => { const k = Object.keys(JPT_NOTICE_ERR).find(x => String(m || '').indexOf(x) >= 0); return k ? JPT_NOTICE_ERR[k] : (m || 'error'); };
+  try {
+    if(act === 'send'){
+      // Save the text as shown first, so what is sent is exactly what the audit keeps.
+      if(n && (subject !== n.subject || body !== n.body)){
+        const r = await rpc('save', { p_subject: subject, p_body: body });
+        if(r.error){ showToast('Not sent: ' + errText(r.error.message)); return; }
+      }
+      btn.textContent = 'Sending…';
+      const r = await leadMailCall('POST', '/api/leads/jp-notice', { notice_id: id });
+      if(r.ok && r.body && r.body.ok) showToast('Sent to ' + (n ? (n.rep_name || n.rep_email) : 'the rep') + ' from your Gmail');
+      else showToast('Not sent: ' + (JPT_NOTICE_ERR[r.body && r.body.error] || (typeof leadMailErrorText === 'function' ? leadMailErrorText(r.body && r.body.error) : (r.body && r.body.error) || 'error')));
+    } else {
+      const r = act === 'save' ? await rpc('save', { p_subject: subject, p_body: body }) : await rpc(act);
+      if(r.error){ showToast(errText(r.error.message)); return; }
+      showToast(act === 'save' ? 'Draft saved' : act === 'reset' ? 'Draft text reset' : act === 'sent' ? 'Marked as sent' : act === 'reopen' ? 'Draft reopened' : 'Draft dismissed');
+    }
+  } finally {
+    await jptLoad(true);
+    jptRender();
+  }
+}
+document.getElementById('jp-transfers-btn') && document.getElementById('jp-transfers-btn').addEventListener('click', () => openJpTransfers('review'));
+document.getElementById('jpt-close') && document.getElementById('jpt-close').addEventListener('click', closeJpTransfers);
+document.getElementById('jpt-backdrop') && document.getElementById('jpt-backdrop').addEventListener('click', e => { if(e.target.id === 'jpt-backdrop') closeJpTransfers(); });
 
 const JLEAD_STEP_LABEL = ['1st nudge', '2nd nudge', 'last nudge'];
 function jleadAgo(ms, now){
@@ -35557,7 +35945,7 @@ async function leadNameEditSave(){
   document.getElementById('lead-modal-title').textContent = name;
   leadNameEditClose();
   renderLeads();
-  if(typeof renderJLeads === 'function' && document.querySelector('.view[data-view="jleads"].active')) renderJLeads();
+  if(typeof renderJLeads === 'function' && document.querySelector('.view[data-view="jpleads"].active')) renderJLeads();
   if(typeof renderSales === 'function') renderSales();
   showToast('Name updated');
 }
@@ -35637,6 +36025,7 @@ document.getElementById('leads-filter-status')&& document.getElementById('leads-
 })();
 document.getElementById('jleads-search')       && document.getElementById('jleads-search').addEventListener('input',  e => { JLEAD_FILTERS.search = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-stage') && document.getElementById('jleads-filter-stage').addEventListener('change', e => { JLEAD_FILTERS.stage = e.target.value; renderJLeads(); });
+document.getElementById('jleads-filter-channel') && document.getElementById('jleads-filter-channel').addEventListener('change', e => { JLEAD_FILTERS.channel = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-tier')  && document.getElementById('jleads-filter-tier').addEventListener('change', e => { JLEAD_FILTERS.tier = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-housing')&& document.getElementById('jleads-filter-housing').addEventListener('change', e => { JLEAD_FILTERS.housing = e.target.value; renderJLeads(); });
 document.getElementById('jleads-filter-status')&& document.getElementById('jleads-filter-status').addEventListener('change', e => { JLEAD_FILTERS.status = e.target.value; renderJLeads(); });
@@ -46404,14 +46793,14 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-11-03-hbrowact1"></script>
-<script src="extensions.js?v=2026-11-03-hbrowact1"></script>
-<script src="retention.js?v=2026-11-03-hbrowact1"></script>
-<script src="ap.js?v=2026-11-03-hbrowact1"></script>
-<script src="properties.js?v=2026-11-03-hbrowact1"></script>
-<script src="partner-sales.js?v=2026-11-03-hbrowact1"></script>
-<script src="ar.js?v=2026-11-03-hbrowact1"></script>
-<script src="mx-finance.js?v=2026-11-03-hbrowact1"></script>
-<script src="ef-deposits.js?v=2026-11-03-hbrowact1"></script>
+<script src="room-changes.js?v=2026-11-03-jpleads1"></script>
+<script src="extensions.js?v=2026-11-03-jpleads1"></script>
+<script src="retention.js?v=2026-11-03-jpleads1"></script>
+<script src="ap.js?v=2026-11-03-jpleads1"></script>
+<script src="properties.js?v=2026-11-03-jpleads1"></script>
+<script src="partner-sales.js?v=2026-11-03-jpleads1"></script>
+<script src="ar.js?v=2026-11-03-jpleads1"></script>
+<script src="mx-finance.js?v=2026-11-03-jpleads1"></script>
+<script src="ef-deposits.js?v=2026-11-03-jpleads1"></script>
 </body>
 </html>
