@@ -671,6 +671,12 @@
   }
   .modal-head .ic svg{width:20px;height:20px}
   .modal-title{font-family:var(--serif);font-weight:700;font-size:20px;line-height:1.1}
+  .lead-name-row{display:flex;align-items:center;gap:6px}
+  .lead-name-edit{border:0;background:none;padding:3px;border-radius:6px;cursor:pointer;color:var(--muted, #8A7D6E);display:inline-flex}
+  .lead-name-edit:hover{background:var(--cream-2, #F3EDE2);color:var(--ink, #2B211A)}
+  .lead-name-edit svg{width:15px;height:15px}
+  .lead-name-edit[hidden],.lead-name-input[hidden]{display:none}
+  .lead-name-input{font-family:var(--serif);font-weight:700;font-size:18px;padding:3px 8px;border:1px solid var(--line, #E4DBC9);border-radius:8px;min-width:220px;background:#fff;color:var(--ink, #2B211A)}
   .modal-title em{color:var(--red);font-style:italic;font-weight:600}
   .modal-sub{color:var(--muted);font-size:12.5px;margin-top:2px}
   .modal-close{
@@ -1878,7 +1884,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-02-resend5"></script>
+<script src="pms-supabase.js?v=2026-11-02-leadname1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4724,7 +4730,13 @@ hello@vanmates.com · vanmates.com</textarea>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
       </div>
       <div>
-        <div class="modal-title" id="lead-modal-title">Lead</div>
+        <div class="lead-name-row">
+          <div class="modal-title" id="lead-modal-title">Lead</div>
+          <button type="button" class="lead-name-edit" id="lead-name-edit" title="Edit name" aria-label="Edit name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </button>
+          <input type="text" class="lead-name-input" id="lead-name-input" maxlength="120" placeholder="Lead name" aria-label="Lead name" hidden>
+        </div>
         <div class="modal-sub" id="lead-modal-sub"></div>
       </div>
       <button class="modal-close" id="lead-modal-close" aria-label="Close">
@@ -35438,6 +35450,7 @@ function openLead(id){
   const l = leads.find(x => String(x.id) === String(id));
   if(!l) return;
   _editingLeadId = l.id;
+  leadNameEditClose();
   fillLeadFields(l);
   if(typeof renderJLeadCustomer === 'function') renderJLeadCustomer(l);
   if(typeof renderJLeadChat === 'function') renderJLeadChat(l);
@@ -35504,6 +35517,56 @@ async function saveLead(){
   if(typeof updateSidebarCounts === 'function') updateSidebarCounts();
   if(typeof showToast === 'function') showToast('Lead updated');
 }
+
+/* Lead name: the pencil next to the drawer title turns it into a box; Enter
+   or leaving the box saves the name at once (LINE / WhatsApp leads often come
+   in with no name). Escape cancels. Same UPDATE + RLS as the drawer Save. */
+function leadNameEditClose(){
+  const t = document.getElementById('lead-modal-title'), b = document.getElementById('lead-name-edit'), i = document.getElementById('lead-name-input');
+  if(!t || !i) return;
+  i.hidden = true; t.hidden = false; if(b) b.hidden = false;
+}
+function leadNameEditOpen(){
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  const t = document.getElementById('lead-modal-title'), b = document.getElementById('lead-name-edit'), i = document.getElementById('lead-name-input');
+  if(!l || !t || !i) return;
+  i.value = l.name || '';
+  t.hidden = true; if(b) b.hidden = true; i.hidden = false;
+  i.focus(); i.select();
+}
+let _leadNameSaving = false;
+async function leadNameEditSave(){
+  const i = document.getElementById('lead-name-input');
+  if(!i || i.hidden || _leadNameSaving) return;
+  const l = leads.find(x => String(x.id) === String(_editingLeadId));
+  if(!l){ leadNameEditClose(); return; }
+  const name = i.value.replace(/\s+/g, ' ').trim();
+  if(name === String(l.name || '').trim()){ leadNameEditClose(); return; }
+  if(!name){ showToast('Name can’t be empty'); i.focus(); return; }
+  if(!window.vmDb || typeof vmDb.updateLead !== 'function' || !vmDb.sb){ showToast('Not saved — no database connection'); return; }
+  _leadNameSaving = true; i.disabled = true;
+  const patch = { name, last_touched_at: new Date().toISOString() };
+  const ok = await vmDb.updateLead(Object.assign({}, l, patch));   // toasts the reason on failure
+  _leadNameSaving = false; i.disabled = false;
+  if(!ok){ i.focus(); return; }
+  Object.assign(l, patch);
+  document.getElementById('lead-modal-title').textContent = name;
+  leadNameEditClose();
+  renderLeads();
+  if(typeof renderJLeads === 'function' && document.querySelector('.view[data-view="jleads"].active')) renderJLeads();
+  if(typeof renderSales === 'function') renderSales();
+  showToast('Name updated');
+}
+(function(){
+  const b = document.getElementById('lead-name-edit'), i = document.getElementById('lead-name-input');
+  if(b) b.addEventListener('click', leadNameEditOpen);
+  if(!i) return;
+  i.addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); leadNameEditSave(); }
+    else if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); leadNameEditClose(); }
+  });
+  i.addEventListener('blur', () => { if(!i.hidden) leadNameEditSave(); });
+})();
 
 /* Filter + modal wiring */
 document.getElementById('leads-search')       && document.getElementById('leads-search').addEventListener('input',  e => { LEAD_FILTERS.search = e.target.value; renderLeads(); });
@@ -46283,13 +46346,13 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-11-02-resend5"></script>
-<script src="extensions.js?v=2026-11-02-resend5"></script>
-<script src="retention.js?v=2026-11-02-resend5"></script>
-<script src="ap.js?v=2026-11-02-resend5"></script>
-<script src="properties.js?v=2026-11-02-resend5"></script>
-<script src="partner-sales.js?v=2026-11-02-resend5"></script>
-<script src="ar.js?v=2026-11-02-resend5"></script>
-<script src="mx-finance.js?v=2026-11-02-resend5"></script>
+<script src="room-changes.js?v=2026-11-02-leadname1"></script>
+<script src="extensions.js?v=2026-11-02-leadname1"></script>
+<script src="retention.js?v=2026-11-02-leadname1"></script>
+<script src="ap.js?v=2026-11-02-leadname1"></script>
+<script src="properties.js?v=2026-11-02-leadname1"></script>
+<script src="partner-sales.js?v=2026-11-02-leadname1"></script>
+<script src="ar.js?v=2026-11-02-leadname1"></script>
+<script src="mx-finance.js?v=2026-11-02-leadname1"></script>
 </body>
 </html>
