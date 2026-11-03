@@ -187,9 +187,9 @@
     NOT_READY: 'Confirm the move-out and the inspection first.', NO_PAYMENT: 'Link the original Stripe payment first.',
     CHANGED_IN_STRIPE: 'This payment was (partly) refunded in Stripe directly. The page has been updated; check before refunding.',
     STRIPE_DECLINED: 'Stripe refused the refund', STRIPE_UNKNOWN: 'Stripe did not answer in time. The refund may or may not exist: use "Check status" (it never refunds twice).',
-    STRIPE_NOT_CONFIGURED: 'Stripe is not connected on the partner app.', LINKED_ELSEWHERE: 'That payment is already linked to another student.',
+    STRIPE_NOT_CONFIGURED: 'The EF Stripe account is not connected on the partner app (EF_STRIPE_SECRET_KEY).', LINKED_ELSEWHERE: 'That payment is already linked to another student.',
     PAYMENT_NOT_USABLE: 'That payment was not found in Stripe, or it did not succeed.', LINKED_BY_STAFF: 'This payment was linked by hand; unlink it first.',
-    HAS_REFUND: 'This student already has a refund.', WRONG_STAGE: 'This step does not apply any more. Reload.', INVALID: 'Check the form', LOCKED: 'This deposit is already settled.',
+    HAS_REFUND: 'This student already has a refund.', DISPUTED: 'The card holder disputed this payment (chargeback): the money already went back, so nothing is refunded here.', WRONG_STAGE: 'This step does not apply any more. Reload.', INVALID: 'Check the form', LOCKED: 'This deposit is already settled.',
     forbidden: 'You need the Damage deposits page (ask an admin).',
   };
   const errText = r => {
