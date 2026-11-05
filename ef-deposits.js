@@ -9,6 +9,7 @@
   const STATUS = {
     upcoming: ['Upcoming Move-Out', 'blue'], pending_inspection: ['Pending Inspection', 'amber'], ready: ['Ready for Refund', 'green'],
     not_found: ['Payment Not Found', 'red'], check: ['Check Match', 'amber'], processing: ['Refund Processing', 'amber'], refunded: ['Refunded', ''],
+    refunded_stripe: ['Refunded in Stripe', ''],
     failed: ['Refund Failed', 'red'], closed: ['Closed (no refund)', ''], cancelled: ['Cancelled', ''],
   };
   const OVERDUE_DAYS = 14;   // moved out this long ago and no refund yet → overdue
@@ -65,21 +66,25 @@
 
   /** The three questions the team asks (Aldo 2026-11-05): who is moving out, whose deposit we hold, who has not paid. */
   const hasDeposit = r => !!r.stripe_payment_intent && r.paid_cents != null;
-  const isOpen = r => !['refunded', 'closed', 'cancelled'].includes(r.status);
+  const isOpen = r => !['refunded', 'refunded_stripe', 'closed', 'cancelled'].includes(r.status);
+  /** Moved out, and the team sheet says the deposit went back although Stripe shows no refund. */
+  const sheetSaysDone = r => !!(r.sheet_flag && r.sheet_flag.code === 'sheet_done');
   function efViews(rows, today){
     const open = rows.filter(isOpen);
     const byOut = (a, b) => (a.move_out || '9').localeCompare(b.move_out || '9') || (a.student_name || '').localeCompare(b.student_name || '');
-    const left = open.filter(r => r.move_out && r.move_out < today).sort(byOut);
+    const gone = open.filter(r => r.move_out && r.move_out < today).sort(byOut);
+    const left = gone.filter(r => !sheetSaysDone(r)), sheetDone = gone.filter(sheetSaysDone);
     const ahead = open.filter(r => !r.move_out || r.move_out >= today).sort(byOut);
     const held = open.filter(hasDeposit).sort(byOut);
     const unpaid = open.filter(r => !hasDeposit(r) && (!r.move_out || r.move_out >= addDays(today, -30))).sort(byOut);
-    return { left, ahead, held, heldCents: held.reduce((t, r) => t + (r.available_cents != null ? r.available_cents : r.paid_cents || 0), 0),
+    return { left, sheetDone, ahead, held, heldCents: held.reduce((t, r) => t + (r.available_cents != null ? r.available_cents : r.paid_cents || 0), 0),
       check: unpaid.filter(r => r.match_state === 'review'), none: unpaid.filter(r => r.match_state !== 'review') };
   }
   /** What has to happen next for one stay, in plain words ([label, colour]). */
   function nextStep(r, today){
     if (r.status === 'processing') return ['Refund processing', 'amber'];
     if (r.status === 'failed') return ['Refund failed — retry', 'red'];
+    if (sheetSaysDone(r)) return ['Sheet says refunded — confirm how', 'amber'];
     if (!hasDeposit(r)) return r.match_state === 'review' ? ['Confirm the payment', 'amber'] : ['No deposit found', 'red'];
     if (r.status === 'ready') return [`Send refund ${money(r.refund_due_cents)}`, 'green'];
     if (r.status === 'pending_inspection') return ['Inspect the room', 'amber'];
@@ -206,11 +211,56 @@
     return out;
   }
 
-  window.EF_CORE = { groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
+  // ── the team's deposit sheet ("EF Deposits - Canada": tabs EF The Ivy / EF The Well / EF The Parker) ──
+  const SHEET_HEAD = {
+    name: /^(what is your full name\??|name|full\s*name|student(\s*name)?)$/i,
+    move_out: /^(departure(\s*date)?|move[\s-]*out(\s*date)?|check[\s-]*out(\s*date)?)$/i,
+    unit: /^(unit\s*no\.?|unit[\s-]*room|unit|room)$/i, paid: /^deposit\s*paid$/i, deposit: /^deposit$/i,
+    deductions: /^deductions?$/i, refund: /^refund$/i, status: /^status$/i, comments: /^comments?$/i, token: /^token$/i, link: /^link$/i,
+  };
+  /** '$1,400.00' / 400 → cents; '' → null. */
+  const toCents = v => { if (v === '' || v == null) return null; const n = typeof v === 'number' ? v : Number(String(v).replace(/[$,\s]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) : null; };
+  /** sheets: [{name, aoa}] of the downloaded .xlsx → {rows, tabs, problems}. Only tabs named "EF …" with a Status column. */
+  function parseTeamSheet(sheets, today){
+    const rows = [], tabs = [], problems = [];
+    const from = today ? addDays(today, -400) : '';
+    for (const sh of sheets) {
+      if (!/^ef\b/i.test(String(sh.name || '').trim())) continue;
+      let hdr = null;
+      for (let i = 0; i < Math.min(sh.aoa.length, 5) && !hdr; i++) {
+        const cols = {};
+        (sh.aoa[i] || []).forEach((c, j) => { const t = cellStr(c); for (const [k, re] of Object.entries(SHEET_HEAD)) if (re.test(t)) (cols[k] = cols[k] || []).push(j); });
+        if (cols.name && cols.move_out && cols.status) hdr = { row: i, cols };
+      }
+      if (!hdr) { problems.push(`${sh.name}: no Name / Move-out / Status header — skipped`); continue; }
+      const c = hdr.cols; let n = 0;
+      const first = (r, k) => { for (const j of (c[k] || [])) { const v = cellStr(r[j]); if (v) return r[j]; } return ''; };
+      // Ivy has "Unit No." (clean) and "Unit-room" (as typed): prefer the clean one
+      const unitCols = (c.unit || []).slice().sort((a, b) => (/no/i.test(cellStr(sh.aoa[hdr.row][b])) ? 1 : 0) - (/no/i.test(cellStr(sh.aoa[hdr.row][a])) ? 1 : 0));
+      sh.aoa.slice(hdr.row + 1).forEach((r, i) => {
+        const name = cellStr(first(r, 'name')).replace(/\s+/g, ' ');
+        if (!name) return;
+        const rawOut = first(r, 'move_out');
+        const move_out = readDate(rawOut, 'MDY', false);
+        const line = hdr.row + i + 2;
+        if (!move_out || move_out < '2024-01-01') { problems.push(`${sh.name} row ${line}: move-out "${cellStr(rawOut)}" is not a full date`); return; }
+        if (from && move_out < from) return;
+        let unit = ''; for (const j of unitCols) { const v = cellStr(r[j]); if (v) { unit = v; break; } }
+        rows.push({ tab: String(sh.name).trim(), row: line, name, move_out, unit, status: cellStr(first(r, 'status')), paid: cellStr(first(r, 'paid')),
+          deposit_cents: toCents(first(r, 'deposit')), deduction_cents: toCents(first(r, 'deductions')), refund_cents: toCents(first(r, 'refund')),
+          comments: (c.comments || []).map(j => cellStr(r[j])).filter(Boolean).join(' · '), token: cellStr(first(r, 'token')), link: cellStr(first(r, 'link')) });
+        n++;
+      });
+      tabs.push([String(sh.name).trim(), n]);
+    }
+    return { rows, tabs, problems: problems.slice(0, 30).concat(problems.length > 30 ? [`and ${problems.length - 30} more`] : []) };
+  }
+
+  window.EF_CORE = { parseTeamSheet, toCents, sheetSaysDone, groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
-  const S = { tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', open: null, busy: false, confirm: false, upload: null };
+  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', open: null, busy: false, confirm: false, upload: null };
   const $ = id => document.getElementById(id);
   const api = async (method, path, body) => {
     const res = await rcvApi(method, '/api/staff/ef-deposits' + path, body);
@@ -290,13 +340,14 @@
     box.innerHTML = `
       <div class="card" style="margin-bottom:14px"><div class="card-pad" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
         <div><b>EF damage deposits</b>
-          <div class="card-sub">${up ? `Last roster: <b>${esc(up.filename || 'roster')}</b>, ${esc(String(up.uploaded_at || '').slice(0, 10))}. ` : ''}Click a student to see the payment, mark the move-out, inspect and refund.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
+          <div class="card-sub">${up ? `Last roster: <b>${esc(up.filename || 'roster')}</b>, ${esc(String(up.uploaded_at || '').slice(0, 10))}. ` : ''}${d.sheet_import ? `Team sheet imported ${esc(String(d.sheet_import.uploaded_at || '').slice(0, 10))} by ${esc(d.sheet_import.uploaded_by || '—')}. ` : ''}Click a student to see the payment, mark the move-out, inspect and refund.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
         <span class="hb-links">
           <label class="btn btn-mini" style="cursor:pointer">Upload EF roster<input type="file" data-ef="file" accept=".xlsx,.xls,.csv" hidden></label>
+          <label class="btn btn-mini" style="cursor:pointer" title="The team's EF Deposits - Canada sheet: File → Download → Microsoft Excel (.xlsx)">Import team sheet<input type="file" data-ef="sheetfile" accept=".xlsx" hidden></label>
           <button type="button" class="btn btn-mini" data-ef="match-all" ${S.busy ? 'disabled' : ''} title="Search Stripe for every student leaving in the next 3 weeks (or the last 2 months) who has no payment yet">Find Stripe payments</button>
           <button type="button" class="hb-link" data-ef="reload">Refresh</button>
         </span>
-      </div>${S.upload ? uploadHtml() : ''}</div>
+      </div>${S.upload ? uploadHtml() : ''}${S.sheet ? sheetHtml() : ''}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         ${[['moving', 'Moving out', V.left.length + V.ahead.length], ['held', 'Deposits held', V.held.length], ['unpaid', 'No deposit', V.check.length + V.none.length]]
           .map(([k, l, n]) => `<button type="button" class="btn ${S.view === k ? 'btn-primary' : ''}" data-ef-view="${k}">${l} <span style="opacity:.75">${n}</span></button>`).join('')}
@@ -311,8 +362,10 @@
 
   const room = r => `${esc(r.building || '—')}${r.unit ? ' · ' + esc(r.unit) : ''}${r.bed ? ' ' + esc(r.bed) : ''}`;
   const who = r => `<b>${esc(r.student_name || '—')}</b><div class="name-sub">${esc(r.student_email || 'no email')}${r.ef_student_id ? ' · EF ' + esc(r.ef_student_id) : ''}</div>`;
+  const sheetLine = r => !r.sheet ? '' : `<div class="name-sub">Sheet: ${esc(r.sheet.status || 'no status')}${r.sheet.deduction_cents ? ` · −${money(r.sheet.deduction_cents)}` : ''}</div>`
+    + (r.sheet_flag && !sheetSaysDone(r) ? `<div class="name-sub" style="color:#9a6b12">⚠ ${esc(r.sheet_flag.text)}</div>` : '');
   const step = (r, today) => { const [l, c] = nextStep(r, today); const col = { red: 'var(--red-dark,#a33)', green: '#3e6049', amber: '#9a6b12' }[c] || 'var(--muted)';
-    return `<span style="color:${col};font-weight:${c ? 600 : 400};white-space:nowrap">${esc(l)}</span>`; };
+    return `<span style="color:${col};font-weight:${c ? 600 : 400};white-space:nowrap">${esc(l)}</span>${sheetLine(r)}`; };
   const dep = r => hasDeposit(r) ? `${money(r.available_cents != null ? r.available_cents : r.paid_cents)}<div class="name-sub">paid ${esc(short(String(r.paid_at || '').slice(0, 10)))}</div>`
     : r.match_state === 'review' ? '<span style="color:#9a6b12">to confirm</span>' : '<span style="color:var(--red-dark,#a33)">none</span>';
   const table = (head, body, empty) => `<div class="card"><div style="overflow-x:auto"><table><thead><tr>${head.map(h => `<th${/Deposit|Held/.test(h) ? ' class="right"' : ''}>${h}</th>`).join('')}</tr></thead>
@@ -326,6 +379,7 @@
     const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td><b>${esc(short(r.move_out))}</b></td><td class="right">${dep(r)}</td><td>${step(r, today)}</td></tr>`;
     let body = '';
     if (V.left.length) body += band('<span style="color:var(--red-dark,#a33)">Already moved out — deposit not returned yet</span>', V.left.length) + V.left.map(line).join('');
+    if (V.sheetDone.length) body += band('<span style="color:#9a6b12">Moved out — the team sheet says refunded, Stripe shows no refund: confirm how it was paid back</span>', V.sheetDone.length) + V.sheetDone.map(line).join('');
     for (const g of groupByMonth(V.ahead)) body += band(esc(monthLabel(g.month, today)), g.rows.length) + g.rows.map(line).join('');
     return `<div class="card-sub" style="margin:0 0 10px">Next 2 weeks: <b>${two.length}</b> students moving out · <b>${money(twoCents)}</b> in deposits to return${two.filter(r => !hasDeposit(r)).length ? ` · <span style="color:var(--red-dark,#a33)">${two.filter(r => !hasDeposit(r)).length} with no deposit</span>` : ''}</div>`
       + table(['Student', 'Building · room', 'Move-out', 'Deposit', 'Next step'], body, 'Nobody moving out for these filters.');
@@ -349,7 +403,7 @@
   function rowHtml(r, today){
     const hl = needsAttention(r, today);
     const pay = r.match_state === 'matched'
-      ? `<a href="${stripePi(r.stripe_payment_intent)}" target="_blank" rel="noopener" data-ef-stop>${esc(r.stripe_payment_intent)}</a><div class="name-sub">${esc(String(r.paid_at || '').slice(0, 10))} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by hand' : r.matched_by === 'auto:name' ? 'linked by name (Typeform)' : 'auto (email)'}</div>`
+      ? `<a href="${stripePi(r.stripe_payment_intent)}" target="_blank" rel="noopener" data-ef-stop>${esc(r.stripe_payment_intent)}</a><div class="name-sub">${esc(String(r.paid_at || '').slice(0, 10))} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by hand' : r.matched_by === 'auto:name' ? 'linked by name (Typeform)' : r.matched_by === 'sheet:token' ? 'team sheet token' : 'auto (email)'}</div>`
       : r.match_state === 'unchecked' ? '<span class="name-sub">not searched yet</span>'
       : `<span style="color:var(--red-dark,#a33)">${r.match_state === 'review' ? 'Check candidates' : 'Not found'}</span><div class="name-sub">${esc(r.match_note || '')}</div>`;
     const refund = r.refunded_cents ? `${money(r.refunded_cents)}${(r.refunds || []).find(f => f.stripe_refund_id) ? `<div class="name-sub">${esc((r.refunds.find(f => f.stripe_refund_id) || {}).stripe_refund_id)}</div>` : ''}`
@@ -381,6 +435,52 @@
       <button type="button" class="btn btn-primary btn-mini" data-ef="upload-save" ${S.busy || !u.rows.length ? 'disabled' : ''}>Save ${u.rows.length} students</button>
       <button type="button" class="hb-link" data-ef="upload-cancel">Cancel</button></div>`;
   }
+  // ── team sheet import ──
+  function sheetHtml(){
+    const u = S.sheet;
+    const pad = 'class="card-pad" style="border-top:1px solid var(--line)"';
+    if (u.error) return `<div ${pad}><b>${esc(u.filename)}</b>: ${esc(u.error)} <button type="button" class="hb-link" data-ef="sheet-cancel">Close</button></div>`;
+    if (u.result) {
+      const x = u.result, fl = x.flags || {};
+      const FL = { sheet_done: 'sheet says refunded, Stripe does not', sheet_behind: 'refunded but the sheet is behind', other_stay: 'payment on the student\'s other stay',
+        sheet_no_refund: 'sheet says no refund', sheet_no_deposit: 'sheet says no deposit', sheet_paid: 'sheet says paid, no payment linked', deductions_differ: 'deductions differ' };
+      return `<div ${pad}><b>Team sheet imported.</b> ${x.lines} lines read${x.older ? ` (${x.older} from before the portal's EF records)` : ''} · <b>${x.matched}</b> tied to a student
+        · ${x.linked + x.relinked} Stripe payments linked by Typeform token${x.relinked ? ` (${x.relinked} replaced a name link)` : ''} · ${x.refunds_read} Stripe-dashboard refunds read back
+        ${x.stripe ? '' : `<div class="name-sub" style="color:var(--red-dark,#a33)">Stripe was not read${x.stripe_error ? ': ' + esc(x.stripe_error) : ''} — tokens not linked.</div>`}
+        ${Object.keys(fl).length ? `<div style="margin-top:4px">Disagreements: ${Object.entries(fl).map(([k, n]) => `<b>${n}</b> ${esc(FL[k] || k)}`).join(' · ')}</div>` : '<div class="name-sub">No disagreements between the sheet and Stripe.</div>'}
+        ${(x.unmatched_lines || []).length ? `<details style="margin-top:6px"><summary class="name-sub">${x.unmatched_lines.length} sheet lines with no student here (not on an EF roster in the portal)</summary>
+          <div class="name-sub">${x.unmatched_lines.map(l => `${esc(l.tab)} row ${l.row}: ${esc(l.name)} · ${esc(short(l.move_out))} · ${esc(l.status || '—')}${l.why === 'two stays fit' ? ' (two stays fit — not stored)' : ''}`).join('<br>')}</div></details>` : ''}
+        <div style="margin-top:6px"><button type="button" class="hb-link" data-ef="sheet-cancel">Close</button></div></div>`;
+    }
+    const by = u.tabs.map(([t, n]) => `${esc(t)} ${n}`).join(' · ');
+    return `<div ${pad}><b>${esc(u.filename)}</b> · ${u.rows.length} lines from the last 13 months (${by || 'no EF tabs'}).
+      ${u.problems.length ? `<details style="margin:6px 0"><summary class="name-sub">${u.problems.length} lines skipped</summary><div class="name-sub">${u.problems.map(esc).join('<br>')}</div></details>` : ''}
+      <div class="name-sub" style="margin:6px 0">Each line is tied to the student with the same name in the same residence (move-out within 10 days). The sheet's status, deductions and comments are shown next to the portal's, Ivy Typeform tokens link the exact Stripe payment, and refunds made in the Stripe dashboard are read back. Nothing is refunded, closed or changed in the inspection.</div>
+      <button type="button" class="btn btn-primary btn-mini" data-ef="sheet-save" ${S.busy || !u.rows.length ? 'disabled' : ''}>${S.busy ? 'Importing… (about a minute)' : `Import ${u.rows.length} lines`}</button>
+      <button type="button" class="hb-link" data-ef="sheet-cancel">Cancel</button></div>`;
+  }
+  async function readSheetFile(file){
+    S.sheet = { filename: file.name, rows: [], tabs: [], problems: [] }; render();
+    try {
+      const X = await loadSheetJs();
+      const wb = X.read(new Uint8Array(await file.arrayBuffer()), { type: 'array', cellDates: false, raw: true });
+      const sheets = wb.SheetNames.map(n => ({ name: n, aoa: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }) }));
+      const p = parseTeamSheet(sheets, S.data ? S.data.today : '');
+      S.sheet = { filename: file.name, ...p };
+      if (!p.rows.length) S.sheet.error = p.problems[0] || 'no EF tab with Name, Move-out and Status columns found';
+    } catch (e) { S.sheet = { filename: file.name, error: e.message || String(e), rows: [], tabs: [], problems: [] }; }
+    render();
+  }
+  async function saveSheet(){
+    const u = S.sheet; if (!u || !u.rows.length || S.busy) return;
+    S.busy = true; render();
+    const r = await api('POST', '/sheet', { filename: u.filename, rows: u.rows });
+    S.busy = false;
+    if (!r.ok) { showToast('Could not import the sheet: ' + errText(r)); render(); return; }
+    await load();
+    S.sheet = { filename: u.filename, result: r.data, rows: [], tabs: [], problems: [] }; render();
+  }
+
   function loadSheetJs(){
     if (window.XLSX) return Promise.resolve(window.XLSX);
     return new Promise((ok, no) => { const s = document.createElement('script'); s.src = SHEETJS; s.onload = () => ok(window.XLSX); s.onerror = () => no(new Error('could not load the spreadsheet reader')); document.head.appendChild(s); });
@@ -447,7 +547,7 @@
     let pay;
     if (r.match_state === 'matched') {
       pay = `<div><a href="${stripePi(r.stripe_payment_intent)}" target="_blank" rel="noopener">${esc(r.stripe_payment_intent)}</a> · ${money(r.paid_cents)} ${esc((r.currency || '').toUpperCase())} on ${esc(String(r.paid_at || '').slice(0, 10))}</div>
-        <div class="name-sub">Charge ${esc(r.stripe_charge || '—')} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by ' + esc(r.matched_by.slice(6)) : r.matched_by === 'auto:name' ? 'linked by name (Typeform) — unlink if it is the wrong student' : 'matched by email'}${r.stripe_refunded_cents ? ` · <b>${money(r.stripe_refunded_cents)} already refunded in Stripe</b>` : ''} · available ${money(r.available_cents)}</div>
+        <div class="name-sub">Charge ${esc(r.stripe_charge || '—')} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by ' + esc(r.matched_by.slice(6)) : r.matched_by === 'auto:name' ? 'linked by name (Typeform) — unlink if it is the wrong student' : r.matched_by === 'sheet:token' ? 'linked by the team sheet (Typeform token)' : 'matched by email'}${r.stripe_refunded_cents ? ` · <b>${money(r.stripe_refunded_cents)} already refunded in Stripe</b>` : ''} · available ${money(r.available_cents)}</div>
         ${me.can_refund && !r.refunded_cents && !(r.refunds || []).some(f => ['creating', 'pending', 'succeeded'].includes(f.status)) ? `<button type="button" class="hb-link" data-ef="unlink" ${busy}>Unlink (wrong payment)</button>` : ''}`;
     } else {
       const cands = (r.candidates || []);
@@ -474,6 +574,7 @@
     const editingInspection = canInspect && !(r.refunds || []).some(f => ['creating', 'pending'].includes(f.status));
     const inspBody = !canInspect && !inspected ? '<div class="name-sub">After the move-out.</div>'
       : `${r.inspected_at ? `<div class="name-sub">Inspected by ${esc(r.inspected_by || '—')} ${esc(String(r.inspected_at).slice(0, 10))}</div>` : ''}
+        ${editingInspection && !ded.length && r.sheet && r.sheet.deduction_cents > 0 ? `<div class="name-sub">Team sheet: −${money(r.sheet.deduction_cents)}${r.sheet.comments ? ' · ' + esc(r.sheet.comments) : ''} <button type="button" class="hb-link" data-ef="ded-sheet">Use it</button></div>` : ''}
         ${editingInspection ? `<div id="ef-ded-list">${(ded.length ? ded : []).map((x, i) => dedRow(x, i)).join('')}</div>
           <button type="button" class="hb-link" data-ef="ded-add">+ Add a deduction</button>
           <textarea class="input" data-ef="insp-notes" rows="2" placeholder="Inspection notes (optional)" style="width:100%;margin-top:6px">${esc(r.inspection_notes || '')}</textarea>
@@ -499,12 +600,27 @@
     $('ef-dd-body').innerHTML = `
       ${r.roster_note ? `<div class="name-sub" style="color:#9a6b12;margin-bottom:6px">⚠ ${esc(r.roster_note)}</div>` : ''}
       <div class="name-sub">${esc(r.student_email || 'no email')}${r.ef_student_id ? ' · EF id ' + esc(r.ef_student_id) : ''} · from ${esc(r.source === 'roster' ? 'roster upload' : 'Arrivals')}</div>
+      ${sheetBox(r)}
       ${step(1, 'Original Stripe damage deposit', r.match_state === 'matched', pay)}
       ${step(2, 'Move-out confirmed', moved, movedBody)}
       ${step(3, 'Room inspection & deductions', r.stage === 'inspected' || r.stage === 'refunded', inspBody)}
       ${step(4, 'Refund', r.stage === 'refunded', refBody)}
       <div style="margin-top:8px"><textarea class="input" data-ef="notes" rows="2" placeholder="Notes" style="width:100%">${esc(r.notes || '')}</textarea>
       <button type="button" class="hb-link" data-ef="note" ${busy}>Save notes</button></div>`;
+  }
+  function sheetBox(r){
+    const x = r.sheet; if (!x) return '';
+    const TP = { same: 'its Typeform payment is the one linked here', linked: 'its Typeform token linked the payment', other_stay: 'its Typeform payment is linked to this student\'s other stay',
+      not_in_stripe: 'its Typeform token was not found in Stripe', kept_staff_link: 'its Typeform token names another payment — the hand-linked one was kept', locked: 'its Typeform token was not applied (already refunded/closed)' };
+    return `<div style="border:1px solid ${r.sheet_flag ? '#e5c07b' : 'var(--line)'};background:${r.sheet_flag ? '#fff9ec' : 'transparent'};border-radius:10px;padding:10px 12px;margin:10px 0">
+      <div style="font-weight:600">Team sheet · ${esc(x.tab)} row ${esc(String(x.row))}</div>
+      <div><b>${esc(x.status || 'no status')}</b> · move-out ${esc(short(x.move_out))}${x.unit ? ' · ' + esc(x.unit) : ''}${x.paid ? ' · deposit paid: ' + esc(x.paid) : ''}
+        · deposit ${money(x.deposit_cents)} · deductions ${money(x.deduction_cents)} · refund ${money(x.refund_cents)}</div>
+      ${x.comments ? `<div class="name-sub">${esc(x.comments)}</div>` : ''}
+      ${x.token_payment && TP[x.token_payment] ? `<div class="name-sub">Sheet line ${esc(TP[x.token_payment])}.</div>` : ''}
+      ${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener" class="name-sub">Open the file in Drive</a>` : ''}
+      ${r.sheet_flag ? `<div style="color:#9a6b12;margin-top:4px">⚠ ${esc(r.sheet_flag.text)}</div>` : ''}
+      <div class="name-sub">Imported ${esc(String(x.imported_at || '').slice(0, 10))} from ${esc(x.file || 'the sheet')}.</div></div>`;
   }
   const dedRow = (x, i) => `<div data-ef-ded="${i}" style="display:flex;gap:6px;margin:4px 0"><input class="input" data-ef-ded-amt placeholder="$" value="${x.cents ? (x.cents / 100).toFixed(2) : ''}" style="max-width:90px" inputmode="decimal"><input class="input" data-ef-ded-why placeholder="What for (required)" value="${esc(x.reason || '')}" style="flex:1"><button type="button" class="hb-link" data-ef="ded-del">✕</button></div>`;
   function readDeductions(){
@@ -539,6 +655,7 @@
     const k = e.target.dataset.efF;
     if (k) { S.f[k] = e.target.value; render(); if (k === 'q') { const i = document.querySelector('[data-ef-f="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } } return; }
     if (e.target.dataset.ef === 'file' && e.target.files && e.target.files[0]) { readFile(e.target.files[0]); e.target.value = ''; }
+    if (e.target.dataset.ef === 'sheetfile' && e.target.files && e.target.files[0]) { readSheetFile(e.target.files[0]); e.target.value = ''; }
   }
   async function onClick(e){
     if (e.target.closest('[data-ef-stop]') || (e.target.closest('a') && e.target.closest('#ef-dd, #ef-dd-backdrop'))) return;
@@ -549,7 +666,9 @@
     if (!b && openRow) { openModal(openRow.dataset.efOpen); return; }
     if (!b) return;
     const a = b.dataset.ef;
-    if (a === 'file') return;
+    if (a === 'file' || a === 'sheetfile') return;
+    if (a === 'sheet-cancel') { S.sheet = null; return render(); }
+    if (a === 'sheet-save') return saveSheet();
     if (a === 'reload') return load();
     if (a === 'dismiss') return closeModal();
     if (a === 'upload-cancel') { S.upload = null; return render(); }
@@ -568,6 +687,7 @@
     if (a === 'link-typed') { const v = (document.querySelector('[data-ef="pi"]') || {}).value || ''; if (!/^pi_/.test(v.trim())) return showToast('Paste a payment id starting with pi_'); return act('link', { payment_intent: v.trim() }); }
     if (a === 'unlink' || a === 'moved_out' || a === 'undo_moved_out' || a === 'refresh') return act(a);
     if (a === 'ded-add') { const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow({}, list.children.length)); return; }
+    if (a === 'ded-sheet') { const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow({ cents: r.sheet.deduction_cents, reason: r.sheet.comments || 'Per the team sheet' }, list.children.length)); b.parentElement.remove(); return; }
     if (a === 'ded-del') { b.closest('[data-ef-ded]').remove(); return; }
     if (a === 'inspected') { let ded; try { ded = readDeductions(); } catch (err) { return showToast(err.message); } return act('inspected', { deductions: ded, notes: (document.querySelector('[data-ef="insp-notes"]') || {}).value || '' }); }
     if (a === 'note') return act('note', { notes: (document.querySelector('#ef-dd-body [data-ef="notes"]') || {}).value || '' });
