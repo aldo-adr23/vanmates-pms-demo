@@ -87,6 +87,19 @@
     return [`Return ${money(r.available_cents != null ? r.available_cents : r.paid_cents)} after move-out`, ''];
   }
 
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function monthLabel(ym, today){
+    if (!ym) return 'No move-out date';
+    const tag = ym === today.slice(0, 7) ? ' · this month' : ym === addDays(today.slice(0, 7) + '-28', 7).slice(0, 7) ? ' · next month' : '';
+    return `${MONTH_NAMES[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}${tag}`;
+  }
+  /** Rows already sorted by move-out → [{ month: 'yyyy-mm', rows }] in order. */
+  function groupByMonth(rows){
+    const out = [];
+    for (const r of rows) { const k = (r.move_out || '').slice(0, 7); const g = out[out.length - 1]; if (g && g.month === k) g.rows.push(r); else out.push({ month: k, rows: [r] }); }
+    return out;
+  }
+
   function groupByWeek(rows){
     const m = new Map();
     for (const r of rows) { const k = r.week || ''; if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
@@ -193,7 +206,7 @@
     return out;
   }
 
-  window.EF_CORE = { efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
+  window.EF_CORE = { groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
@@ -313,7 +326,7 @@
     const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td><b>${esc(short(r.move_out))}</b></td><td class="right">${dep(r)}</td><td>${step(r, today)}</td></tr>`;
     let body = '';
     if (V.left.length) body += band('<span style="color:var(--red-dark,#a33)">Already moved out — deposit not returned yet</span>', V.left.length) + V.left.map(line).join('');
-    for (const g of groupByWeek(V.ahead)) body += band(esc(weekLabel(g.week, today)), g.rows.length) + g.rows.map(line).join('');
+    for (const g of groupByMonth(V.ahead)) body += band(esc(monthLabel(g.month, today)), g.rows.length) + g.rows.map(line).join('');
     return `<div class="card-sub" style="margin:0 0 10px">Next 2 weeks: <b>${two.length}</b> students moving out · <b>${money(twoCents)}</b> in deposits to return${two.filter(r => !hasDeposit(r)).length ? ` · <span style="color:var(--red-dark,#a33)">${two.filter(r => !hasDeposit(r)).length} with no deposit</span>` : ''}</div>`
       + table(['Student', 'Building · room', 'Move-out', 'Deposit', 'Next step'], body, 'Nobody moving out for these filters.');
   }
