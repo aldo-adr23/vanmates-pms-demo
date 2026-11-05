@@ -63,6 +63,30 @@
     return s;
   }
 
+  /** The three questions the team asks (Aldo 2026-11-05): who is moving out, whose deposit we hold, who has not paid. */
+  const hasDeposit = r => !!r.stripe_payment_intent && r.paid_cents != null;
+  const isOpen = r => !['refunded', 'closed', 'cancelled'].includes(r.status);
+  function efViews(rows, today){
+    const open = rows.filter(isOpen);
+    const byOut = (a, b) => (a.move_out || '9').localeCompare(b.move_out || '9') || (a.student_name || '').localeCompare(b.student_name || '');
+    const left = open.filter(r => r.move_out && r.move_out < today).sort(byOut);
+    const ahead = open.filter(r => !r.move_out || r.move_out >= today).sort(byOut);
+    const held = open.filter(hasDeposit).sort(byOut);
+    const unpaid = open.filter(r => !hasDeposit(r) && (!r.move_out || r.move_out >= addDays(today, -30))).sort(byOut);
+    return { left, ahead, held, heldCents: held.reduce((t, r) => t + (r.available_cents != null ? r.available_cents : r.paid_cents || 0), 0),
+      check: unpaid.filter(r => r.match_state === 'review'), none: unpaid.filter(r => r.match_state !== 'review') };
+  }
+  /** What has to happen next for one stay, in plain words ([label, colour]). */
+  function nextStep(r, today){
+    if (r.status === 'processing') return ['Refund processing', 'amber'];
+    if (r.status === 'failed') return ['Refund failed — retry', 'red'];
+    if (!hasDeposit(r)) return r.match_state === 'review' ? ['Confirm the payment', 'amber'] : ['No deposit found', 'red'];
+    if (r.status === 'ready') return [`Send refund ${money(r.refund_due_cents)}`, 'green'];
+    if (r.status === 'pending_inspection') return ['Inspect the room', 'amber'];
+    if (r.move_out && r.move_out <= today) return ['Mark as moved out', 'amber'];
+    return [`Return ${money(r.available_cents != null ? r.available_cents : r.paid_cents)} after move-out`, ''];
+  }
+
   function groupByWeek(rows){
     const m = new Map();
     for (const r of rows) { const k = r.week || ''; if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
@@ -169,11 +193,11 @@
     return out;
   }
 
-  window.EF_CORE = { money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
+  window.EF_CORE = { efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
-  const S = { tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, open: null, busy: false, confirm: false, upload: null };
+  const S = { tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', open: null, busy: false, confirm: false, upload: null };
   const $ = id => document.getElementById(id);
   const api = async (method, path, body) => {
     const res = await rcvApi(method, '/api/staff/ef-deposits' + path, body);
@@ -245,53 +269,68 @@
     if (S.error && !S.data) { box.innerHTML = `<div class="card"><div class="card-pad">Could not load EF deposits: ${esc(S.error)} <button type="button" class="hb-link" data-ef="reload">Try again</button></div></div>`; return; }
     if (!S.data) { box.innerHTML = ''; return; }
     const d = S.data, today = d.today, all = d.rows || [];
-    const attention = all.filter(r => needsAttention(r, today));
-    if (tc) tc.textContent = attention.length ? String(attention.length) : '';
-    const weeks = [...new Set(all.map(r => r.week).filter(Boolean))].sort();
-    const thisWeek = monday(today);
-    if (!weeks.includes(thisWeek)) weeks.push(thisWeek), weeks.sort();
+    const lateCount = efViews(all, today).left.length;   // moved out, deposit not returned yet
+    if (tc) tc.textContent = lateCount ? String(lateCount) : '';
     const props = [...new Set(all.map(r => r.building).filter(Boolean))].sort();
-    const rows = filterRows(all, S.f, today);
-    const sumRows = S.f.week === 'attention' || S.f.week === 'all' ? rows : filterRows(all, { week: S.f.week, property: S.f.property }, today);
-    const s = summary(sumRows, today);
-    const scope = S.f.week === 'attention' ? 'Needs attention' : S.f.week === 'all' ? 'All weeks' : weekLabel(S.f.week, today);
+    const V = efViews(filterRows(all, { week: 'all', property: S.f.property, q: S.f.q }, today), today);
     const up = d.uploads && d.uploads[0];
     box.innerHTML = `
       <div class="card" style="margin-bottom:14px"><div class="card-pad" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-        <div><b>EF damage deposits</b> <span class="name-sub">· ${esc(scope)}</span>
-          <div class="card-sub">EF students come from the rosters already in Arrivals${up ? `; last upload <b>${esc(up.filename || 'roster')}</b> ${esc(String(up.uploaded_at || '').slice(0, 10))} (${up.added} new, ${up.changed} changed, ${up.missing} not listed)` : ''}. Stripe deposits are linked by the student's email, or by their name on a Typeform deposit when it is the only one.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
+        <div><b>EF damage deposits</b>
+          <div class="card-sub">${up ? `Last roster: <b>${esc(up.filename || 'roster')}</b>, ${esc(String(up.uploaded_at || '').slice(0, 10))}. ` : ''}Click a student to see the payment, mark the move-out, inspect and refund.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
         <span class="hb-links">
           <label class="btn btn-mini" style="cursor:pointer">Upload EF roster<input type="file" data-ef="file" accept=".xlsx,.xls,.csv" hidden></label>
           <button type="button" class="btn btn-mini" data-ef="match-all" ${S.busy ? 'disabled' : ''} title="Search Stripe for every student leaving in the next 3 weeks (or the last 2 months) who has no payment yet">Find Stripe payments</button>
           <button type="button" class="hb-link" data-ef="reload">Refresh</button>
         </span>
       </div>${S.upload ? uploadHtml() : ''}</div>
-      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-        ${tile('Moving out', s.leaving, esc(scope))}
-        ${tile('Deposits held', money(s.depositCents), s.depositUnknown ? `${s.depositUnknown} not matched yet` : 'all matched')}
-        ${tile('Stripe matched', `${s.matched}<span style="font-size:15px;color:var(--muted)"> / ${s.leaving}</span>`, '')}
-        ${tile('Refunds pending', s.pending, 'moved out, not refunded yet')}
-        ${tile('Refunds completed', s.completed, money(s.refundedCents) + ' refunded')}
-        ${tile('Unresolved / overdue', `${s.unresolved}`, `${s.overdue} overdue (${OVERDUE_DAYS}+ days)`, s.unresolved > 0)}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        ${[['moving', 'Moving out', V.left.length + V.ahead.length], ['held', 'Deposits held', V.held.length], ['unpaid', 'No deposit', V.check.length + V.none.length]]
+          .map(([k, l, n]) => `<button type="button" class="btn ${S.view === k ? 'btn-primary' : ''}" data-ef-view="${k}">${l} <span style="opacity:.75">${n}</span></button>`).join('')}
+        <span style="flex:1"></span>
+        <div class="filter-search" style="min-width:220px"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input data-ef-f="q" placeholder="Search student, email, EF id…" value="${esc(S.f.q)}"></div>
+        <select data-ef-f="property" class="input" style="max-width:180px"><option value="">All buildings</option>${props.map(p => `<option ${S.f.property === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
       </div>
-      <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
-        <div class="filter-search"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input data-ef-f="q" placeholder="Search student, email, EF id, building…" value="${esc(S.f.q)}"></div>
-        <select data-ef-f="week" class="input" style="max-width:290px">
-          <option value="attention" ${S.f.week === 'attention' ? 'selected' : ''}>⚠ Needs attention (${attention.length})</option>
-          <option value="all" ${S.f.week === 'all' ? 'selected' : ''}>All weeks</option>
-          ${weeks.map(w => `<option value="${w}" ${S.f.week === w ? 'selected' : ''}>${esc(weekLabel(w, today))}</option>`).join('')}
-        </select>
-        <select data-ef-f="property" class="input" style="max-width:200px"><option value="">All properties</option>${props.map(p => `<option ${S.f.property === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
-        <select data-ef-f="status" class="input" style="max-width:200px"><option value="all">All statuses</option>${Object.entries(STATUS).map(([k, [l]]) => `<option value="${k}" ${S.f.status === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-      </div>
-      <div class="card"><div style="overflow-x:auto"><table>
-        <thead><tr><th>Student</th><th>Property · room</th><th>Move-in</th><th>Move-out</th><th class="right">Deposit</th><th>Stripe payment</th><th class="right">Refund</th><th>Status</th></tr></thead>
-        <tbody>${rows.length ? groupByWeek(rows).map(g => `
-          <tr><td colspan="8" style="background:var(--cream,#f7f3ec);font-weight:600;font-size:12px;letter-spacing:.02em">${esc(weekLabel(g.week, today))} · ${g.rows.length} leaving</td></tr>
-          ${g.rows.map(r => rowHtml(r, today)).join('')}`).join('') : `<tr><td colspan="8" class="name-sub" style="padding:24px;text-align:center">No EF students for these filters.</td></tr>`}
-        </tbody></table></div></div>`;
+      ${S.view === 'held' ? heldHtml(V, today) : S.view === 'unpaid' ? unpaidHtml(V, today) : movingHtml(V, today)}`;
     if (S.open) renderModal();
+  }
+
+  const room = r => `${esc(r.building || '—')}${r.unit ? ' · ' + esc(r.unit) : ''}${r.bed ? ' ' + esc(r.bed) : ''}`;
+  const who = r => `<b>${esc(r.student_name || '—')}</b><div class="name-sub">${esc(r.student_email || 'no email')}${r.ef_student_id ? ' · EF ' + esc(r.ef_student_id) : ''}</div>`;
+  const step = (r, today) => { const [l, c] = nextStep(r, today); const col = { red: 'var(--red-dark,#a33)', green: '#3e6049', amber: '#9a6b12' }[c] || 'var(--muted)';
+    return `<span style="color:${col};font-weight:${c ? 600 : 400};white-space:nowrap">${esc(l)}</span>`; };
+  const dep = r => hasDeposit(r) ? `${money(r.available_cents != null ? r.available_cents : r.paid_cents)}<div class="name-sub">paid ${esc(short(String(r.paid_at || '').slice(0, 10)))}</div>`
+    : r.match_state === 'review' ? '<span style="color:#9a6b12">to confirm</span>' : '<span style="color:var(--red-dark,#a33)">none</span>';
+  const table = (head, body, empty) => `<div class="card"><div style="overflow-x:auto"><table><thead><tr>${head.map(h => `<th${/Deposit|Held/.test(h) ? ' class="right"' : ''}>${h}</th>`).join('')}</tr></thead>
+    <tbody>${body || `<tr><td colspan="${head.length}" class="name-sub" style="padding:24px;text-align:center">${empty}</td></tr>`}</tbody></table></div></div>`;
+  const band = (label, n) => `<tr><td colspan="9" style="background:var(--cream,#f7f3ec);font-weight:600;font-size:12px;letter-spacing:.02em">${label} · ${n}</td></tr>`;
+  const rowOpen = r => `data-ef-open="${esc(r.id)}" style="cursor:pointer"`;
+
+  function movingHtml(V, today){
+    const two = V.ahead.filter(r => r.move_out && r.move_out <= addDays(today, 13));
+    const twoCents = two.filter(hasDeposit).reduce((t, r) => t + (r.available_cents || 0), 0);
+    const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td><b>${esc(short(r.move_out))}</b></td><td class="right">${dep(r)}</td><td>${step(r, today)}</td></tr>`;
+    let body = '';
+    if (V.left.length) body += band('<span style="color:var(--red-dark,#a33)">Already moved out — deposit not returned yet</span>', V.left.length) + V.left.map(line).join('');
+    for (const g of groupByWeek(V.ahead)) body += band(esc(weekLabel(g.week, today)), g.rows.length) + g.rows.map(line).join('');
+    return `<div class="card-sub" style="margin:0 0 10px">Next 2 weeks: <b>${two.length}</b> students moving out · <b>${money(twoCents)}</b> in deposits to return${two.filter(r => !hasDeposit(r)).length ? ` · <span style="color:var(--red-dark,#a33)">${two.filter(r => !hasDeposit(r)).length} with no deposit</span>` : ''}</div>`
+      + table(['Student', 'Building · room', 'Move-out', 'Deposit', 'Next step'], body, 'Nobody moving out for these filters.');
+  }
+  function heldHtml(V, today){
+    const body = V.held.map(r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td>${esc(short(r.move_in))} → <b>${esc(short(r.move_out))}</b></td>
+      <td class="right">${dep(r)}</td><td>${step(r, today)}</td></tr>`).join('');
+    return `<div class="card-sub" style="margin:0 0 10px">We hold <b>${V.held.length}</b> EF deposits · <b>${money(V.heldCents)}</b> in total, soonest move-out first.</div>`
+      + table(['Student', 'Building · room', 'Stay', 'Held', 'Next step'], body, 'No deposits held for these filters.');
+  }
+  function unpaidHtml(V, today){
+    const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td>${esc(short(r.move_in))} → ${esc(short(r.move_out))}</td>
+      <td style="max-width:320px"><span class="name-sub">${esc(r.match_note || 'not searched yet')}</span></td></tr>`;
+    let body = '';
+    if (V.check.length) body += band('<span style="color:#9a6b12">A payment may be theirs — open and confirm it</span>', V.check.length) + V.check.map(line).join('');
+    if (V.none.length) body += band('<span style="color:var(--red-dark,#a33)">No deposit payment found</span>', V.none.length) + V.none.map(line).join('');
+    return `<div class="card-sub" style="margin:0 0 10px">Students living with us now or arriving (or left in the last 30 days) with no deposit linked. Open a student to search Stripe or paste the payment id.</div>`
+      + table(['Student', 'Building · room', 'Stay', 'What we found'], body, 'Everyone has a deposit for these filters.');
   }
 
   function rowHtml(r, today){
@@ -490,6 +529,8 @@
   }
   async function onClick(e){
     if (e.target.closest('[data-ef-stop]') || (e.target.closest('a') && e.target.closest('#ef-dd, #ef-dd-backdrop'))) return;
+    const vb = e.target.closest('[data-ef-view]');
+    if (vb) { S.view = vb.dataset.efView; return render(); }
     const openRow = e.target.closest('[data-ef-open]');
     const b = e.target.closest('[data-ef]');
     if (!b && openRow) { openModal(openRow.dataset.efOpen); return; }
