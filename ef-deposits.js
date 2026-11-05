@@ -8,7 +8,7 @@
 (function(){
   const STATUS = {
     upcoming: ['Upcoming Move-Out', 'blue'], pending_inspection: ['Pending Inspection', 'amber'], ready: ['Ready for Refund', 'green'],
-    not_found: ['Payment Not Found', 'red'], processing: ['Refund Processing', 'amber'], refunded: ['Refunded', ''],
+    not_found: ['Payment Not Found', 'red'], check: ['Check Match', 'amber'], processing: ['Refund Processing', 'amber'], refunded: ['Refunded', ''],
     failed: ['Refund Failed', 'red'], closed: ['Closed (no refund)', ''], cancelled: ['Cancelled', ''],
   };
   const OVERDUE_DAYS = 14;   // moved out this long ago and no refund yet → overdue
@@ -31,7 +31,7 @@
   const isOverdue = (r, today) => !['refunded', 'closed', 'cancelled', 'processing'].includes(r.status)
     && r.move_out && daysSince(r.move_out, today) >= OVERDUE_DAYS;
   /** Needs a person: no payment found, refund failed, overdue, or a roster change to check. */
-  const needsAttention = (r, today) => r.status === 'not_found' || r.status === 'failed' || isOverdue(r, today)
+  const needsAttention = (r, today) => r.status === 'not_found' || r.status === 'check' || r.status === 'failed' || isOverdue(r, today)
     || (r.roster_state === 'missing' && r.status === 'upcoming');
 
   function filterRows(rows, f, today){
@@ -259,7 +259,7 @@
     box.innerHTML = `
       <div class="card" style="margin-bottom:14px"><div class="card-pad" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
         <div><b>EF damage deposits</b> <span class="name-sub">· ${esc(scope)}</span>
-          <div class="card-sub">EF students come from the rosters already in Arrivals${up ? `; last upload <b>${esc(up.filename || 'roster')}</b> ${esc(String(up.uploaded_at || '').slice(0, 10))} (${up.added} new, ${up.changed} changed, ${up.missing} not listed)` : ''}. Stripe is searched by the student's email, never by name alone.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
+          <div class="card-sub">EF students come from the rosters already in Arrivals${up ? `; last upload <b>${esc(up.filename || 'roster')}</b> ${esc(String(up.uploaded_at || '').slice(0, 10))} (${up.added} new, ${up.changed} changed, ${up.missing} not listed)` : ''}. Stripe deposits are linked by the student's email, or by their name on a Typeform deposit when it is the only one.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
         <span class="hb-links">
           <label class="btn btn-mini" style="cursor:pointer">Upload EF roster<input type="file" data-ef="file" accept=".xlsx,.xls,.csv" hidden></label>
           <button type="button" class="btn btn-mini" data-ef="match-all" ${S.busy ? 'disabled' : ''} title="Search Stripe for every student leaving in the next 3 weeks (or the last 2 months) who has no payment yet">Find Stripe payments</button>
@@ -297,7 +297,7 @@
   function rowHtml(r, today){
     const hl = needsAttention(r, today);
     const pay = r.match_state === 'matched'
-      ? `<a href="${stripePi(r.stripe_payment_intent)}" target="_blank" rel="noopener" data-ef-stop>${esc(r.stripe_payment_intent)}</a><div class="name-sub">${esc(String(r.paid_at || '').slice(0, 10))} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by hand' : 'auto (email)'}</div>`
+      ? `<a href="${stripePi(r.stripe_payment_intent)}" target="_blank" rel="noopener" data-ef-stop>${esc(r.stripe_payment_intent)}</a><div class="name-sub">${esc(String(r.paid_at || '').slice(0, 10))} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by hand' : r.matched_by === 'auto:name' ? 'linked by name (Typeform)' : 'auto (email)'}</div>`
       : r.match_state === 'unchecked' ? '<span class="name-sub">not searched yet</span>'
       : `<span style="color:var(--red-dark,#a33)">${r.match_state === 'review' ? 'Check candidates' : 'Not found'}</span><div class="name-sub">${esc(r.match_note || '')}</div>`;
     const refund = r.refunded_cents ? `${money(r.refunded_cents)}${(r.refunds || []).find(f => f.stripe_refund_id) ? `<div class="name-sub">${esc((r.refunds.find(f => f.stripe_refund_id) || {}).stripe_refund_id)}</div>` : ''}`
@@ -395,7 +395,7 @@
     let pay;
     if (r.match_state === 'matched') {
       pay = `<div><a href="${stripePi(r.stripe_payment_intent)}" target="_blank" rel="noopener">${esc(r.stripe_payment_intent)}</a> · ${money(r.paid_cents)} ${esc((r.currency || '').toUpperCase())} on ${esc(String(r.paid_at || '').slice(0, 10))}</div>
-        <div class="name-sub">Charge ${esc(r.stripe_charge || '—')} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by ' + esc(r.matched_by.slice(6)) : 'matched by email'}${r.stripe_refunded_cents ? ` · <b>${money(r.stripe_refunded_cents)} already refunded in Stripe</b>` : ''} · available ${money(r.available_cents)}</div>
+        <div class="name-sub">Charge ${esc(r.stripe_charge || '—')} · ${r.matched_by && r.matched_by.startsWith('staff:') ? 'linked by ' + esc(r.matched_by.slice(6)) : r.matched_by === 'auto:name' ? 'linked by name (Typeform) — unlink if it is the wrong student' : 'matched by email'}${r.stripe_refunded_cents ? ` · <b>${money(r.stripe_refunded_cents)} already refunded in Stripe</b>` : ''} · available ${money(r.available_cents)}</div>
         ${me.can_refund && !r.refunded_cents && !(r.refunds || []).some(f => ['creating', 'pending', 'succeeded'].includes(f.status)) ? `<button type="button" class="hb-link" data-ef="unlink" ${busy}>Unlink (wrong payment)</button>` : ''}`;
     } else {
       const cands = (r.candidates || []);
