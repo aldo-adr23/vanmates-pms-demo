@@ -173,7 +173,7 @@
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
-  const S = { tab: 'deposits', data: null, loading: false, error: '', f: { week: '', property: '', q: '', status: 'all' }, open: null, busy: false, confirm: false, upload: null };
+  const S = { tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, open: null, busy: false, confirm: false, upload: null };
   const $ = id => document.getElementById(id);
   const api = async (method, path, body) => {
     const res = await rcvApi(method, '/api/staff/ef-deposits' + path, body);
@@ -230,7 +230,6 @@
       const r = await api('GET', '');
       if (!r.ok) throw new Error(errText(r));
       S.data = r.data;
-      if (!S.f.week) S.f.week = monday(r.data.today);
     } catch (e) { S.error = e.message || String(e); }
     S.loading = false; render();
   }
