@@ -1888,7 +1888,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-05-dashten1"></script>
+<script src="pms-supabase.js?v=2026-11-05-hastaff1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -4115,6 +4115,16 @@ hello@vanmates.com · vanmates.com</textarea>
         .ha-photos figure{margin:0}
         .ha-photos img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
         .ha-photos figcaption{font-size:11.5px;color:var(--muted);margin-top:3px}
+        .ha-panel .hae-form{display:grid;gap:8px}
+        .ha-panel .hae-field{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;align-items:center;font-size:13px}
+        .ha-panel .hae-field > span{color:var(--muted)}
+        .ha-panel .hae-field textarea{min-height:80px;margin:0}
+        .ha-panel .hae-check{display:inline-flex;gap:6px;align-items:center;font-size:13px;margin:2px 12px 2px 0}
+        .ha-panel .hae-row{display:grid;gap:6px;padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px}
+        .ha-panel .hae-tag{font-size:12px;padding:3px 6px}
+        .ha-panel .hae-form > .btn,.ha-panel .hae-row > .btn{justify-self:start}
+        .ha-panel .ha-line.ha-need,.ha-panel .ha-sub.ha-need{color:var(--red)}
+        @media (max-width:900px){.ha-panel .hae-field{grid-template-columns:1fr}}
         #panel-meta .ha-meta{font-size:12px;font-weight:600;color:var(--muted);background:var(--cream-2);padding:2px 10px;border-radius:99px}
         #panel-meta .ha-meta.ha-need{color:var(--red);background:var(--red-soft)}
         @media (max-width:900px){.ha-tabbar{gap:16px}.ha-panel .ha-kv{grid-template-columns:120px minmax(0,1fr)}}
@@ -22749,6 +22759,193 @@ function haPickAgreement(rows){
   return by(live.filter(r => r.status === "signed")) || by(live);
 }
 /* HA-APPS-CORE-END */
+/* HA-EDIT-CORE-START */
+/* Staff complete an application with the host (Worker /staff/applications/:id/save|photo…|crc|finish-link).
+   Pure: forms are built from one section's answers and read back from a {name: value} map, so the
+   round trip is testable. The host's own declarations (19+, texts) are shown, never edited here. */
+const HAE_EDITABLE = ["started", "changes_requested"];
+const HAE_ITEMS_OPEN = ["started", "submitted", "under_review", "changes_requested"];
+const haeCanEdit = app => !!app && HAE_EDITABLE.includes(app.status);
+const haeCanItems = app => !!app && HAE_ITEMS_OPEN.includes(app.status);
+const HAE_CITIES = [["vancouver", "Vancouver"], ["toronto", "Toronto"], ["montreal", "Montréal"], ["victoria", "Victoria"], ["calgary", "Calgary"],
+  ["edmonton", "Edmonton"], ["halifax", "Halifax"], ["ottawa", "Ottawa"], ["winnipeg", "Winnipeg"], ["other", "Other city"]];
+const HAE_PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
+const HAE_HOME_TYPES = [["house", "House"], ["townhouse", "Townhouse"], ["condo", "Condo / apartment"], ["basement_suite", "Basement suite"], ["other", "Other"]];
+const HAE_SMOKING = [["no", "No"], ["outside", "Outside only"], ["yes", "Yes"]];
+const HAE_BEDS = [["single", "Single"], ["double", "Double"], ["queen", "Queen"], ["king", "King"]];
+const HAE_BATHS = [["private", "Private"], ["shared", "Shared"]];
+const HAE_FLOORS = [["main", "Main floor"], ["upper", "Upper floor"], ["basement", "Basement"]];
+const HAE_GENDERS = [["any", "Any"], ["female", "Female only"], ["male", "Male only"]];
+const HAE_DIETS = [["vegetarian", "Vegetarian"], ["vegan", "Vegan"], ["halal", "Halal"], ["gluten_free", "Gluten-free"], ["dairy_free", "Dairy-free"], ["kosher", "Kosher"]];
+const HAE_AMENITIES = [["three_meals", "Three meals a day (instead of two)"], ["no_meals", "No meals option"], ["wifi", "Wi-Fi"], ["laundry", "Laundry"],
+  ["parking", "Parking"], ["ac", "Air conditioning"], ["study_space", "Quiet study space"]];
+const HAE_MAX = { members: 12, rooms: 6 };
+const haeE = v => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const haeInt = v => { const s = String(v == null ? "" : v).trim(); if (!/^\d{1,3}$/.test(s)) return null; return Number(s); };
+const haeTri = v => v === "yes" ? true : v === "no" ? false : null;
+const haeTriVal = b => b === true ? "yes" : b === false ? "no" : "";
+const haeOn = v => v === true || v === "on" || v === "true";
+
+function haeSelect(name, value, opts, blank){
+  return `<select class="form-input" name="${haeE(name)}">${blank === false ? "" : `<option value="">${haeE(blank || "Choose…")}</option>`}`
+    + opts.map(([v, l]) => `<option value="${haeE(v)}"${String(value) === v ? " selected" : ""}>${haeE(l)}</option>`).join("") + "</select>";
+}
+const haeYesNo = (name, b) => haeSelect(name, haeTriVal(b), [["yes", "Yes"], ["no", "No"]], "Not answered");
+const haeText = (name, v, extra) => `<input class="form-input" name="${haeE(name)}" value="${haeE(v)}"${extra || ""}>`;
+const haeCheck = (name, on, label) => `<label class="hae-check"><input type="checkbox" name="${haeE(name)}"${on ? " checked" : ""}> ${haeE(label)}</label>`;
+const haeField = (label, input) => `<label class="hae-field"><span>${haeE(label)}</span>${input}</label>`;
+
+/** The edit form for one section, from that section's answers (or a draft read back from the form). */
+function haeFormHtml(key, s){
+  s = s || {};
+  if (key === "about") return haeField("First name", haeText("first_name", s.first_name, ' maxlength="60"'))
+    + haeField("Last name", haeText("last_name", s.last_name, ' maxlength="60"'))
+    + haeField("Mobile phone", haeText("phone", s.phone, ' maxlength="40" inputmode="tel"'))
+    + haeField("How they heard about us", haeText("heard_from", s.heard_from, ' maxlength="120"'))
+    + `<div class="ha-sub">Only the host can confirm they are 19 or older and agree to texts (their finish link asks them).</div>`;
+  if (key === "home") return haeField("Street address", haeText("street", s.street, ' maxlength="120"'))
+    + haeField("Unit", haeText("unit", s.unit, ' maxlength="20"'))
+    + haeField("City", haeSelect("city", s.city, HAE_CITIES))
+    + haeField("Other city (only if Other)", haeText("city_other", s.city_other, ' maxlength="60"'))
+    + haeField("Province (only if Other)", haeSelect("province", s.province, HAE_PROVINCES.map(p => [p, p])))
+    + haeField("Postal code", haeText("postal_code", s.postal_code, ' maxlength="10"'))
+    + haeField("Neighbourhood", haeText("area", s.area, ' maxlength="80"'))
+    + haeField("Home type", haeSelect("home_type", s.home_type, HAE_HOME_TYPES))
+    + `<div class="ha-sub">A new address clears the travel times: recalculate them after saving and confirm the pin with the host. If the host already signed, a new address, names or household means they sign again.</div>`;
+  if (key === "household") {
+    const members = Array.isArray(s.members) ? s.members : [];
+    return `<div class="hae-list">` + members.map((m, i) => `<div class="hae-row">
+        ${haeField("First name", haeText(`members.${i}.first_name`, m.first_name, ' maxlength="60"'))}
+        ${haeField("Last name", haeText(`members.${i}.last_name`, m.last_name, ' maxlength="60"'))}
+        ${haeField("Relationship", haeText(`members.${i}.relationship`, m.relationship, ' maxlength="40" placeholder="host, son, partner…"'))}
+        ${haeField("Age", haeText(`members.${i}.age`, m.age == null ? "" : m.age, ' inputmode="numeric" maxlength="3"'))}
+        ${haeCheck(`members.${i}.co_host`, m.co_host === true, "Co-host (signs too)")}
+        <button type="button" class="btn btn-ghost btn-mini" data-hae-remove="members" data-hae-i="${i}">Remove</button></div>`).join("")
+      + `</div>` + (members.length < HAE_MAX.members ? `<button type="button" class="btn btn-ghost btn-mini" data-hae-add="members">+ Add a person</button>` : "")
+      + haeField("Smoking in the home", haeSelect("smoking", s.smoking, HAE_SMOKING))
+      + haeField("Pets", haeYesNo("pets", s.pets)) + haeField("About the pets", haeText("pets_detail", s.pets_detail, ' maxlength="200"'))
+      + haeField("Other students, renters or boarders", haeYesNo("boarders", s.boarders))
+      + haeField("About them", haeText("boarders_detail", s.boarders_detail, ' maxlength="200"'))
+      + haeField("Languages at home (comma-separated)", haeText("languages", (s.languages || []).join(", "), ' maxlength="300"'));
+  }
+  if (key === "rooms") {
+    const rooms = Array.isArray(s.rooms) ? s.rooms : [];
+    return `<div class="hae-list">` + rooms.map((r, i) => `<div class="hae-row">
+        ${haeField("Room name", haeText(`rooms.${i}.name`, r.name, ' maxlength="60"'))}
+        ${haeField("Bed", haeSelect(`rooms.${i}.bed`, r.bed, HAE_BEDS))}
+        ${haeField("Bathroom", haeSelect(`rooms.${i}.bathroom`, r.bathroom, HAE_BATHS))}
+        ${haeField("Floor", haeSelect(`rooms.${i}.floor`, r.floor, HAE_FLOORS))}
+        ${haeField("Available from", haeText(`rooms.${i}.available_from`, r.available_from, ' type="date"'))}
+        <button type="button" class="btn btn-ghost btn-mini" data-hae-remove="rooms" data-hae-i="${i}">Remove</button></div>`).join("")
+      + `</div>` + (rooms.length < HAE_MAX.rooms ? `<button type="button" class="btn btn-ghost btn-mini" data-hae-add="rooms">+ Add a room</button>` : "")
+      + haeCheck("furnished_ack", s.furnished_ack === true, "The host confirmed the room is furnished (bed, desk, storage)")
+      + haeField("Maximum students at once", haeText("max_students", s.max_students == null ? "" : s.max_students, ' inputmode="numeric" maxlength="2"'));
+  }
+  if (key === "amenities") return `<div class="ha-sub">Two meals a day is the standard.</div>` + HAE_AMENITIES.map(([k, l]) => haeCheck(k, s[k] === true, l)).join("");
+  if (key === "students") return haeField("Students welcome", haeSelect("genders", s.genders, HAE_GENDERS))
+    + haeField("Accepts under 18", haeYesNo("accepts_minors", s.accepts_minors))
+    + haeField("Youngest age", haeText("min_age", s.min_age == null ? "" : s.min_age, ' inputmode="numeric" maxlength="2"'))
+    + haeField("Oldest age", haeText("max_age", s.max_age == null ? "" : s.max_age, ' inputmode="numeric" maxlength="2"'))
+    + `<div class="hae-field"><span>Can cook for</span><div>${HAE_DIETS.map(([k, l]) => haeCheck(`diets.${k}`, (s.diets || []).includes(k), l)).join("")}</div></div>`
+    + haeField("About the family (at least 50 characters)", `<textarea class="form-input" name="intro" maxlength="800">${haeE(s.intro)}</textarea>`)
+    + haeField("House rules", `<textarea class="form-input" name="house_rules" maxlength="400">${haeE(s.house_rules)}</textarea>`);
+  return "";
+}
+
+/** Rows present in the form for a list ("members.3.first_name" → 4 rows). */
+function haeRows(v, list){
+  let n = 0;
+  for (const k of Object.keys(v)) { const m = new RegExp(`^${list}\\.(\\d+)\\.`).exec(k); if (m) n = Math.max(n, Number(m[1]) + 1); }
+  return n;
+}
+/** One section's data from the form's {name: value} (checkboxes: true/false). The Worker validates again. */
+function haeRead(key, v){
+  const t = k => String(v[k] == null ? "" : v[k]).trim();
+  if (key === "about") return { first_name: t("first_name"), last_name: t("last_name"), phone: t("phone"), heard_from: t("heard_from") };
+  if (key === "home") return { street: t("street"), unit: t("unit"), city: t("city"), city_other: t("city_other"), province: t("province"),
+    postal_code: t("postal_code"), area: t("area"), home_type: t("home_type") };
+  if (key === "household") {
+    const members = [];
+    for (let i = 0; i < haeRows(v, "members"); i++) {
+      if (!(`members.${i}.first_name` in v)) continue;
+      members.push({ first_name: t(`members.${i}.first_name`), last_name: t(`members.${i}.last_name`), relationship: t(`members.${i}.relationship`),
+        age: haeInt(v[`members.${i}.age`]), co_host: haeOn(v[`members.${i}.co_host`]) });
+    }
+    return { members, smoking: t("smoking"), pets: haeTri(t("pets")), pets_detail: t("pets_detail"), boarders: haeTri(t("boarders")),
+      boarders_detail: t("boarders_detail"), languages: t("languages").split(",").map(x => x.trim()).filter(Boolean) };
+  }
+  if (key === "rooms") {
+    const rooms = [];
+    for (let i = 0; i < haeRows(v, "rooms"); i++) {
+      if (!(`rooms.${i}.name` in v)) continue;
+      rooms.push({ name: t(`rooms.${i}.name`), bed: t(`rooms.${i}.bed`), bathroom: t(`rooms.${i}.bathroom`), floor: t(`rooms.${i}.floor`),
+        available_from: t(`rooms.${i}.available_from`) });
+    }
+    return { rooms, furnished_ack: haeOn(v.furnished_ack), max_students: haeInt(v.max_students) };
+  }
+  if (key === "amenities") return Object.fromEntries(HAE_AMENITIES.map(([k]) => [k, haeOn(v[k])]));
+  if (key === "students") return { genders: t("genders"), accepts_minors: haeTri(t("accepts_minors")), min_age: haeInt(v.min_age), max_age: haeInt(v.max_age),
+    diets: HAE_DIETS.map(([k]) => k).filter(k => haeOn(v[`diets.${k}`])), intro: t("intro"), house_rules: t("house_rules") };
+  return {};
+}
+/** Add or remove a row in a draft (household members, rooms). */
+function haeDraftEdit(key, draft, op, i){
+  const d = JSON.parse(JSON.stringify(draft || {}));
+  const list = key === "household" ? "members" : key === "rooms" ? "rooms" : null;
+  if (!list) return d;
+  d[list] = Array.isArray(d[list]) ? d[list] : [];
+  if (op === "add" && d[list].length < HAE_MAX[list]) d[list].push(list === "members"
+    ? { first_name: "", last_name: "", relationship: "", age: null, co_host: false }
+    : { name: "", bed: "", bathroom: "", floor: "", available_from: "" });
+  if (op === "remove" && i >= 0 && i < d[list].length) d[list].splice(i, 1);
+  return d;
+}
+
+/** The section's missing items from the stored progress (red under the section heading). */
+function haeMissing(app, key){
+  const s = app && app.progress && app.progress.sections && app.progress.sections[key];
+  return s && !s.done ? (s.missing || []) : [];
+}
+const haeWho = actor => String(actor || "").replace(/^staff:/, "staff ").split("@")[0] || "staff";
+const HAE_WHAT = { photo_add: "added a photo", photo_remove: "removed a photo", photo_tag: "retagged a photo", photo_order: "reordered photos",
+  crc: "uploaded the record check", map_confirm: "confirmed the map pin" };
+/** "Filled in by emilio · 5 Nov" for a section staff saved (newest first in the log); "" = the host's answers. */
+function haeSectionBy(edits, key, dayFmt){
+  const e = (edits || []).find(x => x && x.type === "application_staff_edit" && x.after && x.after.what === "section" && x.after.section === key);
+  return e ? `Filled in by ${haeWho(e.actor)} · ${dayFmt(e.created_at)}` : "";
+}
+/** The staff-help log as lines, newest first. */
+function haeLog(edits, dayFmt, sectionWords){
+  return (edits || []).filter(Boolean).map(e => {
+    const a = e.after || {};
+    const what = e.type === "application_finish_link" ? `sent the finish link${Array.isArray(a.left) && a.left.length ? " (left: " + a.left.join(", ") + ")" : ""}`
+      : a.what === "section" ? `filled in ${sectionWords[a.section] || a.section}` : HAE_WHAT[a.what] || String(a.what || "changed it");
+    return { at: e.created_at, text: `${haeWho(e.actor)} ${what}`, when: dayFmt(e.created_at) };
+  });
+}
+/** Is the record-check form's date OK (YYYY-MM-DD, not in the future, within 3 years)? Returns the problem or "". */
+function haeCrcDateProblem(day, now){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ""))) return "Enter the date the check was issued.";
+  const today = new Date(now).toISOString().slice(0, 10);
+  if (day > today) return "The issue date can't be in the future.";
+  const old = new Date(now); old.setUTCFullYear(old.getUTCFullYear() - 3);
+  if (day < old.toISOString().slice(0, 10)) return "The check must have been issued in the last 3 years.";
+  return "";
+}
+const HAE_ERRORS = { locked: "This application can't be edited now (it was submitted or closed): refresh.", busy: "Approval is running: try again in a minute.",
+  bad_section: "That section can't be saved here.", bad_data: "The form was empty: refresh and try again.", bad_request: "Refresh and try again.",
+  not_an_image: "That file isn't a JPEG, PNG or WebP photo.", too_many: "Already 10 photos: remove one first.",
+  too_many_uploads: "Too many uploads today for this application: try tomorrow.", too_large: "That file is too big.", bad_tag: "Pick what the photo shows.",
+  bad_file: "Upload a PDF or a photo of the record check.", bad_date: "Enter the date the check was issued.",
+  crc_too_old: "The check must have been issued in the last 3 years.", not_located: "Calculate the travel times first: the map has no pin yet.",
+  mail_failed: "The email to the host failed: try again.", admin_only: "Only portal admins can approve a host." };
+const haeError = (code, fallback) => HAE_ERRORS[code] || fallback || "Something went wrong: try again.";
+/** After "Send finish link": what to say. */
+function haeFinishText(out, email, left){
+  if (out && out.throttled) return "A link was emailed in the last 2 minutes (or 6 today): wait a moment before sending another.";
+  return `Finish link emailed to ${email}.` + (left && left.length ? ` Left for the host: ${left.join(", ")}.` : "");
+}
+/* HA-EDIT-CORE-END */
 /* ---- Partner inventory (DOM side of INVENTORY-CORE) -------------------------
    Read when the page is opened. Writes go through the signed-in admin's
    session; RLS and column grants decide (only property_id and *_override on
@@ -41675,7 +41872,7 @@ function haOpen(id){
   // The landlord panel leaves header buttons (and a menu) behind; every opener of the shared panel clears them.
   document.querySelectorAll(".panel-head .header-edit-btn").forEach(x => x.remove());
   document.getElementById("ll-more-menu")?.remove();
-  if (HA.openId !== id) { HA.form = null; HA.msg = null; HA.block = null; HA.flags = {}; }
+  if (HA.openId !== id) { HA.form = null; HA.msg = null; HA.block = null; HA.flags = {}; HA.edit = null; }
   HA.openId = id;
   haRenderPanel(a);
   document.getElementById("detail-panel").classList.add("open");
@@ -41698,7 +41895,9 @@ async function haLoadDetail(id){
       if (i >= 0) HA.apps[i] = Object.assign({}, HA.apps[i], keep);
     }
     HA.detail.set(id, { photos: Array.isArray(out.photos) ? out.photos : [], crc_url: out.crc_url || null,
-      agreement_url: out.agreement_url || out.agreement_pdf_url || null });
+      agreement_url: out.agreement_url || out.agreement_pdf_url || null,
+      host_only: Array.isArray(out.host_only) ? out.host_only : null, can_approve: out.can_approve,
+      staff_edits: Array.isArray(out.staff_edits) ? out.staff_edits : [] });
   } catch (e) {
     HA.detail.set(id, { error: (e && e.message) || String(e) });
   }
@@ -41737,7 +41936,10 @@ function haActionsHtml(a){
   } else if (a.status === "approved" && a.host_id && haHostProfileNote(a).canOpen) {
     html += `<div class="ha-actions"><button type="button" class="btn btn-ghost btn-mini" data-ha-host-profile="${hmEsc(a.host_id)}">Open in Host profiles</button></div>`;
   }
-  const acts = haActions(a);
+  const det = HA.detail.get(a.id) || {};
+  const noApprove = det.can_approve === false;
+  const acts = haActions(a).filter(k => !(noApprove && k === "approve"));
+  if (noApprove && haActions(a).includes("approve")) html += `<div class="ha-sub" style="margin-bottom:8px">Only portal admins can approve a host.</div>`;
   if (!acts.length) return html;
   const f = HA.form;
   if (f === "changes" || f === "reject") {
@@ -41809,20 +42011,27 @@ function haFilesHtml(a){
   if (d.loading) note = '<div class="ha-sub">Loading links…</div>';
   else if (d.error) note = `<div class="ha-sub ha-need">Links couldn't load: ${hmEsc(d.error)} ${reload}</div>`;
   else if (d.photos) note = `<div class="ha-sub">Photo links work for an hour. ${reload}</div>`;
+  const manage = haeCanItems(a) && !!d.photos;
   const photos = d.photos && d.photos.length
-    ? `<div class="ha-photos">${d.photos.map(p => /^https:\/\//.test(String(p.url || p.signed_url || ""))
-        ? `<figure><a href="${hmEsc(p.url || p.signed_url)}" target="_blank" rel="noopener"><img src="${hmEsc(p.url || p.signed_url)}" alt="${hmEsc(p.tag || "photo")}" loading="lazy"></a><figcaption>${hmEsc(String(p.tag || "").replace(/_/g, " "))}</figcaption></figure>` : "").join("")}</div>`
+    ? `<div class="ha-photos">${d.photos.map((p, i) => /^https:\/\//.test(String(p.url || p.signed_url || ""))
+        ? `<figure><a href="${hmEsc(p.url || p.signed_url)}" target="_blank" rel="noopener"><img src="${hmEsc(p.url || p.signed_url)}" alt="${hmEsc(p.tag || "photo")}" loading="lazy"></a>`
+          + (manage ? haPhotoTools(p, i, d.photos.length) : `<figcaption>${hmEsc(String(p.tag || "").replace(/_/g, " "))}</figcaption>`) + `</figure>` : "").join("")}</div>`
     : d.photos ? '<div class="card-sub">No photos yet.</div>' : "";
+  const photoMissing = haeMissing(a, "photos");
+  const photoBox = (photoMissing.length ? photoMissing.map(m => `<div class="ha-line ha-need">${hmEsc(m)}</div>`).join("") : "")
+    + (photos || '<div class="card-sub">Loading…</div>') + (manage ? haPhotoUploadHtml() : "");
   return haSection("Contract, <em>documents</em> &amp; payouts",
-      haKv("Host agreement", contract) + haKv("Criminal record check", crc)
+      haKv("Host agreement", contract) + haKv("Criminal record check", crc + (haeCanItems(a) ? haCrcFormHtml(a) : ""))
       + `<div class="ha-sub" id="ha-doc-msg"></div>` + haKv("Stripe payouts", hmEsc(payouts))
       + (a.host_id ? haKv("Payout account", hmEsc(a.host_id)) : "") + note)
-    + haSection("Photos", photos || '<div class="card-sub">Loading…</div>');
+    + haSection("Photos", photoBox);
 }
 function haGettingAroundHtml(a){
   const skip = haGeoCanSkip(a.geo);
   const confirming = HA.skipId === a.id;
+  const pinAsk = a.status !== "approved" && a.geo && a.geo.status === "ok" && !a.geo.confirmed_at;
   const btns = `<button type="button" class="btn btn-ghost btn-mini" data-ha-locate>Recalculate travel times</button>`
+    + (pinAsk ? ` <button type="button" class="btn btn-ghost btn-mini" data-hae-pin>Host confirmed this is their home</button>` : "")
     + (skip && !confirming ? ` <button type="button" class="btn btn-ghost btn-mini" data-ha-skip-ask>Skip travel times for this host</button>` : "");
   const confirm = skip && confirming
     ? `<div class="ha-inline" style="margin-top:8px"><div class="card-sub">This lets the host continue without travel times. Skip?</div>
@@ -41850,10 +42059,12 @@ function haRestHtml(a){
   const missing = a.status === "approved" ? [] : haMissing(a);
   const timeline = haTimeline(a);
   return (a.review_note ? haSection("Note to the <em>host</em>", `<div class="ha-line" style="white-space:pre-line">${hmEsc(a.review_note)}</div>`) : "")
-    + (missing.length ? haSection("Still <em>missing</em>", missing.map(m => `<div class="ha-line">• ${hmEsc(m)}</div>`).join("")) : "")
+    + (missing.length || haeCanEdit(a) ? haSection("Still <em>missing</em>", missing.map(m => `<div class="ha-line">• ${hmEsc(m)}</div>`).join("")
+      + haFinishHtml(a)) : "")
     + haFilesHtml(a)
     + haGettingAroundHtml(a)
-    + haAnswerSections(a.answers).map(s => haSection(hmEsc(s.title), s.rows.map(([l, v]) => haKv(l, hmEsc(v))).join(""))).join("")
+    + haAnswerSections(a.answers).map(s => haAnswerSectionHtml(a, s)).join("")
+    + haStaffLogHtml(a)
     + haSection("Timeline", timeline.length ? timeline.map(e => haKv(hmWhen(e.at), hmEsc(e.text)
       + (e.doc ? ` <button type="button" class="btn btn-ghost btn-mini" data-ha-doc="${e.doc}" data-ha-doc-mode="view">View</button>` : ""))).join("") : '<div class="card-sub">—</div>');
 }
@@ -41880,6 +42091,10 @@ function haRenderPanel(a){
   // An open note form keeps what is being typed: only the rest is redrawn under it.
   if (HA.force || !HA.form || !root.querySelector("#ha-note, [data-ha-act='approve']")) root.querySelector("#ha-panel-actions").innerHTML = haActionsHtml(a);
   HA.force = false;
+  const form = root.querySelector("#ha-edit-form");
+  if (form && HA.edit && HA.edit.id === a.id && !HA.forceRest) return; // typing stays put; Save/Cancel redraw
+  if (form && HA.edit) HA.edit.draft = haeRead(HA.edit.key, haeValues(form));
+  HA.forceRest = false;
   root.querySelector("#ha-panel-rest").innerHTML = haRestHtml(a);
 }
 
@@ -41974,6 +42189,190 @@ async function haOpenFromProfile(appId){
   haOpen(appId);
 }
 
+/* ---- Staff complete the application with the host (HA-EDIT-CORE). Every change goes through the Worker,
+   which validates it like the host's own save and logs who did it. ---- */
+function haeValues(form){
+  const v = {};
+  form.querySelectorAll("[name]").forEach(el => { v[el.name] = el.type === "checkbox" ? el.checked : el.value; });
+  return v;
+}
+const haeDay = t => { try { return hmDay(t); } catch (e) { return String(t || "").slice(0, 10); } };
+function haAnswerSectionHtml(a, s){
+  const editing = HA.edit && HA.edit.id === a.id && HA.edit.key === s.key;
+  const det = HA.detail.get(a.id) || {};
+  const by = haeSectionBy(det.staff_edits, s.key, haeDay);
+  const miss = haeMissing(a, s.key).map(m => `<div class="ha-line ha-need">${hmEsc(m)}</div>`).join("");
+  const head = (by ? `<div class="ha-sub">${hmEsc(by)}</div>` : "") + miss;
+  if (editing) {
+    const draft = HA.edit.draft || (a.answers && a.answers[s.key]) || {};
+    return haSection(hmEsc(s.title), head + `<div id="ha-edit-form" class="hae-form" data-key="${hmEsc(s.key)}">${haeFormHtml(s.key, draft)}</div>
+      <div class="ha-actions" style="margin-top:10px"><button type="button" class="btn btn-primary btn-mini" data-hae-save>Save ${hmEsc(s.title)}</button>
+      <button type="button" class="btn btn-ghost btn-mini" data-hae-cancel>Cancel</button></div><div class="ha-sub" id="ha-edit-msg"></div>`);
+  }
+  const edit = haeCanEdit(a) && !HA.edit ? `<div class="ha-actions" style="margin-top:8px"><button type="button" class="btn btn-ghost btn-mini" data-hae-edit="${hmEsc(s.key)}">Edit ${hmEsc(s.title)}</button></div>` : "";
+  return haSection(hmEsc(s.title), head + s.rows.map(([l, v]) => haKv(l, hmEsc(v))).join("") + edit);
+}
+function haFinishHtml(a){
+  if (!haeCanEdit(a)) return "";
+  const det = HA.detail.get(a.id) || {};
+  const left = det.host_only || [];
+  return `<div class="ha-inline"><div class="card-sub">${left.length
+      ? "Only the host can do: " + hmEsc(left.join(", ")) + ". When the rest is filled in, send them a finish link: it lists what's left, and the application goes to To review by itself once they're done."
+      : "Nothing is left that only the host can do."}</div>
+    <div class="ha-actions" style="margin-top:8px"><button type="button" class="btn btn-ghost btn-mini" data-hae-finish>Send finish link</button></div>
+    <div class="ha-sub" id="ha-finish-msg"></div></div>`;
+}
+function haStaffLogHtml(a){
+  const det = HA.detail.get(a.id) || {};
+  const lines = haeLog(det.staff_edits, t => { try { return hmWhen(t); } catch (e) { return t; } }, HA_SECTION_WORDS);
+  if (!lines.length) return "";
+  return haSection("Staff <em>help</em>", lines.map(l => haKv(l.when, hmEsc(l.text))).join("")
+    + `<div class="ha-sub" style="margin-top:6px">Sections without a "Filled in by" line are the host's own answers.</div>`);
+}
+function haPhotoTools(p, i, n){
+  const tags = HML_TAGS.map(([v, t]) => `<option value="${v}"${v === p.tag ? " selected" : ""}>${hmEsc(t)}</option>`).join("");
+  const by = p.by && p.by !== "host" ? `<div class="ha-sub">added by ${hmEsc(haeWho(p.by))}</div>` : "";
+  return `<figcaption><select class="form-input hae-tag" data-hae-ph-tag="${hmEsc(p.id)}">${tags}</select>${by}
+    <span class="ha-actions" style="margin-top:4px">
+      <button type="button" class="btn btn-ghost btn-mini" data-hae-ph-move="${hmEsc(p.id)}" data-hae-dir="-1"${i === 0 ? " disabled" : ""} aria-label="Move earlier">←</button>
+      <button type="button" class="btn btn-ghost btn-mini" data-hae-ph-move="${hmEsc(p.id)}" data-hae-dir="1"${i === n - 1 ? " disabled" : ""} aria-label="Move later">→</button>
+      <button type="button" class="btn btn-ghost btn-mini" data-hae-ph-del="${hmEsc(p.id)}">Remove</button></span></figcaption>`;
+}
+function haPhotoUploadHtml(){
+  const tags = HML_TAGS.map(([v, t]) => `<option value="${v}"${v === "other" ? " selected" : ""}>${hmEsc(t)}</option>`).join("");
+  return `<div class="ha-inline"><div class="card-sub">Upload photos for the host (several at once). The first photo leads the listing; at least 4 home photos including the student's room.</div>
+    <div class="ha-actions" style="margin-top:8px;align-items:center"><select class="form-input" id="hae-up-tag" style="width:auto">${tags}</select>
+    <input type="file" id="hae-up-files" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple>
+    <button type="button" class="btn btn-primary btn-mini" data-hae-upload>Upload</button></div><div class="ha-sub" id="ha-photo-msg"></div></div>`;
+}
+function haCrcFormHtml(a){
+  return `<div class="ha-actions" style="margin-top:6px;align-items:center">
+    <label class="ha-sub">${a.crc_path ? "Replace" : "Upload"} for the host: issued <input type="date" class="form-input" id="hae-crc-day" style="width:auto"></label>
+    <input type="file" id="hae-crc-file" accept="application/pdf,image/jpeg,image/png,image/webp">
+    <button type="button" class="btn btn-ghost btn-mini" data-hae-crc>Upload check</button></div><div class="ha-sub" id="ha-crc-msg"></div>`;
+}
+const haeSay = (id, t, bad) => { const m = document.getElementById(id); if (m) { m.textContent = t || ""; m.style.color = bad ? "var(--red)" : ""; } };
+/** Raw-body POST (photos, record check) with the staff session. */
+async function haePost(path, blob, type){
+  const { data } = await window.vmDb.sb.auth.getSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(HM_WORKER + path, { method: "POST", headers: { "Content-Type": type, Authorization: "Bearer " + token }, body: blob });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(haeError(out.error, "HTTP " + res.status)); e.body = out; throw e; }
+  return out;
+}
+/** After a change: the row (progress), then the drawer's links and log. */
+async function haeAfter(id){
+  HA.forceRest = true;
+  await haLoad();
+  await haLoadDetail(id);
+}
+async function haeRun(btn, msgId, f){
+  if (btn) btn.disabled = true;
+  try { await f(); }
+  catch (e) { haeSay(msgId, haeError(e && e.body && e.body.error, (e && e.message) || String(e)), true); if (btn && btn.isConnected) btn.disabled = false; }
+}
+async function haeSave(a, btn){
+  const form = document.getElementById("ha-edit-form");
+  if (!form || !HA.edit) return;
+  const key = HA.edit.key, data = haeRead(key, haeValues(form));
+  HA.edit.draft = data;
+  haeSay("ha-edit-msg", "Saving…");
+  await haeRun(btn, "ha-edit-msg", async () => {
+    await hmWorker(`/staff/applications/${a.id}/save`, { section: key, data });
+    HA.edit = null;
+    haSay("Saved. Progress is updated; anything still missing is in red.");
+    await haeAfter(a.id);
+  });
+}
+async function haeUpload(a, btn){
+  const input = document.getElementById("hae-up-files"), tag = (document.getElementById("hae-up-tag") || {}).value || "other";
+  const files = input && input.files ? [...input.files] : [];
+  if (!files.length) return haeSay("ha-photo-msg", "Choose one or more photos first.", true);
+  await haeRun(btn, "ha-photo-msg", async () => {
+    let done = 0;
+    for (const f of files) {
+      haeSay("ha-photo-msg", `Uploading ${done + 1} of ${files.length}…`);
+      await haePost(`/staff/applications/${a.id}/photo?tag=${encodeURIComponent(tag)}`, await hmPhotoJpeg(f), "image/jpeg");
+      done++;
+    }
+    haSay(`${done} photo${done === 1 ? "" : "s"} uploaded.`);
+    await haeAfter(a.id);
+  });
+}
+async function haeCrc(a, btn){
+  const file = (document.getElementById("hae-crc-file") || {}).files?.[0];
+  const day = (document.getElementById("hae-crc-day") || {}).value || "";
+  const bad = haeCrcDateProblem(day, Date.now());
+  if (bad) return haeSay("ha-crc-msg", bad, true);
+  if (!file) return haeSay("ha-crc-msg", "Choose the PDF or photo of the check.", true);
+  if (file.size > 10 * 1024 * 1024) return haeSay("ha-crc-msg", "That file is over 10 MB.", true);
+  await haeRun(btn, "ha-crc-msg", async () => {
+    haeSay("ha-crc-msg", "Uploading…");
+    await haePost(`/staff/applications/${a.id}/crc?issued=${encodeURIComponent(day)}&name=${encodeURIComponent(file.name)}`, file, file.type || "application/octet-stream");
+    haSay("Record check uploaded (logged as a staff upload).");
+    await haeAfter(a.id);
+  });
+}
+async function haePhotoMove(a, id, dir, btn){
+  const photos = ((HA.detail.get(a.id) || {}).photos || []).map(p => p.id);
+  const i = photos.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= photos.length) return;
+  [photos[i], photos[j]] = [photos[j], photos[i]];
+  await haeRun(btn, "ha-photo-msg", async () => { await hmWorker(`/staff/applications/${a.id}/photo-order`, { ids: photos }); await haeAfter(a.id); });
+}
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-hae-edit],[data-hae-save],[data-hae-cancel],[data-hae-add],[data-hae-remove],[data-hae-finish],[data-hae-pin],[data-hae-upload],[data-hae-crc],[data-hae-ph-move],[data-hae-ph-del]");
+  if (!t || !t.closest(".ha-panel")) return;
+  const a = HA.apps.find(x => x.id === HA.openId);
+  if (!a) return;
+  if (t.dataset.haeEdit) { HA.edit = { id: a.id, key: t.dataset.haeEdit, draft: null }; HA.forceRest = true; haSay(""); haRenderPanel(a); return; }
+  if (t.hasAttribute("data-hae-cancel")) { HA.edit = null; HA.forceRest = true; return haRenderPanel(a); }
+  if (t.hasAttribute("data-hae-save")) return haeSave(a, t);
+  if (t.dataset.haeAdd || t.dataset.haeRemove) {
+    const form = document.getElementById("ha-edit-form");
+    if (!form || !HA.edit) return;
+    HA.edit.draft = haeDraftEdit(HA.edit.key, haeRead(HA.edit.key, haeValues(form)), t.dataset.haeAdd ? "add" : "remove", Number(t.dataset.haeI));
+    form.innerHTML = haeFormHtml(HA.edit.key, HA.edit.draft);
+    return;
+  }
+  if (t.hasAttribute("data-hae-finish")) {
+    haeSay("ha-finish-msg", "Sending…");
+    return haeRun(t, "ha-finish-msg", async () => {
+      const out = await hmWorker(`/staff/applications/${a.id}/finish-link`, {});
+      haSay(haeFinishText(out, a.email, (HA.detail.get(a.id) || {}).host_only));
+      await haeAfter(a.id);
+    });
+  }
+  if (t.hasAttribute("data-hae-pin")) return haeRun(t, "ha-locate-msg", async () => {
+    const out = await hmWorker(`/staff/applications/${a.id}/locate`, { confirm: true });
+    const i = HA.apps.findIndex(x => x.id === a.id);
+    if (i >= 0 && out && out.geo) HA.apps[i] = Object.assign({}, HA.apps[i], { geo: out.geo });
+    haSay("Home confirmed on the map.");
+    await haeAfter(a.id);
+  });
+  if (t.hasAttribute("data-hae-upload")) return haeUpload(a, t);
+  if (t.hasAttribute("data-hae-crc")) return haeCrc(a, t);
+  if (t.dataset.haePhMove) return haePhotoMove(a, Number(t.dataset.haePhMove), Number(t.dataset.haeDir), t);
+  if (t.dataset.haePhDel) return haeRun(t, "ha-photo-msg", async () => {
+    await hmWorker(`/staff/applications/${a.id}/photo-remove`, { id: Number(t.dataset.haePhDel) });
+    haSay("Photo removed.");
+    await haeAfter(a.id);
+  });
+});
+document.addEventListener("change", (ev) => {
+  const sel = ev.target.closest && ev.target.closest("[data-hae-ph-tag]");
+  if (!sel || !sel.closest(".ha-panel")) return;
+  const a = HA.apps.find(x => x.id === HA.openId);
+  if (!a) return;
+  haeRun(sel, "ha-photo-msg", async () => {
+    await hmWorker(`/staff/applications/${a.id}/photo-tag`, { id: Number(sel.dataset.haePhTag), tag: sel.value });
+    await haeAfter(a.id);
+  });
+});
+
 document.addEventListener("click", async (ev) => {
   const t = ev.target.closest && ev.target.closest("[data-hh-tab],[data-ha-filter],[data-ha-open],#ha-refresh,[data-ha-open-app],[data-ha-act],[data-ha-form],[data-ha-cancel],[data-ha-host-profile],[data-ha-files-reload],[data-ha-doc],[data-ha-locate],[data-ha-skip-ask],[data-ha-skip-cancel],[data-ha-skip-do]");
   if (!t) return;
@@ -42026,6 +42425,17 @@ async function hmlCall(hostId, action, body){
 
 // Photos are shrunk to 1600px JPEG in the browser (also turns phone orientation into real pixels) before upload.
 async function hmlUpload(hostId, file, tag){
+  const blob = await hmPhotoJpeg(file);
+  const { data } = await window.vmDb.sb.auth.getSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(`${HM_WORKER}/staff/hosts/${encodeURIComponent(hostId)}/listing/photo?tag=${encodeURIComponent(tag)}`,
+    { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + token }, body: blob });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(HML_ERRORS[out.error] || out.error || ("HTTP " + res.status));
+}
+/** A photo file as a JPEG blob, at most 1600px on its longest side. */
+async function hmPhotoJpeg(file){
   // Same fallbacks as the host page: EXIF-aware bitmap, plain bitmap, then an <img> from a blob URL.
   let bmp = null;
   try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) {}
@@ -42041,14 +42451,7 @@ async function hmlUpload(hostId, file, tag){
   const c = document.createElement("canvas");
   c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
   c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-  const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("could not read the photo")), "image/jpeg", 0.85));
-  const { data } = await window.vmDb.sb.auth.getSession();
-  const token = data && data.session && data.session.access_token;
-  if (!token) throw new Error("Not signed in");
-  const res = await fetch(`${HM_WORKER}/staff/hosts/${encodeURIComponent(hostId)}/listing/photo?tag=${encodeURIComponent(tag)}`,
-    { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + token }, body: blob });
-  const out = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(HML_ERRORS[out.error] || out.error || ("HTTP " + res.status));
+  return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("could not read the photo")), "image/jpeg", 0.85));
 }
 
 async function hmlRefreshStatuses(){
@@ -46896,14 +47299,14 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-11-05-dashten1"></script>
-<script src="extensions.js?v=2026-11-05-dashten1"></script>
-<script src="retention.js?v=2026-11-05-dashten1"></script>
-<script src="ap.js?v=2026-11-05-dashten1"></script>
-<script src="properties.js?v=2026-11-05-dashten1"></script>
-<script src="partner-sales.js?v=2026-11-05-dashten1"></script>
-<script src="ar.js?v=2026-11-05-dashten1"></script>
-<script src="mx-finance.js?v=2026-11-05-dashten1"></script>
-<script src="ef-deposits.js?v=2026-11-05-dashten1"></script>
+<script src="room-changes.js?v=2026-11-05-hastaff1"></script>
+<script src="extensions.js?v=2026-11-05-hastaff1"></script>
+<script src="retention.js?v=2026-11-05-hastaff1"></script>
+<script src="ap.js?v=2026-11-05-hastaff1"></script>
+<script src="properties.js?v=2026-11-05-hastaff1"></script>
+<script src="partner-sales.js?v=2026-11-05-hastaff1"></script>
+<script src="ar.js?v=2026-11-05-hastaff1"></script>
+<script src="mx-finance.js?v=2026-11-05-hastaff1"></script>
+<script src="ef-deposits.js?v=2026-11-05-hastaff1"></script>
 </body>
 </html>
