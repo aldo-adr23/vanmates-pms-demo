@@ -1888,7 +1888,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-03-jptnae1"></script>
+<script src="pms-supabase.js?v=2026-11-05-dashrev1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20072,6 +20072,43 @@ function occMonthly(spans, props, todayIso, fromIso) {
   });
 }
 /* OCC-TREND-CORE-END */
+/* DASH-REV-CORE-START */
+// Dashboard "Monthly revenue" (pure; no globals). Until 2026-11-05 the card summed the rent of
+// every active tenant, so people not moved in yet (often months away) and test records counted.
+// Now:
+//   current  = active tenants already moved in: "living" + "ended" (lease date passed but still
+//              active, nearly always an undated renewal; same rule as Properties & rooms P&L).
+//   moveIns  = active tenants moving in later this month (rent/month, not prorated).
+//   ending   = current tenants whose lease ends later this month (rent/month; some will renew).
+//   test     = name or property containing the word "test" (TEST House), left out everywhere.
+// Dates are YYYY-MM-DD strings, compared as text. todayIso is the local date.
+function revDay(v) { const s = String(v || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ""; }
+function revIsTest(t) { return /\btest\b/i.test(`${(t && t.name) || ""} ${(t && t.property) || ""}`); }
+function revMonthEnd(todayIso) {
+  const y = +todayIso.slice(0, 4), m = +todayIso.slice(5, 7);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${todayIso.slice(0, 8)}${String(last).padStart(2, "0")}`;
+}
+function revModel(list, todayIso) {
+  const monthEnd = revMonthEnd(todayIso);
+  const bucket = () => ({ n: 0, rent: 0 });
+  const o = { current: bucket(), living: bucket(), ended: bucket(), moveIns: bucket(), later: bucket(),
+    ending: bucket(), test: bucket(), noRent: 0, monthEnd };
+  const add = (b, r) => { b.n++; b.rent += r; };
+  for (const t of list || []) {
+    if (!t || t.status !== "active") continue;
+    const r = Number(t.rent) || 0;
+    if (revIsTest(t)) { add(o.test, r); continue; }
+    const mi = revDay(t.moveIn), le = revDay(t.leaseEnd);
+    if (mi && mi > todayIso) { add(mi <= monthEnd ? o.moveIns : o.later, r); continue; }
+    add(o.current, r);
+    if (!r) o.noRent++;
+    if (le && le < todayIso) add(o.ended, r);
+    else { add(o.living, r); if (le && le <= monthEnd) add(o.ending, r); }
+  }
+  return o;
+}
+/* DASH-REV-CORE-END */
 let OCC_MODE = "monthly";
 const OCC_SUB = {
   day: "Last 14 days · rooms in use each day",
@@ -20109,13 +20146,69 @@ document.getElementById("occ-modes")?.addEventListener("click", (e) => {
   renderOccTrend();
 });
 
+// Homestay for the dashboard: this month's student charges, Canada only, from the same model as
+// Homestay › Finance (live Stripe bookings dated this month + portal clients prorated). Cents in.
+// The live bookings read is started once; the card re-renders when it lands.
+function dashHomestay() {
+  if (window.vmCountry && vmCountry.current() !== "CA") return null;
+  if (typeof computeHomestayFinance !== "function" || typeof homestayClients === "undefined") return null;
+  if (typeof HF_LIVE !== "undefined" && HF_LIVE.state === "idle" && typeof loadHomestayFinanceLive === "function") {
+    loadHomestayFinanceLive().then(() => { try { refreshDashboard(); } catch (e) {} });
+  }
+  try {
+    const m = computeHomestayFinance({
+      clients: homestayClients, hosts: typeof homestayHosts !== "undefined" ? homestayHosts : [],
+      bookings: HF_LIVE.bookings, bookingsError: HF_LIVE.reason, remoteHosts: HF_LIVE.hosts,
+      month: homestayYM(), today: homestayToday(),
+    });
+    return {
+      gross: (m.confirmed.cashIn + m.expected.cashIn) / 100,
+      net: (m.confirmed.net + m.expected.net) / 100,
+      stays: m.confirmed.bookingCount + m.expected.clientCount,
+      live: m.confirmed.available, loading: HF_LIVE.state === "loading",
+    };
+  } catch (e) { console.warn("[dash revenue] homestay", e.message); return null; }
+}
+function renderDashRevenue(kpi) {
+  if (!kpi) return;
+  const m = revModel(tenants, occIso(TODAY));
+  const hs = dashHomestay();
+  const mon = ["January","February","March","April","May","June","July","August","September","October","November","December"][TODAY.getUTCMonth()];
+  const $ = (v) => "$" + Math.round(v).toLocaleString();
+  const k = (v) => "$" + (Math.abs(v) >= 1000 ? (Math.round(v / 100) / 10).toLocaleString() + "k" : Math.round(v).toLocaleString());
+  const co = m.current.rent, total = co + (hs ? hs.gross : 0);
+  kpi.querySelector(".kpi-label").textContent = `Monthly revenue · ${mon.slice(0, 3)}`;
+  kpi.querySelector(".kpi-value").textContent = $(total);
+  const row = (a, b) => `<div style="display:flex;justify-content:space-between;gap:8px"><span>${a}</span><span>${b}</span></div>`;
+  const hsTxt = !hs ? "" : hs.loading && !hs.live ? row("Homestay", "loading…")
+    : row(`Homestay · ${hs.stays} stay${hs.stays === 1 ? "" : "s"}`, `${$(hs.gross)}`);
+  const tr = kpi.querySelector(".kpi-trend");
+  tr.style.display = "block";
+  tr.style.fontWeight = "500";
+  tr.innerHTML =
+    `<div style="color:var(--ink,inherit)">` +
+      row(`Co-living · ${m.current.n} tenants`, $(co)) + hsTxt +
+    `</div>` +
+    `<div style="color:var(--muted);margin-top:4px">Rest of ${mon.slice(0, 3)}: +${k(m.moveIns.rent)} move-ins (${m.moveIns.n}) · −${k(m.ending.rent)} leases ending (${m.ending.n})</div>`;
+  const tip = [
+    `Co-living ${$(co)}/month: rent of ${m.current.n} active tenants already moved in`,
+    `  living here ${m.living.n} (${$(m.living.rent)}) + lease date passed, still active ${m.ended.n} (${$(m.ended.rent)})`,
+    m.noRent ? `  ${m.noRent} of them have no rent on file` : "",
+    `Not counted: ${m.moveIns.n + m.later.n} not moved in yet (${$(m.moveIns.rent + m.later.rent)}/month; ${m.moveIns.n} arrive this month)` +
+      (m.test.n ? `, ${m.test.n} test tenants` : ""),
+    hs ? `Homestay ${$(hs.gross)} = student charges for ${mon} (${$(hs.net)} after host pay)` +
+      (hs.live ? "" : ", Stripe bookings not loaded: portal clients only") : "",
+    `Month changes use full monthly rent (not prorated); some ending leases renew.`,
+    `Contracted rent, not cash collected: see Finance › AR for payments.`,
+  ].filter(Boolean).join("\n");
+  kpi.title = tip;
+}
 function refreshDashboard(){
   const dash = document.querySelector('section[data-view="dashboard"]');
   if(!dash) return;
 
   const activeTenants = tenants.filter(t => t.status === "active");
   const totalTenants = activeTenants.length;
-  const totalRev = activeTenants.reduce((s,t) => s + (t.rent || 0), 0);
   // Cities derived from tenants (properties[] doesn't have city set)
   const cities = [...new Set(activeTenants.map(t => t.city).filter(Boolean))].map(c => c === "Montréal" ? "Montreal" : c);
   const uniqCityCount = new Set(cities).size;
@@ -20162,9 +20255,8 @@ function refreshDashboard(){
     kpis[1].querySelector(".kpi-value").textContent = totalTenants;
     kpis[1].querySelector(".kpi-trend").textContent = `${uniqCityCount} cities · ${properties.length} properties`;
 
-    // Monthly revenue
-    kpis[2].querySelector(".kpi-value").textContent = "$" + totalRev.toLocaleString();
-    kpis[2].querySelector(".kpi-trend").textContent = totalTenants ? `avg $${Math.round(totalRev/totalTenants).toLocaleString()} / tenant` : "no active leases";
+    // Monthly revenue (DASH-REV-CORE): co-living rent of tenants living here now + homestay this month
+    renderDashRevenue(kpis[2]);
   }
 
   // 3. Occupancy trend chart: real history rebuilt from move-in / move-out dates (OCC-TREND-CORE)
@@ -46796,14 +46888,14 @@ document.addEventListener("submit", (ev) => {
   else if (f.matches("[data-rc-settings-form]")) { ev.preventDefault(); rcSaveSettings(f); }
 });
 </script>
-<script src="room-changes.js?v=2026-11-03-jptnae1"></script>
-<script src="extensions.js?v=2026-11-03-jptnae1"></script>
-<script src="retention.js?v=2026-11-03-jptnae1"></script>
-<script src="ap.js?v=2026-11-03-jptnae1"></script>
-<script src="properties.js?v=2026-11-03-jptnae1"></script>
-<script src="partner-sales.js?v=2026-11-03-jptnae1"></script>
-<script src="ar.js?v=2026-11-03-jptnae1"></script>
-<script src="mx-finance.js?v=2026-11-03-jptnae1"></script>
-<script src="ef-deposits.js?v=2026-11-03-jptnae1"></script>
+<script src="room-changes.js?v=2026-11-05-dashrev1"></script>
+<script src="extensions.js?v=2026-11-05-dashrev1"></script>
+<script src="retention.js?v=2026-11-05-dashrev1"></script>
+<script src="ap.js?v=2026-11-05-dashrev1"></script>
+<script src="properties.js?v=2026-11-05-dashrev1"></script>
+<script src="partner-sales.js?v=2026-11-05-dashrev1"></script>
+<script src="ar.js?v=2026-11-05-dashrev1"></script>
+<script src="mx-finance.js?v=2026-11-05-dashrev1"></script>
+<script src="ef-deposits.js?v=2026-11-05-dashrev1"></script>
 </body>
 </html>
