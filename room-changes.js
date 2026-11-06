@@ -1,6 +1,7 @@
-/* Room changes (portal): requests from vanmates.com/room-swap.
+/* Room changes (portal): requests from vanmates.com/room-swap, or opened by staff ("+ New room swap",
+   room_change_staff_create in room-change-staff-create-2026-11-06.sql).
    Reads room_change_requests / _feedback / _events through RLS (room-changes-2026-10-08.sql);
-   the only write is the room_change_staff_update RPC (status, owner, tenant message, note) with
+   writes go through the room_change_staff_update / room_change_staff_create RPCs (status, owner, tenant message, note) with
    an optimistic version check. Raw tenant comments live in room_change_comments, which RLS
    returns only to admins and the request's owner; everyone else sees "restricted".
    "Confirm & send" (room-change-handoff-2026-10-09.sql) sends the new room's contract through the
@@ -124,7 +125,7 @@
     document.getElementById('rc-body').innerHTML = list.map(r => {
       const d = r.data || {}, delta = r.target_price != null && r.current_rent != null ? Number(r.target_price) - Number(r.current_rent) : null;
       return `<tr class="clickable" data-rc-open="${e(r.id)}" tabindex="0" style="cursor:pointer">
-        <td><b>${e(r.id)}</b><div class="name-sub">${e(day(r.created_at))}</div></td>
+        <td><b>${e(r.id)}</b><div class="name-sub">${e(day(r.created_at))}${d.source === 'staff' ? ' · by ' + e(nameOf(d.created_by) || 'staff') : ''}</div></td>
         <td>${e(d.name || d.first_name || r.email)}<div class="name-sub">${e(r.email)}</div></td>
         <td>${e([r.current_house, r.current_room].filter(Boolean).join(' · '))}<div class="name-sub">${e(r.city || '')}</div></td>
         <td>${r.target_name ? e(r.target_name) : '<span class="name-sub">None picked</span>'}</td>
@@ -204,6 +205,7 @@
       ${handoffHtml(r, d, sel)}
       ${h('Request')}
       ${kv('Tenant', `${e(d.name || '')} <span class="name-sub">${e(r.email)}</span>`)}
+      ${kv('Opened by', d.source === 'staff' ? `${e(nameOf(d.created_by) || 'staff')} (staff, for the tenant)` : 'The tenant, on vanmates.com/room-swap')}
       ${kv('From', `${e([r.current_house, r.current_room].filter(Boolean).join(' · '))} · ${e(money(r.current_rent))}/mo · ${e(r.city || '')}`)}
       ${kv('To', sel ? `${e(sel.name)} · ${e(money(sel.price))}/mo${delta != null ? ` (${delta >= 0 ? '+' : '−'}${e(money(Math.abs(delta)))})` : ''}<div class="name-sub">${e(sel.address || '')} · ${e(sel.available || '')}${sel.gid ? ` · <a href="https://app.asana.com/0/0/${e(sel.gid)}" target="_blank" rel="noopener">Asana</a>` : ''}</div>` : `<span class="name-sub">None picked: suggest options within ${e(money(r.budget))}</span>`)}
       ${kv('Move date', `${e(day(r.move_date))}${p.flexible_until ? ' · flexible to ' + e(day(p.flexible_until)) : ''}`)}
@@ -266,11 +268,11 @@
           ${f('Province', `<select class="form-input" name="province">${['bc', 'on', 'qc'].map(x => `<option value="${x}" ${x === provinceOf(r.city) ? 'selected' : ''}>${x.toUpperCase()}</option>`).join('')}</select>`)}
         </div>
         <input type="hidden" name="room_gid" value="${e(sel.gid || '')}">
-        <input type="hidden" name="asana_tenant_gid" value="${e((tr && tr.asanaGid) || '')}">
+        <input type="hidden" name="asana_tenant_gid" value="${e((tr && tr.asanaGid) || d.asana_tenant_gid || '')}">
         ${f('Message the tenant sees on vanmates.com/room-swap', `<textarea class="form-input" name="staff_message" rows="2" maxlength="1000">${e(d.staff_message || `Your room change is confirmed. Please sign your new contract for ${parts.house}${parts.room ? ' · ' + parts.room : ''} and fill in the move-out form for your current room; both are in your email.`)}</textarea>`)}
         <p class="form-error" data-rc-handoff-err style="margin:0"></p>
         <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit">Confirm &amp; send</button></div>
-        <p class="name-sub" style="margin:0">${cc ? `Deposit and utilities come from their signed contract ${e(cc.id)}.` : 'No signed contract found for this email in Contracts: check the deposit amount.'}${tr && tr.asanaGid ? '' : ' No Asana tenant link on their portal record.'}</p>
+        <p class="name-sub" style="margin:0">${cc ? `Deposit and utilities come from their signed contract ${e(cc.id)}.` : 'No signed contract found for this email in Contracts: check the deposit amount.'}${(tr && tr.asanaGid) || d.asana_tenant_gid ? '' : ' No Asana tenant link on their portal record.'}</p>
       </form>`;
   }
 
@@ -344,6 +346,144 @@
     open(id);
   }
 
+  // ── Staff open a room swap for a tenant (room-change-staff-create-2026-11-06.sql) ──
+  // The request lands In progress, owned by the creator, with the picked room in data.selected,
+  // so the usual "Confirm & send" then sends the contract and the move-out form.
+  let newPick = { tenants: {}, rooms: {} };
+  const currentTenants = () => (typeof tenants !== 'undefined' && Array.isArray(tenants) ? tenants : [])
+    .filter(t => t && t.email && t.status !== 'past' && !t.deleted);
+  const invModel = () => (typeof VAC_STATE !== 'undefined' && VAC_STATE && VAC_STATE.model) || null;
+  function roomOptionsHtml(){
+    const M = invModel();
+    newPick.rooms = {};
+    if (!M) return '';
+    const list = M.filter(v => v.room).slice().sort((a, b) => (b.listable - a.listable) || String(a.from || '9').localeCompare(String(b.from || '9')) || a.room.localeCompare(b.room));
+    return list.map(v => {
+      const label = `${v.room} · ${money(v.rent)}/mo · ${v.listable ? (v.emptyNow ? 'free now' : 'free from ' + day(v.from)) : 'occupied'}`;
+      newPick.rooms[label] = v;
+      return `<option value="${e(label)}"></option>`;
+    }).join('');
+  }
+  function openNew(){
+    newPick = { tenants: {}, rooms: {} };
+    const tOpts = currentTenants().slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).map(t => {
+      const label = `${t.name || t.email} · ${t.email} · ${[t.property, t.room].filter(x => x && x !== '—').join(' ')}`.replace(/\s+/g, ' ').trim();
+      newPick.tenants[label] = t;
+      return `<option value="${e(label)}"></option>`;
+    }).join('');
+    const f = (label, input) => `<label class="name-sub" style="display:grid;gap:4px">${label}${input}</label>`;
+    const h = (t) => `<h4 style="margin:22px 0 6px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">${e(t)}</h4>`;
+    document.getElementById('panel-hero').textContent = '+';
+    document.getElementById('panel-title').textContent = 'New room swap';
+    document.getElementById('panel-sub').textContent = 'Open a room change for a tenant (e.g. they asked by phone, WhatsApp or in person)';
+    document.getElementById('panel-meta').innerHTML = '';
+    document.getElementById('panel-body').innerHTML = `
+      <form data-rc-new style="display:grid;gap:10px">
+        ${h('Tenant')}
+        ${f('Find a current tenant (name, email, house)', `<input class="form-input" name="pick" list="rc-new-tenants" autocomplete="off" placeholder="Start typing…"><datalist id="rc-new-tenants">${tOpts}</datalist>`)}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${f('Name', `<input class="form-input" name="name" maxlength="200">`)}
+          ${f('Email', `<input class="form-input" name="email" type="email" required maxlength="200">`)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          ${f('Current house', `<input class="form-input" name="current_house" maxlength="200">`)}
+          ${f('Current room', `<input class="form-input" name="current_room" maxlength="200">`)}
+          ${f('City', `<select class="form-input" name="city"><option>Vancouver</option><option>Toronto</option><option>Montréal</option></select>`)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${f('Current rent / month', `<input class="form-input" name="current_rent" inputmode="numeric">`)}
+          ${f('Contract end (kept)', `<input class="form-input" type="date" name="lease_end">`)}
+        </div>
+        <input type="hidden" name="asana_tenant_gid"><input type="hidden" name="tenant_id"><input type="hidden" name="lease_type">
+        ${h('New room')}
+        ${f('Pick a room from the inventory (optional: you can leave it for later)', `<input class="form-input" name="room_pick" list="rc-new-rooms" autocomplete="off" placeholder="${invModel() ? 'Start typing a room or house…' : 'Loading rooms…'}"><datalist id="rc-new-rooms">${roomOptionsHtml()}</datalist>`)}
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px">
+          ${f('Room ("Room - House")', `<input class="form-input" name="target_name" maxlength="300">`)}
+          ${f('New rent / month', `<input class="form-input" name="target_price" inputmode="numeric">`)}
+        </div>
+        ${f('Address', `<input class="form-input" name="target_address" maxlength="300">`)}
+        <input type="hidden" name="target_gid"><input type="hidden" name="target_available">
+        ${f('Move date', `<input class="form-input" type="date" name="move_date" required>`)}
+        ${f('Main reason', `<select class="form-input" name="primary_reason"><option value="">—</option>${Object.entries(RC_REASONS).map(([k, l]) => `<option value="${k}">${e(l)}</option>`).join('')}</select>`)}
+        ${f('Internal note (audit history only)', `<input class="form-input" name="note" maxlength="1000">`)}
+        <p class="form-error" data-rc-new-err style="margin:0"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-primary" type="submit">Open room swap</button></div>
+        <p class="name-sub" style="margin:0">Nothing is sent to the tenant yet. The request opens as <b>In progress</b> with you as owner; then use <b>Confirm &amp; send</b> on it to send the new contract and the move-out form. The tenant will also see it on vanmates.com/room-swap.</p>
+      </form>`;
+    document.getElementById('detail-panel').classList.add('open');
+    document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
+    document.getElementById('panel-backdrop').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    const form = document.querySelector('#panel-body [data-rc-new]');
+    form.dataset.sub = 'staff-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    // The room list comes from the Vacancies inventory; load it if nobody opened Vacancies yet.
+    if (!invModel() && typeof loadVacancies === 'function') {
+      Promise.resolve(loadVacancies()).catch(() => {}).then(() => {
+        const dl = document.getElementById('rc-new-rooms'), inp = form.querySelector('[name="room_pick"]');
+        if (dl && document.body.contains(form)) { dl.innerHTML = roomOptionsHtml(); if (inp) inp.placeholder = invModel() ? 'Start typing a room or house…' : 'Rooms could not load: type the room below'; }
+      });
+    }
+    setTimeout(() => { const i = form.querySelector('[name="pick"]'); if (i) i.focus(); }, 50);
+  }
+  function newPickChanged(form, input){
+    const set = (k, v) => { const el = form.querySelector(`[name="${k}"]`); if (el) el.value = v == null ? '' : v; };
+    if (input.name === 'pick') {
+      const t = newPick.tenants[input.value];
+      if (!t) return;
+      const city = lc(t.city).normalize('NFD').replace(/[̀-ͯ]/g, '');
+      set('name', t.name || ''); set('email', lc(t.email));
+      set('current_house', t.property && t.property !== '—' ? t.property : ''); set('current_room', t.room && t.room !== '—' ? t.room : '');
+      set('city', city.startsWith('tor') || city === 'on' ? 'Toronto' : city.startsWith('mon') || city === 'qc' ? 'Montréal' : 'Vancouver');
+      set('current_rent', t.rent != null && t.rent !== '' ? Math.round(Number(t.rent)) : ''); set('lease_end', String(t.leaseEnd || '').slice(0, 10));
+      set('asana_tenant_gid', t.asanaGid || ''); set('tenant_id', t._id || t.id || ''); set('lease_type', t.leaseType || '');
+    } else if (input.name === 'room_pick') {
+      const v = newPick.rooms[input.value];
+      if (!v) return;
+      set('target_name', v.room); set('target_price', v.rent != null ? v.rent : ''); set('target_address', v.addr || '');
+      set('target_gid', v.gid || ''); set('target_available', v.listable ? (v.emptyNow ? 'Available now' : 'From ' + day(v.from)) : '');
+      const md = form.querySelector('[name="move_date"]');
+      if (md && !md.value && v.listable && v.from) md.value = v.from > v.today ? v.from : v.today;
+    } else if (input.name === 'email') {
+      set('tenant_id', ''); set('asana_tenant_gid', ''); set('lease_type', '');
+    } else if (input.name === 'target_name') {
+      // Typed by hand: the inventory link no longer applies.
+      set('target_gid', ''); set('target_available', '');
+    }
+  }
+  async function createNew(form){
+    const fd = new FormData(form);
+    const v = (k) => String(fd.get(k) || '').trim();
+    const num = (k) => v(k).replace(/[$,\s]/g, '');
+    const err = form.querySelector('[data-rc-new-err]');
+    const fail = (m) => { if (err) { err.textContent = m; err.classList.add('show'); } };
+    if (err) { err.textContent = ''; err.classList.remove('show'); }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v('email'))) return fail('Enter the tenant\'s email (pick them from the list or type it).');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v('move_date'))) return fail('Pick the move date.');
+    for (const k of ['current_rent', 'target_price']) if (num(k) && !isFinite(Number(num(k)))) return fail('Rents must be numbers.');
+    const p = {
+      submission_id: form.dataset.sub, email: v('email'), name: v('name'), city: v('city'),
+      current_house: v('current_house'), current_room: v('current_room'), current_rent: num('current_rent'), lease_end: v('lease_end'),
+      move_date: v('move_date'), primary_reason: v('primary_reason'), note: v('note'), asana_tenant_gid: v('asana_tenant_gid'), tenant_id: v('tenant_id'), lease_type: v('lease_type'),
+      target: v('target_name') ? { name: v('target_name'), price: num('target_price'), address: v('target_address'), gid: v('target_gid'), available: v('target_available') } : {},
+    };
+    const btn = form.querySelector('button[type="submit"]'); if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+    const { data, error } = await sb().rpc('room_change_staff_create', { p });
+    if (btn) { btn.disabled = false; btn.textContent = 'Open room swap'; }
+    if (error) {
+      const missing = /room_change_staff_create/.test(String(error.message || '')) && /exist|schema cache|find/i.test(String(error.message || ''));
+      return fail(missing ? 'Not set up in the database yet (run room-change-staff-create-2026-11-06.sql).' : 'Could not open it: ' + (error.message || error));
+    }
+    if (!data || !data.ok) {
+      const why = { active_exists: `This tenant already has an open room change (${(data && data.id) || ''}). Open it from the list instead.`,
+        bad_email: 'That email does not look right.', bad_date: 'The move date must be today or later.', bad_input: 'Check the dates and rents.',
+        bad_reason: 'Pick a reason from the list.', forbidden: 'You are not on the team.' };
+      return fail(why[data && data.error] || 'Could not open it: ' + ((data && data.error) || 'unknown'));
+    }
+    toast('Opened ' + data.id + ' for ' + (v('name') || v('email')));
+    await load(true);
+    open(data.id);
+  }
+
   function fromHash(){
     const hash = location.hash || '';
     const m = hash.match(/^#room-change=(RC-\d{2}-\d{5})$/);
@@ -377,7 +517,11 @@
     if (pb) pb.addEventListener('submit', ev => {
       if (ev.target.matches('[data-rc-form]')) { ev.preventDefault(); save(ev.target); }
       else if (ev.target.matches('[data-rc-handoff]')) { ev.preventDefault(); handoff(ev.target); }
+      else if (ev.target.matches('[data-rc-new]')) { ev.preventDefault(); createNew(ev.target); }
     });
+    if (pb) pb.addEventListener('change', ev => { const form = ev.target.closest('[data-rc-new]'); if (form && ev.target.name) newPickChanged(form, ev.target); });
+    if (pb) pb.addEventListener('input', ev => { const form = ev.target.closest('[data-rc-new]'); if (form && ['pick', 'room_pick'].includes(ev.target.name)) newPickChanged(form, ev.target); });
+    on('rc-new', 'click', openNew);
     if (pb) pb.addEventListener('click', ev => {
       const a = ev.target.closest('[data-rc-goto-contract]');
       if (!a) return;
