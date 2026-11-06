@@ -305,6 +305,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 .codebtn:hover { color: var(--ink); }
 .uadd { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--line); }
 .pick .rpsel { width: 100%; margin-top: 6px; }
+.pick.flash { box-shadow: 0 0 0 3px var(--red, #c0392b); transition: box-shadow .3s; }
 .pick .frow { margin-top: 6px; }
 .fx label.fl { display: grid; gap: 3px; font-size: 12px; font-weight: 700; color: var(--muted); flex: 1 1 140px; }
 .fx textarea.inp { min-height: 56px; }
@@ -527,7 +528,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-11-06-staffswap1"></script>
+<script src="arrivals-core.js?v=2026-11-06-arrbldg3"></script>
 <script>
 (function () {
   'use strict';
@@ -929,6 +930,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (r.status !== 'handled' && r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="handled">Mark handled</button>');
     else if (!(r.status === 'cancelled' && (r.cancelled_by === 'contract' || r.cancelled_by === 'partner'))) acts.push('<button type="button" class="btn btn-ghost" data-act="reopen">Reopen</button>');
     if (r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-act="cancel">Cancel arrival</button>');
+    acts.push('<button type="button" class="btn btn-ghost" data-act="chgbldg">Change building</button>');
 
     var warn = '';
     if (r.status === 'cancelled') warn = '<p class="warnbox">Cancelled' + (r.cancelled_by ? ' by ' + esc(r.cancelled_by) : ' — no longer on the roster') + '.</p>';
@@ -977,6 +979,24 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<iframe class="pv" id="pv" sandbox="" title="Email preview" referrerpolicy="no-referrer"></iframe></div>';
     $('pv').srcdoc = mail.html;
     fuPanelPreviews(r);
+    focusPick();
+  }
+  // "Change building" (any panel): bring the Room box's Building picker into view, highlighted. Waits for Rooms to load.
+  function focusPick() {
+    if (!S.focusPick || !$('rpB')) return;
+    S.focusPick = false;
+    var box = $('rpB').closest('.pick');
+    box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    box.classList.add('flash'); setTimeout(function () { box.classList.remove('flash'); }, 1600);
+    $('rpB').focus({ preventScroll: true });
+  }
+  // Jump from Bookings / Scheduled to the arrival on Check-ins, optionally straight to the Building picker.
+  function openArrivalFor(id, date, pick) {
+    var wk = date ? A.weekendOf(str(date).slice(0, 10)) : null;
+    if (!wk) { toast('This arrival has no move-in date.'); return; }
+    S.wk = wk; S.city = ''; $('cityF').value = ''; S.source = ''; $('srcF').value = ''; S.filter = 'all';
+    S.openId = id; S.rows = []; S.focusPick = !!pick;
+    setAv('checkins');
   }
   // The arrivals_v row is flat: it carries the template columns (subject, intro, …, keys_only) and the access
   // columns (address, house_code, wifi_*, door_code, room_label), which is what buildArrivalEmail and
@@ -1101,6 +1121,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (name === 'cancel') { await cancelArrival(r.id, r.student_name, loadArrivals); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
+    if (name === 'chgbldg') { S.focusPick = true; if (!S.rv) ensureRooms(); renderPanel(); return; }
     if (name === 'pickroom') { await pickRoom(); return; }
     if (name === 'pickbuilding') { var pr = byId(S.openId); if (pr) await moveBuilding(pr, ''); return; }
     if (name === 'rooms') { var q = $('accQ'); q.value = r.building; setTab('access'); }
@@ -1655,6 +1676,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (open) acts.push(r.held_by ? '<button type="button" class="btn btn-ghost" data-bk="unhold">Unhold</button>' : '<button type="button" class="btn btn-ghost" data-bk="hold">Hold</button>');
     acts.push('<button type="button" class="btn btn-ghost" data-bk="arrival">Open the arrival</button>');
+    acts.push('<button type="button" class="btn btn-ghost" data-bk="chgbldg">Change building</button>');
     if (r.arrival_status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-bk="cancel">Cancel arrival</button>');
 
     var warn = '';
@@ -1788,13 +1810,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (name === 'cancel') { await cancelArrival(r.arrival_id, r.student_name, function () { S.bk.openId = null; return loadBookings(); }); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = r.kind === 'room_change' ? 'room_change' : 'booking'; setTab('templates'); return; }
-    if (name === 'arrival') {
-      var wk = r.arrival_date ? A.weekendOf(str(r.arrival_date).slice(0, 10)) : null;
-      if (!wk) { toast('This arrival has no move-in date.'); return; }
-      S.wk = wk; S.city = ''; $('cityF').value = ''; S.source = ''; $('srcF').value = ''; S.filter = 'all';
-      S.openId = r.arrival_id; S.rows = [];
-      setAv('checkins');
-    }
+    if (name === 'arrival' || name === 'chgbldg') openArrivalFor(r.arrival_id, r.arrival_date, name === 'chgbldg');
   }
   // end Bookings
 
@@ -2003,6 +2019,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-sc="cancel_arrival">Cancel arrival</button>');
     if (scIsAdmin()) acts.push('<button type="button" class="btn btn-ghost" data-sc="delete" style="color:var(--red)">Delete arrival</button>');
     if (isCk) acts.push('<button type="button" class="btn btn-ghost" data-sc="tpl">Edit the building template</button>');
+    if (r.arrival_id && r.status !== 'cancelled') acts.push('<button type="button" class="btn btn-ghost" data-sc="chgbldg">Change building</button>');
     acts.push('<button type="button" class="btn btn-ghost" data-sc="history">History</button>');
     var fx = '';
     if (can.edit && !isCk) {
@@ -2171,6 +2188,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       return;
     }
     if (name === 'delete') { await scDelete([r]); return; }
+    if (name === 'chgbldg') { openArrivalFor(r.arrival_id, r.arrival_date, true); return; }
     if (name === 'cancel_arrival') { await cancelArrival(r.arrival_id, r.student_name, function () { S.sc.openId = null; return loadScheduled(); }); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
     if (name === 'history') { await scHistory(r); }
