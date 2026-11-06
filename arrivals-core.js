@@ -1213,6 +1213,23 @@ function sameBuildingSuggestions(name, buildings) {
     .sort(function (a, b) { return b.score - a.score || a.building.localeCompare(b.building); })
     .map(function (x) { return x.building; });
 }
+// Street address → comparison key: "260 Sackville Street, Toronto, ON, Canada" and "260 sackville st toronto" → "260 sackville st".
+// Only the street part (before the first comma) counts; street-type words are shortened; unit prefixes ("1609-", "#210") dropped.
+var STREET_ABBR = { street: "st", avenue: "ave", av: "ave", road: "rd", drive: "dr", boulevard: "blvd", place: "pl", lane: "ln",
+  crescent: "cres", court: "ct", east: "e", west: "w", north: "n", south: "s" };
+function addressKey(addr) {
+  var s = String(addr || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(",")[0]
+    .replace(/^\s*(unit|suite|apt|#)\s*[a-z0-9]+\s*[-,]?\s*/, "").replace(/^\s*[a-z0-9]+\s*-\s*(?=\d)/, "");
+  var w = s.split(/[^a-z0-9]+/).filter(Boolean).map(function (x) { return STREET_ABBR[x] || x; });
+  return w.length >= 2 && /\d/.test(w.join(" ")) ? w.join(" ") : "";
+}
+// Saved buildings (models with .saved, .address) other than `name` whose street address is the same as `address`.
+function sameAddressBuildings(name, address, models) {
+  var k = addressKey(address);
+  if (!k) return [];
+  return (models || []).filter(function (m) { return m && m.saved && m.building !== name && addressKey(m.address) === k; })
+    .map(function (m) { return m.building; });
+}
 
 
 var ArrCore = {
@@ -1236,7 +1253,7 @@ var ArrCore = {
   fill: fill, ACCESS_FIELDS: ACCESS_FIELDS,
   schedTypeLabel: schedTypeLabel, schedChip: schedChip, schedBucket: schedBucket, schedCounts: schedCounts, cityTz: cityTz,
   zonedParts: zonedParts, zonedToUtc: zonedToUtc, schedWhen: schedWhen, schedActions: schedActions, SCHED_STATUS: SCHED_STATUS,
-  sameBuildingSuggestions: sameBuildingSuggestions
+  sameBuildingSuggestions: sameBuildingSuggestions, addressKey: addressKey, sameAddressBuildings: sameAddressBuildings
 };
 if (typeof window !== "undefined") window.ArrCore = ArrCore;
 if (typeof module !== "undefined" && module.exports) module.exports = ArrCore;
