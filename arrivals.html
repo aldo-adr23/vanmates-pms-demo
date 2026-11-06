@@ -530,7 +530,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-11-06-arrbldg5"></script>
+<script src="arrivals-core.js?v=2026-11-06-autoall1"></script>
 <script>
 (function () {
   'use strict';
@@ -1865,8 +1865,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   // end Bookings
 
   // ───────── Scheduled (arrival-scheduling-2026-10-10.sql) ─────────
-  // arrival_schedule_v: one row per signed co-living arrival × email (Welcome / Room-change welcome / Arrival
-  // instructions), with its scheduled time, live status, owner and payment (signed = paid). The view carries no code
+  // arrival_schedule_v: one row per signed co-living / partner / school-roster arrival × email (Welcome / Room-change welcome / Arrival
+  // instructions; roster rows since arrival-auto-all-2026-11-06.sql, payment_status 'school'), with its scheduled time, live status, owner and payment (signed = paid). The view carries no code
   // and no Wi-Fi; only the instructions preview (arrivals_v, the same row Check-ins shows) does, as on Check-ins.
   // Actions: rpc arrival_schedule_action / arrivals_save_arrival_date / booking_message_override, sends through the
   // arrivals-send webhook exactly as Check-ins and Bookings do.
@@ -1900,7 +1900,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var room = str(r.room_label) || (str(r.bed) ? 'Room ' + str(r.bed) : '');
     return [str(r.city), str(r.building) || '—', str(r.unit) ? 'Unit ' + str(r.unit) : '', room].filter(str).join(' · ');
   }
-  function scPayText(r) { return r.payment_status === 'agency' ? 'Agency booking' : r.payment_status === 'paid' ? 'Paid (signed)' : r.payment_status === 'not_paid' ? 'Not signed' : 'Unknown'; }
+  function scPayText(r) { return r.payment_status === 'school' ? 'School roster' + (str(r.school) ? ' · ' + str(r.school) : '') : r.payment_status === 'agency' ? 'Agency booking' : r.payment_status === 'paid' ? 'Paid (signed)' : r.payment_status === 'not_paid' ? 'Not signed' : 'Unknown'; }
   function scContractText(r) { var s = str(r.contract_status); return s === 'customer_signed' ? 'Signed' : s === 'completed' ? 'Countersigned' : s === 'void' ? 'Void' : s || '—'; }
   function scWhenText(r) {
     if (r.status === 'sent') return 'Sent ' + A.schedWhen(r.sent_at, r.city);
@@ -1910,7 +1910,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   function scRowNote(r) {
     if (r.status === 'failed' || r.status === 'retrying') return bkErrText(r.last_error);
-    if (r.status === 'held') return r.held_by === 'system:prior_sent' ? 'Earlier version sent — send the update?' : r.held_by === 'system:go_live' ? 'Zoho may have sent one — decide' : 'Held by ' + str(r.held_by);
+    if (r.status === 'held') return r.held_by === 'system:prior_sent' ? 'Earlier version sent — send the update?' : r.held_by === 'system:go_live' ? 'Zoho may have sent one — decide' : r.held_by === 'system:not_in_roster' ? 'Not in ' + (str(r.school) || 'the school') + '’s latest roster' : 'Held by ' + str(r.held_by);
     if (r.status === 'needs_info' || r.status === 'needs_review' || r.status === 'no_template') return scMissingText(r);
     if (r.status === 'sent' && r.changed_after_send) return 'Details changed after sending';
     return '';
@@ -2041,7 +2041,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       ['Scheduled', scWhenText(r)],
       ['Move-in', r.arrival_date ? A.longDate(r.arrival_date) : ''],
       ['Room', scRoomText(r)],
-      ['Contract', scContractText(r) + (r.booking_ref ? ' · ' + r.booking_ref : '')],
+      ['Contract', r.source === 'roster' ? '' : scContractText(r) + (r.booking_ref ? ' · ' + r.booking_ref : '')],
       ['Payment', scPayText(r)],
       ['Owner', str(r.owner)],
       ['Attempts', r.attempts ? r.attempts + ' of 3' : ''],
@@ -2052,6 +2052,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var warn = '';
     if (r.status === 'sent' && r.changed_after_send) warn = '<p class="warnbox">The move-in date or room changed after this was sent.' + (can.resend ? ' Send the updated instructions?' : '') + '</p>';
     else if (r.held_by === 'system:prior_sent') warn = '<p class="warnbox">This booking replaced an earlier contract whose email was already sent, and the details changed. Send the updated email, or cancel it.</p>';
+    else if (r.held_by === 'system:not_in_roster') warn = '<p class="warnbox">Not in the latest roster from ' + esc(str(r.school) || 'the school') + ', so it isn’t sent automatically. Check with the school; if the student is still coming, Send now.</p>';
     else if (r.held_by === 'system:go_live') warn = '<p class="warnbox">Held when automatic sending started: Zoho may already have sent its own check-in email. Unhold to let it go, or cancel it.</p>';
     else if (r.status === 'needs_review' || r.status === 'no_template') warn = '<p class="warnbox">' + (r.status === 'no_template' ? 'This building has no template yet' : 'The building’s template isn’t reviewed') + ' — nothing is sent until it is.</p>';
     else if (r.status === 'needs_info') warn = '<p class="warnbox">' + esc(scMissingText(r)) + '. It won’t be sent with blanks.</p>';
