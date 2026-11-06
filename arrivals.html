@@ -189,6 +189,8 @@ textarea.inp { resize: vertical; min-height: 72px; width: 100%; line-height: 1.4
 .arow .c-who b { display: block; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .arow .c-who small, .arow .c-room, .arow .c-date, .arow .c-open { color: var(--muted); font-size: 12.5px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
 .arow .c-room, .arow .c-date { color: var(--ink); }
+.arow .c-chg { display: block; width: fit-content; margin-top: 2px; font-size: 11.5px; font-weight: 600; color: var(--red, #b23a2e); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.arow .c-chg:hover { opacity: .75; }
 .st { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ph .st { max-width: none; white-space: normal; }
 .st-ready { background: var(--green-soft); color: var(--b-green); }
@@ -528,7 +530,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-11-06-arrbldg4"></script>
+<script src="arrivals-core.js?v=2026-11-06-arrbldg5"></script>
 <script>
 (function () {
   'use strict';
@@ -1623,7 +1625,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var note = bkRowNote(r);
     return '<button type="button" class="arow bk' + (r.id === S.bk.openId ? ' on' : '') + '" data-id="' + esc(r.id) + '">' +
       '<span class="c-who"><b>' + esc(r.student_name || '(no name)') + '</b><small>' + esc(r.student_email || 'No email') + '</small></span>' +
-      '<span class="c-room">' + esc(bkRoomText(r)) + '</span>' +
+      '<span class="c-room">' + esc(bkRoomText(r)) + (r.status !== 'sent' && r.status !== 'skipped' && r.arrival_status !== 'cancelled'
+        ? '<span class="c-chg" data-bkplace title="Change building / room">' + (bkMissing(r).indexOf('room') !== -1 ? 'Pick room' : 'Change') + '</span>' : '') + '</span>' +
       '<span class="c-date">' + esc(r.arrival_date ? shortDate(r.arrival_date) : 'No move-in date') + '</span>' +
       '<span class="c-kind">' + esc(bkKindText(r)) + '</span>' +
       '<span class="c-chip">' + bkChipHtml(r) + (note ? '<span class="c-open">' + esc(note) + '</span>' : '') + '</span></button>';
@@ -1710,6 +1713,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<div class="pv-subj" id="bkSubj"></div>' +
       '<iframe class="pv" id="bkPv" sandbox="" title="Booking email preview" referrerpolicy="no-referrer"></iframe></div>';
     bkPreview(r);
+    if (S.bk.focusPlace && $('bkB')) { S.bk.focusPlace = false; bkAct('chgbldg'); }
   }
   // Preview = the email n8n sends (saved overrides, or the unsaved edits being typed).
   function bkPreview(r) {
@@ -3858,7 +3862,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('bkCity').addEventListener('change', function () { S.bk.city = this.value; S.bk.openId = null; S.bk.draft = null; loadBookings(); });
     $('bkChips').addEventListener('click', function (e) { var b = e.target.closest('[data-f]'); if (b) { S.bk.filter = b.getAttribute('data-f'); loadBookings(); } });
     $('bkSendAll').addEventListener('click', bkSendAll);
-    $('bkList').addEventListener('click', function (e) { var b = e.target.closest('.arow[data-id]'); if (b) bkOpenRow(b.getAttribute('data-id')); });
+    $('bkList').addEventListener('click', function (e) {
+      var b = e.target.closest('.arow[data-id]'); if (!b) return;
+      S.bk.focusPlace = !!e.target.closest('[data-bkplace]');
+      bkOpenRow(b.getAttribute('data-id'));
+    });
     $('bkPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-bk]'); if (b && !b.disabled) bkAct(b.getAttribute('data-bk')); });
     $('bkPanel').addEventListener('submit', function (e) { e.preventDefault(); bkSaveFx(e.target); });
     $('bkPanel').addEventListener('input', bkInput);
