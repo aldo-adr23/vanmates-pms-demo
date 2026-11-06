@@ -527,7 +527,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-10-29-reloc1"></script>
+<script src="arrivals-core.js?v=2026-11-06-arrbldg1"></script>
 <script>
 (function () {
   'use strict';
@@ -1002,7 +1002,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
         p_room_label: v('room_label'), p_door_code: v('door_code'), p_wifi_name: null, p_wifi_password: null });
       else if (kind === 'wifi') ok = await rpc('arrivals_save_access', { p_building: r.building, p_unit: r.unit, p_room_key: '',
         p_room_label: null, p_door_code: null, p_wifi_name: v('wifi_name'), p_wifi_password: v('wifi_password') });
-      else if (kind === 'building') ok = await rpc('arrivals_save_building', { p_building: r.building, p_city: null, p_house_code: v('house_code'), p_address: v('address') });
+      else if (kind === 'building') ok = (await sameAddressOk(r.building, v('address'))) && await rpc('arrivals_save_building', { p_building: r.building, p_city: null, p_house_code: v('house_code'), p_address: v('address') });
     } finally { if (btn) btn.disabled = false; }
     if (ok) { toast('Saved'); S.acc = null; await loadArrivals(); }
   }
@@ -1102,6 +1102,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (name === 'cancel') { await cancelArrival(r.id, r.student_name, loadArrivals); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = 'checkin'; setTab('templates'); return; }
     if (name === 'pickroom') { await pickRoom(); return; }
+    if (name === 'pickbuilding') { var pr = byId(S.openId); if (pr) await moveBuilding(pr, ''); return; }
     if (name === 'rooms') { var q = $('accQ'); q.value = r.building; setTab('access'); }
   }
   // ───────── Upload roster (n8n Portal - Arrivals Upload -> Limpio Roster Actions manual_upload) ─────────
@@ -2353,7 +2354,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (btn) btn.disabled = true;
     try {
       if (zBadUrl(form)) { toast('Links must start with https://'); return; }
-      if (kind === 'building') ok = await rpc('arrivals_save_building', Object.assign({ p_building: b, p_city: v('city'), p_house_code: v('house_code'), p_address: v('address') },
+      if (kind === 'building') ok = (await sameAddressOk(b, v('address'))) && await rpc('arrivals_save_building', Object.assign({ p_building: b, p_city: v('city'), p_house_code: v('house_code'), p_address: v('address') },
         zChanged(form, Z_BUILDING, buildingWas(b))));
       else if (kind === 'unit') {
         var unit = form.getAttribute('data-unit') || v('unit');
@@ -2686,14 +2687,44 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       h += '<p class="warnbox" style="margin:0">No room matched — ' + (str(r.room_key) ? 'the roster’s room “' + esc(r.room_key) + '” isn’t in the Rooms list for ' + esc(r.building) + '.' : 'the roster gave no room.') + ' Pick the right room below.</p>';
     }
     if (p.overridden) h += '<div class="frow"><span class="st st-sent sub">Chosen by staff</span>' + (p.rosterRoom ? '<span class="muted" style="font-size:12px">Roster said ' + esc(p.rosterRoom) + '</span>' : '') + '</div>';
-    if (p.options.length) {
-      h += '<input class="inp rpsel" id="rpQ" type="search" placeholder="Search ' + esc(r.building) + ' rooms (e.g. 1104 C)" autocomplete="off" />' +
-        '<select class="sel rpsel" id="rpSel" size="6" aria-label="Rooms in ' + esc(r.building) + '">' + pickOptionsHtml(p.options, '', p.matched) + '</select>' +
-        '<div class="frow"><button type="button" class="btn btn-ghost" data-act="pickroom">Use this room</button></div>';
+    // Building picker (arrival-change-building-2026-11-06.sql): another Rooms building lists its rooms below; "Move to …" saves both.
+    var tb = pickTarget(r), other = tb !== r.building, stray = !isRoomsBuilding(r.building);
+    var names = pickBuildings(r);
+    if (stray) h += '<p class="warnbox" style="margin:6px 0 0">“' + esc(r.building) + '” isn’t a building in Rooms. Pick the right building below.</p>';
+    h += '<label class="muted" style="display:block;font-size:12px;margin-top:8px" for="rpB">Building</label>' +
+      '<select class="sel rpsel" id="rpB" style="margin-top:2px">' + (stray && !other ? '<option value="' + esc(r.building) + '" selected>' + esc(r.building) + ' (not in Rooms)</option>' : '') +
+      names.map(function (b) { return '<option value="' + esc(b) + '"' + (b === tb ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('') + '</select>';
+    var po = other ? A.roomPick({ building: tb, room_key: '' }, S.rv.rows, null) : p;
+    var remember = other && stray ? '<label class="note" style="display:flex;gap:6px;align-items:center;margin:6px 0 0"><input type="checkbox" id="rpRemember" checked />' +
+      'Send future “' + esc(r.building) + '” arrivals to ' + esc(tb) + ' too</label>' : '';
+    if (po.options.length) {
+      h += '<input class="inp rpsel" id="rpQ" type="search" placeholder="Search ' + esc(tb) + ' rooms (e.g. 1104 C)" autocomplete="off" />' +
+        '<select class="sel rpsel" id="rpSel" size="6" aria-label="Rooms in ' + esc(tb) + '">' + pickOptionsHtml(po.options, '', po.matched) + '</select>' + remember +
+        '<div class="frow"><button type="button" class="btn ' + (other ? 'btn-primary' : 'btn-ghost') + '" data-act="pickroom">' + (other ? 'Move to ' + esc(tb) : 'Use this room') + '</button></div>';
     } else {
-      h += '<p class="note" style="margin:6px 0 0">No rooms saved for ' + esc(r.building) + ' yet.</p><div class="frow"><button type="button" class="btn btn-ghost" data-act="rooms">Add them in Rooms</button></div>';
+      h += '<p class="note" style="margin:6px 0 0">No rooms saved for ' + esc(tb) + ' yet.</p>' + remember + '<div class="frow">' +
+        (other ? '<button type="button" class="btn btn-primary" data-act="pickbuilding">Move to ' + esc(tb) + ' (no room yet)</button>' : '') +
+        '<button type="button" class="btn btn-ghost" data-act="rooms">Add them in Rooms</button></div>';
     }
     return h + '</div>';
+  }
+  // Saving a building with another building's street address: that is usually a duplicate (2026-11-06 "Sackville" next to
+  // "260 Sackville"). Ask first; wings of one house legitimately share an address, so "Save anyway" stays.
+  async function sameAddressOk(b, address) {
+    if (!S.acc || A.addressKey(address) === A.addressKey(buildingWas(b).address)) return true;
+    var dup = A.sameAddressBuildings(b, address, Object.keys(S.acc).map(function (k) { return S.acc[k]; }));
+    if (!dup.length) return true;
+    return confirmSheet(dup[0] + ' already has this address', '<p class="note">' + esc(b) + ' and ' + esc(dup.join(', ')) + ' would be two buildings at ' + esc(address) + '. ' +
+      'If they’re the same building, don’t save — open ' + esc(b) + ' in Templates and use <b>Same building as…</b> to merge it into ' + esc(dup[0]) + ' (its arrivals, rooms and codes move there). ' +
+      'Save anyway only if they really are separate (e.g. wings of one house).</p>', 'Save anyway');
+  }
+  function isRoomsBuilding(b) { return !!(S.acc && S.acc[b] && S.acc[b].saved); }
+  function pickTarget(r) { return S.pickB && S.pickB.id === r.id && isRoomsBuilding(S.pickB.b) ? S.pickB.b : r.building; }
+  // Rooms buildings in the arrival's city first, then the rest (a wrong city is rarer than a wrong name).
+  function pickBuildings(r) {
+    var all = Object.keys(S.acc || {}).filter(isRoomsBuilding).sort(natSort);
+    var city = str(r.city).toLowerCase(), same = function (b) { return city && str(S.acc[b].city).toLowerCase() === city; };
+    return all.filter(same).concat(all.filter(function (b) { return !same(b); }));
   }
   function pickOptionsHtml(options, q, matched) {
     return options.filter(function (x) { return A.roomMatches(x, q); }).map(function (x) {
@@ -2703,12 +2734,17 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   }
   function filterPick() {
     var r = byId(S.openId); if (!r || !S.rv || !$('rpSel')) return;
-    var p = A.roomPick(r, S.rv.rows, S.roster[r.id]);
+    var tb = pickTarget(r);
+    var p = tb !== r.building ? A.roomPick({ building: tb, room_key: '' }, S.rv.rows, null) : A.roomPick(r, S.rv.rows, S.roster[r.id]);
     $('rpSel').innerHTML = pickOptionsHtml(p.options, $('rpQ').value, p.matched);
     if (!$('rpSel').value && $('rpSel').options.length) $('rpSel').selectedIndex = 0;
   }
   async function pickRoom() {
     var r = byId(S.openId); if (!r || !S.rv || !$('rpSel')) return;
+    if (pickTarget(r) !== r.building) {
+      if (!$('rpSel').value) { toast('Pick a room first.'); return; }
+      await moveBuilding(r, $('rpSel').value); return;
+    }
     var key = $('rpSel').value, room = null;
     A.roomPick(r, S.rv.rows, S.roster[r.id]).options.forEach(function (x) { if (x.room_key === key) room = x; });
     if (!room) { toast('Pick a room first.'); return; }
@@ -2718,6 +2754,26 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var ok = await rpc('arrivals_set_room', { p_id: r.id, p_unit: room.unit ? room.unit : null, p_bed: null, p_room_key: room.room_key });
     if (!ok) return;
     toast(ok.changed_after_send ? 'Room set — resend the email' : 'Room set');
+    delete S.roster[r.id];
+    S.acc = null; S.rv = null;
+    await loadArrivals();
+  }
+  // Move the open arrival to another Rooms building (+ one of its rooms, or none yet).
+  async function moveBuilding(r, roomKey) {
+    var tb = pickTarget(r), room = null;
+    if (tb === r.building) return;
+    if (roomKey) A.roomPick({ building: tb, room_key: '' }, S.rv.rows, null).options.forEach(function (x) { if (x.room_key === roomKey) room = x; });
+    if (roomKey && !room) { toast('Pick a room first.'); return; }
+    var where = tb + (room ? ' · ' + A.roomOptionLabel(room) : '');
+    var body = '<p class="note">From “' + esc(r.building) + '”' + (str(r.room_key) ? ' (room ' + esc(r.room_key) + ')' : '') + '. Their email will use ' + esc(tb) + '’s template, Wi-Fi and door codes.</p>' +
+      (r.sent_at ? '<p class="note">Their email already went out with the old building. It will be flagged so you can resend.</p>' : '');
+    if (!(await confirmSheet('Move ' + (r.student_name || 'this student') + ' to ' + where + '?', body, 'Move'))) return;
+    var ok = await rpc('arrivals_set_building', { p_id: r.id, p_building: tb, p_room_key: room ? room.room_key : '', p_remember: !!($('rpRemember') && $('rpRemember').checked) });
+    if (!ok) return;
+    toast('Moved to ' + tb + (ok.changed_after_send ? ' — resend the email' : '') +
+      (ok.alias ? '. Future “' + ok.from + '” arrivals go there too' : '') +
+      (ok.left ? '. ' + ok.left + ' more still on “' + ok.from + '”' : ''));
+    S.pickB = null;
     delete S.roster[r.id];
     S.acc = null; S.rv = null;
     await loadArrivals();
@@ -3669,6 +3725,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     });
     $('panel').addEventListener('submit', function (e) { e.preventDefault(); saveFx(e.target); });
     $('panel').addEventListener('input', function (e) { if (e.target.id === 'rpQ') filterPick(); });
+    $('panel').addEventListener('change', function (e) {
+      if (e.target.id !== 'rpB' || !S.openId) return;
+      S.pickB = { id: S.openId, b: e.target.value }; renderPanel();
+      if ($('rpB')) $('rpB').focus();
+    });
     // show/hide a masked code (Access tab and side panel)
     document.addEventListener('click', function (e) {
       var b = e.target.closest('[data-eye]'); if (!b) return;
