@@ -1124,6 +1124,7 @@ function schedChip(r) {
   if (r.status === "retrying") return { cls: "failed", label: "Retrying (" + (Number(r.attempts) || 0) + "/3)" };
   if (r.status === "held" && r.held_by === "system:prior_sent") return { cls: "changed", label: "Update to send?" };
   if (r.status === "held" && r.held_by === "system:go_live") return { cls: "held", label: "Held at go-live" };
+  if (r.status === "held" && r.held_by === "system:not_in_roster") return { cls: "held", label: "Not in latest roster" };
   return SCHED_STATUS[r.status] || { cls: "held", label: String(r.status || "Unknown") };
 }
 // Filter buckets: upcoming (on its way), exceptions (a person must act), sent, closed (cancelled / handled).
@@ -1182,12 +1183,13 @@ function schedActions(r) {
   r = r || {};
   var s = r.status, miss = Array.isArray(r.missing) ? r.missing : [], open = s !== "sent" && s !== "cancelled" && s !== "handled";
   var a = { preview: true, history: true };
-  a.send = open && !miss.length && s !== "sending" && s !== "held";   // a held email is unheld first
+  var rosterOut = s === "held" && r.held_by === "system:not_in_roster";   // lifted by the school's next roster, not by Unhold
+  a.send = open && !miss.length && s !== "sending" && (s !== "held" || rosterOut);   // a held email is unheld first
   a.release = s === "held" && r.held_by === "system:prior_sent" && !miss.length;
   a.resend = s === "sent" && !!r.changed_after_send && r.email_type === "checkin";
   a.reschedule = open && s !== "sending";
-  a.hold = open && s !== "held" && s !== "sending";
-  a.unhold = s === "held";
+  a.hold = open && (s !== "held" || rosterOut) && s !== "sending";
+  a.unhold = s === "held" && !rosterOut;
   a.cancel = open && s !== "sending";
   a.restore = s === "cancelled" && r.cancelled_by !== "contract" && r.cancelled_by !== "partner" && !(r.email_type === "checkin" && !r.cancelled_at);
   a.edit = r.email_type !== "checkin" ? open : true;   // check-in content = the building template
