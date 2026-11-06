@@ -528,7 +528,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="arrivals-core.js?v=2026-11-06-arrbldg3"></script>
+<script src="arrivals-core.js?v=2026-11-06-arrbldg4"></script>
 <script>
 (function () {
   'use strict';
@@ -1689,7 +1689,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (open) {
       fx += fxBlock('email', 'Tenant email', has('email'),
         '<div class="frow"><input class="inp" type="email" name="email" value="' + esc(r.student_email) + '" placeholder="tenant@example.com" autocomplete="off" /><button class="btn btn-ghost" type="submit">Save</button></div>');
-      if (has('room')) fx += '<div class="fx miss"><div class="fh"><span>Room</span><small>Missing</small></div><p class="note">Pick the room on the arrival (Check-ins).</p><button type="button" class="btn btn-ghost" data-bk="arrival">Open the arrival</button></div>';
+      fx += bkPlaceHtml(r, has('room'));
       if (has('move_in')) fx += '<div class="fx miss"><div class="fh"><span>Move-in date</span><small>Missing</small></div><p class="note">The contract has no move-in date — fix the contract.</p></div>';
       if (has('template')) {
         fx += '<div class="fx miss"><div class="fh"><span>' + esc(bkKindText(r)) + ' template</span><small>' + (r.template_exists ? 'Not reviewed' : 'None yet') + '</small></div><button type="button" class="btn btn-ghost" data-bk="tpl">Open the ' + esc(r.building) + ' ' + esc(bkKindText(r).toLowerCase()) + ' template</button></div>';
@@ -1796,6 +1796,44 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     if (ok) await bkSendIds(ready.map(function (r) { return r.id; }));
   }
   // end bkSendAll
+  // Building · room for a booking (arrival-change-building-2026-11-06.sql): pick here instead of on Check-ins.
+  function bkPlaceTarget(r) { return S.bk.pickB && S.bk.pickB.id === r.id && isRoomsBuilding(S.bk.pickB.b) ? S.bk.pickB.b : r.building; }
+  function bkPlaceHtml(r, missing) {
+    var h = '<div class="fx pick' + (missing ? ' miss' : '') + '" id="bkPlace"><div class="fh"><span>Building · room</span>' + (missing ? '<small>Room missing</small>' : '') + '</div>';
+    if (!S.rv) { if (!S.acc) ensureRooms(); return h + '<p class="note" style="margin:0">Loading rooms…</p></div>'; }
+    var tb = bkPlaceTarget(r), other = tb !== r.building, stray = !isRoomsBuilding(r.building);
+    if (stray) h += '<p class="warnbox" style="margin:0 0 6px">“' + esc(r.building) + '” isn’t a building in Rooms. Pick the right building.</p>';
+    h += '<select class="sel rpsel" id="bkB" aria-label="Building">' + (stray && !other ? '<option value="' + esc(r.building) + '" selected>' + esc(r.building) + ' (not in Rooms)</option>' : '') +
+      pickBuildings(r).map(function (b) { return '<option value="' + esc(b) + '"' + (b === tb ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('') + '</select>';
+    var opts = A.roomPick({ building: tb, room_key: other ? '' : r.room_key }, S.rv.rows, null);
+    if (opts.options.length) {
+      h += '<select class="sel rpsel" id="bkR" aria-label="Room"><option value="">' + (opts.matched ? '' : 'Pick a room…') + '</option>' +
+        opts.options.map(function (x) {
+          var mm = Array.isArray(x.missing) && x.missing.length ? ' (missing ' + x.missing.map(A.roomMissingLabel).join(', ') + ')' : '';
+          return '<option value="' + esc(x.room_key) + '"' + (opts.matched && opts.matched.room_key === x.room_key ? ' selected' : '') + '>' + esc(A.roomOptionLabel(x) + mm) + '</option>';
+        }).join('') + '</select>';
+    } else {
+      h += '<p class="note" style="margin:6px 0 0">No rooms saved for ' + esc(tb) + ' yet — add them in Rooms' + (other ? ', or save the building only' : '') + '.</p>';
+    }
+    if (other && stray) h += '<label class="note" style="display:flex;gap:6px;align-items:center;margin:6px 0 0"><input type="checkbox" id="bkRemember" checked />Send future “' + esc(r.building) + '” arrivals to ' + esc(tb) + ' too</label>';
+    return h + '<div class="frow"><button type="button" class="btn ' + (missing || other ? 'btn-primary' : 'btn-ghost') + '" data-bk="place">Save building · room</button>' +
+      (opts.options.length ? '' : '<button type="button" class="btn btn-ghost" data-bk="rooms">Open Rooms</button>') + '</div></div>';
+  }
+  async function bkSavePlace(r) {
+    var tb = bkPlaceTarget(r), key = $('bkR') ? $('bkR').value : '', room = null;
+    if ($('bkR') && !key) { toast('Pick a room first.'); return; }
+    if (key) A.roomPick({ building: tb, room_key: '' }, S.rv.rows, null).options.forEach(function (x) { if (x.room_key === key) room = x; });
+    if (key && !room) { toast('Pick a room first.'); return; }
+    if (tb === r.building && (!room || room.room_key === r.room_key)) { toast('Nothing changed.'); return; }
+    if (r.status === 'sent' && !(await confirmSheet('Change the room after sending?', '<p class="note">The booking email already went out with the old room. The check-in email will use the new one.</p>', 'Change'))) return;
+    var ok = tb === r.building
+      ? await rpc('arrivals_set_room', { p_id: r.arrival_id, p_unit: room.unit ? room.unit : null, p_bed: null, p_room_key: room.room_key })
+      : await rpc('arrivals_set_building', { p_id: r.arrival_id, p_building: tb, p_room_key: room ? room.room_key : '', p_remember: !!($('bkRemember') && $('bkRemember').checked) });
+    if (!ok) return;
+    toast((tb === r.building ? 'Room set' : 'Moved to ' + tb) + (ok.alias ? '. Future “' + ok.from + '” arrivals go there too' : ''));
+    S.bk.pickB = null; S.acc = null; S.rv = null;
+    await loadBookings();
+  }
   async function bkAct(name) {
     if (name === 'close') { S.bk.openId = null; S.bk.draft = null; renderBookings(); return; }
     var r = bkById(S.bk.openId); if (!r) return;
@@ -1810,7 +1848,15 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     }
     if (name === 'cancel') { await cancelArrival(r.arrival_id, r.student_name, function () { S.bk.openId = null; return loadBookings(); }); return; }
     if (name === 'tpl') { S.tplPick = r.building; S.tk = r.kind === 'room_change' ? 'room_change' : 'booking'; setTab('templates'); return; }
-    if (name === 'arrival' || name === 'chgbldg') openArrivalFor(r.arrival_id, r.arrival_date, name === 'chgbldg');
+    if (name === 'place') { await bkSavePlace(r); return; }
+    if (name === 'rooms') { setTab('access'); return; }
+    if (name === 'chgbldg') {
+      var bp = $('bkPlace'); if (!bp) return;
+      bp.scrollIntoView({ block: 'center', behavior: 'smooth' }); bp.classList.add('flash'); setTimeout(function () { bp.classList.remove('flash'); }, 1600);
+      if ($('bkB')) $('bkB').focus({ preventScroll: true });
+      return;
+    }
+    if (name === 'arrival') openArrivalFor(r.arrival_id, r.arrival_date, false);
   }
   // end Bookings
 
@@ -2240,6 +2286,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       }
     }
     if (S.tab === 'access') renderRooms(); else if (S.tab === 'templates') renderTemplates();
+    else if (S.tab === 'arrivals' && S.av === 'bookings' && S.bk.openId && !$('bkPanel').contains(document.activeElement)) bkRenderPanel();
     else if (S.tab === 'arrivals' && S.openId && !$('panel').contains(document.activeElement)) renderPanel();
   }
   // building → { city, address, house_code, units{}, rooms{}, tpl, upcoming }
@@ -3815,6 +3862,11 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('bkPanel').addEventListener('click', function (e) { var b = e.target.closest('[data-bk]'); if (b && !b.disabled) bkAct(b.getAttribute('data-bk')); });
     $('bkPanel').addEventListener('submit', function (e) { e.preventDefault(); bkSaveFx(e.target); });
     $('bkPanel').addEventListener('input', bkInput);
+    $('bkPanel').addEventListener('change', function (e) {
+      if (e.target.id !== 'bkB' || !S.bk.openId) return;
+      S.bk.pickB = { id: S.bk.openId, b: e.target.value }; bkRenderPanel();
+      if ($('bkR')) $('bkR').focus(); else if ($('bkB')) $('bkB').focus();
+    });
     // Scheduled
     $('scCity').addEventListener('change', function () { S.sc.city = this.value; S.sc.openId = null; loadScheduled(); });
     $('scType').addEventListener('change', function () { S.sc.type = this.value; renderScheduled(); });
