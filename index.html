@@ -245,6 +245,7 @@
   .settings-nav button:hover{background:var(--cream-2)}
   .settings-nav button[hidden]{display:none}
   #nav-hr[hidden]{display:none}
+  #nav-lu[hidden]{display:none}
   #jp-transfers-btn[hidden]{display:none}
   .settings-nav button.active{background:var(--red-soft);color:var(--red-dark);font-weight:700}
   .settings-nav button svg{width:16px;height:16px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:2}
@@ -1888,7 +1889,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-06-autoall2"></script>
+<script src="pms-supabase.js?v=2026-11-07-luinbox1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2093,6 +2094,13 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       AR
       <span class="nav-count">—</span>
     </button>
+    <!-- Lu inbox (lu-inbox-2026-11-07.sql): Lu's approvals + notices. Shown when lu_inbox_count says allowed (admin,
+         accountant or the "lu" page); the page re-checks and RLS + lu_inbox_action are the real gate. -->
+    <a class="nav-item" id="nav-lu" href="lu.html" style="text-decoration:none" hidden>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H5.2L4 17.2z"/><path d="M8 9h8M8 12h5"/></svg>
+      Lu inbox
+      <span class="nav-count" id="nav-lu-count">↗</span>
+    </a>
     <!-- Mexico's own AP / AR (mx-finance.js): shown only in the Mexico view, to admins and whoever has the mxap / mxar page -->
     <button class="nav-item" data-view="mxap">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
@@ -9563,6 +9571,7 @@ const ALL_PAGES = [
   ["ar",               "Accounts receivable"],
   ["mxap",             "AP · Mexico"],
   ["mxar",             "AR · Mexico"],
+  ["lu",               "Lu inbox"],
   ["team",             "Team"],
   ["settings",         "Settings"],
 ];
@@ -10365,8 +10374,25 @@ function showMaNavIfAllowed(){
     return fetch('https://vanmates-analytics.talatcan.workers.dev/api/me', { headers: { Authorization: 'Bearer ' + t } });
   }).then(r => { maNavAllowed = !!(r && r.ok); el.hidden = !(maNavAllowed && !VIEWING_AS); }, () => {});
 }
+// Lu inbox link + open count: one lu_inbox_count call per page load. Hidden during "View as" (real session).
+let luNavChecked = false, luNavAllowed = false;
+function showLuNavIfAllowed(){
+  const el = document.getElementById('nav-lu');
+  if (el) el.hidden = !(luNavAllowed && !VIEWING_AS);
+  if (luNavChecked) return;
+  const sb = window.vmDb && window.vmDb.sb;
+  if (!sb || !el) return;
+  luNavChecked = true;
+  sb.rpc('lu_inbox_count').then(({ data }) => {
+    luNavAllowed = !!(data && data.allowed);
+    el.hidden = !(luNavAllowed && !VIEWING_AS);
+    const n = document.getElementById('nav-lu-count');
+    if (n && data && data.allowed) n.textContent = data.open ? String(data.open) : '↗';
+  }, () => {});
+}
 function applyRolePermissions(){
   if (typeof showHrNavIfAllowed === "function") showHrNavIfAllowed();
+  if (typeof showLuNavIfAllowed === "function") showLuNavIfAllowed();
   if (typeof showMkNavIfAllowed === "function") showMkNavIfAllowed();
   if (typeof showMaNavIfAllowed === "function") showMaNavIfAllowed();
   // Countries: the teammate (or the View-as preview) decides which countries the switcher offers.
@@ -24686,6 +24712,15 @@ async function ptnReload(){
    #partners). Runs after hydrate (the post-hydrate hook next to openLeadFromHash), so the
    signed-in user's role is known; the auth gate's stashed vm_next_hash is honoured. Admin
    only: anyone else is left where they are. The hash is cleared once handled. */
+/* #view=<page> opens that portal page (links in Lu's inbox notices: #view=ar, #view=ap, #view=checkouts). */
+function openViewFromHash(){
+  const m = /^#view=([a-z0-9-]+)$/.exec(location.hash || '');
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (document.querySelector(`.view[data-view="${m[1]}"]`) && typeof goToView === 'function') goToView(m[1]);
+}
+window.openViewFromHash = openViewFromHash;
+window.addEventListener('hashchange', openViewFromHash);
 function openPartnersFromHash(){
   let hash = location.hash || '';
   if (!hash) { try { hash = sessionStorage.getItem('vm_next_hash') || ''; } catch (e) {} }
@@ -36792,6 +36827,8 @@ window.vmCountry = (function(){
     catch (e) { console.warn('[vmDb] openCelFromHash failed:', e.message); }
     try { if (typeof window.openHmCaseFromHash === 'function') window.openHmCaseFromHash(); }
     catch (e) { console.warn('[vmDb] openHmCaseFromHash failed:', e.message); }
+    try { if (typeof window.openViewFromHash === 'function') window.openViewFromHash(); }
+    catch (e) { console.warn('[vmDb] openViewFromHash failed:', e.message); }
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
