@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Lu inbox · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Same sign-in gate as arrivals.html. Access is decided server-side (vm_lu_member: RLS + lu_inbox_action).
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now()));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'lu.html'); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root{
+  --cream:#FAF5ED; --cream-2:#F4ECDD; --red:#B94A3F; --red-dark:#A13A30; --red-soft:#F3DDD8; --ink:#2B211A; --muted:#8A7B6C;
+  --line:#E4DBC9; --green:#5C8A6B; --green-soft:#E2EDDF; --amber:#C8923A; --amber-soft:#F4E5C7; --blue:#3F6E94; --blue-soft:#DCE7F1;
+  --surface:#FFFFFF; --serif:"Playfair Display", Georgia, serif; --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05); --radius: 14px;
+  --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e; --scrim:rgba(43,33,26,.38); --toast:#2B211A; --toast-ink:#FAF5ED;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
+  --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --scrim:rgba(0,0,0,.55); --toast:#F4ECDD; --toast-ink:#1F1A16;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+[hidden] { display: none !important; }
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px; padding-top: max(12px, env(safe-area-inset-top)); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none;
+  font-family: var(--serif); font-style: italic; font-weight: 700; font-size: 15px; text-decoration: none; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; white-space: nowrap; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); white-space: nowrap; }
+.sp { flex: 1; min-width: 0; }
+.tabs { display: flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.tab { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; min-height: 30px;
+  display: inline-flex; align-items: center; gap: 6px; }
+.tab:hover { color: var(--ink); }
+.tab.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.tbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); font-size: 11px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
+  border: 1px solid transparent; white-space: nowrap; }
+a.btn { text-decoration: none; color: var(--ink); }
+.btn-primary { background: var(--red); color: var(--on-red); }
+.btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); }
+.btn-ghost:hover { background: var(--cream-2); }
+.btn-ok { background: var(--green-soft); color: var(--b-green); border-color: transparent; }
+.btn-warn { background: var(--amber-soft); color: var(--b-amber); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn:focus-visible, .tab:focus-visible, .row:focus-visible, .chip:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.wrap { padding: 0 12px 32px; padding-bottom: max(32px, env(safe-area-inset-bottom)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.muted { color: var(--muted); }
+.note { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.chips { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.chip { flex: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 0 10px; font-size: 12px; font-weight: 600; min-height: 30px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chip.on { background: var(--red); border-color: var(--red); color: var(--on-red); }
+.chip .n { opacity: .75; font-weight: 700; }
+input.inp, select.sel, textarea.inp { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 34px; padding: 6px 10px;
+  font: inherit; font-size: 13px; outline: 0; min-width: 0; width: 100%; }
+input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+textarea.inp { resize: vertical; min-height: 64px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: 12px; align-items: start; }
+.empty { padding: 28px 14px; text-align: center; color: var(--muted); }
+.lock { max-width: 460px; margin: 12vh auto; padding: 28px; text-align: center; }
+.lock h1 { font-family: var(--serif); margin: 0 0 6px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px;
+  border-radius: 999px; font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; transition: .2s ease; max-width: calc(100vw - 32px); z-index: 60; }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.inbox { max-width: 960px; margin: 0 auto; }
+.grp { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 2px 8px; display: flex; gap: 8px; align-items: center; }
+.item { padding: 12px 14px; margin-bottom: 8px; }
+.item .hd { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.item .ttl { font-weight: 700; overflow-wrap: anywhere; min-width: 0; flex: 1 1 260px; }
+.item .amt { font-family: var(--serif); font-weight: 700; font-size: 18px; white-space: nowrap; }
+.item .ln { font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; }
+.item .ln div { margin: 1px 0; }
+.item .ln blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+.item .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.item .res { font-size: 12.5px; margin-top: 8px; padding: 6px 10px; border-radius: 9px; overflow-wrap: anywhere; }
+.res.pending { background: var(--amber-soft); color: var(--b-amber); }
+.res.rejected { background: var(--red-soft); color: var(--red); }
+.res.applied { background: var(--green-soft); color: var(--b-green); }
+.item.done { opacity: .72; }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 10px; align-items: end; }
+.form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
+.form .chk { flex-direction: row; align-items: center; gap: 6px; }
+.cands { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.st { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.st-open { background: var(--amber-soft); color: var(--b-amber); }
+.st-failed { background: var(--red-soft); color: var(--red); }
+.st-done { background: var(--green-soft); color: var(--b-green); }
+.st-shadow { background: var(--blue-soft); color: var(--b-blue); }
+details.recent { margin-top: 18px; }
+details.recent > summary { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); cursor: pointer; margin: 0 2px 8px; }
+.item a { color: var(--blue); }
+</style>
+</head>
+<body>
+<div class="top">
+  <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
+  <span class="page-title">Lu <em>inbox</em></span>
+  <span class="pill" id="shadowPill" hidden title="Payments, expenses and cleaner pay still run in shadow mode: approving them writes nothing to QuickBooks.">Some lanes in shadow mode</span>
+  <span class="sp"></span>
+  <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab on" data-tab="approve">To approve <span class="tbadge" id="nApprove" hidden></span></button>
+    <button type="button" class="tab" data-tab="notice">Notices <span class="tbadge" id="nNotice" hidden></span></button>
+  </nav>
+</div>
+
+<main class="wrap" id="app"><div class="empty">Loading…</div></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
+    { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  // Lu's proposal kinds, in the order they are shown. Payments/expenses/cleaner pay are still shadow-only in Lu (LIVE_KINDS).
+  var KINDS = [
+    ['end_recurring', 'Rent stops (move-outs)'], ['receipt', 'Employee receipts'], ['reimbursement', 'Receipt bookings'],
+    ['payroll', 'Payroll entries'], ['payment', 'Payments'], ['invoice', 'Draft invoices'], ['categorization', 'Expenses'],
+    ['ap_cleaner_paid', 'Cleaner pay'] ];
+  var SHADOW = { payment: 1, invoice: 1, categorization: 1, ap_cleaner_paid: 1 };
+  var OPEN = { proposed: 1, failed: 1, pending_approval: 1, exception_pending: 1, open: 1 };
+  var S = { tab: 'approve', kind: 'all', mine: false, items: [], acts: {}, lists: { accounts: [], properties: [] }, me: '', busy: {} };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 4500); }
+  function money(c) { return c === null || c === undefined ? '' : (c < 0 ? '-' : '') + '$' + (Math.abs(c) / 100).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function when(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  // Slack mrkdwn-lite (what Lu writes): *bold*, _italic_, `code`, <url|label>, <mailto:x|x>, "> quote" lines.
+  function md(line) {
+    var s = esc(line);
+    s = s.replace(/&lt;((?:https?:|mailto:)[^|&]+?)(?:\|([^&]+?))?&gt;/g, function (_, url, label) {
+      var u = url.replace(/&amp;/g, '&');
+      return '<a href="' + esc(u) + '"' + (/^https?:/.test(u) ? ' target="_blank" rel="noopener"' : '') + '>' + (label || esc(u.replace(/^mailto:/, ''))) + '</a>';
+    });
+    s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,:;!?])/g, '$1<b>$2</b>').replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,:;!?])/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    return /^&gt;/.test(s) ? '<blockquote>' + s.replace(/^&gt;\s?/, '') + '</blockquote>' : '<div>' + s + '</div>';
+  }
+  function linesHtml(lines) { return (lines || []).map(function (l) { return String(l).split('\n').map(md).join(''); }).join(''); }
+
+  async function call(fn, args) { var r = await sb.rpc(fn, args); if (r.error) throw r.error; return r.data; }
+
+  async function load() {
+    var r = await Promise.all([
+      sb.from('lu_inbox').select('*').order('created_at', { ascending: false }).limit(1000),
+      sb.from('lu_inbox_actions').select('id,item_id,revision,action,status,result,created_by,created_at,applied_at').order('id', { ascending: false }).limit(500),
+    ]);
+    if (r[0].error || r[1].error) { toast('Could not load: ' + (r[0].error || r[1].error).message); return; }
+    S.items = []; S.acts = {};
+    (r[0].data || []).forEach(function (x) { if (x.section === 'meta') { if (x.item_id === 'meta:lists') S.lists = x.controls || S.lists; } else S.items.push(x); });
+    (r[1].data || []).forEach(function (a) { if (!S.acts[a.item_id]) S.acts[a.item_id] = a; }); // newest request per item
+    render();
+  }
+
+  function isOpen(it) { return !!OPEN[it.status]; }
+  function forMe(it) { return !it.for_email || it.for_email === S.me; }
+  function counts() {
+    var a = 0, n = 0;
+    S.items.forEach(function (it) { if (!isOpen(it)) return; if (it.section === 'approve') a++; else if (forMe(it)) n++; });
+    return { a: a, n: n };
+  }
+
+  function render() {
+    var c = counts();
+    $('nApprove').hidden = !c.a; $('nApprove').textContent = c.a;
+    $('nNotice').hidden = !c.n; $('nNotice').textContent = c.n;
+    document.querySelectorAll('#tabs .tab').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === S.tab); });
+    var html = '<div class="inbox">';
+    if (S.tab === 'approve') html += renderApprove(); else html += renderNotices();
+    $('app').innerHTML = html + '</div>';
+  }
+
+  function renderApprove() {
+    var open = S.items.filter(function (it) { return it.section === 'approve' && isOpen(it); });
+    var done = S.items.filter(function (it) { return it.section === 'approve' && !isOpen(it); });
+    var by = {}; open.forEach(function (it) { (by[it.kind] = by[it.kind] || []).push(it); });
+    var chips = '<div class="toolbar"><div class="chips">' + chip('all', 'All', open.length) +
+      KINDS.filter(function (k) { return by[k[0]]; }).map(function (k) { return chip(k[0], k[1], by[k[0]].length); }).join('') + '</div></div>';
+    var body = '';
+    KINDS.forEach(function (k) {
+      if (!by[k[0]] || (S.kind !== 'all' && S.kind !== k[0])) return;
+      body += '<div class="grp">' + esc(k[1]) + ' <span class="tbadge">' + by[k[0]].length + '</span>' + (SHADOW[k[0]] ? ' <span class="st st-shadow">shadow: nothing written to QuickBooks</span>' : '') + '</div>';
+      // oldest first: what has waited longest is at the top
+      body += by[k[0]].slice().sort(function (x, y) { return String(x.created_at).localeCompare(String(y.created_at)); }).map(itemHtml).join('');
+    });
+    if (!open.length) body = '<div class="card empty">Nothing waiting for approval. 🎉</div>';
+    if (done.length) body += '<details class="recent"><summary>Done in the last 3 days (' + done.length + ')</summary>' + done.map(itemHtml).join('') + '</details>';
+    $('shadowPill').hidden = !open.some(function (it) { return SHADOW[it.kind]; });
+    return chips + body;
+  }
+  function chip(k, label, n) { return '<button type="button" class="chip' + (S.kind === k ? ' on' : '') + '" data-kind="' + esc(k) + '">' + esc(label) + ' <span class="n">' + n + '</span></button>'; }
+
+  function renderNotices() {
+    var list = S.items.filter(function (it) { return it.section === 'notice' && (!S.mine || forMe(it)); });
+    var open = list.filter(isOpen), done = list.filter(function (it) { return !isOpen(it); });
+    var bar = '<div class="toolbar"><div class="chips">' +
+      '<button type="button" class="chip' + (!S.mine ? ' on' : '') + '" data-mine="0">Everyone</button>' +
+      '<button type="button" class="chip' + (S.mine ? ' on' : '') + '" data-mine="1">For me</button></div></div>';
+    var body = open.length ? open.map(itemHtml).join('') : '<div class="card empty">No open notices.</div>';
+    if (done.length) body += '<details class="recent"><summary>Done in the last 3 days (' + done.length + ')</summary>' + done.map(itemHtml).join('') + '</details>';
+    return bar + body;
+  }
+
+  function stBadge(it) {
+    if (it.section === 'notice') return isOpen(it) ? '<span class="st st-open">Open</span>' : '<span class="st st-done">Done</span>';
+    if (it.status === 'failed') return '<span class="st st-failed">Failed: try again</span>';
+    if (it.status === 'exception_pending') return '<span class="st st-failed">Over the cap</span>';
+    if (isOpen(it)) return '';
+    var l = { approved: 'Approved', posted: 'Written to QuickBooks', shadow_posted: 'Approved (shadow)', skipped: 'Skipped', recorded_in_qbo: 'Entered by hand in QuickBooks' }[it.status] || it.status;
+    return '<span class="st st-done">' + esc(l) + '</span>';
+  }
+
+  function itemHtml(it) {
+    var a = S.acts[it.item_id], ctl = it.controls || {}, id = esc(it.item_id), busy = S.busy[it.item_id];
+    var waiting = a && a.status === 'pending';
+    var h = '<div class="card item' + (isOpen(it) ? '' : ' done') + '" data-item="' + id + '"><div class="hd"><div class="ttl">' + esc(it.title) + ' ' + stBadge(it) + '</div>' +
+      (it.amount_cents !== null && it.amount_cents !== undefined ? '<div class="amt">' + money(it.amount_cents) + '</div>' : '') + '</div>';
+    h += '<div class="ln">' + linesHtml(it.lines) + '</div>';
+    var meta = [];
+    if (it.created_at) meta.push(when(it.created_at));
+    if (it.for_email) meta.push('for ' + esc(it.for_email));
+    if (it.acted_by) meta.push((it.section === 'notice' ? 'done by ' : 'by ') + esc(it.acted_by) + (it.acted_at ? ' · ' + when(it.acted_at) : ''));
+    if (it.link) meta.push('<a href="' + esc(it.link) + '">Open in the portal</a>');
+    if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
+    if (a && (waiting || a.status === 'rejected' || (a.status === 'applied' && Date.now() - new Date(a.applied_at || a.created_at) < 36e5))) {
+      var what = { approve: 'Approve', skip: 'Skip', deny: 'Deny', end_date: 'New end date', change_payment: 'Change', change_category: 'Change', done: 'Done' }[a.action] || a.action;
+      h += '<div class="res ' + esc(a.status) + '">' + (waiting ? '⏳ ' + esc(what) + ' sent by ' + esc(a.created_by) + '. Lu applies it within 5 minutes…'
+        : (a.status === 'rejected' ? '✗ ' : '✓ ') + esc(what) + ' (' + esc(a.created_by) + '): ' + esc(a.result)) + '</div>';
+    }
+    if (isOpen(it) && !waiting) h += controlsHtml(it, ctl, busy);
+    return h + '</div>';
+  }
+
+  function controlsHtml(it, ctl, busy) {
+    var dis = busy ? ' disabled' : '', h = '';
+    if (ctl.end_date !== undefined) h += '<div class="form"><label>End date<input class="inp" type="date" data-f="endDate" value="' + esc(ctl.end_date || '') + '"></label>' +
+      '<button type="button" class="btn btn-ghost" data-act="end_date"' + dis + '>Set end date</button></div>';
+    if (ctl.change_category) {
+      var cc = ctl.change_category;
+      h += '<details><summary class="meta" style="cursor:pointer">Change account / property</summary><div class="form">' +
+        '<label>Account<select class="sel" data-f="account">' + S.lists.accounts.map(function (n) { return '<option' + (n === cc.account ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select></label>' +
+        '<label>Property<select class="sel" data-f="property"><option value="">(no property)</option>' + S.lists.properties.map(function (n) { return '<option' + (n === cc.property ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select></label>' +
+        '<button type="button" class="btn btn-ghost" data-act="change_category"' + dis + '>Save change</button></div></details>';
+    }
+    if (ctl.change_payment) {
+      var cp = ctl.change_payment, open = !ctl.approve;
+      h += '<details' + (open ? ' open' : '') + '><summary class="meta" style="cursor:pointer">' + (open ? 'Who paid? Pick the customer' : 'Change customer / invoices') + '</summary>' +
+        ((cp.candidates || []).length ? '<div class="cands">' + cp.candidates.map(function (c) { return '<button type="button" class="chip" data-cand="' + esc(c.id) + '">' + esc(c.name) + ' · ' + esc(c.id) + '</button>'; }).join('') + '</div>' : '') +
+        '<div class="form"><label>Customer (name or QuickBooks ID)<input class="inp" data-f="customer" value="' + esc(cp.customer || '') + '" placeholder="e.g. Kapeesh Arora or 9561"></label>' +
+        '<label>Invoice numbers (optional)<input class="inp" data-f="invoices" placeholder="e.g. 1062, 1063"></label>' +
+        (cp.alias ? '<label class="chk"><input type="checkbox" data-f="saveAlias" checked> Remember this sender</label>' : '') +
+        '<button type="button" class="btn btn-ghost" data-act="change_payment"' + dis + '>Save change</button></div></details>';
+    }
+    var btns = '';
+    if (ctl.approve !== undefined) btns += '<button type="button" class="btn btn-primary" data-act="approve"' + (ctl.approve ? dis : ' disabled title="Pick what it is first"') + '>' + (it.status === 'failed' ? 'Approve again' : it.status === 'exception_pending' ? 'Approve exception' : 'Approve') + '</button>';
+    if (ctl.deny) btns += '<button type="button" class="btn btn-ghost" data-act="deny"' + dis + '>Deny</button>';
+    if (ctl.skip) btns += '<button type="button" class="btn btn-ghost" data-act="skip"' + dis + '>Skip</button>';
+    if (ctl.done) btns += '<button type="button" class="btn btn-ok" data-act="done"' + dis + '>Done</button>';
+    if (btns) h += '<div class="actions">' + btns + '</div>';
+    return h;
+  }
+
+  async function send(itemId, action) {
+    var it = S.items.filter(function (x) { return x.item_id === itemId; })[0];
+    if (!it) return;
+    var card = document.querySelector('[data-item="' + CSS.escape(itemId) + '"]');
+    var val = function (f) { var el = card && card.querySelector('[data-f="' + f + '"]'); return !el ? undefined : el.type === 'checkbox' ? el.checked : el.value.trim(); };
+    var data = {};
+    if (action === 'end_date') { data.endDate = val('endDate'); if (!data.endDate) return toast('Pick an end date.'); }
+    if (action === 'change_category') { data.account = val('account'); data.property = val('property') || undefined; }
+    if (action === 'change_payment') { data.customer = val('customer'); data.invoices = val('invoices') || undefined; data.saveAlias = val('saveAlias') === true; if (!data.customer) return toast('Enter the customer.'); }
+    if (action === 'skip' && !confirmInline(card, 'Skip this? Lu will not do it.')) return;
+    S.busy[itemId] = true; render();
+    try {
+      await call('lu_inbox_action', { p_item_id: itemId, p_action: action, p_revision: it.revision, p_data: data });
+      toast('Sent to Lu. It applies it within 5 minutes.');
+      await load();
+    } catch (e) { toast(String((e && e.message) || e).replace(/^.*?: /, '')); }
+    finally { delete S.busy[itemId]; render(); }
+  }
+  // Skip asks once: the first press arms the button, the second sends.
+  function confirmInline(card, msg) {
+    var b = card && card.querySelector('[data-act="skip"]');
+    if (b && b.getAttribute('data-armed') === '1') return true;
+    if (b) { b.setAttribute('data-armed', '1'); b.textContent = 'Press again to skip'; toast(msg); setTimeout(function () { if (b.isConnected) { b.removeAttribute('data-armed'); b.textContent = 'Skip'; } }, 5000); }
+    return false;
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('button'); if (!t) return;
+    if (t.hasAttribute('data-tab')) { S.tab = t.getAttribute('data-tab'); try { localStorage.setItem('vm-lu-tab', S.tab); } catch (x) {} return render(); }
+    if (t.hasAttribute('data-kind')) { S.kind = t.getAttribute('data-kind'); return render(); }
+    if (t.hasAttribute('data-mine')) { S.mine = t.getAttribute('data-mine') === '1'; try { localStorage.setItem('vm-lu-mine', S.mine ? '1' : '0'); } catch (x) {} return render(); }
+    var card = t.closest('[data-item]'); if (!card) return;
+    if (t.hasAttribute('data-cand')) { var inp = card.querySelector('[data-f="customer"]'); if (inp) inp.value = t.getAttribute('data-cand'); return; }
+    if (t.hasAttribute('data-act')) send(card.getAttribute('data-item'), t.getAttribute('data-act'));
+  });
+
+  var reloadT = null;
+  function soon() { clearTimeout(reloadT); reloadT = setTimeout(load, 600); }
+
+  async function boot() {
+    try { S.tab = localStorage.getItem('vm-lu-tab') === 'notice' ? 'notice' : 'approve'; S.mine = localStorage.getItem('vm-lu-mine') === '1'; } catch (e) {}
+    if (/^#notices/.test(location.hash)) S.tab = 'notice';
+    try { var u = await sb.auth.getUser(); S.me = ((u.data && u.data.user && u.data.user.email) || '').toLowerCase(); } catch (e) {}
+    var acc = null;
+    try { acc = await call('lu_inbox_count', {}); } catch (e) {
+      $('app').innerHTML = '<div class="card lock"><h1>Not set up yet</h1><p class="muted">The Lu inbox database (lu-inbox-2026-11-07.sql) is not applied yet.</p><a class="btn btn-ghost" href="index.html">Back to the portal</a></div>';
+      return;
+    }
+    if (!acc || !acc.allowed) {
+      $('app').innerHTML = '<div class="card lock"><h1>No access</h1><p class="muted">The Lu inbox is for admins, accountants and anyone given the “Lu inbox” page. Ask an admin.</p><a class="btn btn-ghost" href="index.html">Back to the portal</a></div>';
+      return;
+    }
+    $('tabs').hidden = false;
+    await load();
+    sb.channel('lu-inbox').on('postgres_changes', { event: '*', schema: 'public', table: 'lu_inbox' }, soon)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lu_inbox_actions' }, soon).subscribe();
+    setInterval(load, 120000); // in case realtime drops
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
