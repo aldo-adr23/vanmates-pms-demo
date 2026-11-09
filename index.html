@@ -1881,7 +1881,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
   if (hasSession) {
     try {
       var nextPath = sessionStorage.getItem('vm_next_path');
-      if (nextPath && /^(cs\.html(#c=[\w-]+)?|arrivals\.html(#(access|templates))?|hr\.html)$/.test(nextPath)) { sessionStorage.removeItem('vm_next_path'); location.replace(nextPath); }
+      if (nextPath && /^(cs\.html(#c=[\w-]+)?|arrivals\.html(#(access|templates))?|hr\.html|relocation\.html(\?next=[\w%.\-]{0,200})?)$/.test(nextPath)) { sessionStorage.removeItem('vm_next_path'); location.replace(nextPath); }
     } catch (e) {}
   }
 })();
@@ -1889,7 +1889,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-07-luinbox1"></script>
+<script src="pms-supabase.js?v=2026-11-09-relosso1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1978,6 +1978,14 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
     <a class="nav-item" data-view="phone-calls" href="calls.html" style="text-decoration:none">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.8 2z"/></svg>
       Phone calls
+      <span class="nav-count">↗</span>
+    </a>
+    <!-- Relocation workspace (relocation.vanmates.com, 2026-11-09): relocation.html signs the teammate in there with this
+         portal session (no second sign-in). Shown to admins and whoever has the Relocation page; the relocation server
+         re-checks that page on every request. -->
+    <a class="nav-item" data-view="relocation" href="relocation.html" style="text-decoration:none">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M14 4l3-1 1 3"/><path d="M10 20v-5h4v5"/></svg>
+      Relocation
       <span class="nav-count">↗</span>
     </a>
     <button class="nav-item" data-view="contracts">
@@ -9566,6 +9574,7 @@ const ALL_PAGES = [
   ["extensions-homestay","Extensions: homestay only"],
   ["retention",        "Customer retention"],
   ["contracts",        "Contracts"],
+  ["relocation",       "Relocation"],
   ["financials",       "Financials"],
   ["ap",               "Accounts payable"],
   ["ar",               "Accounts receivable"],
@@ -10294,7 +10303,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
   const roleLabel = (typeof roles === "object" && roles[role]?.label) || role;
 
   const pageLabels = {
-    "dashboard":"Dashboard","leads":"Leads","jpleads":"JP Leads","sales":"Sales","cs":"Customer Service","phone-calls":"Phone calls","arrivals":"Arrivals",
+    "dashboard":"Dashboard","leads":"Leads","jpleads":"JP Leads","sales":"Sales","cs":"Customer Service","phone-calls":"Phone calls","relocation":"Relocation","arrivals":"Arrivals",
     "assistants":"Assistants","tenants":"Tenants","properties":"Properties & rooms",
     "partner-inventory":"Partner inventory","partners":"Partners",
     "portfolio":"Portfolio","landlords":"Landlords","homestay-clients":"Homestay clients",
@@ -10506,7 +10515,14 @@ async function vmSignOut(){
   // Belt and braces: the auth gate trusts this key, so make sure it is gone
   // even if signOut() timed out or threw.
   try { Object.keys(localStorage).filter(k => /^sb-.*-auth-token$/.test(k)).forEach(k => localStorage.removeItem(k)); } catch(e){}
+  // Relocation staff: also end the relocation workspace session (it then returns to signin.html).
+  if (vmHasRelocation(typeof CURRENT_USER !== "undefined" ? CURRENT_USER : null)) { location.href = RELO_LOGOUT_URL; return; }
   location.href = "signin.html";
+}
+// Relocation (relocation.vanmates.com): admins, or the Relocation page. The relocation server checks the same rule.
+const RELO_LOGOUT_URL = "https://relocation.vanmates.com/api/relocation/staff/logout?to=signin";
+function vmHasRelocation(u){
+  return !!u && (u.role === "admin" || (Array.isArray(u.allowed_pages) && u.allowed_pages.includes("relocation")));
 }
 
 // The Google picture from signin.html's stash, on the sidebar + pill avatars.
