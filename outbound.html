@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#FAF5ED" />
+<meta name="robots" content="noindex,nofollow" />
+<title>Outbound · Vanmates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script>
+try { document.documentElement.setAttribute('data-theme', localStorage.getItem('vm-theme') || 'light'); } catch (e) {}
+</script>
+<script>
+// Same sign-in gate as lu.html. Access is decided by the vanmates-outbound Worker (Outbound → Settings roles).
+(function () {
+  var ok = false;
+  try {
+    var s = JSON.parse(localStorage.getItem('sb-recbwmihyinlgxnymcmc-auth-token') || 'null');
+    ok = !!(s && s.access_token && (!s.expires_at || s.expires_at * 1000 > Date.now()));
+  } catch (e) { ok = false; }
+  if (!ok) {
+    try { sessionStorage.setItem('vm_next_path', 'outbound.html'); } catch (e) {}
+    location.replace('signin.html');
+  }
+})();
+</script>
+<style>
+:root{
+  --cream:#FAF5ED; --cream-2:#F4ECDD; --red:#B94A3F; --red-dark:#A13A30; --red-soft:#F3DDD8; --ink:#2B211A; --muted:#8A7B6C;
+  --line:#E4DBC9; --green:#5C8A6B; --green-soft:#E2EDDF; --amber:#C8923A; --amber-soft:#F4E5C7; --blue:#3F6E94; --blue-soft:#DCE7F1;
+  --surface:#FFFFFF; --serif:"Playfair Display", Georgia, serif; --sans:"Plus Jakarta Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(43,33,26,.05); --radius: 14px;
+  --on-red:#fff; --b-green:#3e6049; --b-amber:#8a611f; --b-blue:#2b4f6e; --scrim:rgba(43,33,26,.38); --toast:#2B211A; --toast-ink:#FAF5ED;
+}
+:root[data-theme="dark"]{
+  --cream:#1F1A16; --cream-2:#2A231E; --red:#D17262; --red-dark:#B95F50; --red-soft:#5C2B25; --ink:#F4ECDD; --muted:#A89685; --line:#3A302A;
+  --green:#85A88E; --green-soft:#2C3E32; --amber:#E5C896; --amber-soft:#4A3C20; --blue:#6F9DC4; --blue-soft:#28394A; --surface:#26201B;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.30); --b-green:#B9D3C0; --b-amber:#F0D9AE; --b-blue:#B7D0E6; --scrim:rgba(0,0,0,.55); --toast:#F4ECDD; --toast-ink:#1F1A16;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; color: inherit; }
+a { color: var(--blue); }
+[hidden] { display: none !important; }
+.top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px; padding-top: max(12px, env(safe-area-inset-top)); }
+.brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--red); color: var(--on-red); display: grid; place-items: center; flex: none;
+  font-family: var(--serif); font-style: italic; font-weight: 700; font-size: 15px; text-decoration: none; }
+.page-title { font-family: var(--serif); font-weight: 700; font-size: 22px; line-height: 1.1; white-space: nowrap; }
+.page-title em { font-style: italic; color: var(--red); font-weight: 600; }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); white-space: nowrap; }
+.pill.red { background: var(--red-soft); color: var(--red); }
+.pill.green { background: var(--green-soft); color: var(--b-green); }
+.sp { flex: 1; min-width: 0; }
+.tabs { display: flex; gap: 2px; background: var(--cream-2); padding: 3px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.tab { border: 0; background: transparent; padding: 4px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; min-height: 30px;
+  display: inline-flex; align-items: center; gap: 6px; }
+.tab:hover { color: var(--ink); }
+.tab.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.tbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--amber-soft); color: var(--b-amber); font-size: 11px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; min-height: 32px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
+  border: 1px solid transparent; white-space: nowrap; text-decoration: none; }
+.btn-primary { background: var(--red); color: var(--on-red); }
+.btn-primary:hover { background: var(--red-dark); }
+.btn-ghost { background: var(--surface); border-color: var(--line); color: var(--ink); }
+.btn-ghost:hover { background: var(--cream-2); }
+.btn-ok { background: var(--green-soft); color: var(--b-green); }
+.btn-warn { background: var(--amber-soft); color: var(--b-amber); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn:focus-visible, .tab:focus-visible, .chip:focus-visible, tr.click:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.wrap { padding: 0 12px 40px; padding-bottom: max(40px, env(safe-area-inset-bottom)); max-width: 1280px; margin: 0 auto; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.pad { padding: 14px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.note { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.chip { flex: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 0 10px; font-size: 12px; font-weight: 600; min-height: 30px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chip.on { background: var(--red); border-color: var(--red); color: var(--on-red); }
+input.inp, select.sel, textarea.inp { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); min-height: 34px; padding: 6px 10px;
+  font: inherit; font-size: 13px; outline: 0; min-width: 0; width: 100%; }
+input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+textarea.inp { resize: vertical; min-height: 90px; line-height: 1.5; }
+.toolbar .inp, .toolbar .sel { width: auto; }
+.empty { padding: 28px 14px; text-align: center; color: var(--muted); }
+.lock { max-width: 480px; margin: 12vh auto; padding: 28px; text-align: center; }
+.lock h1 { font-family: var(--serif); margin: 0 0 6px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--toast); color: var(--toast-ink); padding: 10px 16px;
+  border-radius: 999px; font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; transition: .2s ease; max-width: calc(100vw - 32px); z-index: 80; }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.kpi { padding: 12px 14px; }
+.kpi .n { font-family: var(--serif); font-weight: 700; font-size: 26px; line-height: 1.1; }
+.kpi .l { font-size: 12px; color: var(--muted); font-weight: 600; }
+.kpi.alert .n { color: var(--red); }
+.h2 { font-family: var(--serif); font-size: 18px; font-weight: 700; margin: 22px 2px 10px; }
+.tbl-wrap { overflow-x: auto; }
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 800; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl tr:last-child td { border-bottom: 0; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--cream); }
+.score { display: inline-flex; min-width: 34px; justify-content: center; padding: 2px 7px; border-radius: 999px; font-weight: 800; font-size: 12px; }
+.score.high { background: var(--green-soft); color: var(--b-green); }
+.score.medium { background: var(--amber-soft); color: var(--b-amber); }
+.score.research, .score.none { background: var(--cream-2); color: var(--muted); }
+.st { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: var(--cream-2); color: var(--muted); }
+.st.ok { background: var(--green-soft); color: var(--b-green); }
+.st.warn { background: var(--amber-soft); color: var(--b-amber); }
+.st.bad { background: var(--red-soft); color: var(--red); }
+.st.info { background: var(--blue-soft); color: var(--b-blue); }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; align-items: end; }
+.form label, .fl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); min-width: 0; }
+.chk { display: flex; flex-direction: row !important; align-items: flex-start; gap: 8px; font-size: 13px; font-weight: 500; color: var(--ink) !important; }
+.chk input { margin-top: 3px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 50; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--cream); z-index: 60; overflow-y: auto; box-shadow: -8px 0 30px rgba(0,0,0,.15);
+  padding: 14px; padding-top: max(14px, env(safe-area-inset-top)); }
+.drawer .hd { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+.drawer h2 { font-family: var(--serif); margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+.kv { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 6px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); font-weight: 600; }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.sec { margin-top: 12px; }
+.msg { padding: 10px 12px; margin-bottom: 8px; border-left: 3px solid var(--line); background: var(--surface); border-radius: 8px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.in { border-left-color: var(--green); }
+.msg.out { border-left-color: var(--blue); }
+.msg .m { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; white-space: normal; }
+.ev { font-size: 12.5px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.ev:last-child { border-bottom: 0; }
+.bar { height: 22px; background: var(--red-soft); border-radius: 6px; position: relative; min-width: 2px; }
+.bar > span { position: absolute; left: 8px; top: 2px; font-size: 12px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.funnel td:first-child { width: 190px; white-space: nowrap; font-weight: 600; }
+.notif { position: relative; }
+.notif-panel { position: absolute; right: 0; top: 38px; width: min(380px, 92vw); max-height: 60vh; overflow-y: auto; z-index: 40; padding: 8px; }
+.notif-item { padding: 8px; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.notif-item:last-child { border-bottom: 0; }
+.notif-item.unread { background: var(--amber-soft); border-radius: 8px; }
+.banner { padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 13px; background: var(--amber-soft); color: var(--b-amber); }
+.banner.red { background: var(--red-soft); color: var(--red); }
+.facts { font-size: 12px; color: var(--muted); margin-top: 6px; }
+@media (max-width: 640px) {
+  .kv { grid-template-columns: 1fr; }
+  .tbl .hide-sm { display: none; }
+  .page-title { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <a class="brand-mark" href="index.html" aria-label="Back to the portal">V</a>
+  <span class="page-title">Out<em>bound</em></span>
+  <span class="pill" id="modePill" hidden></span>
+  <span class="sp"></span>
+  <div class="notif">
+    <button type="button" class="btn btn-ghost" id="bell" hidden aria-label="Notifications">🔔 <span class="tbadge" id="nUnread" hidden></span></button>
+    <div class="card notif-panel" id="notifPanel" hidden></div>
+  </div>
+  <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab on" data-tab="dashboard">Dashboard</button>
+    <button type="button" class="tab" data-tab="discover">Discover leads</button>
+    <button type="button" class="tab" data-tab="prospects">Prospects</button>
+    <button type="button" class="tab" data-tab="campaigns">Campaigns</button>
+    <button type="button" class="tab" data-tab="followups">Follow-ups <span class="tbadge" id="nApprove" hidden></span></button>
+    <button type="button" class="tab" data-tab="analytics">Analytics</button>
+    <button type="button" class="tab" data-tab="settings">Settings</button>
+  </nav>
+</div>
+
+<main class="wrap" id="app"><div class="empty">Loading…</div></main>
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Prospect"></aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  'use strict';
+  var API = 'https://outbound.vanmates.com/api/v1/outbound';
+  var sb = window.supabase.createClient(window.VM_SUPABASE_URL, window.VM_SUPABASE_KEY,
+    { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } });
+  var S = { tab: 'dashboard', me: null, cats: [], filters: { mine: true, sort: 'score' }, offset: 0, drawer: null, dtab: 'overview', busy: false, settings: null };
+  var LIFE = { discovered: 'Discovered', qualified: 'Qualified', approved: 'Approved', contacted: 'Contacted', replied: 'Replied', meeting: 'Meeting', partner: 'Partner', not_interested: 'Not interested', disqualified: 'Disqualified' };
+  var STATE_CLS = { DRAFT: '', PENDING_APPROVAL: 'warn', READY_TO_SEND: 'info', ACTIVE: 'ok', REPLIED: 'ok', UNSUBSCRIBED: 'bad', BOUNCED: 'bad', PAUSED: 'warn', STOPPED: '', COMPLETED: '' };
+  var STATE_LABEL = { DRAFT: 'Drafting', PENDING_APPROVAL: 'Awaiting approval', READY_TO_SEND: 'Approved, sending', ACTIVE: 'Active', REPLIED: 'Replied', UNSUBSCRIBED: 'Unsubscribed', BOUNCED: 'Bounced', PAUSED: 'Paused', STOPPED: 'Stopped', COMPLETED: 'Completed' };
+  var BASES = [['conspicuous_publication', 'Conspicuously published business address (CASL 10(9)(b))'], ['express_consent', 'Express consent'], ['existing_business_relationship', 'Existing business relationship'], ['referral', 'Referral (introduced by someone who knows both sides)']];
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 5000); }
+  function when(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function day(iso) { if (!iso) return ''; var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); }
+  function money(c) { return '$' + Math.round((c || 0) / 100).toLocaleString('en-CA'); }
+  function scoreHtml(p) { if (p.ai_score === null || p.ai_score === undefined) return '<span class="score none">–</span>'; return '<span class="score ' + esc(p.priority || 'research') + '">' + esc(p.ai_score) + '</span>'; }
+  function st(cls, t) { return '<span class="st ' + (cls || '') + '">' + esc(t) + '</span>'; }
+  function isMgr() { return S.me && (S.me.role === 'admin' || S.me.role === 'manager'); }
+  function canWrite() { return S.me && S.me.role !== 'viewer'; }
+  function link(u, label) { return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(label || u) + '</a>' : ''; }
+
+  async function token() { var s = await sb.auth.getSession(); return s && s.data && s.data.session ? s.data.session.access_token : ''; }
+  async function call(method, path, body) {
+    var t = await token();
+    if (!t) { location.replace('signin.html'); throw new Error('Signed out'); }
+    var r = await fetch(API + path, { method: method, headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    var data = null; try { data = await r.json(); } catch (e) {}
+    if (!r.ok) { var err = new Error((data && data.error && data.error.message) || ('Error ' + r.status)); err.code = data && data.error && data.error.code; err.status = r.status; err.cid = data && data.error && data.error.correlation_id; throw err; }
+    return data;
+  }
+  function fail(e) { toast(e.message + (e.cid && e.status >= 500 ? ' (' + e.cid.slice(0, 8) + ')' : '')); }
+
+  // ---------------- boot + chrome ----------------
+  async function boot() {
+    try { S.tab = localStorage.getItem('vm-ob-tab') || 'dashboard'; } catch (e) {}
+    var m = /^#p=([0-9a-f-]{36})/.exec(location.hash);
+    try { S.me = await call('GET', '/me'); }
+    catch (e) {
+      var msg = e.code === 'NO_OUTBOUND_ACCESS' ? e.message : e.status === 403 ? 'Outbound is for the sales team. Ask an admin.' : 'The Outbound service is not reachable yet (' + esc(e.message) + ').';
+      $('app').innerHTML = '<div class="card lock"><h1>' + (e.status === 403 ? 'No access' : 'Not available') + '</h1><p class="muted">' + esc(msg) + '</p><a class="btn btn-ghost" href="index.html">Back to the portal</a></div>';
+      return;
+    }
+    S.filters.mine = S.me.role === 'rep';
+    try { S.cats = (await call('GET', '/categories')).categories || []; } catch (e) {}
+    $('tabs').hidden = false; $('bell').hidden = false;
+    chrome();
+    render();
+    if (m) openProspect(m[1]);
+    setInterval(refreshMe, 60000);
+  }
+  function chrome() {
+    var p = $('modePill');
+    p.hidden = false;
+    if (S.me.sending_off) { p.className = 'pill red'; p.textContent = 'Sending switched off'; }
+    else if (S.me.send_mode !== 'live') { p.className = 'pill'; p.textContent = 'Test mode: only test recipients get email'; }
+    else { p.className = 'pill green'; p.textContent = 'Live'; }
+    $('nUnread').hidden = !S.me.unread; $('nUnread').textContent = S.me.unread;
+    document.querySelectorAll('#tabs .tab').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === S.tab); });
+  }
+  async function refreshMe() { try { S.me = await call('GET', '/me'); chrome(); } catch (e) {} }
+
+  function render() {
+    chrome();
+    var f = { dashboard: renderDashboard, discover: renderDiscover, prospects: renderProspects, campaigns: renderCampaigns, followups: renderFollowups, analytics: renderAnalytics, settings: renderSettings }[S.tab] || renderDashboard;
+    $('app').innerHTML = '<div class="empty">Loading…</div>';
+    f().catch(function (e) { $('app').innerHTML = '<div class="card empty">Could not load: ' + esc(e.message) + '</div>'; });
+  }
+
+  // ---------------- dashboard ----------------
+  async function renderDashboard() {
+    var k = await call('GET', '/dashboard');
+    var tiles = [
+      ['Prospects discovered today', k.discovered_today], ['Total prospects', k.total_prospects], ['Qualified (score ≥ 60)', k.qualified],
+      ['Pending contact reviews', k.pending_contact_reviews, k.pending_contact_reviews > 0, 'prospects'], ['Possible duplicates', k.dedup_reviews, k.dedup_reviews > 0, 'prospects'],
+      ['Emails awaiting approval', k.awaiting_approval, k.awaiting_approval > 0, 'followups'], ['Active sequences', k.active_sequences], ['Paused sequences', k.paused, k.paused > 0, 'followups'],
+      ['Follow-ups due (24 h)', k.followups_due_24h], ['Replies received', k.replies], ['Positive replies', k.positive_replies], ['Meetings booked', k.meetings],
+      ['Partnerships activated', k.partners], ['Bookings generated', k.bookings], ['Revenue attributed', money(k.revenue_cents)],
+    ];
+    $('nApprove').hidden = !k.awaiting_approval; $('nApprove').textContent = k.awaiting_approval;
+    var h = '';
+    if (!S.me.brave) h += '<div class="banner">Discovery is waiting for the Brave Search API key. Prospects can still be added by hand (Prospects → Add prospect).</div>';
+    if (!S.me.reps.length) h += '<div class="banner">No sales reps yet: an admin adds Catherine and Gabriel in Settings.</div>';
+    if (!S.me.sender_address) h += '<div class="banner red">No sender address yet: nothing can be sent until an admin adds the business name and mailing address in Settings (CASL).</div>';
+    h += '<div class="grid">' + tiles.map(function (t) {
+      return '<div class="card kpi' + (t[2] ? ' alert' : '') + '"' + (t[3] ? ' style="cursor:pointer" data-go="' + t[3] + '"' : '') + '><div class="n">' + esc(t[1]) + '</div><div class="l">' + esc(t[0]) + '</div></div>';
+    }).join('') + '</div>';
+    $('app').innerHTML = h;
+  }
+
+  // ---------------- discover ----------------
+  async function renderDiscover() {
+    var r = await Promise.all([call('GET', '/discovery-runs?limit=30'), call('GET', '/settings')]);
+    var runs = r[0].runs || [], budget = r[0].budget, s = r[1].settings;
+    S.settings = s;
+    var h = '';
+    if (isMgr()) {
+      h += '<div class="card pad"><div class="form">' +
+        '<label>Category<select class="sel" id="dCat">' + S.cats.filter(function (c) { return c.is_active; }).map(function (c) { return '<option value="' + esc(c.slug) + '">' + esc(c.name) + '</option>'; }).join('') + '</select></label>' +
+        '<label>Max results per search<input class="inp" id="dMax" type="number" min="1" max="20" value="' + esc(s.max_results_per_query) + '"></label>' +
+        '<label style="grid-column:1/-1">Search queries (one per line, {city} is replaced; empty = the category\'s queries)<textarea class="inp" id="dQ" placeholder="' + esc(((S.cats[0] || {}).search_queries || []).join('\n')) + '"></textarea></label>' +
+        '</div><div class="fl" style="margin-top:10px">Cities<div class="toolbar" style="margin:4px 0 0">' +
+        s.cities.filter(function (c) { return c.enabled; }).map(function (c) { return '<label class="chk"><input type="checkbox" class="dCity" value="' + esc(c.name) + '" checked> ' + esc(c.name) + '</label>'; }).join('') + '</div></div>' +
+        '<div class="actions"><button type="button" class="btn btn-primary" id="dRun"' + (S.me.brave ? '' : ' disabled title="Brave API key not set"') + '>Run discovery</button>' +
+        '<span class="muted small">Brave requests used: ' + esc(budget.today) + ' / ' + esc(s.daily_request_budget) + ' today · ' + esc(budget.month) + ' / ' + esc(s.monthly_request_budget) + ' this month. Each city × query is one request.</span></div></div>';
+    } else h += '<p class="note">Sales managers run discovery. Daily discovery: ' + (s.daily_discovery ? 'on' : 'off') + '.</p>';
+    h += '<div class="h2">Run history</div><div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Started</th><th>Trigger</th><th>Cities</th><th>Status</th><th>Requests</th><th>Results</th><th>New</th><th>Duplicates</th><th class="hide-sm">Errors</th></tr></thead><tbody>' +
+      (runs.length ? runs.map(function (x) {
+        var cls = { completed: 'ok', partial: 'warn', failed: 'bad', budget: 'warn', running: 'info', queued: '' }[x.status];
+        return '<tr><td>' + esc(when(x.created_at)) + '</td><td>' + esc(x.trigger) + (x.started_by && x.started_by !== 'schedule' ? '<div class="muted small">' + esc(x.started_by) + '</div>' : '') + '</td><td class="small">' + esc((x.cities || []).join(', ')) + '</td><td>' + st(cls, x.status) + '</td><td>' + esc(x.provider_requests) + '</td><td>' + esc(x.results_seen) + '</td><td><b>' + esc(x.prospects_created) + '</b></td><td>' + esc(x.duplicates) + '</td><td class="hide-sm small muted">' + esc((x.errors || []).slice(0, 2).join(' · ')) + '</td></tr>';
+      }).join('') : '<tr><td colspan="9" class="empty">No runs yet.</td></tr>') + '</tbody></table></div>';
+    $('app').innerHTML = h;
+  }
+  async function runDiscovery() {
+    var cities = [].slice.call(document.querySelectorAll('.dCity:checked')).map(function (x) { return x.value; });
+    var qs = $('dQ').value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+    try {
+      var r = await call('POST', '/discovery-runs', { category: $('dCat').value, cities: cities, queries: qs.length ? qs : undefined, max_results_per_city: Number($('dMax').value) });
+      toast('Discovery queued. New prospects appear as they are researched.'); render();
+    } catch (e) { fail(e); }
+  }
+
+  // ---------------- prospects ----------------
+  async function renderProspects() {
+    var f = S.filters, qs = [];
+    if (!f.mine && S.me.role === 'rep') qs.push('all=1');
+    ['city', 'min_score', 'rep', 'status', 'verification', 'dedup', 'q', 'from', 'to', 'research'].forEach(function (k) { if (f[k]) qs.push(k + '=' + encodeURIComponent(f[k])); });
+    if (f.cat) qs.push('category=' + f.cat);
+    qs.push('sort=' + (f.sort === 'recent' ? 'recent' : 'score'), 'limit=50', 'offset=' + S.offset);
+    var r = await call('GET', '/prospects?' + qs.join('&'));
+    var cities = (S.settings && S.settings.cities) || [];
+    if (!S.settings) { try { S.settings = (await call('GET', '/settings')).settings; cities = S.settings.cities; } catch (e) {} }
+    var sel = function (id, cur, opts) { return '<select class="sel" data-f="' + id + '">' + opts.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(cur || '') === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>'; };
+    var h = '<div class="toolbar">' +
+      (S.me.role === 'rep' ? '<button type="button" class="chip' + (f.mine ? ' on' : '') + '" data-mine="1">Mine</button><button type="button" class="chip' + (!f.mine ? ' on' : '') + '" data-mine="0">All</button>' : '') +
+      '<input class="inp" data-f="q" placeholder="Search company or website" value="' + esc(f.q || '') + '" style="min-width:200px">' +
+      sel('city', f.city, [['', 'All cities']].concat(cities.map(function (c) { return [c.name, c.name]; }))) +
+      sel('min_score', f.min_score, [['', 'Any score'], ['80', '80+ high'], ['60', '60+ qualified'], ['40', '40+']]) +
+      sel('rep', f.rep, [['', 'Any rep'], ['none', 'Unassigned']].concat(S.me.reps.map(function (x) { return [x.member_id, x.name]; }))) +
+      sel('status', f.status, [['', 'Any outreach status']].concat(Object.keys(LIFE).map(function (k) { return [k, LIFE[k]]; }))) +
+      sel('verification', f.verification, [['', 'Any licence check'], ['verified', 'Licence verified'], ['claimed_on_site', 'Licence # on site'], ['manual_check', 'Check by hand'], ['not_found', 'Not found']]) +
+      sel('dedup', f.dedup, [['', 'Any'], ['review', 'Possible duplicates']]) +
+      sel('research', f.research, [['', 'Any research'], ['failed', 'Research failed'], ['blocked', 'Site blocked bots'], ['pending', 'Waiting']]) +
+      '<input class="inp" type="date" data-f="from" value="' + esc(f.from || '') + '" title="Discovered from">' +
+      sel('sort', f.sort, [['score', 'Best score first'], ['recent', 'Newest first']]) +
+      (canWrite() ? '<button type="button" class="btn btn-ghost" id="addP">+ Add prospect</button>' : '') + '</div>';
+    var rows = r.prospects || [];
+    h += '<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>City</th><th>Score</th><th>Rep</th><th class="hide-sm">Status</th><th class="hide-sm">Last activity</th><th>Next action</th></tr></thead><tbody>' +
+      (rows.length ? rows.map(function (p) {
+        return '<tr class="click" tabindex="0" data-p="' + esc(p.id) + '"><td><b>' + esc(p.company_name) + '</b><div class="muted small">' + esc(p.normalized_domain || '') + '</div></td><td>' + esc(p.city || '') + '</td><td>' + scoreHtml(p) + '</td><td>' + esc(p.rep_name || '–') + '</td>' +
+          '<td class="hide-sm">' + st('', LIFE[p.lifecycle_status] || p.lifecycle_status) + (p.outreach_state ? ' ' + st(STATE_CLS[p.outreach_state], STATE_LABEL[p.outreach_state]) : '') + '</td><td class="hide-sm small">' + esc(day(p.last_activity_at || p.discovered_at)) + '</td><td class="small">' + esc(p.next_action) + '</td></tr>';
+      }).join('') : '<tr><td colspan="7" class="empty">No prospects match.</td></tr>') + '</tbody></table></div>';
+    h += '<div class="actions">' + (S.offset ? '<button type="button" class="btn btn-ghost" data-page="-1">← Previous</button>' : '') + (r.has_more ? '<button type="button" class="btn btn-ghost" data-page="1">Next →</button>' : '') + '</div>';
+    $('app').innerHTML = h;
+  }
+
+  function addProspectForm() {
+    openDrawerHtml('<div class="hd"><h2>Add a prospect</h2><span class="sp"></span><button type="button" class="btn btn-ghost" data-close>Close</button></div>' +
+      '<p class="note">Add a company you found yourself. Its website is researched and scored the same way as discovered ones. A company already in Outbound or an existing partner is refused.</p>' +
+      '<div class="card pad form"><label>Company name<input class="inp" id="npName"></label><label>Website<input class="inp" id="npWeb" placeholder="https://"></label>' +
+      '<label>City<input class="inp" id="npCity" list="cityList"></label><label>Province<input class="inp" id="npProv" placeholder="BC"></label><label>Phone<input class="inp" id="npPhone"></label>' +
+      '<label style="grid-column:1/-1">Notes<textarea class="inp" id="npNotes"></textarea></label></div>' +
+      '<datalist id="cityList">' + ((S.settings && S.settings.cities) || []).map(function (c) { return '<option value="' + esc(c.name) + '">'; }).join('') + '</datalist>' +
+      '<div class="actions"><button type="button" class="btn btn-primary" id="npSave">Add prospect</button></div>');
+  }
+  async function saveProspect() {
+    try {
+      var r = await call('POST', '/prospects', { company_name: $('npName').value, website_url: $('npWeb').value, city: $('npCity').value, province: $('npProv').value, phone: $('npPhone').value, notes: $('npNotes').value });
+      toast(r.dedup && r.dedup.status !== 'unique' ? 'Added, flagged as a possible duplicate of ' + r.dedup.match.label : 'Added. Research starts in a moment.');
+      openProspect(r.id);
+    } catch (e) { fail(e); }
+  }
+
+  // ---------------- prospect drawer ----------------
+  function openDrawerHtml(html) { $('drawer').innerHTML = html; $('drawer').hidden = false; $('scrim').hidden = false; $('drawer').scrollTop = 0; }
+  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; S.drawer = null; if (/^#p=/.test(location.hash)) history.replaceState(null, '', location.pathname); if (S.tab === 'prospects' || S.tab === 'followups') render(); }
+  async function openProspect(id) {
+    try { S.drawer = await call('GET', '/prospects/' + id); } catch (e) { return fail(e); }
+    history.replaceState(null, '', '#p=' + id);
+    drawProspect();
+  }
+  async function reloadProspect() { if (S.drawer) await openProspect(S.drawer.prospect.id); }
+
+  function drawProspect() {
+    var D = S.drawer, p = D.prospect;
+    var tabs = [['overview', 'Overview'], ['contacts', 'Contacts (' + D.contacts.length + ')'], ['emails', 'Emails'], ['activity', 'Activity'], ['compliance', 'Compliance']];
+    var h = '<div class="hd"><div style="min-width:0"><h2>' + esc(p.company_name) + '</h2><div class="muted small">' + esc([p.city, p.province].filter(Boolean).join(', ')) + (p.website_url ? ' · ' + link(p.website_url, p.normalized_domain || p.website_url) : '') + '</div></div><span class="sp"></span>' + scoreHtml(p) + ' <button type="button" class="btn btn-ghost" data-close>Close</button></div>';
+    if (p.existing_partner_id) h += '<div class="banner">Existing partner' + (D.partner ? ': <b>' + esc(D.partner.name) + '</b>' : '') + '. Their account manager owns the relationship; Outbound does not contact them.</div>';
+    if (p.dedup_status === 'review') h += '<div class="banner red">Possible duplicate of <b>' + esc((p.dedup_match || {}).label) + '</b> (' + esc((p.dedup_match || {}).type) + '). ' + (isMgr() ? '<button type="button" class="btn btn-ghost" data-dedup="distinct">Different company</button> <button type="button" class="btn btn-ghost" data-dedup="duplicate">Same company: drop this one</button>' : 'A sales manager decides.') + '</div>';
+    h += '<nav class="tabs" style="margin:6px 0 12px">' + tabs.map(function (t) { return '<button type="button" class="tab' + (S.dtab === t[0] ? ' on' : '') + '" data-dtab="' + t[0] + '">' + esc(t[1]) + '</button>'; }).join('') + '</nav>';
+    h += ({ overview: dOverview, contacts: dContacts, emails: dEmails, activity: dActivity, compliance: dCompliance }[S.dtab] || dOverview)(D);
+    openDrawerHtml(h);
+  }
+
+  function dOverview(D) {
+    var p = D.prospect, b = p.score_breakdown || {};
+    var h = '<div class="card pad"><dl class="kv">' +
+      '<dt>Status</dt><dd>' + st('', LIFE[p.lifecycle_status] || p.lifecycle_status) + '</dd>' +
+      '<dt>Sales rep</dt><dd>' + esc(p.rep_name || 'Unassigned') + (isMgr() && !p.existing_partner_id ? ' <select class="sel" id="repSel" style="width:auto;display:inline-block"><option value="">Change…</option>' + S.me.reps.filter(function (r) { return r.active; }).map(function (r) { return '<option value="' + esc(r.member_id) + '">' + esc(r.name) + '</option>'; }).join('') + '</select>' : '') +
+        (S.me.role === 'rep' && !p.assigned_rep_id && !p.existing_partner_id ? ' <button type="button" class="btn btn-ghost" id="claim">Take it</button>' : '') + '</dd>' +
+      '<dt>Phone</dt><dd>' + esc(p.phone || '–') + '</dd><dt>Address</dt><dd>' + esc(p.address || '–') + '</dd>' +
+      '<dt>Services</dt><dd>' + esc((p.services || []).join(', ') || '–') + '</dd><dt>Languages</dt><dd>' + esc((p.languages || []).join(', ') || '–') + '</dd>' +
+      '<dt>About</dt><dd>' + esc(p.description || '–') + '</dd>' +
+      '<dt>Licence (CICC)</dt><dd>' + st(p.credential_status === 'verified' ? 'ok' : p.credential_status === 'not_found' ? 'bad' : 'warn', p.credential_status) + ' <span class="small">' + esc(p.credential_note || '') + '</span> ' +
+        link('https://college-ic.ca/', 'CICC public register (college-ic.ca)') +
+        (D.can_act ? ' <button type="button" class="btn btn-ghost" data-cred="verified">Verified on register</button> <button type="button" class="btn btn-ghost" data-cred="not_found">Not on register</button>' : '') + '</dd>' +
+      '<dt>Research</dt><dd>' + st(p.research_status === 'done' ? 'ok' : p.research_status === 'failed' || p.research_status === 'blocked' ? 'bad' : 'info', p.research_status) + ' ' + esc(p.research_error || '') + (p.last_verified_at ? ' <span class="muted small">checked ' + esc(when(p.last_verified_at)) + '</span>' : '') +
+        (D.can_act || isMgr() ? ' <button type="button" class="btn btn-ghost" id="requal">Research &amp; score again</button>' : '') + '</dd>' +
+      '<dt>Discovered</dt><dd>' + esc(when(p.discovered_at)) + (p.source_query ? ' <span class="muted small">via “' + esc(p.source_query) + '”</span>' : '') + '</dd>' +
+      '</dl></div>';
+    h += '<div class="h2">AI score ' + (p.ai_score !== null && p.ai_score !== undefined ? esc(p.ai_score) + ' / 100' : '(not scored)') + '</div><div class="card pad">';
+    if (p.ai_score !== null && p.ai_score !== undefined) {
+      var W = [['recurring', 'Recurring accommodation referrals', 30], ['geography', 'Geographic alignment', 20], ['newcomer_services', 'Student / newcomer services', 20], ['decision_maker', 'Decision-maker identified', 15], ['active', 'Active operations', 15]];
+      h += '<table class="tbl funnel"><tbody>' + W.map(function (w) { var v = b[w[0]] || 0; return '<tr><td>' + esc(w[1]) + '</td><td><div class="bar" style="width:' + Math.max(2, v / w[2] * 100) + '%"><span>' + v + ' / ' + w[2] + '</span></div></td></tr>'; }).join('') + '</tbody></table>' +
+        '<p>' + esc(p.score_explanation || '') + '</p><p class="small muted">Confidence ' + esc(p.score_confidence) + ' · model ' + esc(p.score_version) + ' · ' + esc(when(p.scored_at)) + '</p>' +
+        ((p.missing_info || []).length ? '<p class="small"><b>Missing:</b> ' + esc(p.missing_info.join('; ')) + '</p>' : '') +
+        ((p.score_urls || []).length ? '<p class="small"><b>Evidence:</b> ' + p.score_urls.map(function (u) { return link(u); }).join(' · ') + '</p>' : '');
+    } else h += '<p class="muted">Scored after the website is researched.</p>';
+    h += '</div><div class="h2">Source evidence</div><div class="card pad">' + (D.sources.length ? D.sources.map(function (s) {
+      return '<div class="ev"><b>' + esc(s.source_type) + '</b> ' + link(s.source_url) + ' <span class="muted small">' + esc(when(s.observed_at)) + '</span><div class="small muted">' + esc((s.excerpt || '').slice(0, 260)) + '</div></div>';
+    }).join('') : '<p class="muted">None yet.</p>') + '</div>';
+    if (D.can_act) {
+      h += '<div class="h2">Outcome</div><div class="actions">' +
+        '<button type="button" class="btn btn-ghost" data-life="meeting">Meeting scheduled</button><button type="button" class="btn btn-ghost" data-life="not_interested">Not interested</button><button type="button" class="btn btn-ghost" data-life="disqualified">Disqualify</button>' +
+        (isMgr() && !p.converted_at ? '<button type="button" class="btn btn-ok" id="convert">Convert to partner…</button>' : '') + '</div>';
+    }
+    return h;
+  }
+
+  function compFor(D, cid) { return D.compliance.filter(function (c) { return c.contact_id === cid; })[0]; }
+  function dContacts(D) {
+    var p = D.prospect, h = '';
+    h += D.contacts.length ? D.contacts.map(function (c) {
+      var comp = compFor(D, c.id), supp = D.suppressions.filter(function (s) { return s.email_norm === c.normalized_email; })[0];
+      var open = D.enrollments.filter(function (e) { return e.contact_id === c.id && ['DRAFT', 'PENDING_APPROVAL', 'READY_TO_SEND', 'ACTIVE', 'PAUSED'].indexOf(e.state) >= 0; })[0];
+      return '<div class="card pad" style="margin-bottom:8px"><b>' + esc(c.full_name || '(no name)') + '</b>' + (c.job_title ? ' · ' + esc(c.job_title) : '') +
+        '<div>' + esc(c.email || 'no email') + ' ' + (c.email_verified ? st('ok', 'seen on their site') : st('warn', 'not verified')) + (c.is_role_address ? ' ' + st('', 'general inbox') : '') + (supp ? ' ' + st('bad', 'suppressed: ' + supp.reason) : '') + '</div>' +
+        (c.phone ? '<div class="small">' + esc(c.phone) + '</div>' : '') + '<div class="small muted">Source: ' + (c.source_url ? link(c.source_url) : 'added by ' + esc(c.added_by)) + '</div>' +
+        '<div class="small" style="margin-top:4px">Compliance: ' + (comp ? st(comp.status === 'approved' ? 'ok' : comp.status === 'rejected' ? 'bad' : 'warn', comp.status + (comp.status === 'approved' ? ' · ' + comp.lawful_basis.replace(/_/g, ' ') : '')) : st('warn', 'no review')) + '</div>' +
+        '<div class="actions">' + (D.can_act && c.normalized_email && !supp && !open && !p.existing_partner_id && p.dedup_status !== 'review' && p.assigned_rep_id ? '<button type="button" class="btn btn-primary" data-enroll="' + esc(c.id) + '">Start sequence (draft first email)</button>' : '') +
+        (open ? st(STATE_CLS[open.state], 'Sequence: ' + STATE_LABEL[open.state]) : '') +
+        (canWrite() && c.email && !supp ? ' <button type="button" class="btn btn-ghost" data-suppress="' + esc(c.id) + '">Do not contact</button>' : '') + '</div></div>';
+    }).join('') : '<div class="card empty">No contacts yet.' + (p.research_status === 'done' ? ' Research found no business email on the site.' : '') + '</div>';
+    if (D.can_act) h += '<div class="h2">Add a contact</div><div class="card pad"><p class="note">Only business contacts, with the page where you found them.</p><div class="form">' +
+      '<label>Name<input class="inp" id="ncName"></label><label>Role<input class="inp" id="ncTitle"></label><label>Email<input class="inp" id="ncEmail" type="email"></label>' +
+      '<label>Phone<input class="inp" id="ncPhone"></label><label style="grid-column:1/-1">Found on (web page)<input class="inp" id="ncSrc" placeholder="https://"></label></div>' +
+      '<div class="actions"><button type="button" class="btn btn-ghost" id="ncSave">Add contact</button></div></div>';
+    return h;
+  }
+
+  function dCompliance(D) {
+    var h = '<p class="note">CASL: a public email is not automatic permission. Each contact needs a documented basis. For a conspicuously published address, all three checks must hold. Approved by an admin or sales manager; the AI only suggests.</p>';
+    if (!D.contacts.length) return h + '<div class="card empty">No contacts.</div>';
+    D.contacts.forEach(function (c) {
+      var comp = compFor(D, c.id) || {}, ch = comp.checks || {};
+      h += '<div class="card pad" style="margin-bottom:10px"><b>' + esc(c.full_name || c.email || 'Contact') + '</b> <span class="muted">' + esc(c.email || '') + '</span> ' + st(comp.status === 'approved' ? 'ok' : comp.status === 'rejected' ? 'bad' : 'warn', comp.status || 'no review') +
+        (comp.reviewed_by ? '<div class="small muted">Reviewed by ' + esc(comp.reviewed_by) + ' · ' + esc(when(comp.reviewed_at)) + '</div>' : comp.suggested_by ? '<div class="small muted">Suggested by ' + esc(comp.suggested_by === 'ai' ? 'research (AI)' : comp.suggested_by) + '</div>' : '') +
+        (ch.statement ? '<div class="banner red" style="margin-top:8px">The site says: “' + esc(ch.statement) + '”</div>' : '');
+      if (isMgr() && c.email) {
+        h += '<div class="form" style="margin-top:8px" data-comp="' + esc(c.id) + '">' +
+          '<label>Lawful basis<select class="sel" data-cf="basis">' + BASES.map(function (b) { return '<option value="' + b[0] + '"' + (comp.lawful_basis === b[0] ? ' selected' : '') + '>' + esc(b[1]) + '</option>'; }).join('') + '</select></label>' +
+          '<label>Evidence URL<input class="inp" data-cf="url" value="' + esc(comp.evidence_url || c.source_url || '') + '"></label>' +
+          '<label style="grid-column:1/-1">Evidence<textarea class="inp" data-cf="evidence">' + esc(comp.basis_evidence || '') + '</textarea></label>' +
+          '<label class="chk"><input type="checkbox" data-cf="own"' + (ch.published_on_own_site ? ' checked' : '') + '> Published on the company\'s own website (not a directory)</label>' +
+          '<label class="chk"><input type="checkbox" data-cf="role"' + (ch.role_relevant ? ' checked' : '') + '> Our message is relevant to this person\'s business role</label>' +
+          '<label class="chk"><input type="checkbox" data-cf="nus"' + (ch.no_unsolicited_statement !== false && !ch.statement ? ' checked' : '') + '> No statement on the site refusing unsolicited commercial email</label>' +
+          '<label>Consent record (express consent only)<input class="inp" data-cf="consent" value="' + esc(comp.consent_record_id || '') + '"></label>' +
+          '</div><div class="actions"><button type="button" class="btn btn-ok" data-compact="approve" data-cid="' + esc(c.id) + '">Approve basis</button><button type="button" class="btn btn-ghost" data-compact="reject" data-cid="' + esc(c.id) + '">Reject: do not contact</button></div>';
+      }
+      h += '</div>';
+    });
+    if (D.suppressions.length) h += '<div class="h2">Suppression list</div><div class="card pad">' + D.suppressions.map(function (s) { return '<div class="ev">' + esc(s.email_norm) + ' · ' + esc(s.reason) + ' · ' + esc(when(s.created_at)) + '</div>'; }).join('') + '</div>';
+    return h;
+  }
+
+  function dEmails(D) {
+    if (!D.enrollments.length) return '<div class="card empty">No sequence yet. Start one from a contact on the Contacts tab.</div>';
+    return D.enrollments.map(function (e) {
+      var c = D.contacts.filter(function (x) { return x.id === e.contact_id; })[0] || {};
+      var steps = D.steps.filter(function (s) { return s.enrollment_id === e.id; });
+      var h = '<div class="card pad" style="margin-bottom:12px" data-enr="' + esc(e.id) + '"><div class="toolbar" style="margin:0"><b>To ' + esc(c.full_name || c.email) + '</b> ' + st(STATE_CLS[e.state], STATE_LABEL[e.state]) +
+        (e.reply_class ? ' ' + st('info', e.reply_class.replace(/_/g, ' ')) : '') + '<span class="sp"></span><span class="small muted">' + esc(when(e.created_at)) + '</span></div>';
+      if (e.pause_reason && e.state === 'PAUSED') h += '<div class="banner" style="margin-top:8px">' + esc(e.pause_reason) + '</div>';
+      if (e.last_error && e.state !== 'PAUSED') h += '<div class="small muted">Last note: ' + esc(e.last_error) + '</div>';
+      if (e.reply_summary) h += '<div class="small" style="margin-top:6px"><b>Reply:</b> ' + esc(e.reply_summary) + '</div>';
+      if (e.state === 'PENDING_APPROVAL' || e.state === 'DRAFT') {
+        var facts = (e.draft_meta && e.draft_meta.facts) || [];
+        h += '<div class="sec"><label class="fl">Subject<input class="inp" data-ef="subject" value="' + esc(e.draft_subject || '') + '"' + (D.can_act ? '' : ' disabled') + '></label>' +
+          '<label class="fl" style="margin-top:8px">Message (the greeting “Hi ' + esc((c.full_name || '').split(' ')[0] || 'there') + ',”, your signature, our address and the unsubscribe link are added automatically)<textarea class="inp" data-ef="body" rows="9"' + (D.can_act ? '' : ' disabled') + '>' + esc(e.draft_body || '') + '</textarea></label>' +
+          (facts.length ? '<div class="facts">Personalised with: ' + facts.map(function (f) { return esc(f.fact) + ' (' + link(f.source_url, 'source') + ')'; }).join('; ') + '. Check these are right.</div>' : '') +
+          (D.can_act ? '<div class="actions"><button type="button" class="btn btn-primary" data-eact="approve">Approve &amp; send</button><button type="button" class="btn btn-ghost" data-eact="save">Save draft</button><button type="button" class="btn btn-ghost" data-eact="redraft">Write a new draft</button><button type="button" class="btn btn-ghost" data-eact="stop">Discard</button></div>' +
+            '<p class="small muted">After this email, follow-ups go automatically on days ' + esc(((S.campaignDays || [4, 9, 16])).join(', ')) + ' (weekdays 9–5 their time) until they reply or opt out.</p>' : '') + '</div>';
+      }
+      if (steps.length) h += '<table class="tbl" style="margin-top:8px"><thead><tr><th>Step</th><th>Status</th><th>When</th><th class="hide-sm">Note</th></tr></thead><tbody>' + steps.map(function (s) {
+        var cls = { sent: 'ok', scheduled: 'info', cancelled: '', unknown: 'bad', failed: 'bad', claimed: 'info', blocked: 'warn' }[s.status];
+        return '<tr><td>' + (s.step_number === 0 ? 'First email' : 'Day ' + esc(s.delay_days)) + '</td><td>' + st(cls, s.status) + '</td><td>' + esc(when(s.sent_at || s.due_at)) + '</td><td class="hide-sm small muted">' + esc(s.last_error || '') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+      if (D.can_act && ['ACTIVE', 'READY_TO_SEND', 'PAUSED'].indexOf(e.state) >= 0) {
+        var unknown = steps.some(function (s) { return s.status === 'unknown'; });
+        h += '<div class="actions">' + (e.state === 'PAUSED' ? (unknown ? '<button type="button" class="btn btn-ok" data-eact="resume-sent">It is in my Sent folder: continue</button><button type="button" class="btn btn-warn" data-eact="resume-notsent">It was not sent: send it</button>' : '<button type="button" class="btn btn-ok" data-eact="resume">Resume</button>') : '<button type="button" class="btn btn-ghost" data-eact="pause">Pause</button>') +
+          '<button type="button" class="btn btn-ghost" data-eact="stop">Stop sequence</button><button type="button" class="btn btn-ghost" data-eact="messages">Show emails</button></div>';
+      } else if (['REPLIED', 'COMPLETED', 'STOPPED', 'BOUNCED', 'UNSUBSCRIBED'].indexOf(e.state) >= 0) h += '<div class="actions"><button type="button" class="btn btn-ghost" data-eact="messages">Show emails</button></div>';
+      h += '<div data-msgs></div></div>';
+      return h;
+    }).join('');
+  }
+
+  function dActivity(D) {
+    var h = '';
+    if (D.can_act) h += '<div class="card pad"><div class="form"><label>Type<select class="sel" id="acKind"><option value="note">Note</option><option value="call">Call</option><option value="meeting">Meeting</option><option value="email">Email (outside Outbound)</option></select></label>' +
+      '<label style="grid-column:1/-1">What happened<textarea class="inp" id="acText"></textarea></label></div><div class="actions"><button type="button" class="btn btn-ghost" id="acSave">Add to activity</button></div></div>';
+    h += '<div class="card pad" style="margin-top:10px">' + (D.activity.length ? D.activity.map(function (ev) {
+      var meta = ev.metadata && ev.metadata.text ? '<div>' + esc(ev.metadata.text) + '</div>' : '';
+      var after = ev.after_state ? Object.keys(ev.after_state).slice(0, 4).map(function (k) { var v = ev.after_state[k]; return k + ': ' + (typeof v === 'object' ? JSON.stringify(v) : v); }).join(' · ') : '';
+      return '<div class="ev"><b>' + esc(ev.event_type.replace(/[._]/g, ' ')) + '</b> <span class="muted small">' + esc(when(ev.created_at)) + ' · ' + esc(ev.actor_id || 'system') + '</span>' + meta + (after ? '<div class="small muted">' + esc(after.slice(0, 240)) + '</div>' : '') + '</div>';
+    }).join('') : '<p class="muted">Nothing yet.</p>') + '</div>';
+    if (D.assignments.length) h += '<div class="h2">Ownership history</div><div class="card pad">' + D.assignments.map(function (a) {
+      var n = function (id) { var r = S.me.reps.filter(function (x) { return x.member_id === id; })[0]; return r ? r.name : (id ? 'someone' : 'nobody'); };
+      return '<div class="ev">' + esc(n(a.from_rep_id)) + ' → <b>' + esc(n(a.to_rep_id)) + '</b> · ' + esc(a.reason) + ' · ' + esc(a.actor || '') + ' · ' + esc(when(a.created_at)) + '</div>';
+    }).join('') + '</div>';
+    return h;
+  }
+
+  async function act(fn, ok) { if (S.busy) return; S.busy = true; try { await fn(); if (ok) toast(ok); await reloadProspect(); } catch (e) { fail(e); } finally { S.busy = false; } }
+
+  async function enrollmentAction(eid, a, card) {
+    var p = S.drawer.prospect;
+    var subj = card.querySelector('[data-ef="subject"]'), body = card.querySelector('[data-ef="body"]');
+    if (a === 'approve') {
+      if (!confirmTwice(card.querySelector('[data-eact="approve"]'), 'Press again to send')) return;
+      return act(async function () {
+        var r = await call('POST', '/enrollments/' + eid + '/approve', { subject: subj.value, body: body.value });
+        toast(r.sent ? 'Sent from your Gmail. Follow-ups are scheduled.' : 'Approved. It goes out ' + when(r.scheduled_for) + ' (their business hours).');
+      });
+    }
+    if (a === 'save') return act(function () { return call('PATCH', '/enrollments/' + eid + '/draft', { subject: subj.value, body: body.value }); }, 'Draft saved');
+    if (a === 'redraft') return act(function () { return call('POST', '/enrollments/' + eid + '/redraft'); }, 'New draft written');
+    if (a === 'pause') return act(function () { return call('POST', '/enrollments/' + eid + '/pause', { reason: 'Paused by ' + S.me.name }); }, 'Paused');
+    if (a === 'resume') return act(function () { return call('POST', '/enrollments/' + eid + '/resume', {}); }, 'Resumed');
+    if (a === 'resume-sent') return act(function () { return call('POST', '/enrollments/' + eid + '/resume', { unknown_step: 'sent' }); }, 'Resumed');
+    if (a === 'resume-notsent') return act(function () { return call('POST', '/enrollments/' + eid + '/resume', { unknown_step: 'not_sent' }); }, 'It will be sent again in the next window');
+    if (a === 'stop') { if (!confirmTwice(card.querySelector('[data-eact="stop"]'), 'Press again to stop')) return; return act(function () { return call('POST', '/enrollments/' + eid + '/stop', { reason: 'Stopped by ' + S.me.name }); }, 'Stopped'); }
+    if (a === 'messages') {
+      try {
+        var m = (await call('GET', '/enrollments/' + eid + '/messages')).messages || [];
+        card.querySelector('[data-msgs]').innerHTML = '<div class="sec">' + (m.length ? m.map(function (x) {
+          return '<div class="msg ' + (x.direction === 'in' ? 'in' : 'out') + '"><div class="m">' + (x.direction === 'in' ? 'From ' + esc(x.from_email) : 'Sent by ' + esc(x.from_email)) + ' · ' + esc(when(x.sent_at || x.received_at)) + (x.automatic ? ' · automatic' : '') + ' · ' + esc(x.subject || '') + '</div>' + esc(x.body_text || '') + '</div>';
+        }).join('') : '<p class="muted">No emails yet.</p>') + '</div>';
+      } catch (e) { fail(e); }
+    }
+  }
+
+  function confirmTwice(b, label) {
+    if (!b) return true;
+    if (b.getAttribute('data-armed') === '1') return true;
+    var old = b.textContent; b.setAttribute('data-armed', '1'); b.textContent = label;
+    setTimeout(function () { if (b.isConnected) { b.removeAttribute('data-armed'); b.textContent = old; } }, 5000);
+    return false;
+  }
+
+  // ---------------- follow-ups ----------------
+  async function renderFollowups() {
+    var f = S.fuState || 'READY_TO_SEND,ACTIVE,PAUSED';
+    var r = await Promise.all([call('GET', '/followups?state=' + f), call('GET', '/followups?state=PENDING_APPROVAL')]);
+    var rows = r[0].followups || [], pend = r[1].followups || [];
+    $('nApprove').hidden = !pend.length; $('nApprove').textContent = pend.length;
+    var h = '';
+    if (pend.length) h += '<div class="h2" style="margin-top:4px">First emails awaiting approval (' + pend.length + ')</div><div class="card tbl-wrap"><table class="tbl"><tbody>' + pend.map(function (x) {
+      return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b> <span class="muted small">' + esc(x.city || '') + '</span></td><td>' + esc(x.rep_name || '') + '</td><td class="small">Review and approve →</td></tr>';
+    }).join('') + '</tbody></table></div>';
+    h += '<div class="toolbar" style="margin-top:14px">' + [['READY_TO_SEND,ACTIVE,PAUSED', 'Running + paused'], ['PAUSED', 'Paused'], ['REPLIED', 'Replied'], ['COMPLETED,STOPPED,BOUNCED,UNSUBSCRIBED', 'Finished']].map(function (o) {
+      return '<button type="button" class="chip' + (f === o[0] ? ' on' : '') + '" data-fu="' + o[0] + '">' + esc(o[1]) + '</button>';
+    }).join('') + '</div>';
+    h += '<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Prospect</th><th>Rep</th><th>Step</th><th>Next send</th><th>Reply</th><th class="hide-sm">Eligibility</th><th></th></tr></thead><tbody>' +
+      (rows.length ? rows.map(function (x) {
+        var ctl = '';
+        if (x.state === 'PAUSED') ctl = x.unknown_send ? '<span class="small">Open to settle</span>' : '<button type="button" class="btn btn-ok" data-fact="resume" data-e="' + esc(x.enrollment_id) + '">Resume</button>';
+        else if (x.state === 'ACTIVE' || x.state === 'READY_TO_SEND') ctl = '<button type="button" class="btn btn-ghost" data-fact="pause" data-e="' + esc(x.enrollment_id) + '">Pause</button>';
+        return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + esc(x.rep_name || '') + '</td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div></td>' +
+          '<td class="small">' + esc(x.next_due_at && ['ACTIVE', 'READY_TO_SEND'].indexOf(x.state) >= 0 ? when(x.next_due_at) : '–') + '</td><td class="small">' + esc(x.reply_class ? x.reply_class.replace(/_/g, ' ') : '–') + '</td><td class="hide-sm small' + (x.eligibility === 'ok' ? ' muted' : '') + '">' + esc(x.eligibility || '') + '</td><td>' + ctl + '</td></tr>';
+      }).join('') : '<tr><td colspan="7" class="empty">Nothing here.</td></tr>') + '</tbody></table></div>';
+    $('app').innerHTML = h;
+  }
+
+  // ---------------- campaigns ----------------
+  async function renderCampaigns() {
+    var cs = (await call('GET', '/campaigns')).campaigns || [];
+    var def = cs.filter(function (c) { return c.is_default; })[0];
+    if (def) S.campaignDays = (def.followups || []).map(function (f) { return f.day; });
+    var h = '<p class="note">The first email is drafted per prospect from the positioning below and approved by the rep. Follow-ups use these templates, approved in advance by a sales manager; editing them needs a new approval before any follow-up sends. Placeholders: {first_name} {company} {city} {rep_name}. No greeting or signature: added automatically.</p>';
+    h += cs.map(function (c) {
+      var ro = isMgr() ? '' : ' disabled';
+      var cat = S.cats.filter(function (x) { return x.id === c.category_id; })[0];
+      return '<div class="card pad" style="margin-bottom:14px" data-camp="' + esc(c.id) + '"><div class="toolbar" style="margin:0"><b style="font-size:16px">' + esc(c.name) + '</b> ' + (c.is_default ? st('info', 'default') : '') + ' ' + st(c.status === 'active' ? 'ok' : 'warn', c.status) + ' ' +
+        (c.templates_approved_at ? st('ok', 'templates v' + c.templates_version + ' approved by ' + c.templates_approved_by) : st('bad', 'templates v' + c.templates_version + ' NOT approved')) + '<span class="sp"></span><span class="small muted">' + esc(cat ? cat.name : '') + '</span></div>' +
+        '<div class="form" style="margin-top:10px"><label>Name<input class="inp" data-cf="name" value="' + esc(c.name) + '"' + ro + '></label><label>Status<select class="sel" data-cf="status"' + ro + '>' + ['active', 'paused', 'draft', 'archived'].map(function (s) { return '<option' + (s === c.status ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></label>' +
+        '<label>Eligible audience: min score<input class="inp" type="number" data-cf="min" value="' + esc((c.audience || {}).min_score || 0) + '"' + ro + '></label>' +
+        '<label>Sending hours (their time)<span style="display:flex;gap:6px"><input class="inp" type="number" data-cf="sh" value="' + esc(c.send_start_hour) + '"' + ro + '><input class="inp" type="number" data-cf="eh" value="' + esc(c.send_end_hour) + '"' + ro + '></span></label>' +
+        '<label>Sending account<input class="inp" value="The assigned rep\'s connected Gmail" disabled></label>' +
+        '<label style="grid-column:1/-1">First email subject<input class="inp" data-cf="isub" value="' + esc(c.initial_subject) + '"' + ro + '></label>' +
+        '<label style="grid-column:1/-1">Approved positioning and offer (the AI may not go beyond it)<textarea class="inp" data-cf="guide"' + ro + '>' + esc(c.initial_guidance) + '</textarea></label></div>' +
+        '<div class="h2" style="font-size:15px">Follow-ups</div>' + (c.followups || []).map(function (f, i) {
+          return '<div class="form" data-fu-i="' + i + '" style="margin-bottom:10px"><label>Day<input class="inp" type="number" data-ff="day" value="' + esc(f.day) + '"' + ro + '></label><label style="grid-column:span 2">Subject<input class="inp" data-ff="subject" value="' + esc(f.subject) + '"' + ro + '></label>' +
+            '<label style="grid-column:1/-1">Body<textarea class="inp" data-ff="body"' + ro + '>' + esc(f.body) + '</textarea></label></div>';
+        }).join('') +
+        (isMgr() ? '<div class="actions"><button type="button" class="btn btn-ghost" data-csave="' + esc(c.id) + '">Save changes</button>' + (!c.templates_approved_at ? '<button type="button" class="btn btn-ok" data-capprove="' + esc(c.id) + '">Approve templates</button>' : '') + '</div>' : '') + '</div>';
+    }).join('');
+    $('app').innerHTML = h || '<div class="card empty">No campaigns.</div>';
+  }
+  async function saveCampaign(id) {
+    var el = document.querySelector('[data-camp="' + id + '"]'), v = function (k) { return el.querySelector('[data-cf="' + k + '"]').value; };
+    var fus = [].slice.call(el.querySelectorAll('[data-fu-i]')).map(function (r) { return { day: Number(r.querySelector('[data-ff="day"]').value), subject: r.querySelector('[data-ff="subject"]').value, body: r.querySelector('[data-ff="body"]').value }; });
+    try {
+      var r = await call('PATCH', '/campaigns/' + id, { name: v('name'), status: v('status'), audience: { min_score: Number(v('min')) }, send_start_hour: Number(v('sh')), send_end_hour: Number(v('eh')), initial_subject: v('isub'), initial_guidance: v('guide'), followups: fus });
+      toast(r.needs_template_approval ? 'Saved. Approve the templates before follow-ups can send.' : 'Saved'); render();
+    } catch (e) { fail(e); }
+  }
+
+  // ---------------- analytics ----------------
+  async function renderAnalytics() {
+    var a = await call('GET', '/analytics');
+    var max = Math.max.apply(null, a.funnel.map(function (f) { return f.n; }).concat([1]));
+    var h = '<div class="h2" style="margin-top:4px">Funnel</div><div class="card pad"><table class="tbl funnel"><tbody>' + a.funnel.map(function (f) {
+      return '<tr><td>' + esc(f.stage) + '</td><td><div class="bar" style="width:' + Math.max(1, f.n / max * 100) + '%"><span>' + esc(f.n) + '</span></div></td></tr>';
+    }).join('') + '</tbody></table><p class="small muted">Bookings and revenue count each partner booking once, only for partners converted through Outbound and only after the conversion date. Credit stays with the rep at conversion.</p></div>';
+    h += '<div class="h2">By sales rep</div><div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Rep</th><th>Prospects</th><th>Emails sent</th><th>Contacted</th><th>Replies</th><th>Positive</th><th>Partners</th><th>Bookings</th><th>Revenue</th></tr></thead><tbody>' +
+      (a.reps.length ? a.reps.map(function (r) { return '<tr><td><b>' + esc(r.name) + '</b></td><td>' + r.prospects + '</td><td>' + r.emails_sent + '</td><td>' + r.contacted + '</td><td>' + r.replies + '</td><td>' + r.positive + '</td><td>' + r.partners + '</td><td>' + r.bookings + '</td><td>' + money(r.revenue_cents) + '</td></tr>'; }).join('') : '<tr><td colspan="9" class="empty">No reps.</td></tr>') + '</tbody></table></div>';
+    h += '<div class="h2">By campaign</div><div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Campaign</th><th>Enrolled</th><th>Contacted</th><th>Replies</th><th>Reply rate</th><th>Bounced</th><th>Unsubscribed</th></tr></thead><tbody>' +
+      (a.campaigns.length ? a.campaigns.map(function (c) { return '<tr><td class="small">' + esc(c.campaign_id.slice(0, 8)) + '</td><td>' + c.enrolled + '</td><td>' + c.contacted + '</td><td>' + c.replies + '</td><td>' + c.reply_rate + '%</td><td>' + c.bounced + '</td><td>' + c.unsubscribed + '</td></tr>'; }).join('') : '<tr><td colspan="7" class="empty">No sequences yet.</td></tr>') + '</tbody></table></div>';
+    $('app').innerHTML = h;
+  }
+
+  // ---------------- settings ----------------
+  async function renderSettings() {
+    var r = await call('GET', '/settings'), s = r.settings, team = r.team || [];
+    S.settings = s;
+    var adm = S.me.role === 'admin', mgr = isMgr(), ro = mgr ? '' : ' disabled';
+    var h = '';
+    h += '<div class="card pad"><b>Sending</b><p class="note" style="margin-top:6px">' + (r.secrets.sending_off ? 'The SENDING kill switch is off on the server: nothing is sent.' : s.send_mode === 'live' ? 'Live: approved emails go to real prospects.' : 'Test mode: emails only go to the test recipients below, so the whole flow can be tried safely. Going live needs the CASL legal review first.') + '</p>' +
+      '<div class="form"><label style="grid-column:1/-1">Test recipients (one per line)<textarea class="inp" id="sTest"' + ro + '>' + esc((s.test_recipients || []).join('\n')) + '</textarea></label>' +
+      '<label style="grid-column:1/-1">Sender identification in every email (CASL: name, mailing address)<input class="inp" id="sAddr" placeholder="Legal business name, street, city, province, postal code" value="' + esc(s.sender_address) + '"' + ro + '></label></div>' +
+      (adm ? '<div class="actions">' + (s.send_mode === 'live' ? '<button type="button" class="btn btn-warn" id="goTest">Back to test mode</button>' : '<button type="button" class="btn btn-primary" id="goLive">Go live…</button>') + '</div>' : '') + '</div>';
+    h += '<div class="h2">Sales team</div><div class="card pad"><p class="note">Reps send from their own Gmail (connected in the portal for lead emails, with read access so replies are seen). City preference steers automatic assignment; workload and round robin decide the rest.</p>' +
+      '<div id="repRows">' + (s.reps || []).map(function (rep, i) { return repRow(rep, team, i, adm); }).join('') + '</div>' +
+      (adm ? '<div class="actions"><button type="button" class="btn btn-ghost" id="addRep">+ Add rep</button></div>' : '') +
+      '<div class="form" style="margin-top:12px"><label>Sales managers (approve compliance, campaigns, discovery)<select class="sel" id="sMgr" multiple size="4"' + (adm ? '' : ' disabled') + '>' + team.map(function (t) { return '<option value="' + esc(t.id) + '"' + ((s.managers || []).indexOf(t.id) >= 0 ? ' selected' : '') + '>' + esc(t.name || t.email) + '</option>'; }).join('') + '</select></label>' +
+      '<label>Read-only viewers<select class="sel" id="sView" multiple size="4"' + (adm ? '' : ' disabled') + '>' + team.map(function (t) { return '<option value="' + esc(t.id) + '"' + ((s.viewers || []).indexOf(t.id) >= 0 ? ' selected' : '') + '>' + esc(t.name || t.email) + '</option>'; }).join('') + '</select></label></div>' +
+      '<p class="small muted">Admins always have full access.</p><div id="mailboxes" class="small"></div></div>';
+    h += '<div class="h2">Discovery</div><div class="card pad"><div class="form">' +
+      '<label class="chk"><input type="checkbox" id="sDaily"' + (s.daily_discovery ? ' checked' : '') + ro + '> Run discovery automatically every day (8:00 Vancouver)</label>' +
+      '<label class="chk"><input type="checkbox" id="sAuto"' + (s.auto_research ? ' checked' : '') + ro + '> Research and score new prospects automatically</label>' +
+      '<label>Max results per search<input class="inp" type="number" id="sMax" value="' + esc(s.max_results_per_query) + '"' + ro + '></label>' +
+      '<label>Brave requests per day<input class="inp" type="number" id="sDay" value="' + esc(s.daily_request_budget) + '"' + ro + '></label>' +
+      '<label>Brave requests per month<input class="inp" type="number" id="sMon" value="' + esc(s.monthly_request_budget) + '"' + ro + '></label></div>' +
+      '<p class="small muted">Used: ' + esc(r.budget.today) + ' today, ' + esc(r.budget.month) + ' this month. Brave key: ' + (r.secrets.brave ? 'set' : '<b>not set</b>') + ' · AI: ' + (r.secrets.ai ? 'on' : '<b>off</b>') + '</p>' +
+      '<div class="h2" style="font-size:15px">Cities</div><table class="tbl"><thead><tr><th>On</th><th>City</th><th>Province</th><th>Time zone</th></tr></thead><tbody id="cityRows">' + (s.cities || []).map(cityRow).join('') + '</tbody></table>' +
+      (mgr ? '<div class="actions"><button type="button" class="btn btn-ghost" id="addCity">+ Add city</button></div>' : '') +
+      '<div class="h2" style="font-size:15px">Categories</div>' + S.cats.map(function (c) {
+        return '<div class="form" data-cat="' + esc(c.id) + '" style="margin-bottom:10px"><label>' + esc(c.name) + ' ' + st(c.is_active ? 'ok' : '', c.is_active ? 'active' : 'off') + '<textarea class="inp" data-catq' + (adm ? '' : ' disabled') + '>' + esc((c.search_queries || []).join('\n')) + '</textarea></label>' +
+          (adm ? '<label class="chk"><input type="checkbox" data-cata' + (c.is_active ? ' checked' : '') + '> Active</label>' : '') + '</div>';
+      }).join('') + (adm ? '<div class="actions"><button type="button" class="btn btn-ghost" id="saveCats">Save categories</button><button type="button" class="btn btn-ghost" id="addCat">+ New category</button></div>' : '') + '</div>';
+    if (mgr) h += '<div class="actions" style="margin-top:14px"><button type="button" class="btn btn-primary" id="saveSettings">Save settings</button></div>';
+    if (adm) h += '<div class="h2">Failed background jobs</div><div class="card pad" id="failedJobs"><span class="muted">Loading…</span></div><div class="h2">Audit log</div><div class="card pad" id="auditLog"><span class="muted">Loading…</span></div>';
+    $('app').innerHTML = h;
+    S.team = team;
+    call('GET', '/mailboxes').then(function (m) {
+      $('mailboxes').innerHTML = '<b>Mailboxes</b>: ' + (m.mailboxes || []).map(function (x) { return esc(x.name) + ' ' + st(x.health.healthy ? 'ok' : 'bad', x.health.healthy ? (x.health.email || 'ok') : (x.health.reason || 'not connected')); }).join(' · ') + (m.mailboxes.length ? '' : 'no reps yet');
+    }).catch(function () {});
+    if (adm) {
+      call('GET', '/failed-jobs').then(function (j) {
+        $('failedJobs').innerHTML = (j.jobs || []).length ? j.jobs.map(function (x) { return '<div class="ev">' + esc(x.job.kind) + ' · ' + esc(when(x.created_at)) + ' · ' + esc(x.error) + ' <button type="button" class="btn btn-ghost" data-retry="' + esc(x.id) + '">Retry</button></div>'; }).join('') : '<span class="muted">None.</span>';
+      }).catch(function () {});
+      call('GET', '/audit?limit=60').then(function (a) {
+        $('auditLog').innerHTML = (a.events || []).map(function (ev) { return '<div class="ev"><b>' + esc(ev.event_type) + '</b> ' + esc(ev.entity_type) + ' ' + esc(String(ev.entity_id).slice(0, 8)) + ' <span class="muted small">' + esc(when(ev.created_at)) + ' · ' + esc(ev.actor_id) + '</span></div>'; }).join('') || '<span class="muted">Empty.</span>';
+      }).catch(function () {});
+    }
+  }
+  function repRow(rep, team, i, adm) {
+    var dis = adm ? '' : ' disabled';
+    return '<div class="form" data-rep style="margin-bottom:8px"><label>Team member<select class="sel" data-rf="id"' + dis + '><option value="">Pick…</option>' + team.map(function (t) { return '<option value="' + esc(t.id) + '"' + (rep.member_id === t.id ? ' selected' : '') + '>' + esc(t.name || t.email) + '</option>'; }).join('') + '</select></label>' +
+      '<label>Name in emails<input class="inp" data-rf="name" value="' + esc(rep.name || '') + '"' + dis + '></label><label>Preferred cities (comma)<input class="inp" data-rf="cities" value="' + esc((rep.cities || []).join(', ')) + '"' + dis + '></label>' +
+      '<label class="chk"><input type="checkbox" data-rf="active"' + (rep.active !== false ? ' checked' : '') + dis + '> Active</label></div>';
+  }
+  function cityRow(c) {
+    var ro = isMgr() ? '' : ' disabled';
+    return '<tr data-city><td><input type="checkbox" data-cy="on"' + (c.enabled ? ' checked' : '') + ro + '></td><td><input class="inp" data-cy="name" value="' + esc(c.name) + '"' + ro + '></td><td><input class="inp" data-cy="prov" value="' + esc(c.province) + '"' + ro + ' style="width:70px"></td>' +
+      '<td><select class="sel" data-cy="tz"' + ro + '>' + ['America/Vancouver', 'America/Edmonton', 'America/Winnipeg', 'America/Toronto', 'America/Halifax', 'America/St_Johns'].map(function (z) { return '<option' + (z === c.tz ? ' selected' : '') + '>' + z + '</option>'; }).join('') + '</select></td></tr>';
+  }
+  async function saveSettings(extra) {
+    var adm = S.me.role === 'admin';
+    var body = {
+      test_recipients: $('sTest').value.split(/[\s,]+/).filter(Boolean), sender_address: $('sAddr').value,
+      daily_discovery: $('sDaily').checked, auto_research: $('sAuto').checked, max_results_per_query: Number($('sMax').value),
+      daily_request_budget: Number($('sDay').value), monthly_request_budget: Number($('sMon').value),
+      cities: [].slice.call(document.querySelectorAll('[data-city]')).map(function (r) { return { name: r.querySelector('[data-cy="name"]').value, province: r.querySelector('[data-cy="prov"]').value, tz: r.querySelector('[data-cy="tz"]').value, enabled: r.querySelector('[data-cy="on"]').checked }; }).filter(function (c) { return c.name.trim(); }),
+    };
+    if (adm) {
+      body.reps = [].slice.call(document.querySelectorAll('[data-rep]')).map(function (r) { return { member_id: r.querySelector('[data-rf="id"]').value, name: r.querySelector('[data-rf="name"]').value, cities: r.querySelector('[data-rf="cities"]').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean), active: r.querySelector('[data-rf="active"]').checked }; }).filter(function (x) { return x.member_id; });
+      body.managers = [].slice.call($('sMgr').selectedOptions).map(function (o) { return o.value; });
+      body.viewers = [].slice.call($('sView').selectedOptions).map(function (o) { return o.value; });
+    }
+    Object.assign(body, extra || {});
+    try { await call('PATCH', '/settings', body); toast('Settings saved'); S.me = await call('GET', '/me'); render(); } catch (e) { fail(e); }
+  }
+
+  // ---------------- notifications ----------------
+  async function openNotifications() {
+    var p = $('notifPanel');
+    if (!p.hidden) { p.hidden = true; return; }
+    p.hidden = false; p.innerHTML = '<div class="muted small">Loading…</div>';
+    try {
+      var n = (await call('GET', '/notifications')).notifications || [];
+      p.innerHTML = n.length ? n.map(function (x) { return '<div class="notif-item' + (x.read_at ? '' : ' unread') + '"' + (x.prospect_id ? ' data-p="' + esc(x.prospect_id) + '" data-dt="emails"' : '') + '><b>' + esc(x.title) + '</b><div class="small" style="white-space:pre-wrap">' + esc((x.body || '').slice(0, 300)) + '</div><div class="small muted">' + esc(when(x.created_at)) + '</div></div>'; }).join('') : '<div class="muted small">No notifications.</div>';
+      if (n.some(function (x) { return !x.read_at; })) { await call('POST', '/notifications/read'); S.me.unread = 0; chrome(); }
+    } catch (e) { p.innerHTML = '<div class="muted small">' + esc(e.message) + '</div>'; }
+  }
+
+  // ---------------- events ----------------
+  document.addEventListener('click', async function (ev) {
+    var t = ev.target;
+    var tab = t.closest('[data-tab]');
+    if (tab) { S.tab = tab.getAttribute('data-tab'); try { localStorage.setItem('vm-ob-tab', S.tab); } catch (x) {} S.offset = 0; return render(); }
+    if (t.closest('#bell')) return openNotifications();
+    if (!t.closest('.notif')) $('notifPanel').hidden = true;
+    var go = t.closest('[data-go]'); if (go) { S.tab = go.getAttribute('data-go'); return render(); }
+    if (t.closest('[data-close]') || t.id === 'scrim') return closeDrawer();
+    var row = t.closest('[data-p]');
+    if (row && !t.closest('button')) { S.dtab = row.getAttribute('data-dt') || 'overview'; $('notifPanel').hidden = true; return openProspect(row.getAttribute('data-p')); }
+    var b = t.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-mine')) { S.filters.mine = b.getAttribute('data-mine') === '1'; S.offset = 0; return render(); }
+    if (b.hasAttribute('data-page')) { S.offset = Math.max(0, S.offset + 50 * Number(b.getAttribute('data-page'))); return render(); }
+    if (b.id === 'dRun') return runDiscovery();
+    if (b.id === 'addP') return addProspectForm();
+    if (b.id === 'npSave') return saveProspect();
+    if (b.hasAttribute('data-fu')) { S.fuState = b.getAttribute('data-fu'); return render(); }
+    if (b.hasAttribute('data-fact')) {
+      var eid = b.getAttribute('data-e'), a = b.getAttribute('data-fact');
+      try { await call('POST', '/enrollments/' + eid + '/' + a, a === 'pause' ? { reason: 'Paused by ' + S.me.name } : {}); toast(a === 'pause' ? 'Paused' : 'Resumed'); render(); } catch (e) { fail(e); }
+      return;
+    }
+    if (b.hasAttribute('data-csave')) return saveCampaign(b.getAttribute('data-csave'));
+    if (b.hasAttribute('data-capprove')) { try { await call('POST', '/campaigns/' + b.getAttribute('data-capprove') + '/approve-templates'); toast('Templates approved'); render(); } catch (e) { fail(e); } return; }
+    if (b.id === 'saveSettings') return saveSettings();
+    if (b.id === 'goTest') return saveSettings({ send_mode: 'test' });
+    if (b.id === 'goLive') {
+      var c = prompt('Going live emails real prospects. Only after the CASL legal review.\nType exactly: CASL review done');
+      if (c) return saveSettings({ send_mode: 'live', confirm: c });
+      return;
+    }
+    if (b.id === 'addRep') { $('repRows').insertAdjacentHTML('beforeend', repRow({ active: true }, S.team || [], 0, true)); return; }
+    if (b.id === 'addCity') { $('cityRows').insertAdjacentHTML('beforeend', cityRow({ name: '', province: '', tz: 'America/Toronto', enabled: true })); return; }
+    if (b.id === 'saveCats') {
+      try {
+        for (const el of [].slice.call(document.querySelectorAll('[data-cat]'))) {
+          await call('PATCH', '/categories/' + el.getAttribute('data-cat'), { search_queries: el.querySelector('[data-catq]').value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean), is_active: el.querySelector('[data-cata]').checked });
+        }
+        S.cats = (await call('GET', '/categories')).categories; toast('Categories saved'); render();
+      } catch (e) { fail(e); }
+      return;
+    }
+    if (b.id === 'addCat') {
+      var name = prompt('New prospect category name (it starts switched off):');
+      if (name) { try { await call('POST', '/categories', { name: name }); S.cats = (await call('GET', '/categories')).categories; render(); } catch (e) { fail(e); } }
+      return;
+    }
+    if (b.hasAttribute('data-retry')) { try { await call('POST', '/failed-jobs/' + b.getAttribute('data-retry') + '/retry'); toast('Queued again'); render(); } catch (e) { fail(e); } return; }
+
+    // drawer actions
+    if (!S.drawer) return;
+    var P = S.drawer.prospect;
+    if (b.hasAttribute('data-dtab')) { S.dtab = b.getAttribute('data-dtab'); return drawProspect(); }
+    if (b.hasAttribute('data-dedup')) return act(function () { return call('PATCH', '/prospects/' + P.id, { dedup_status: b.getAttribute('data-dedup') }); }, 'Saved');
+    if (b.hasAttribute('data-cred')) return act(function () { return call('PATCH', '/prospects/' + P.id, { credential_status: b.getAttribute('data-cred'), credential_note: (b.getAttribute('data-cred') === 'verified' ? 'Confirmed on the CICC register by ' : 'Not found on the CICC register by ') + S.me.name }); }, 'Saved');
+    if (b.id === 'claim') return act(function () { return call('POST', '/prospects/' + P.id + '/assign', { rep_id: S.me.id }); }, 'It is yours');
+    if (b.id === 'requal') return act(function () { return call('POST', '/prospects/' + P.id + '/qualify'); }, 'Researched and scored again');
+    if (b.hasAttribute('data-life')) { if (!confirmTwice(b, 'Press again')) return; return act(function () { return call('PATCH', '/prospects/' + P.id, { lifecycle_status: b.getAttribute('data-life') }); }, 'Saved'); }
+    if (b.id === 'convert') {
+      var pid = prompt('Partner agency ID from Partners (the agency must exist there first):');
+      if (pid) return act(function () { return call('POST', '/prospects/' + P.id + '/convert', { partner_id: pid.trim() }); }, 'Converted to partner');
+      return;
+    }
+    if (b.id === 'ncSave') return act(function () { return call('POST', '/prospects/' + P.id + '/contacts', { full_name: $('ncName').value, job_title: $('ncTitle').value, email: $('ncEmail').value, phone: $('ncPhone').value, source_url: $('ncSrc').value }); }, 'Contact added: review compliance next');
+    if (b.hasAttribute('data-enroll')) return act(async function () { await call('POST', '/enrollments', { prospect_id: P.id, contact_id: b.getAttribute('data-enroll') }); S.dtab = 'emails'; }, 'First email drafted: review it');
+    if (b.hasAttribute('data-suppress')) { if (!confirmTwice(b, 'Press again: never email them')) return; return act(function () { return call('POST', '/contacts/' + b.getAttribute('data-suppress') + '/suppress'); }, 'Added to the suppression list'); }
+    if (b.hasAttribute('data-compact')) {
+      var cid = b.getAttribute('data-cid'), f = document.querySelector('[data-comp="' + cid + '"]'), g = function (k) { return f.querySelector('[data-cf="' + k + '"]'); };
+      return act(function () {
+        return call('POST', '/contacts/' + cid + '/compliance', { decision: b.getAttribute('data-compact'), lawful_basis: g('basis').value, basis_evidence: g('evidence').value, evidence_url: g('url').value, consent_record_id: g('consent').value,
+          checks: { published_on_own_site: g('own').checked, role_relevant: g('role').checked, no_unsolicited_statement: g('nus').checked } });
+      }, 'Compliance saved');
+    }
+    if (b.id === 'acSave') return act(function () { return call('POST', '/prospects/' + P.id + '/activity', { kind: $('acKind').value, text: $('acText').value }); }, 'Added');
+    var card = b.closest('[data-enr]');
+    if (card && b.hasAttribute('data-eact')) return enrollmentAction(card.getAttribute('data-enr'), b.getAttribute('data-eact'), card);
+  });
+  document.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t.id === 'repSel' && t.value && S.drawer) { var P = S.drawer.prospect; return act(function () { return call('POST', '/prospects/' + P.id + '/assign', { rep_id: t.value, reason: 'manual' }); }, 'Reassigned'); }
+    var f = t.getAttribute && t.getAttribute('data-f');
+    if (f && S.tab === 'prospects' && !t.closest('#drawer')) { S.filters[f] = t.value; S.offset = 0; render(); }
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !$('drawer').hidden) closeDrawer();
+    if (ev.key === 'Enter' && ev.target.matches && ev.target.matches('tr.click')) ev.target.click();
+    if (ev.key === 'Enter' && ev.target.getAttribute && ev.target.getAttribute('data-f') === 'q') { S.filters.q = ev.target.value; S.offset = 0; render(); }
+  });
+  boot();
+})();
+</script>
+</body>
+</html>
