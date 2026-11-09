@@ -148,8 +148,20 @@ details.recent > summary { font-size: 11px; font-weight: 800; letter-spacing: .0
     ['payroll', 'Payroll entries'], ['payment', 'Payments'], ['invoice', 'Draft invoices'], ['categorization', 'Expenses'],
     ['ap_cleaner_paid', 'Cleaner pay'] ];
   var SHADOW = { payment: 1, invoice: 1, categorization: 1, ap_cleaner_paid: 1 };
+  // Notice topics (sub-tabs on Notices), keyed by the notice kind Lu sends. Unknown kinds fall into "Other".
+  var TOPICS = [
+    ['rent', 'Rent reminders', ['ar_auto_send']],
+    ['payments', 'Payments & billing', ['incoming', 'billing']],
+    ['landlords', 'Landlords & bills', ['ap_landlords', 'ap']],
+    ['moveouts', 'Move-outs', ['moveout', 'moveout_closed', 'auto_rent_stop']],
+    ['tenants', 'Tenants', ['tenant_link', 'tenant_sync']],
+    ['receipts', 'Receipts', ['receipt_auto']],
+    ['system', 'System', ['health']] ];
+  var TOPIC_OF = {}; TOPICS.forEach(function (t) { t[2].forEach(function (k) { TOPIC_OF[k] = t[0]; }); });
+  function topicOf(it) { return TOPIC_OF[it.kind] || 'other'; }
+  var TOPIC_LIST = TOPICS.concat([['other', 'Other', []]]);
   var OPEN = { proposed: 1, failed: 1, pending_approval: 1, exception_pending: 1, open: 1 };
-  var S = { tab: 'approve', kind: 'all', mine: false, items: [], acts: {}, lists: { accounts: [], properties: [] }, me: '', busy: {} };
+  var S = { tab: 'approve', kind: 'all', topic: 'all', mine: false, items: [], acts: {}, lists: { accounts: [], properties: [] }, me: '', busy: {} };
 
   function $(id) { return document.getElementById(id); }
   function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -222,11 +234,25 @@ details.recent > summary { font-size: 11px; font-weight: 800; letter-spacing: .0
 
   function renderNotices() {
     var list = S.items.filter(function (it) { return it.section === 'notice' && (!S.mine || forMe(it)); });
-    var open = list.filter(isOpen), done = list.filter(function (it) { return !isOpen(it); });
+    var by = {}; list.forEach(function (it) { var t = topicOf(it); (by[t] = by[t] || { open: 0, all: 0 }); by[t].all++; if (isOpen(it)) by[t].open++; });
+    if (S.topic !== 'all' && !by[S.topic]) S.topic = 'all'; // topic emptied out (or saved one has nothing now)
+    var shown = S.topic === 'all' ? list : list.filter(function (it) { return topicOf(it) === S.topic; });
+    var open = shown.filter(isOpen), done = shown.filter(function (it) { return !isOpen(it); });
+    var nOpen = list.filter(isOpen).length;
     var bar = '<div class="toolbar"><div class="chips">' +
+      '<button type="button" class="chip' + (S.topic === 'all' ? ' on' : '') + '" data-topic="all">All <span class="n">' + nOpen + '</span></button>' +
+      TOPIC_LIST.filter(function (t) { return by[t[0]]; }).map(function (t) {
+        return '<button type="button" class="chip' + (S.topic === t[0] ? ' on' : '') + '" data-topic="' + t[0] + '">' + esc(t[1]) + ' <span class="n">' + by[t[0]].open + '</span></button>';
+      }).join('') + '</div><span class="sp"></span><div class="chips">' +
       '<button type="button" class="chip' + (!S.mine ? ' on' : '') + '" data-mine="0">Everyone</button>' +
       '<button type="button" class="chip' + (S.mine ? ' on' : '') + '" data-mine="1">For me</button></div></div>';
-    var body = open.length ? open.map(itemHtml).join('') : '<div class="card empty">No open notices.</div>';
+    var body = '';
+    if (!open.length) body = '<div class="card empty">No open notices' + (S.topic === 'all' ? '' : ' here') + '.</div>';
+    else if (S.topic !== 'all') body = open.map(itemHtml).join('');
+    else TOPIC_LIST.forEach(function (t) {
+      var g = open.filter(function (it) { return topicOf(it) === t[0]; });
+      if (g.length) body += '<div class="grp">' + esc(t[1]) + ' <span class="tbadge">' + g.length + '</span></div>' + g.map(itemHtml).join('');
+    });
     if (done.length) body += '<details class="recent"><summary>Done in the last 3 days (' + done.length + ')</summary>' + done.map(itemHtml).join('') + '</details>';
     return bar + body;
   }
@@ -320,6 +346,7 @@ details.recent > summary { font-size: 11px; font-weight: 800; letter-spacing: .0
     var t = e.target.closest('button'); if (!t) return;
     if (t.hasAttribute('data-tab')) { S.tab = t.getAttribute('data-tab'); try { localStorage.setItem('vm-lu-tab', S.tab); } catch (x) {} return render(); }
     if (t.hasAttribute('data-kind')) { S.kind = t.getAttribute('data-kind'); return render(); }
+    if (t.hasAttribute('data-topic')) { S.topic = t.getAttribute('data-topic'); try { localStorage.setItem('vm-lu-topic', S.topic); } catch (x) {} return render(); }
     if (t.hasAttribute('data-mine')) { S.mine = t.getAttribute('data-mine') === '1'; try { localStorage.setItem('vm-lu-mine', S.mine ? '1' : '0'); } catch (x) {} return render(); }
     var card = t.closest('[data-item]'); if (!card) return;
     if (t.hasAttribute('data-cand')) { var inp = card.querySelector('[data-f="customer"]'); if (inp) inp.value = t.getAttribute('data-cand'); return; }
@@ -330,7 +357,7 @@ details.recent > summary { font-size: 11px; font-weight: 800; letter-spacing: .0
   function soon() { clearTimeout(reloadT); reloadT = setTimeout(load, 600); }
 
   async function boot() {
-    try { S.tab = localStorage.getItem('vm-lu-tab') === 'notice' ? 'notice' : 'approve'; S.mine = localStorage.getItem('vm-lu-mine') === '1'; } catch (e) {}
+    try { S.tab = localStorage.getItem('vm-lu-tab') === 'notice' ? 'notice' : 'approve'; S.mine = localStorage.getItem('vm-lu-mine') === '1'; S.topic = localStorage.getItem('vm-lu-topic') || 'all'; } catch (e) {}
     if (/^#notices/.test(location.hash)) S.tab = 'notice';
     try { var u = await sb.auth.getUser(); S.me = ((u.data && u.data.user && u.data.user.email) || '').toLowerCase(); } catch (e) {}
     var acc = null;
