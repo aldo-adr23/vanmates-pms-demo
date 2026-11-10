@@ -925,6 +925,10 @@
   .tn-view .tn-name{font-weight:600}
   .tn-view .tn-act{text-align:right}
   .tn-missing,.tn-soon{color:var(--red);font-weight:600}
+  .tn-stage{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--cream-2);color:var(--ink);white-space:nowrap}
+  .tn-stage-moving{background:var(--blue-soft);color:var(--blue)}
+  .tn-stage-ended{background:var(--red-soft);color:var(--red)}
+  .tn-stage-past{color:var(--muted)}
   .tn-fix{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
   .tn-mini{padding:5px 11px !important;font-size:12px !important}
   .tn-hint{width:100%;text-align:right}
@@ -1894,7 +1898,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-10-inbox1"></script>
+<script src="pms-supabase.js?v=2026-11-10-gsearch1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -7532,9 +7536,13 @@ function tnCurrent(t, today) {
   const s = tnStage(t, today);
   return s === "living" || s === "moving";
 }
+// Stage words for search results, which mix every tab.
+const TN_STAGE_LABEL = { moving: "Moving in", living: "Living here", ended: "Lease ended", past: "Moved out" };
+const TN_STAGE_ORDER = { moving: 0, living: 1, ended: 2, past: 3 };
 function tnInTab(t, tab, today) {
   const s = tnStage(t, today);
   switch (tab) {
+    case "all": return true;   // search results: every tenant, whatever the stage
     case "moving": case "living": case "ended": case "past": return s === tab;
     case "leaving": {
       const le = tnDate(t.leaseEnd);
@@ -7575,12 +7583,17 @@ function tnFilter(list, opts, today) {
     (!o.city || t.city === o.city) &&
     (!o.house || t.property === o.house) &&
     tnMatches(t, o.q));
-  return tnSort(rows, o.tab || "living");
+  return tnSort(rows, o.tab || "living", today);
 }
 // Moving in: soonest move-in first. Moved out: most recent lease end first. Everything else:
 // soonest lease end first, rows with no lease end last; name breaks ties.
-function tnSort(rows, tab) {
+function tnSort(rows, tab, today) {
   const far = 8.64e15;
+  // Search results: current tenants first (moving in, living, lease ended, moved out), then name.
+  if (tab === "all") {
+    const st = t => TN_STAGE_ORDER[tnStage(t, today || new Date())];
+    return rows.slice().sort((a, b) => (st(a) - st(b)) || String(a.name || "").localeCompare(String(b.name || "")));
+  }
   const key = t => {
     if (tab === "moving") { const d = tnDate(t.moveIn); return d ? +d : far; }
     const d = tnDate(t.leaseEnd);
@@ -7744,7 +7757,8 @@ function tnNoteDeletePatch(t, id) {
 
 // drafts: what was typed into row inputs (email / WhatsApp / renewal date), keyed by
 // "<field>|<tnKey>", so a re-render (another row's save, a realtime echo) never wipes it.
-const TN = { tab: "living", q: "", city: "", house: "", view: "list", page: 1, perPage: 50, selected: new Set(), drafts: {} };
+// qAll: a search shows matches from every tab ("All results") until a tab is picked.
+const TN = { tab: "living", qAll: false, q: "", city: "", house: "", view: "list", page: 1, perPage: 50, selected: new Set(), drafts: {} };
 try {
   const savedTab = localStorage.getItem("vm_tn_tab");
   if (savedTab && TN_TABS.some(x => x.key === savedTab)) TN.tab = savedTab;
@@ -7762,12 +7776,20 @@ function tnScoped() {
 }
 function tnFind(key) { return (typeof tenants !== "undefined" ? tenants : []).find(t => tnKey(t) === String(key)); }
 function tnSetTab(tab) {
-  TN.tab = tab; TN.page = 1; TN.selected.clear();
+  if (tab === "all") { TN.qAll = true; TN.page = 1; TN.selected.clear(); renderTenants(); return; }
+  TN.tab = tab; TN.qAll = false; TN.page = 1; TN.selected.clear();
   try { localStorage.setItem("vm_tn_tab", tab); } catch (e) {}
   renderTenants();
 }
 // Kept for callers elsewhere in the portal (after-add, goToView, global search).
 function resetPage() { TN.page = 1; }
+// The tab the list shows: "all" while a search is on and no tab was picked, else TN.tab.
+function tnViewTab() { return TN.q && TN.qAll ? "all" : TN.tab; }
+// A new search (empty -> text) looks across every tab; refining it keeps the tab picked.
+function tnSetQuery(q) {
+  if (q && !TN.q) TN.qAll = true;
+  TN.q = q; TN.page = 1;
+}
 
 const TN_BANNERS = {
   ended: n => `<b>${n} tenant${n === 1 ? " is" : "s are"} still marked active, but the lease end date has passed.</b> Most are renewals whose date was never updated. Confirm each one: <b>Renewed</b> saves the new end date, <b>Moved out</b> moves them to Moved out. Both are copied to Asana as a backup.`,
@@ -7790,6 +7812,11 @@ function tnRentCell(t) {
 }
 function tnActionCell(t, tab, today) {
   const k = esc(tnKey(t));
+  if (tab === "all") {
+    const s = tnStage(t, today);
+    const type = s === "living" ? TN_TYPE_LABEL[tnLeaseType(t)] : "";
+    return `<span class="tn-stage tn-stage-${s}">${esc(TN_STAGE_LABEL[s])}</span>${type ? `<div class="hb-sub">${esc(type)}</div>` : ""}`;
+  }
   if (tab === "ended") {
     const def = TN.drafts["date|" + tnKey(t)] || tnRenewSuggest(t, today);
     const fromAsana = tnDate(t.asanaDueOn) && tnDate(t.asanaDueOn) > today && tnIso(tnDate(t.asanaDueOn)) === def;
@@ -7810,7 +7837,8 @@ function tnRowHtml(t, tab, today) {
   const m = tnMissing(t);
   const sel = TN.selected.has(k);
   const contactLine = (m.email ? `<span class="tn-missing">No email</span>` : esc(tnEmail(t.email))) + (tab === "contact" && m.phone ? ` · <span class="tn-missing">No WhatsApp</span>` : "");
-  const dateCell = tab === "moving"
+  const stage = tab === "all" ? tnStage(t, today) : tab;
+  const dateCell = stage === "moving"
     ? `<div>${esc(tnFmt(t.moveIn))}</div><div class="hb-sub">in ${tnDays(today, tnDate(t.moveIn))} days</div>`
     : tnLeaseCell(t, today);
   const room = t.room && t.room !== "—" ? `Room ${esc(t.room)} · ` : "";
@@ -7844,9 +7872,11 @@ function renderTenants() {
 
   // Tabs
   const tabs = document.getElementById("tn-tabs");
-  tabs.innerHTML = TN_TABS.map(x => x.sep
+  const vt = tnViewTab();
+  const allTab = TN.q ? `<button type="button" class="hb-tab${vt === "all" ? " on" : ""}" role="tab" aria-selected="${vt === "all"}" data-tn-tab="all">All results<span class="hb-n">${counted.length}</span></button><span class="tn-tab-sep" aria-hidden="true"></span>` : "";
+  tabs.innerHTML = allTab + TN_TABS.map(x => x.sep
     ? `<span class="tn-tab-sep" aria-hidden="true"></span>`
-    : `<button type="button" class="hb-tab${x.key === TN.tab ? " on" : ""}" role="tab" aria-selected="${x.key === TN.tab}" data-tn-tab="${x.key}">${esc(x.label)}<span class="hb-n${x.needs && counts[x.key] ? " hb-need-v" : ""}">${counts[x.key]}</span></button>`).join("");
+    : `<button type="button" class="hb-tab${x.key === vt ? " on" : ""}" role="tab" aria-selected="${x.key === vt}" data-tn-tab="${x.key}">${esc(x.label)}<span class="hb-n${x.needs && counts[x.key] ? " hb-need-v" : ""}">${counts[x.key]}</span></button>`).join("");
 
   // Selects (cities/houses from the scoped list, so they track hydrate + realtime)
   const cities = [...new Set(scoped.map(t => t.city).filter(Boolean))].sort();
@@ -7859,13 +7889,13 @@ function renderTenants() {
   const nHouses = new Set(scoped.filter(t => tnInTab(t, "living", today)).map(t => t.property)).size;
   document.getElementById("tn-summary").textContent = `${living} living in ${nHouses} house${nHouses === 1 ? "" : "s"} · ${tnFmt(tnIso(today))}`;
 
-  const rows = tnFilter(base, { tab: TN.tab, q: TN.q }, today);
+  const rows = tnFilter(base, { tab: vt, q: TN.q }, today);
   const banner = document.getElementById("tn-banner");
-  const mk = TN_BANNERS[TN.tab];
-  banner.hidden = !(mk && counts[TN.tab]);
-  if (mk) banner.innerHTML = mk(counts[TN.tab]);
+  const mk = TN_BANNERS[vt];
+  banner.hidden = !(mk && counts[vt]);
+  if (mk) banner.innerHTML = mk(counts[vt]);
 
-  const houseMode = TN.view === "house" && !["ended", "untyped", "contact"].includes(TN.tab);
+  const houseMode = TN.view === "house" && !["ended", "untyped", "contact"].includes(vt);
   document.getElementById("tn-list-card").hidden = houseMode;
   document.getElementById("tn-houses").hidden = !houseMode;
   if (houseMode) tnRenderHouses(rows, today); else tnRenderList(rows, today);
@@ -7879,10 +7909,11 @@ function tnRenderList(rows, today) {
   if (TN.page > pages) TN.page = pages;
   const start = (TN.page - 1) * TN.perPage;
   const page = rows.slice(start, start + TN.perPage);
-  const lastHead = { ended: "Confirm", untyped: "Lease type", contact: "Add contact" }[TN.tab] || "Lease";
+  const vt = tnViewTab();
+  const lastHead = { ended: "Confirm", untyped: "Lease type", contact: "Add contact", all: "Status" }[vt] || "Lease";
   const allOn = page.length && page.every(t => TN.selected.has(tnKey(t)));
-  document.getElementById("tn-thead").innerHTML = `<tr><th class="tn-cb"><input type="checkbox" id="check-all" ${allOn ? "checked" : ""} aria-label="Select all on this page"></th><th>Tenant</th><th>House · room</th><th>${TN.tab === "moving" ? "Moves in" : TN.tab === "past" ? "Lease ended" : "Lease ends"}</th><th>Rent</th><th>${lastHead}</th></tr>`;
-  document.getElementById("tenants-body").innerHTML = page.map(t => tnRowHtml(t, TN.tab, today)).join("");
+  document.getElementById("tn-thead").innerHTML = `<tr><th class="tn-cb"><input type="checkbox" id="check-all" ${allOn ? "checked" : ""} aria-label="Select all on this page"></th><th>Tenant</th><th>House · room</th><th>${vt === "moving" ? "Moves in" : vt === "past" ? "Lease ended" : vt === "all" ? "Dates" : "Lease ends"}</th><th>Rent</th><th>${lastHead}</th></tr>`;
+  document.getElementById("tenants-body").innerHTML = page.map(t => tnRowHtml(t, vt, today)).join("");
   document.getElementById("empty-state").hidden = rows.length > 0;
   document.getElementById("empty-state").textContent = TN.q || TN.city || TN.house ? "No tenants match these filters in this tab." : "Nobody here right now.";
   document.getElementById("tn-count").textContent = rows.length ? `${start + 1}–${start + page.length} of ${rows.length}` : "";
@@ -7903,7 +7934,7 @@ function tnRenderHouses(rows, today) {
         <span class="hb-sub">${h.people.length} tenant${h.people.length === 1 ? "" : "s"}${h.leaving ? ` · <span class="tn-soon">${h.leaving} leaving soon</span>` : ""}</span>
         <button type="button" class="btn btn-ghost tn-mini" data-pr-open="${esc(h.house)}">Open property</button><button type="button" class="btn btn-ghost tn-mini" data-tn-email-house="${esc(h.house)}">Email this house</button>
       </summary>
-      <div class="tn-rooms">${h.people.map(t => `<div class="tn-room" data-tn-row="${esc(tnKey(t))}" tabindex="0"><span class="hb-sub">${t.room && t.room !== "—" ? "Room " + esc(t.room) : "—"}</span><span><b>${esc(t.name || "Unnamed")}</b> <span class="hb-sub">· ${TN.tab === "moving" ? "moves in " + esc(tnFmt(t.moveIn)) : t.leaseEnd ? "until " + esc(tnFmt(t.leaseEnd)) : "no end date"}</span></span><span class="num">${tnRentCell(t).replace(/<div[^>]*>\/month<\/div>/, "")}</span></div>`).join("")}</div>
+      <div class="tn-rooms">${h.people.map(t => `<div class="tn-room" data-tn-row="${esc(tnKey(t))}" tabindex="0"><span class="hb-sub">${t.room && t.room !== "—" ? "Room " + esc(t.room) : "—"}</span><span><b>${esc(t.name || "Unnamed")}</b> <span class="hb-sub">· ${(tnViewTab() === "all" ? tnStage(t, today) : TN.tab) === "moving" ? "moves in " + esc(tnFmt(t.moveIn)) : t.leaseEnd ? "until " + esc(tnFmt(t.leaseEnd)) : "no end date"}</span></span><span class="num">${tnRentCell(t).replace(/<div[^>]*>\/month<\/div>/, "")}</span></div>`).join("")}</div>
     </details>`).join("")}</section>`).join("");
 }
 
@@ -7912,7 +7943,7 @@ function tnRenderSelBar() {
   if (!bar) return;
   bar.hidden = TN.selected.size === 0;
   document.getElementById("bulk-ct").textContent = TN.selected.size;
-  document.getElementById("tn-sel-out").hidden = TN.tab !== "ended";
+  document.getElementById("tn-sel-out").hidden = tnViewTab() !== "ended";
 }
 
 // Merge a patch into the live record and save the whole record. Returns true on success;
@@ -8010,7 +8041,7 @@ function tnCsvDownload(list) {
     if (e.target.id === "check-all") {
       const today = tnToday();
       const base = tnScoped().filter(t => (!TN.city || t.city === TN.city) && (!TN.house || t.property === TN.house));
-      const rows = tnFilter(base, { tab: TN.tab, q: TN.q }, today).slice((TN.page - 1) * TN.perPage, TN.page * TN.perPage);
+      const rows = tnFilter(base, { tab: tnViewTab(), q: TN.q }, today).slice((TN.page - 1) * TN.perPage, TN.page * TN.perPage);
       rows.forEach(t => e.target.checked ? TN.selected.add(tnKey(t)) : TN.selected.delete(tnKey(t)));
       renderTenants(); return;
     }
@@ -8035,7 +8066,11 @@ function tnCsvDownload(list) {
   let searchTimer = null;
   document.getElementById("ft-search").addEventListener("input", e => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { TN.q = e.target.value.trim(); TN.page = 1; renderTenants(); }, 120);
+    searchTimer = setTimeout(() => {
+      const q = e.target.value.trim();
+      tnSetQuery(q); renderTenants();
+      const gs = document.getElementById("global-search"); if (gs && gs.value.trim() !== q) gs.value = q;
+    }, 120);
   });
 })();
 
@@ -8047,7 +8082,7 @@ document.addEventListener("input", e => {
   if (activeView !== "tenants" && typeof goToView === "function") goToView("tenants");
   const filterInput = document.getElementById("ft-search");
   if (filterInput) filterInput.value = q;
-  TN.q = q; TN.page = 1;
+  tnSetQuery(q);
   renderTenants();
 });
 document.addEventListener("keydown", e => {
@@ -15621,7 +15656,7 @@ document.getElementById("tenant-form").addEventListener("submit", e => {
   }
 
   // Re-render on the tab the new tenant lands in, so the highlight below finds the row.
-  if(typeof tnSetTab === "function") { TN.q = ""; const fs = document.getElementById("ft-search"); if (fs) fs.value = ""; tnSetTab(tnStage(fresh, tnToday()) === "moving" ? "moving" : "living"); }
+  if(typeof tnSetTab === "function") { TN.q = ""; const fs = document.getElementById("ft-search"); if (fs) fs.value = ""; const gs = document.getElementById("global-search"); if (gs) gs.value = ""; tnSetTab(tnStage(fresh, tnToday()) === "moving" ? "moving" : "living"); }
   closeAddTenant();
   showToast(`${name} added`);
 
