@@ -91,6 +91,11 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
 .th-head .name { font-weight: 800; font-size: 15px; } .back { display: none; }
 .th-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .summary { padding: 8px 12px; background: var(--red-soft); color: var(--ink); font-size: 13px; border-bottom: 1px solid var(--line); }
+.summary { position: relative; padding-right: 36px; max-height: 40vh; overflow-y: auto; }
+.summary .sx { position: absolute; top: 4px; right: 6px; border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; padding: 4px 6px; cursor: pointer; border-radius: 6px; }
+.summary .sx:hover { background: var(--surface); color: var(--ink); }
+.summary.min { padding: 5px 12px; display: flex; align-items: center; gap: 8px; }
+.summary.min .sshow { border: 0; background: transparent; color: var(--red); font-weight: 700; font-size: 13px; cursor: pointer; padding: 0; }
 .msgs { flex: 1; overflow-y: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--cream); }
 .m { max-width: min(78%, 560px); padding: 7px 10px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; box-shadow: var(--shadow-sm); }
 .m .meta { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
@@ -244,6 +249,10 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
     }
     return '<div class="m ' + cls + '">' + media + body + '<span class="meta">' + meta + '</span></div>';
   }
+  // closed handoff notes, per browser; a new or changed handoff shows again
+  function sumHidden() { try { return JSON.parse(localStorage.getItem('vm-wa-sumhide') || '{}') || {}; } catch (e) { return {}; } }
+  function sumKey(t) { var h = 0; for (var i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return String(h); }
+  function setSumHidden(wa, key) { var m = sumHidden(); if (key) m[wa] = key; else delete m[wa]; try { localStorage.setItem('vm-wa-sumhide', JSON.stringify(m)); } catch (e) {} }
   function renderThread() {
     var v = S.view, th = $('th');
     if (!v) { th.innerHTML = '<div class="empty">Choose a chat on the left.</div>'; return; }
@@ -257,7 +266,13 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
       '</div></div>';
     if (S.drawer === 'link') html += '<div class="drawer"><input class="inp" id="linkQ" placeholder="Search a host or student name" autocomplete="off" /><div class="res" id="linkRes"></div></div>';
     if (S.drawer === 'giveback') html += '<div class="drawer"><div class="small">Ted answers this chat again. Any open handoffs here are marked done. Optional note for Ted (what you agreed, what to tell them):</div><textarea class="inp" id="gbNote" rows="2"></textarea><div><button class="btn btn-primary btn-sm" id="gbGo">Give back</button> <button class="btn btn-ghost btn-sm" id="gbCancel">Cancel</button></div></div>';
-    if (v.state === 'needs_team') html += '<div class="summary"><b>Why Ted handed off:</b> ' + v.cases.map(function (k) { return esc(k.summary || k.case_type) + (k.decision_needed ? ' <i>Decision: ' + esc(k.decision_needed) + '</i>' : ''); }).join('<br>') + '</div>';
+    if (v.state === 'needs_team') {
+      var sumHtml = v.cases.map(function (k) { return esc(k.summary || k.case_type) + (k.decision_needed ? ' <i>Decision: ' + esc(k.decision_needed) + '</i>' : ''); }).join('<br>');
+      var hid = sumHidden()[c.wa_id] === sumKey(sumHtml);
+      html += hid ? '<div class="summary min"><b>Why Ted handed off</b> <button class="sshow" id="sumShow">Show</button></div>'
+        : '<div class="summary"><button class="sx" id="sumHide" title="Close" aria-label="Close the handoff note">×</button><b>Why Ted handed off:</b> ' + sumHtml + '</div>';
+      S.sumKey = sumKey(sumHtml);
+    }
     html += '<div class="msgs" id="msgs">';
     var lastDay = '';
     v.items.forEach(function (it) { var d = dayLabel(it.at); if (d !== lastDay) { html += '<div class="day">' + esc(d) + '</div>'; lastDay = d; } html += bubble(it, c.wa_id); });
@@ -335,6 +350,8 @@ input.inp:focus, select.sel:focus, textarea.inp:focus { border-color: var(--red)
     if (t.dataset.f) { S.filter = t.dataset.f; document.querySelectorAll('.chip').forEach(function (c) { c.classList.toggle('on', c === t); }); return renderList(); }
     if (t.id === 'back') { $('app').classList.remove('open'); S.open = null; S.view = null; try { history.replaceState(null, '', 'whatsapp.html'); } catch (e2) {} return renderList(); }
     if (t.id === 'send') return send();
+    if (t.id === 'sumHide') { setSumHidden(S.open, S.sumKey); return renderThread(); }
+    if (t.id === 'sumShow') { setSumHidden(S.open, null); return renderThread(); }
     if (t.id === 'takeover') return act('takeover', {}, 'You have this chat. Ted stays quiet.');
     if (t.id === 'giveback') { S.drawer = 'giveback'; return renderThread(); }
     if (t.id === 'gbCancel') { S.drawer = null; return renderThread(); }
