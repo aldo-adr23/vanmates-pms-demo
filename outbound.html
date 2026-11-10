@@ -97,6 +97,14 @@ textarea.inp { resize: vertical; min-height: 90px; line-height: 1.5; }
 .kpi .n { font-family: var(--serif); font-weight: 700; font-size: 26px; line-height: 1.1; }
 .kpi .l { font-size: 12px; color: var(--muted); font-weight: 600; }
 .kpi.alert .n { color: var(--red); }
+.dgroup { margin-top: 18px; }
+.dgroup:first-of-type { margin-top: 6px; }
+.dhead { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px 2px; }
+.dgrid { display: grid; gap: 10px; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+.kpi.go { cursor: pointer; }
+.kpi.go:hover { border-color: var(--red); }
+@media (max-width: 900px) { .dgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .dgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .h2 { font-family: var(--serif); font-size: 18px; font-weight: 700; margin: 22px 2px 10px; }
 .tbl-wrap { overflow-x: auto; }
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -254,21 +262,29 @@ tr.click:hover td { background: var(--cream); }
   // ---------------- dashboard ----------------
   async function renderDashboard() {
     var k = await call('GET', '/dashboard');
-    var tiles = [
-      ['Prospects discovered today', k.discovered_today], ['Total prospects', k.total_prospects], ['Qualified (score ≥ 60)', k.qualified],
-      ['Pending contact reviews', k.pending_contact_reviews, k.pending_contact_reviews > 0, 'prospects'], ['Possible duplicates', k.dedup_reviews, k.dedup_reviews > 0, 'prospects'],
-      ['Emails awaiting approval', k.awaiting_approval, k.awaiting_approval > 0, 'followups'], ['Active sequences', k.active_sequences], ['Paused sequences', k.paused, k.paused > 0, 'followups'],
-      ['Follow-ups due (24 h)', k.followups_due_24h], ['Replies received', k.replies], ['Positive replies', k.positive_replies], ['Meetings booked', k.meetings],
-      ['Partnerships activated', k.partners], ['Bookings generated', k.bookings], ['Revenue attributed', money(k.revenue_cents)],
+    // [label, value, alert when > 0, tab to open]
+    var groups = [
+      ['Needs attention', [
+        ['Contact reviews', k.pending_contact_reviews, true, 'prospects'], ['Possible duplicates', k.dedup_reviews, true, 'prospects'],
+        ['Emails awaiting approval', k.awaiting_approval, true, 'followups'], ['Paused sequences', k.paused, true, 'followups']]],
+      ['Pipeline', [
+        ['Total prospects', k.total_prospects, false, 'prospects'], ['Discovered today', k.discovered_today], ['Qualified (score 60+)', k.qualified, false, 'prospects'],
+        ['Active sequences', k.active_sequences, false, 'followups'], ['Follow-ups due in 24 h', k.followups_due_24h, false, 'followups']]],
+      ['Results', [
+        ['Replies', k.replies], ['Positive replies', k.positive_replies], ['Meetings booked', k.meetings],
+        ['Partnerships', k.partners], ['Bookings', k.bookings], ['Revenue', money(k.revenue_cents)]]],
     ];
     $('nApprove').hidden = !k.awaiting_approval; $('nApprove').textContent = k.awaiting_approval;
     var h = '';
     if (!S.me.brave) h += '<div class="banner">Discovery is waiting for the Brave Search API key. Prospects can still be added by hand (Prospects → Add prospect).</div>';
     if (!S.me.reps.length) h += '<div class="banner">No sales reps yet: an admin adds Catherine and Gabriel in Settings.</div>';
     if (!S.me.sender_address) h += '<div class="banner red">No sender address yet: nothing can be sent until an admin adds the business name and mailing address in Settings (CASL).</div>';
-    h += '<div class="grid">' + tiles.map(function (t) {
-      return '<div class="card kpi' + (t[2] ? ' alert' : '') + '"' + (t[3] ? ' style="cursor:pointer" data-go="' + t[3] + '"' : '') + '><div class="n">' + esc(t[1]) + '</div><div class="l">' + esc(t[0]) + '</div></div>';
-    }).join('') + '</div>';
+    groups.forEach(function (g) {
+      h += '<section class="dgroup"><h2 class="dhead">' + esc(g[0]) + '</h2><div class="dgrid" style="--n:' + g[1].length + '">' + g[1].map(function (t) {
+        var hot = t[2] && Number(t[1]) > 0;
+        return '<div class="card kpi' + (hot ? ' alert' : '') + (t[3] ? ' go' : '') + '"' + (t[3] ? ' data-go="' + t[3] + '" role="button" tabindex="0"' : '') + '><div class="n">' + esc(t[1]) + '</div><div class="l">' + esc(t[0]) + '</div></div>';
+      }).join('') + '</div></section>';
+    });
     $('app').innerHTML = h;
   }
 
