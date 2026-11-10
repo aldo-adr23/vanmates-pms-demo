@@ -1738,6 +1738,11 @@
 .ml-acts{display:flex;gap:6px;flex-shrink:0}
 .ml-acts .btn{border:1px solid var(--line,#E4DBC9);background:var(--card,#fff)}
 @media (max-width:600px){.ml-row{flex-wrap:wrap}.ml-acts{width:100%;justify-content:flex-end}}
+/* Inbox (Leads) */
+.inb-n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:9px;background:#B94A3F;color:#fff;font-size:11px;line-height:18px;text-align:center}
+tr.inb-wait .name-main{font-weight:700}
+.inb-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2563eb;margin-right:6px;vertical-align:middle}
+.inb-badge-wait{background:#2563eb1a;color:#2563eb;border:1px solid #2563eb33}
 /* Payment pending (Leads) */
 tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120,12,.13)}tr.lpp-a7 td{background:rgba(185,74,63,.15)}
 .lpp-days.lpp-a3{color:#9a6b00;font-weight:600}.lpp-days.lpp-a5{color:#b45309;font-weight:700}.lpp-days.lpp-a7{color:#B94A3F;font-weight:700}
@@ -1889,7 +1894,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-09-outbound1"></script>
+<script src="pms-supabase.js?v=2026-11-10-inbox1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2755,6 +2760,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
       <div id="leads-team" style="display:none"></div>
       <div id="leads-fu" style="display:none"></div>
       <div id="leads-pp" style="display:none"></div>
+      <div id="leads-inbox" style="display:none"></div>
       <div class="filter-bar" id="leads-all-filters">
         <div class="filter-search">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -33332,7 +33338,7 @@ function leadsViewMode(){
     LEAD_VIEW.mode = saved;
   }
   const admin = leadsIsAdmin();
-  const allowed = admin ? ['team', 'mine', 'fu', 'pp', 'all'] : ['mine', 'fu', 'pp', 'all'];
+  const allowed = admin ? ['team', 'mine', 'inbox', 'fu', 'pp', 'all'] : ['mine', 'inbox', 'fu', 'pp', 'all'];
   let m = allowed.indexOf(LEAD_VIEW.mode) >= 0 ? LEAD_VIEW.mode : allowed[0];
   if(m === 'mine' && admin && !LEAD_VIEW.asRep) m = 'team';
   return m;
@@ -33357,7 +33363,9 @@ function renderLeadsChrome(mode){
   const lppTab = ['pp', 'Payment pending' + (lppN ? ` (${lppN})` : '')];
   const lfuC = lfuCounts(lfuLeads(leads, admin ? null : String(v.email || '').toLowerCase()), salesDay(new Date()));
   const lfuTab = ['fu', 'Follow up' + (lfuC.total ? ` (${lfuC.total}${lfuC.due ? ` · ${lfuC.due} due` : ''})` : '')];
-  const tabs = admin ? [['team', 'Team'], lfuTab, lppTab, ['all', 'All leads']] : [['mine', 'My leads'], lfuTab, lppTab, ['all', 'All leads']];
+  const inbN = inboxLeads(leads, admin ? null : String(v.email || '').toLowerCase(), Date.now()).filter(l => l.reply_waiting).length;
+  const inbTab = ['inbox', 'Inbox' + (inbN ? ` <span class="inb-n">${inbN}</span>` : '')];
+  const tabs = admin ? [['team', 'Team'], inbTab, lfuTab, lppTab, ['all', 'All leads']] : [['mine', 'My leads'], inbTab, lfuTab, lppTab, ['all', 'All leads']];
   document.getElementById('leads-view-seg').innerHTML = tabs.map(([k, lab]) =>
     `<button type="button" data-lv="${k}" class="${(mode === k || (k === 'team' && mode === 'mine' && admin)) ? 'on' : ''}">${lab}</button>`).join('');
   const as = document.getElementById('leads-view-as');
@@ -33371,10 +33379,12 @@ function renderLeadsChrome(mode){
   document.getElementById('leads-view-focus').innerHTML = mode === 'mine' && LEAD_VIEW.focus
     ? `<span class="ml-chip" data-lv-clear="1">Showing: ${FOCUS[LEAD_VIEW.focus] || esc(LEAD_VIEW.focus)} ✕</span>` : '';
   const arrTools = document.getElementById('leads-arr-tools');
-  if(arrTools){ arrTools.style.display = mode === 'team' ? 'none' : ''; arrTools.innerHTML = mode === 'team' ? '' : leadArrToolsHtml(); }
+  const noArr = mode === 'team' || mode === 'inbox';
+  if(arrTools){ arrTools.style.display = noArr ? 'none' : ''; arrTools.innerHTML = noArr ? '' : leadArrToolsHtml(); }
   document.getElementById('leads-mine').style.display = mode === 'mine' ? '' : 'none';
   document.getElementById('leads-team').style.display = mode === 'team' ? '' : 'none';
   document.getElementById('leads-pp').style.display = mode === 'pp' ? '' : 'none';
+  document.getElementById('leads-inbox').style.display = mode === 'inbox' ? '' : 'none';
   document.getElementById('leads-fu').style.display = mode === 'fu' ? '' : 'none';
   document.getElementById('leads-all-filters').style.display = mode === 'all' ? '' : 'none';
   document.getElementById('leads-all-card').style.display = mode === 'all' ? '' : 'none';
@@ -33949,6 +33959,53 @@ function renderPayPending(){
   </div>`;
 }
 
+/* ---- Inbox: every lead that emailed back, newest reply first. The lead-mail Worker files a reply under
+   the lead (any thread in the rep's Gmail, portal-started or not) and sets reply_waiting / last_inbound_at.
+   Pure helper: LEAD-INBOX-CORE. */
+// LEAD-INBOX-CORE start
+const INBOX_DAYS = 30;
+// email null → everyone's (admins); else that rep's. Replies in the last INBOX_DAYS days, newest first.
+function inboxLeads(all, email, nowMs, days){
+  const me = email == null ? null : String(email).toLowerCase();
+  const since = (nowMs || Date.now()) - (days || INBOX_DAYS) * 864e5;
+  const ts = v => { const t = Date.parse(v || ''); return isNaN(t) ? 0 : t; };
+  return (all || []).filter(l => l && !l.deleted_at && ts(l.last_inbound_at) >= since
+      && (me == null || String(l.claimed_by || '').toLowerCase() === me))
+    .sort((a, b) => ts(b.last_inbound_at) - ts(a.last_inbound_at));
+}
+// LEAD-INBOX-CORE end
+const INBOX_FILTERS = { rep: '', waiting: false };
+function renderLeadInbox(){
+  const box = document.getElementById('leads-inbox'); if(!box) return;
+  const admin = leadsIsAdmin(), me = String((activeRole() || {}).email || '').toLowerCase(), now = Date.now();
+  const all = inboxLeads(leads, admin ? null : me, now);
+  const reps = [...new Set(all.map(l => String(l.claimed_by || '').toLowerCase()).filter(Boolean))].sort();
+  const rows = all.filter(l => (!INBOX_FILTERS.rep || String(l.claimed_by || '').toLowerCase() === INBOX_FILTERS.rep)
+    && (!INBOX_FILTERS.waiting || l.reply_waiting));
+  const waiting = all.filter(l => l.reply_waiting).length;
+  const opt = (v, lab, cur) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`;
+  const filters = `<div class="lpp-filters">
+    ${admin ? `<select class="form-input" data-inb-f="rep">${opt('', 'All reps', INBOX_FILTERS.rep)}${reps.map(e => opt(e, leadsRepName(e), INBOX_FILTERS.rep)).join('')}</select>` : ''}
+    <select class="form-input" data-inb-f="waiting">${opt('', 'All replies', INBOX_FILTERS.waiting ? '1' : '')}${opt('1', 'Needs an answer', INBOX_FILTERS.waiting ? '1' : '')}</select>
+  </div>`;
+  const body = rows.map(l => {
+    const at = Date.parse(l.last_inbound_at);
+    return `<tr class="${l.reply_waiting ? 'inb-wait' : ''}" data-inb-row="${esc(l.id)}" style="cursor:pointer">
+      <td><div class="name-main">${l.reply_waiting ? '<span class="inb-dot" aria-hidden="true"></span>' : ''}${esc(l.name || '—')}</div><div class="name-sub">${esc(l.email || '')}</div></td>
+      ${admin ? `<td>${esc(l.claimed_by ? leadsRepName(l.claimed_by) : 'Unclaimed')}</td>` : ''}
+      <td>${leadStatusBadge(l.status || 'new')}</td>
+      <td title="${esc(new Date(at).toLocaleString())}">${esc(mlAgo(now - at))} ago</td>
+      <td>${l.reply_waiting ? '<span class="badge inb-badge-wait">Needs an answer</span>' : '<span class="name-sub">Answered</span>'}</td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = `<div class="card card-pad"><div class="card-head"><div><div class="card-title">Inbox</div>
+    <div class="card-sub">Email replies from ${admin ? 'leads' : 'your leads'} in the last ${INBOX_DAYS} days · ${waiting} waiting for an answer · newest first. Open one to read and reply.</div></div></div>
+    ${filters}
+    ${rows.length ? `<div style="overflow-x:auto"><table class="lpp-table"><thead><tr><th>Customer</th>${admin ? '<th>Sales rep</th>' : ''}<th>Status</th><th>Last reply</th><th></th></tr></thead><tbody>${body}</tbody></table></div>`
+      : `<div class="card-sub" style="padding:8px 2px">${all.length ? 'No replies match these filters.' : 'No email replies in the last ' + INBOX_DAYS + ' days.'}</div>`}
+  </div>`;
+}
+
 /* ---- Follow up: stage dialog + tab. Pure helpers: FOLLOW-UP-CORE. Nothing server-side: the cap and
    the auto-release only count new / contacted / qualified, so a follow_up lead is outside both. */
 const LFU_FILTERS = { rep: '', when: '' };
@@ -34054,6 +34111,7 @@ function renderLeads(){
   if(mode === 'mine') renderMyLeads();
   else if(mode === 'team') renderTeamGrid();
   else if(mode === 'pp') renderPayPending();
+  else if(mode === 'inbox') renderLeadInbox();
   else if(mode === 'fu') renderFollowUp();
   loadLeadReferrals();
   const list = applyLeadFilters();
@@ -35434,7 +35492,7 @@ function leadMailTimeline(emails, messages){
              // A portal email shows what the rep typed, not Gmail's copy with greeting and signature.
              body: (e && e.body) || m.body_text || '', at: m.sent_at, threadId: m.thread_id, email: e || null,
              files: (m.attachments && m.attachments.length ? m.attachments : (e && e.attachments) || []),
-             auto: !!(e && e.followup_step), step: (e && e.followup_step) || null };
+             auto: !!(e && e.followup_step), step: (e && e.followup_step) || null, mine: !!m.mine };
   });
   (emails || []).forEach(e => {
     if(e.gmail_id && seen[e.gmail_id]) return;
@@ -35445,13 +35503,17 @@ function leadMailTimeline(emails, messages){
   items.sort((a, b) => String(a.at) < String(b.at) ? -1 : String(a.at) > String(b.at) ? 1 : 0);
   return items;
 }
-// The thread a reply goes into: the newest one this viewer started (only the
-// rep whose mailbox holds a thread can answer in it).
-function leadMailReplyThread(emails, viewerEmail){
+// The thread a reply goes into: of the threads in this viewer's mailbox (ones they started from the
+// portal, or ones the sync found there), the one with the newest message, so the answer lands where
+// the lead last wrote. Only the rep whose mailbox holds a thread can answer in it.
+function leadMailReplyThread(emails, viewerEmail, history){
   const me = String(viewerEmail || '').toLowerCase();
-  const mine = (emails || []).filter(e => e.gmail_thread_id && String(e.sent_by || '').toLowerCase() === me);
-  if(!mine.length) return '';
-  return mine.slice().sort((a, b) => String(a.sent_at) < String(b.sent_at) ? 1 : -1)[0].gmail_thread_id;
+  const cands = (emails || []).filter(e => e.gmail_thread_id && String(e.sent_by || '').toLowerCase() === me)
+    .map(e => ({ t: e.gmail_thread_id, at: String(e.sent_at || '') }));
+  const own = {}; cands.forEach(c => { own[c.t] = true; });
+  (history || []).forEach(m => { if(m.threadId && (m.mine || own[m.threadId])) cands.push({ t: m.threadId, at: String(m.at || '') }); });
+  if(!cands.length) return '';
+  return cands.sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0)[0].t;
 }
 function leadMailErrorText(code){
   return LEAD_MAIL_ERRORS[code] || ('Not sent (' + (code || 'unknown error') + ').');
@@ -35774,7 +35836,7 @@ function leadMailScheduleControls(prefix, mode, date, gap){
 }
 
 function leadMailComposerHtml(l, me){
-  const thread = leadMailReplyThread(LEAD_MAIL.emails, me);
+  const thread = leadMailReplyThread(LEAD_MAIL.emails, me, LEAD_MAIL.history);
   const needMe = (LEAD_MAIL.needsRead || []).some(e => String(e).toLowerCase() === me);
   const reply = !!thread && !needMe && !LEAD_MAIL.newMode;
   const fu = LEAD_MAIL.followup && LEAD_MAIL.followup.status === 'active';
@@ -35915,7 +35977,7 @@ function leadMailRender(l, opts){
       `<button class="btn btn-primary" type="button" id="lead-mail-connect">${mode === 'reconnect' ? 'Reconnect Gmail' : 'Connect Gmail'}</button>`);
     leadMailWire(l); return;
   }
-  const thread = leadMailReplyThread(LEAD_MAIL.emails, me);
+  const thread = leadMailReplyThread(LEAD_MAIL.emails, me, LEAD_MAIL.history);
   const gmailLink = thread ? `<a class="lm-link" href="https://mail.google.com/mail/u/?authuser=${encodeURIComponent(me)}#all/${encodeURIComponent(thread)}" target="_blank" rel="noopener">${LM_ICON.ext} Open in Gmail</a>` : '';
   const from = LEAD_MAIL.gmail && LEAD_MAIL.gmail.email ? `<span class="lm-dim">${esc(LEAD_MAIL.gmail.email)}</span>` : '';
   const needs = LEAD_MAIL.needsRead || [];
@@ -36123,7 +36185,7 @@ async function leadMailTaylor(l){
   if(LEAD_MAIL.taylorBusy) return;
   leadMailKeepDraft();
   const me = String(leadMailViewer().email || '').toLowerCase();
-  const thread = LEAD_MAIL.newMode ? '' : leadMailReplyThread(LEAD_MAIL.emails, me);
+  const thread = LEAD_MAIL.newMode ? '' : leadMailReplyThread(LEAD_MAIL.emails, me, LEAD_MAIL.history);
   LEAD_MAIL.taylorBusy = true;
   leadMailRender(l);
   const r = await leadMailCall('POST', '/api/leads/draft', { lead_id: l.id, lang: LEAD_MAIL.lang, instruction: LEAD_MAIL.taylorAsk || '', mode: thread ? 'reply' : 'first' });
@@ -36148,7 +36210,7 @@ async function leadMailTaylor(l){
 async function leadMailSend(l){
   if(LEAD_MAIL.sending) return;
   const me = String(leadMailViewer().email || '').toLowerCase();
-  const thread = LEAD_MAIL.newMode ? '' : leadMailReplyThread(LEAD_MAIL.emails, me);
+  const thread = LEAD_MAIL.newMode ? '' : leadMailReplyThread(LEAD_MAIL.emails, me, LEAD_MAIL.history);
   const needMe = (LEAD_MAIL.needsRead || []).some(e => String(e).toLowerCase() === me);
   const reply = !!thread && !needMe;
   const subject = reply ? '' : ((document.getElementById('lead-mail-subject') || {}).value || '');
@@ -36457,6 +36519,9 @@ document.getElementById('lead-status') && document.getElementById('lead-status')
   });
   on('leads-pp', 'change', e => { const f = e.target.closest('[data-lpp-f]'); if(f){ LPP_FILTERS[f.dataset.lppF] = f.value; renderPayPending(); } });
   on('leads-pp', 'click', e => { if(e.target.closest('a')) return; const r = e.target.closest('[data-lpp-row]'); if(r) openLead(r.dataset.lppRow); });
+  on('leads-inbox', 'click', e => { const r = e.target.closest('[data-inb-row]'); if(r) openLead(r.dataset.inbRow); });
+  on('leads-inbox', 'change', e => { const f = e.target.closest('[data-inb-f]'); if(!f) return;
+    if(f.dataset.inbF === 'rep') INBOX_FILTERS.rep = f.value; else INBOX_FILTERS.waiting = f.value === '1'; renderLeadInbox(); });
   document.addEventListener('keydown', e => {
     if(e.key !== 'Escape') return;
     if(document.getElementById('lppr-backdrop').classList.contains('open')) lppCloseReminder();
