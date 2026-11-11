@@ -236,6 +236,11 @@
   const touchLine = (st, now) => (st.attempts ? `${st.attempts} contact attempt${st.attempts === 1 ? '' : 's'} · last ${ago(st.last, now)}${st.reached ? ' · reached' : ''}` : 'Not contacted yet');
   const why = (data, error) => (error ? (error.message || String(error)) : (ERR[data && data.error] || (data && data.error) || 'unknown error'));
 
+  // Country scope: the portal's Canada/Mexico switcher decides which cases show (list, tabs, KPIs,
+  // report, sidebar badge, CSV). Opening a case by id still finds any case the database returned.
+  const curCountry = () => { try { return window.vmCountry && typeof window.vmCountry.current === 'function' ? window.vmCountry.current() : ''; } catch (_) { return ''; } };
+  const scoped = () => { const k = curCountry(); return (cases || []).filter(c => !k || (c.country || 'CA') === k); };
+
   async function load(force){
     if (loading) return loading;
     if (cases && !force) { render(); return; }
@@ -272,13 +277,15 @@
   function filters(){
     const opt = (v, l, sel) => `<option value="${e(v)}" ${v === sel ? 'selected' : ''}>${e(l)}</option>`;
     const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
-    const owners = new Set(team().map(t => String(t.email || '').toLowerCase()).filter(Boolean)); (cases || []).forEach(c => c.owner && owners.add(c.owner));
+    const owners = new Set(team().map(t => String(t.email || '').toLowerCase()).filter(Boolean)); scoped().forEach(c => c.owner && owners.add(c.owner));
     set('ret-f-owner', opt('', 'All owners', S.owner) + opt('none', 'Unassigned', S.owner) + opt('me', 'Mine', S.owner) +
       [...owners].sort((a, b) => nameOf(a).localeCompare(nameOf(b))).map(x => opt(x, nameOf(x), S.owner)).join(''));
-    const cities = [...new Set((cases || []).map(c => c.city).filter(Boolean))].sort();
+    const cities = [...new Set(scoped().map(c => c.city).filter(Boolean))].sort();
+    if (S.city && !cities.includes(S.city)) S.city = '';
     set('ret-f-city', opt('', 'All cities', S.city) + cities.map(x => opt(x, x, S.city)).join(''));
     const countries = [...new Set((cases || []).map(c => c.country))];
-    const cEl = document.getElementById('ret-f-country'); if (cEl) cEl.style.display = countries.length > 1 ? '' : 'none';
+    if (curCountry()) S.country = '';
+    const cEl = document.getElementById('ret-f-country'); if (cEl) cEl.style.display = countries.length > 1 && !curCountry() ? '' : 'none';
     set('ret-f-country', opt('', 'Canada + Mexico', S.country) + opt('CA', 'Canada', S.country) + opt('MX', 'Mexico', S.country));
     set('ret-f-trigger', opt('', 'All triggers', S.trigger) + Object.entries(TRIGGER_LABEL).map(([k, l]) => opt(k, l, S.trigger)).join(''));
     set('ret-f-stage', opt('', 'All stages', S.stage) + STAGES.map(k => opt(k, STAGE_LABEL[k], S.stage)).join(''));
@@ -288,7 +295,7 @@
 
   function filtered(){
     const q = S.q.trim().toLowerCase(), c0 = ctx(), m = me().email;
-    return (cases || []).filter(c => (S.stage ? (S.stage === c.stage) : inTab(c, S.tab, c0))
+    return scoped().filter(c => (S.stage ? (S.stage === c.stage) : inTab(c, S.tab, c0))
       && (S.showTest || !(c.flags || []).includes('test'))
       && (!S.country || c.country === S.country) && (!S.city || c.city === S.city) && (!S.trigger || c.primary_trigger === S.trigger)
       && (!S.reason || (S.reason === 'unknown' ? !c.primary_reason : c.primary_reason === S.reason))
@@ -298,7 +305,7 @@
 
   function renderKpis(){
     const el = document.getElementById('ret-kpis'); if (!el) return;
-    const k = kpis(cases || [], tasks, { slaBd: settings ? settings.contact_sla_bd : 1, includeTest: S.showTest });
+    const k = kpis(scoped(), tasks, { slaBd: settings ? settings.contact_sla_bd : 1, includeTest: S.showTest });
     const pct = (x) => (x == null ? '—' : Math.round(100 * x) + '%');
     const rent = Object.entries(k.retainedRent).map(([c, v]) => money(v, c === 'CAD' ? '' : c) + (c === 'CAD' ? ' CAD' : '')).join(' · ') || '—';
     const tile = (label, value, sub, tab) => `<div class="kpi"${tab ? ` data-ret-tab="${tab}" style="cursor:pointer"` : ''}><div class="kpi-deco"></div><div class="kpi-label">${e(label)}</div><div class="kpi-value">${value}</div><div class="kpi-trend up">${sub}</div></div>`;
@@ -314,11 +321,11 @@
     if (!cases) return;
     const c0 = ctx();
     const badge = document.querySelector('.nav-item[data-view="retention"] .nav-count');
-    if (badge) badge.textContent = String(cases.filter(c => !isClosed(c.stage) && (!c.owner || c.stage === 'new') && !(c.flags || []).includes('test')).length);
+    if (badge) badge.textContent = String(scoped().filter(c => !isClosed(c.stage) && (!c.owner || c.stage === 'new') && !(c.flags || []).includes('test')).length);
     renderKpis();
     const tabs = document.getElementById('ret-tabs');
     if (tabs) tabs.innerHTML = TABS.map(([k, l]) => {
-      const n = k === 'reports' ? '' : ` <span class="name-sub">${cases.filter(c => inTab(c, k, c0) && (S.showTest || !(c.flags || []).includes('test'))).length}</span>`;
+      const n = k === 'reports' ? '' : ` <span class="name-sub">${scoped().filter(c => inTab(c, k, c0) && (S.showTest || !(c.flags || []).includes('test'))).length}</span>`;
       return `<button type="button" class="tab${S.tab === k && !S.stage ? ' active' : ''}" role="tab" data-ret-tab="${k}">${e(l)}${n}</button>`;
     }).join('');
     const rpt = S.tab === 'reports' && !S.stage;
@@ -349,9 +356,9 @@
 
   function renderReport(){
     const el = document.getElementById('ret-report-body');
-    const k = kpis(cases || [], tasks, { slaBd: settings ? settings.contact_sla_bd : 1, includeTest: S.showTest });
+    const k = kpis(scoped(), tasks, { slaBd: settings ? settings.contact_sla_bd : 1, includeTest: S.showTest });
     const pct = (x) => (x == null ? '—' : Math.round(100 * x) + '%');
-    const list = (cases || []).filter(c => S.showTest || !(c.flags || []).includes('test'));
+    const list = scoped().filter(c => S.showTest || !(c.flags || []).includes('test'));
     const row = (l, v, n) => `<tr><td>${e(l)}</td><td><b>${v}</b></td><td class="name-sub">${e(n || '')}</td></tr>`;
     const byTrig = {}; list.filter(c => ['retained', 'lost'].includes(c.stage)).forEach(c => { const t = byTrig[c.primary_trigger] = byTrig[c.primary_trigger] || { r: 0, l: 0 }; t[c.stage === 'retained' ? 'r' : 'l']++; });
     const reasons = Object.entries(k.reasons).sort((a, b) => b[1] - a[1]);
@@ -710,6 +717,7 @@
   }
 
   window.loadRetention = load;
+  window.renderRetention = () => { if (!cases) return; filters(); render(); };
   window.openRetentionCase = openTracked;
   window.retentionFromHash = fromHash;
   if (typeof window.addEventListener === 'function') window.addEventListener('hashchange', fromHash);
