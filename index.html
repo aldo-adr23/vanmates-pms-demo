@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-11-ctrycard1"></script>
+<script src="pms-supabase.js?v=2026-11-11-occmonth1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -20181,6 +20181,17 @@ function occMonthly(spans, props, todayIso, fromIso) {
       occAverage(spans, props, start, p.day));
   });
 }
+// The dashboard KPI: occupancy for the whole calendar month containing today (room-nights booked /
+// available, 1st to last day). Days still ahead count tenants already in plus booked move-ins from
+// their move-in date (active tenants are assumed to stay, as in the trend). today = rooms filled
+// today; movingIn = booked arrivals after today and before the month ends.
+function occMonth(spans, props, todayIso) {
+  const today = occDay(todayIso), x = new Date(today), y = x.getUTCFullYear(), m = x.getUTCMonth();
+  const start = Date.UTC(y, m, 1), end = Date.UTC(y, m + 1, 0);
+  const movingIn = spans.filter((s) => s.from > today && s.from <= end).length;
+  return Object.assign({ label: OCC_MON[m], start, end, today: occAt(spans, props, today), movingIn },
+    occAverage(spans, props, start, end));
+}
 /* OCC-TREND-CORE-END */
 /* DASH-REV-CORE-START */
 // Dashboard "Monthly revenue" (pure; no globals). Until 2026-11-05 the card summed the rent of
@@ -20327,9 +20338,11 @@ function refreshDashboard(){
   const uniqCityCount = new Set(cities).size;
   // Occupancy = people in a room today (OCC-TREND-CORE), so the KPI and the trend's last bar agree.
   // Until 2026-10-18 it counted every active tenant, including the ones not moved in yet.
-  const occToday = occAt(occSpans(tenants), properties, occDay(occIso(TODAY)));
-  const occupancy = occToday.pct;
-  const movingIn = activeTenants.filter(t => (occDay(t.moveIn) || 0) > occDay(occIso(TODAY))).length;
+  // 2026-11-11 (Aldo): the KPI is the whole month (occMonth); the trend's last bar stays month-to-date.
+  const occM = occMonth(occSpans(tenants), properties, occIso(TODAY));
+  const occToday = occM.today;
+  const occupancy = occM.pct;
+  const movingIn = occM.movingIn;
 
   // 1. Page header subtitle — TODAY is UTC midnight of the local date, so use UTC getters
   const dateLine = `${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][TODAY.getUTCDay()]}, ${["January","February","March","April","May","June","July","August","September","October","November","December"][TODAY.getUTCMonth()]} ${TODAY.getUTCDate()}, ${TODAY.getUTCFullYear()}`;
@@ -20362,7 +20375,11 @@ function refreshDashboard(){
   if(kpis.length >= 4){
     // Occupancy
     kpis[0].querySelector(".kpi-value").innerHTML = `${occupancy.toFixed(1)}<span style="font-size:18px;color:var(--muted)">%</span>`;
-    kpis[0].querySelector(".kpi-trend").textContent = `${occToday.occupied} of ${occToday.rooms} rooms occupied` + (movingIn ? ` · ${movingIn} moving in` : "");
+    const occMonName = ["January","February","March","April","May","June","July","August","September","October","November","December"][TODAY.getUTCMonth()];
+    const occLabel = kpis[0].querySelector(".kpi-label");
+    if (occLabel) occLabel.textContent = `Occupancy · ${occMonName}`;
+    kpis[0].querySelector(".kpi-trend").textContent = `${occToday.occupied} of ${occToday.rooms} rooms today` + (movingIn ? ` · +${movingIn} moving in by ${occMonName.slice(0, 3)} ${new Date(occM.end).getUTCDate()}` : "");
+    kpis[0].title = `${occMonName} occupancy: room-nights booked ÷ room-nights available, ${occMonName} 1–${new Date(occM.end).getUTCDate()}.\nDays still to come count tenants already in plus booked move-ins from their move-in date; active tenants are assumed to stay.\nToday: ${occToday.occupied} of ${occToday.rooms} rooms (${occToday.pct.toFixed(1)}%).`;
 
     // Active tenants
     kpis[1].querySelector(".kpi-value").textContent = totalTenants;
