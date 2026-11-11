@@ -1898,7 +1898,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-10-gsearch1"></script>
+<script src="pms-supabase.js?v=2026-11-11-leadsq1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -2758,6 +2758,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
         <div class="ml-seg" id="leads-view-seg"></div>
         <select id="leads-view-as" class="form-input" style="max-width:220px;display:none" title="View as rep"></select>
         <span id="leads-view-focus"></span>
+        <input id="leads-q" type="search" class="form-input" placeholder="Search clients…" autocomplete="off" aria-label="Search clients" style="max-width:240px;display:none">
         <span id="leads-arr-tools" class="lmi-tools" style="display:none"></span>
       </div>
       <div id="leads-mine" style="display:none"></div>
@@ -32176,7 +32177,25 @@ function myLeadsSections(list, nowMs, today, dueFn){
   });
   const byAct = (a, b) => (leadLastActivity(a) || 0) - (leadLastActivity(b) || 0);
   Object.keys(out).forEach(k => out[k].sort(byAct));
+  // In progress: newest lead first (Sergio 2026-11-10); stale / due stay most-urgent first.
+  out.progress.sort((a, b) => (mlTs(b.created_at) || 0) - (mlTs(a.created_at) || 0) || byAct(b, a));
   return out;
+}
+// One client search for My leads, Follow up and Payment pending (same fields as All leads, plus the id).
+function mlSearchMatch(l, q){
+  const s = String(q || '').trim().toLowerCase();
+  if(!s) return true;
+  return [l.name, l.email, l.phone, l.city, l.source, l.message, l.preference, l.id]
+    .map(x => String(x == null ? '' : x).toLowerCase()).join(' ').includes(s);
+}
+// Leads this rep marked lost in the last `days` days, newest first.
+function myLostLeads(all, email, nowMs, days){
+  const me = String(email || '').toLowerCase();
+  if(!me) return [];
+  const since = nowMs - days * ML_DAY_MS;
+  const at = l => mlTs(l.deal && l.deal.lost_at) || leadLastActivity(l) || 0;
+  return (all || []).filter(l => mlRegular(l) && (l.status || '') === 'lost' && String(l.claimed_by || '').toLowerCase() === me && at(l) >= since)
+    .sort((a, b) => at(b) - at(a));
 }
 // Admin grid. soldFn(email) → {closed, deals} (the Sales page's month numbers).
 // extraReps: emails to consider even with no open leads (they show if they sold).
@@ -33413,6 +33432,9 @@ function renderLeadsChrome(mode){
   const FOCUS = { stale: 'Going stale', due: 'Due today / overdue', new: 'New', contacted: 'Contacted', qualified: 'Qualified' };
   document.getElementById('leads-view-focus').innerHTML = mode === 'mine' && LEAD_VIEW.focus
     ? `<span class="ml-chip" data-lv-clear="1">Showing: ${FOCUS[LEAD_VIEW.focus] || esc(LEAD_VIEW.focus)} ✕</span>` : '';
+  const qEl = document.getElementById('leads-q');
+  if(qEl){ const on = mlSearchModes(mode); qEl.style.display = on ? '' : 'none';
+    qEl.placeholder = mode === 'fu' ? 'Search follow ups: name, email, phone…' : mode === 'pp' ? 'Search payment pending: name, email, phone…' : 'Search my leads: name, email, phone, city…'; }
   const arrTools = document.getElementById('leads-arr-tools');
   const noArr = mode === 'team' || mode === 'inbox';
   if(arrTools){ arrTools.style.display = noArr ? 'none' : ''; arrTools.innerHTML = noArr ? '' : leadArrToolsHtml(); }
@@ -33447,8 +33469,12 @@ let LEAD_ARR_OPEN = false;   // the arrival-month menu
 function leadArrSave(){ try { localStorage.setItem(LEAD_ARR_KEY, JSON.stringify(LEAD_ARR)); } catch(_){} }
 function leadArrOf(l){ return lmiOf(l, leadPayloadOf(l)); }
 // Filter then sort; with the default order the list keeps the order its tab gives it.
+// The client search box (leads-q) shows on My leads, Follow up and Payment pending; All leads keeps its own.
+var ML_Q = '';
+function mlSearchModes(mode){ return mode === 'mine' || mode === 'fu' || mode === 'pp'; }
 function leadArrApply(list){
-  return lmiSort((list || []).filter(l => lmiMatches(leadArrOf(l), LEAD_ARR)), LEAD_ARR.sort, { arr: leadArrOf, act: leadLastActivity });
+  const q = mlSearchModes(leadsViewMode()) ? ML_Q : '';
+  return lmiSort((list || []).filter(l => lmiMatches(leadArrOf(l), LEAD_ARR) && mlSearchMatch(l, q)), LEAD_ARR.sort, { arr: leadArrOf, act: leadLastActivity });
 }
 function lmiShortMonth(day){ return new Date(day + 'T00:00:00').toLocaleString('en-US', { month: 'short', year: 'numeric' }); }
 // 📅 Move-in: Jan 9, 2027 — tinted red within 7 days, orange within 30, struck grey once passed (the status is left alone).
@@ -33642,6 +33668,12 @@ function renderMyLeads(){
       <div class="ml-acts">${d.fee ? `<b>${mlMoney(d.fee)}</b>` : (leadIds.has(String(d.id))
         ? `<button class="btn btn-mini" type="button" data-ml-fee="${esc(d.id)}">Add fee</button>` : `<span class="badge">No fee</span>`)}</div>
     </div>`).join('') : '';
+  const lost = !f ? leadArrApply(myLostLeads(leads, email, now, 30)) : [];
+  const lostHtml = lost.length ? `<div class="ml-sec"><span>Lost · last 30 days</span><span>${lost.length}</span></div>` + lost.map(l => {
+    const d = l.deal || {}, why = (SALES_LOST_REASONS.find(([k]) => k === d.lost_reason) || [])[1] || '';
+    return `<div class="ml-row" data-ml-lead="${esc(l.id)}"><div class="ml-main"><div class="name-main">${esc(l.name || '—')}</div>
+      <div class="name-sub">${d.lost_at ? fmtDate(d.lost_at) : ''}${why ? ' · ' + esc(why) : ''}${d.lost_note ? ' · ' + esc(String(d.lost_note).slice(0, 80)) : ''}</div></div></div>`;
+  }).join('') : '';
   const bulk = ML_SEL.size ? `
     <div class="ml-bulk">
       <b>${ML_SEL.size} selected</b>
@@ -33652,7 +33684,7 @@ function renderMyLeads(){
       <button class="btn btn-mini" type="button" data-ml-bulk="clear" aria-label="Clear selection">✕</button>
     </div>` : '';
   box.innerHTML = viewing + `<div class="ml-head">${soldCard}${pipeCard}</div>` +
-    `<div class="card card-pad">${leadArrNote(shownOpen, open)}${open ? listHtml : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${fuHtml}${lppHtml}${closedHtml}</div>` + bulk;
+    `<div class="card card-pad">${leadArrNote(shownOpen, open)}${open ? (ML_Q.trim() && !shownOpen ? `<div class="card-sub">No open leads match “${esc(ML_Q.trim())}”.</div>` : listHtml) : '<div class="card-sub">No open leads. Claim one from <b>All leads</b>.</div>'}${fuHtml}${lppHtml}${closedHtml}${lostHtml}</div>` + bulk;
 }
 
 async function mlAct(kind, id){
@@ -36419,6 +36451,7 @@ async function leadNameEditSave(){
 
 /* Filter + modal wiring */
 document.getElementById('leads-search')       && document.getElementById('leads-search').addEventListener('input',  e => { LEAD_FILTERS.search = e.target.value; renderLeads(); });
+document.getElementById('leads-q')            && document.getElementById('leads-q').addEventListener('input',  e => { ML_Q = e.target.value; renderLeads(); });
 document.getElementById('leads-filter-source')&& document.getElementById('leads-filter-source').addEventListener('change', e => { LEAD_FILTERS.source = e.target.value; renderLeads(); });
 document.getElementById('leads-filter-status')&& document.getElementById('leads-filter-status').addEventListener('change', e => { LEAD_FILTERS.status = e.target.value; renderLeads(); });
 (function(){
