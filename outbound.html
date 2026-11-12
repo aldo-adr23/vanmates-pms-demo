@@ -161,6 +161,11 @@ tr.click:hover td { background: var(--cream); }
 .qchecks { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--cream-2); border-radius: 10px; margin-bottom: 10px; }
 .qmail { border-top: 1px solid var(--line); padding-top: 10px; }
 .qmail textarea { min-height: 170px; }
+.qdiff { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.qdiff pre { white-space: pre-wrap; font: inherit; font-size: 12.5px; margin: 4px 0 0; padding: 8px 10px; background: var(--cream-2); border-radius: 8px; max-height: 320px; overflow: auto; }
+.qdiff > div:last-child pre { background: var(--green-soft); }
+.strow textarea { min-height: 90px; }
+@media (max-width: 720px) { .qdiff { grid-template-columns: 1fr; } }
 .facts { font-size: 12px; color: var(--muted); margin-top: 6px; }
 @media (max-width: 640px) {
   .kv { grid-template-columns: 1fr; }
@@ -180,6 +185,7 @@ tr.click:hover td { background: var(--cream); }
     <div class="card notif-panel" id="notifPanel" hidden></div>
   </div>
   <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab" data-tab="mine" id="mineTab" hidden>My outreach</button>
     <button type="button" class="tab" data-tab="queue" id="queueTab" hidden>To approve <span class="tbadge" id="nQueue" hidden></span></button>
     <button type="button" class="tab on" data-tab="dashboard">Dashboard</button>
     <button type="button" class="tab" data-tab="discover">Discover leads</button>
@@ -244,11 +250,12 @@ tr.click:hover td { background: var(--cream); }
       return;
     }
     S.filters.mine = S.me.role === 'rep';
+    try { if (S.me.role === 'rep' && !localStorage.getItem('vm-ob-tab-mine1')) { S.tab = 'mine'; localStorage.setItem('vm-ob-tab-mine1', '1'); } } catch (e) {}
     try { S.cats = (await call('GET', '/categories')).categories || []; } catch (e) {}
     $('tabs').hidden = false; $('bell').hidden = false;
     chrome();
     render();
-    if (isMgr() && S.tab !== 'queue') call('GET', '/queue').then(function (r) { qBadge((r.cards || []).length); }).catch(function () {});
+    if (isMgr() && S.tab !== 'queue') call('GET', '/queue').then(function (r) { qBadge((r.cards || []).filter(function (c) { return c.contacts.some(function (x) { return x.needs_manager; }); }).length + (r.strategy_changes || []).length); }).catch(function () {});
     if (m) openProspect(m[1]);
     setInterval(refreshMe, 60000);
   }
@@ -260,32 +267,137 @@ tr.click:hover td { background: var(--cream); }
     else { p.className = 'pill green'; p.textContent = 'Live'; }
     $('nUnread').hidden = !S.me.unread; $('nUnread').textContent = S.me.unread;
     $('queueTab').hidden = !isMgr();
-    if (S.tab === 'queue' && !isMgr()) S.tab = 'dashboard';
+    $('mineTab').hidden = !(isMgr() || S.me.role === 'rep');
+    if (S.tab === 'queue' && !isMgr()) S.tab = S.me.role === 'rep' ? 'mine' : 'dashboard';
     document.querySelectorAll('#tabs .tab').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === S.tab); });
   }
   async function refreshMe() { try { S.me = await call('GET', '/me'); chrome(); } catch (e) {} }
 
   function render() {
     chrome();
-    var f = { queue: renderQueue, dashboard: renderDashboard, discover: renderDiscover, prospects: renderProspects, campaigns: renderCampaigns, followups: renderFollowups, analytics: renderAnalytics, settings: renderSettings }[S.tab] || renderDashboard;
+    var f = { mine: renderMine, queue: renderQueue, dashboard: renderDashboard, discover: renderDiscover, prospects: renderProspects, campaigns: renderCampaigns, followups: renderFollowups, analytics: renderAnalytics, settings: renderSettings }[S.tab] || renderDashboard;
     $('app').innerHTML = '<div class="empty">Loading…</div>';
     f().catch(function (e) { $('app').innerHTML = '<div class="card empty">Could not load: ' + esc(e.message) + '</div>'; });
+  }
+
+  // ---------------- my outreach (a rep's home; managers pick a rep) ----------------
+  function repQ(sep) { return isMgr() && S.mineRep ? sep + 'rep=' + S.mineRep : ''; }
+  async function renderMine() {
+    var mgr = isMgr();
+    if (mgr && !S.mineRep) S.mineRep = (S.me.reps.filter(function (r) { return r.active; })[0] || S.me.reps[0] || {}).member_id;
+    if (mgr && !S.mineRep) { $('app').innerHTML = '<div class="card empty">No reps yet: add them in Settings.</div>'; return; }
+    var r = await Promise.all([call('GET', '/numbers' + repQ('?')), call('GET', '/followups?state=REPLIED' + repQ('&')), call('GET', '/queue' + repQ('?')), call('GET', '/followups' + repQ('?')), call('GET', '/strategy' + repQ('?'))]);
+    var n = r[0], replies = r[1].followups || [], cards = r[2].cards || [], running = r[3].followups || [], strat = r[4].strategies || [];
+    var who = mgr ? (n.rep && n.rep.name) || 'Rep' : 'You';
+    // a rep's own approvals first; cards waiting for a manager last
+    cards.sort(function (a, b) { return (qContact(a).needs_manager ? 1 : 0) - (qContact(b).needs_manager ? 1 : 0); });
+    S.queue = cards;
+    var h = '';
+    if (mgr) h += '<div class="toolbar"><label class="small" style="display:flex;gap:8px;align-items:center"><b>Viewing as</b><select class="sel" id="mineRep">' + S.me.reps.map(function (x) { return '<option value="' + esc(x.member_id) + '"' + (x.member_id === S.mineRep ? ' selected' : '') + '>' + esc(x.name) + (x.active ? '' : ' (inactive)') + '</option>'; }).join('') + '</select></label><span class="small muted">This is exactly what ' + esc(who) + ' sees.</span></div>';
+    var k = [['Emails sent this month', n.this_month.sent, 'last month ' + n.last_month.sent], ['Replies this month', n.this_month.replies, 'last month ' + n.last_month.replies], ['Positive replies', n.this_month.positive, 'last month ' + n.last_month.positive], ['Meetings', n.meetings, n.prospects + ' prospects'], ['Partners', n.partners, 'all time']];
+    h += '<section class="dgroup"><h2 class="dhead">' + (mgr ? esc(who) + '\'s numbers' : 'My numbers') + '</h2><div class="dgrid" style="--n:5">' + k.map(function (t) { return '<div class="card kpi"><div class="n">' + esc(t[1]) + '</div><div class="l">' + esc(t[0]) + '</div><div class="small muted">' + esc(t[2]) + '</div></div>'; }).join('') + '</div></section>';
+    h += '<section class="dgroup"><h2 class="dhead">Replies to answer (' + replies.length + ')</h2>' + (replies.length ? '<div class="card tbl-wrap"><table class="tbl"><tbody>' + replies.map(function (x) {
+      return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b> <span class="muted small">' + esc(x.city || '') + '</span></td><td>' + st(/interested|meeting|needs_information/.test(x.reply_class || '') ? 'ok' : '', (x.reply_class || 'reply').replace(/_/g, ' ')) + '</td><td class="small">Open the thread →</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="card empty">No replies waiting.</div>') + '</section>';
+    h += '<section class="dgroup"><h2 class="dhead">To approve (' + cards.length + ')</h2>' + (cards.length ? qListHtml(cards) : '<div class="card empty">Nothing to approve. New companies are found every day and assigned to ' + (mgr ? esc(who) : 'you') + '.</div>') + '</section>';
+    h += '<section class="dgroup"><h2 class="dhead">Running (' + running.length + ')</h2>' + (running.length ? '<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>Status</th><th>Next email</th><th class="hide-sm">Note</th><th></th></tr></thead><tbody>' + running.map(function (x) {
+      var ctl = x.state === 'PAUSED' ? (x.unknown_send ? '<span class="small">Open to settle</span>' : '<button type="button" class="btn btn-ok" data-fact="resume" data-e="' + esc(x.enrollment_id) + '">Resume</button>') : '<button type="button" class="btn btn-ghost" data-fact="pause" data-e="' + esc(x.enrollment_id) + '">Pause</button>';
+      return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div></td>' +
+        '<td class="small">' + esc(x.next_due_at && x.state !== 'PAUSED' ? when(x.next_due_at) : '–') + '</td><td class="hide-sm small' + (x.eligibility === 'ok' ? ' muted' : '') + '">' + esc(x.eligibility === 'ok' ? '' : x.eligibility || '') + '</td><td>' + ctl + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="card empty">No sequences running.</div>') + '</section>';
+    h += '<section class="dgroup"><h2 class="dhead">' + (mgr ? esc(who) + '\'s strategy' : 'My strategy') + '</h2>' + (strat.length ? strat.map(stratHtml).join('') : '<div class="card empty">No category to work yet.</div>') + '</section>';
+    $('app').innerHTML = h;
+    qDraftAhead();
+  }
+  function fuRowHtml(f, ro) {
+    return '<div class="form strow" data-sti style="margin-bottom:10px"><label>Day<input class="inp" type="number" min="1" max="60" data-sf="day" value="' + esc(f.day) + '"' + ro + '></label><label style="grid-column:span 2">Subject<input class="inp" data-sf="subject" value="' + esc(f.subject) + '"' + ro + '></label>' +
+      (ro ? '' : '<button type="button" class="btn btn-ghost" data-stdel title="Remove this follow-up" style="justify-self:start">Remove</button>') +
+      '<label style="grid-column:1/-1">Body<textarea class="inp" data-sf="body"' + ro + '>' + esc(f.body) + '</textarea></label></div>';
+  }
+  function stratHtml(s) {
+    var c = s.campaign, mgr = isMgr();
+    if (!c) return '<div class="card pad" style="margin-bottom:12px"><b>' + esc(s.category.name) + '</b><p class="note">No campaign for this category yet. Ask a manager.</p></div>';
+    var days = function (x) { return 'Day 0' + (x.followups || []).map(function (f) { return ' · ' + f.day; }).join(''); };
+    if (!s.own) return '<div class="card pad" style="margin-bottom:12px"><div class="toolbar" style="margin:0"><b style="font-size:16px">' + esc(s.category.name) + '</b> ' + st('info', 'shared') + '<span class="sp"></span><span class="small muted">' + esc(days(c)) + '</span></div>' +
+      '<p class="note" style="margin-top:8px">' + (mgr ? 'Uses the shared strategy “' + esc(c.name) + '”.' : 'You use the shared strategy “' + esc(c.name) + '”. Make your own copy to change the follow-ups and the offer for your prospects; your changes go live after a manager approves them.') + '</p>' +
+      (mgr ? '' : '<button type="button" class="btn btn-primary" data-scopy="' + esc(c.id) + '">Make my own copy</button>') + '</div>';
+    var v = c.pending ? Object.assign({}, c, c.pending) : c, ro = mgr ? ' disabled' : '';
+    var h = '<div class="card pad" style="margin-bottom:12px" data-st="' + esc(c.id) + '"><div class="toolbar" style="margin:0"><b style="font-size:16px">' + esc(s.category.name) + '</b> ' + st('ok', 'own strategy') + ' ' +
+      (c.pending ? st('warn', 'changes waiting for approval') : c.templates_approved_at ? st('ok', 'approved v' + c.templates_version) : st('bad', 'not approved')) + '<span class="sp"></span><span class="small muted">' + esc(days(v)) + '</span></div>';
+    if (c.pending) h += '<div class="banner" style="margin-top:10px">' + (mgr ? esc(c.pending_by || 'The rep') + ' sent changes ' + esc(when(c.pending_at)) + '. Approve or reject them in To approve.' : 'Your changes are waiting for a manager (sent ' + esc(when(c.pending_at)) + '). The approved version keeps sending until then. Below: your proposed version.') + '</div>';
+    h += '<div class="form" style="margin-top:10px"><label style="grid-column:1/-1">First email subject<input class="inp" data-sf="isub" value="' + esc(v.initial_subject) + '"' + ro + '></label>' +
+      '<label style="grid-column:1/-1">What we offer (the AI writes each first email from this and may not go beyond it)<textarea class="inp" data-sf="guide" rows="4"' + ro + '>' + esc(v.initial_guidance) + '</textarea></label></div>' +
+      '<div class="h2" style="font-size:15px">Follow-ups <span class="small muted" style="font-weight:500">Placeholders {first_name} {company} {city} {rep_name}. Greeting and signature are added automatically.</span></div>' +
+      '<div data-strows>' + (v.followups || []).map(function (f) { return fuRowHtml(f, ro); }).join('') + '</div>';
+    if (!mgr) h += '<div class="actions"><button type="button" class="btn btn-ghost" data-stadd>+ Add follow-up</button><span class="sp" style="flex:1"></span>' + (c.pending ? '<button type="button" class="btn btn-ghost" data-stwd>Withdraw changes</button>' : '') + '<button type="button" class="btn btn-primary" data-stsave>' + (c.pending ? 'Update my changes' : 'Send changes for approval') + '</button></div>';
+    return h + '</div>';
+  }
+  function changesHtml(list) {
+    if (!list.length) return '';
+    var fu = function (x) { return (x || []).map(function (f) { return 'Day ' + f.day + ' · ' + f.subject + '\n' + f.body; }).join('\n\n'); };
+    var row = function (label, now, next) { return now === next ? '' : '<div class="small" style="margin-top:8px"><b>' + esc(label) + '</b></div><div class="qdiff"><div><div class="small muted">Now</div><pre>' + esc(now) + '</pre></div><div><div class="small muted">Proposed</div><pre>' + esc(next) + '</pre></div></div>'; };
+    return '<section class="dgroup"><h2 class="dhead">Strategy changes to approve (' + list.length + ')</h2>' + list.map(function (x) {
+      var p = x.pending || {}, c = x.current || {};
+      return '<div class="card qcard" data-sc="' + esc(x.id) + '"><div class="qhead"><h3>' + esc(x.rep_name || x.pending_by || '') + '</h3><span class="muted small">' + esc(x.name) + ' · sent ' + esc(when(x.pending_at)) + '</span></div>' +
+        ('initial_subject' in p ? row('First email subject', c.initial_subject || '', p.initial_subject || '') : '') +
+        ('initial_guidance' in p ? row('What we offer', c.initial_guidance || '', p.initial_guidance || '') : '') +
+        ('followups' in p ? row('Follow-ups', fu(c.followups), fu(p.followups)) : '') +
+        '<div class="actions"><button type="button" class="btn btn-primary" data-scok>Approve: live now</button><input class="inp" data-screason placeholder="Reason, if you reject" style="flex:1;min-width:180px"><button type="button" class="btn btn-ghost" data-scno>Reject</button></div></div>';
+    }).join('') + '</section>';
+  }
+  async function stratAction(b) {
+    var el = b.closest('[data-st]');
+    if (b.hasAttribute('data-scopy')) { try { await call('POST', '/campaigns/' + b.getAttribute('data-scopy') + '/copy', {}); toast('Your own copy is ready: change it below'); render(); } catch (e) { fail(e); } return true; }
+    if (b.hasAttribute('data-stadd')) {
+      var rows = el.querySelector('[data-strows]'), last = [].slice.call(rows.querySelectorAll('[data-sf="day"]')).map(function (x) { return Number(x.value) || 0; }).pop() || 0;
+      rows.insertAdjacentHTML('beforeend', fuRowHtml({ day: last + 5, subject: '', body: '' }, ''));
+      return true;
+    }
+    if (b.hasAttribute('data-stdel')) { b.closest('[data-sti]').remove(); return true; }
+    if (b.hasAttribute('data-stwd')) { try { await call('POST', '/campaigns/' + el.getAttribute('data-st') + '/pending/withdraw', {}); toast('Changes withdrawn'); render(); } catch (e) { fail(e); } return true; }
+    if (b.hasAttribute('data-stsave')) {
+      var g = function (k) { return el.querySelector('[data-sf="' + k + '"]').value; };
+      var fus = [].slice.call(el.querySelectorAll('[data-sti]')).map(function (r) { return { day: Number(r.querySelector('[data-sf="day"]').value), subject: r.querySelector('[data-sf="subject"]').value, body: r.querySelector('[data-sf="body"]').value }; });
+      try { await call('PATCH', '/campaigns/' + el.getAttribute('data-st'), { initial_subject: g('isub'), initial_guidance: g('guide'), followups: fus }); toast('Sent to your manager for approval'); render(); } catch (e) { fail(e); }
+      return true;
+    }
+    var sc = b.closest('[data-sc]');
+    if (sc && (b.hasAttribute('data-scok') || b.hasAttribute('data-scno'))) {
+      var ok = b.hasAttribute('data-scok');
+      if (!confirmTwice(b, ok ? 'Press again: goes live' : 'Press again to reject')) return true;
+      try {
+        var r = await call('POST', '/campaigns/' + sc.getAttribute('data-sc') + '/pending/' + (ok ? 'approve' : 'reject'), { reason: sc.querySelector('[data-screason]').value });
+        toast(ok ? 'Approved' + (r.adopted ? ': ' + r.adopted + ' running sequence' + (r.adopted === 1 ? '' : 's') + ' use it for their next follow-ups' : '') : 'Rejected: the rep is told');
+        render();
+      } catch (e) { fail(e); }
+      return true;
+    }
+    return false;
   }
 
   // ---------------- to approve (one card = contact approval + first email) ----------------
   function qBadge(n) { $('nQueue').hidden = !n; $('nQueue').textContent = n; }
   function qCard(pid) { return (S.queue || []).filter(function (c) { return c.prospect.id === pid; })[0]; }
   function qContact(card) { return card.contacts.filter(function (c) { return c.id === card.contact_id; })[0] || card.contacts[0]; }
-  async function renderQueue() {
-    var cards = (await call('GET', '/queue')).cards || [];
+  function qListHtml(cards) {
     var skipped = S.qSkip || [];
     cards.sort(function (a, b) { return skipped.indexOf(a.prospect.id) - skipped.indexOf(b.prospect.id); });   // skipped go last, in skip order
+    return '<div id="qList">' + cards.map(function (c) { return '<div class="card qcard" data-qp="' + esc(c.prospect.id) + '">' + qCardHtml(c) + '</div>'; }).join('') + '</div>';
+  }
+  async function renderQueue() {
+    var res = await call('GET', '/queue'), all = res.cards || [], changes = res.strategy_changes || [];
+    var need = all.filter(function (c) { return c.contacts.some(function (x) { return x.needs_manager; }); });
+    if (!S.qFilter) S.qFilter = need.length ? 'need' : 'all';
+    var cards = S.qFilter === 'need' ? need : all;
+    if (S.qFilter === 'need') cards.forEach(function (c) { var x = c.contacts.filter(function (y) { return y.needs_manager; })[0]; if (x) c.contact_id = x.id; });
     S.queue = cards;
-    qBadge(cards.length);
+    qBadge(need.length + changes.length);
     var h = '<p class="note">Each card is one company. Check the contact, read the first email, then <b>Approve &amp; send</b>: that records the CASL approval, starts the sequence and sends from the rep\'s Gmail' +
       (S.me.send_mode === 'live' && !S.me.sending_off ? ' <b>to the real prospect</b>.' : ' (test mode: only test recipients get email).') + ' Outside business hours it goes at their next morning.</p>';
-    h += cards.length ? '<div id="qList">' + cards.map(function (c) { return '<div class="card qcard" data-qp="' + esc(c.prospect.id) + '">' + qCardHtml(c) + '</div>'; }).join('') + '</div>'
-      : '<div class="card empty">Nothing to approve. New prospects appear here after research finds a contact email.</div>';
+    h += changesHtml(changes);
+    h += '<div class="toolbar" style="margin-top:14px"><button type="button" class="chip' + (S.qFilter === 'need' ? ' on' : '') + '" data-qf="need">Needs a manager (' + need.length + ')</button><button type="button" class="chip' + (S.qFilter === 'all' ? ' on' : '') + '" data-qf="all">All reps (' + all.length + ')</button>' +
+      '<span class="small muted">Reps approve their own clean contacts in My outreach. “Needs a manager” = doubtful or sent to you.</span></div>';
+    h += cards.length ? qListHtml(cards) : '<div class="card empty">' + (S.qFilter === 'need' ? 'Nothing needs a manager.' : 'Nothing to approve. New prospects appear here after research finds a contact email.') + '</div>';
     $('app').innerHTML = h;
     if (S.qFocus) { var el = document.querySelector('[data-qp="' + S.qFocus + '"]'); S.qFocus = null; if (el) { el.scrollIntoView({ block: 'start' }); el.style.outline = '2px solid var(--red)'; } }
     qDraftAhead();
@@ -300,9 +412,12 @@ tr.click:hover td { background: var(--cream); }
       ? '<select class="sel" data-qcontact>' + card.contacts.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === c.id ? ' selected' : '') + '>' + esc((x.full_name ? x.full_name + ' · ' : '') + x.email) + '</option>'; }).join('') + '</select>'
       : esc((c.full_name ? c.full_name + ' · ' : '') + c.email)) + (c.job_title ? ' <span class="muted">(' + esc(c.job_title) + ')</span>' : '') + '</dd>' +
       '<dt>Found on</dt><dd>' + (comp.evidence_url || c.source_url ? link(comp.evidence_url || c.source_url) : '<span class="muted">not recorded</span>') + '</dd></dl>';
-    if (ch.statement) h += '<div class="banner red">The site says: “' + esc(String(ch.statement).replace(/[.\s]+$/, '')) + '”. Do not email under “published address”: reject, or use Other basis.</div>';
-    else if (!approved && comp.lawful_basis === 'none') h += '<div class="banner">Research did not see this email on the company\'s own website. Open the page and check before ticking, or use Other basis.</div>';
-    if (approved) h += '<div class="qchecks"><span class="small">' + st('ok', 'Contact approved') + ' ' + esc((comp.lawful_basis || '').replace(/_/g, ' ')) + '</span></div>';
+    var rep = !isMgr(), nm = !approved && c.needs_manager;
+    if (ch.statement) h += '<div class="banner red">The site says: “' + esc(String(ch.statement).replace(/[.\s]+$/, '')) + '”. ' + (rep ? 'A manager has to decide on this one.' : 'Do not email under “published address”: reject, or use Other basis.') + '</div>';
+    else if (!approved && comp.lawful_basis === 'none') h += '<div class="banner">Research did not see this email on the company\'s own website. ' + (rep ? 'A manager has to approve it.' : 'Open the page and check before ticking, or use Other basis.') + '</div>';
+    if (!approved && ch.escalated_by) h += '<div class="banner">Sent to a manager by ' + esc(ch.escalated_by) + (ch.escalated_note ? ': ' + esc(ch.escalated_note) : '') + '</div>';
+    if (rep && nm) h += '';
+    else if (approved) h += '<div class="qchecks"><span class="small">' + st('ok', 'Contact approved') + ' ' + esc((comp.lawful_basis || '').replace(/_/g, ' ')) + '</span></div>';
     else {
       var own = ch.published_on_own_site === true, nus = ch.no_unsolicited_statement !== false && !ch.statement;
       h += '<div class="qchecks">' +
@@ -311,27 +426,31 @@ tr.click:hover td { background: var(--cream); }
         '<label class="chk"><input type="checkbox" data-qchk="nus"' + (nus ? ' checked' : '') + '> No “no unsolicited email” statement on the site</label></div>';
     }
     h += '<div class="qmail">';
-    if (!e || (!e.draft_body && !e.last_error)) h += '<div class="muted small">Writing the first email…</div>';
+    if (rep && nm) h += '<div class="muted small">The first email is written once a manager approves the contact.</div>';
+    else if (!e || (!e.draft_body && !e.last_error)) h += '<div class="muted small">Writing the first email…</div>';
     else if (!e.draft_body) h += '<div class="banner red">The first email could not be written: ' + esc(e.last_error) + '</div><button type="button" class="btn btn-ghost" data-qretry>Try again</button>';
     else h += '<label class="fl">Subject<input class="inp" data-qsubj value="' + esc(e.draft_subject || '') + '"></label>' +
       '<label class="fl" style="margin-top:8px">Message (greeting, ' + esc(p.rep_name || 'the rep') + '\'s signature, our address and the unsubscribe link are added automatically)<textarea class="inp" data-qbody rows="9">' + esc(e.draft_body) + '</textarea></label>';
-    h += '</div><div class="actions"><button type="button" class="btn btn-primary" data-qapprove>Approve &amp; send</button>' +
+    h += '</div><div class="actions">' + (rep && nm ? (ch.escalated_by ? '<button type="button" class="btn btn-ghost" disabled>Waiting for a manager</button>' : '') : '<button type="button" class="btn btn-primary" data-qapprove>Approve &amp; send</button>') +
       '<button type="button" class="btn btn-ghost" data-qskip>Skip</button>' +
       (approved ? '' : '<button type="button" class="btn btn-ghost" data-qreject>Do not contact</button>') +
-      '<button type="button" class="btn btn-ghost" data-qother>' + (approved ? 'Details' : 'Other basis…') + '</button></div>';
+      (rep ? (approved || ch.escalated_by ? '<button type="button" class="btn btn-ghost" data-qother>Details</button>' : '<button type="button" class="btn btn-ghost" data-qesc>Send to manager…</button>')
+        : '<button type="button" class="btn btn-ghost" data-qother>' + (approved ? 'Details' : 'Other basis…') + '</button>') + '</div>' +
+      (rep && !approved && !ch.escalated_by ? '<div class="actions" data-qescrow hidden><input class="inp" data-qnote placeholder="Why? e.g. they were referred by…, or they are an existing client" style="flex:1;min-width:200px"><button type="button" class="btn btn-primary" data-qescgo>Send to manager</button></div>' : '');
     return h;
   }
   function qSync(el) {
     var card = qCard(el.getAttribute('data-qp')); if (!card) return;
     var c = qContact(card), ch = (c.compliance && c.compliance.checks) || {};
     var ok = !!(c.enrollment && c.enrollment.draft_body) && !ch.statement && [].slice.call(el.querySelectorAll('[data-qchk]')).every(function (x) { return x.checked; });
-    el.querySelector('[data-qapprove]').disabled = !ok;
+    var btn = el.querySelector('[data-qapprove]'); if (btn) btn.disabled = !ok;
   }
   function qRedraw(pid) { var el = document.querySelector('[data-qp="' + pid + '"]'); if (!el) return; el.innerHTML = qCardHtml(qCard(pid)); qSync(el); }
   async function qDraft(pid, retry) {
     var card = qCard(pid); if (!card) return;
     var c = qContact(card);
     if (c.enrollment && (c.enrollment.draft_body || c.enrollment.last_error) && !retry) return;
+    if (!isMgr() && c.needs_manager && !(c.compliance && c.compliance.status === 'approved')) return;
     if (c._drafting) return; c._drafting = true;
     try { c.enrollment = (await call('POST', '/queue/draft', { prospect_id: pid, contact_id: c.id, retry: !!retry })).enrollment; }
     catch (e) { c.enrollment = { draft_body: null, last_error: e.message }; }
@@ -347,6 +466,7 @@ tr.click:hover td { background: var(--cream); }
   function qRemove(pid) {
     var el = document.querySelector('[data-qp="' + pid + '"]'); if (el) el.remove();
     S.queue = (S.queue || []).filter(function (c) { return c.prospect.id !== pid; });
+    if (S.tab === 'mine') return render();   // numbers, Running and counts change too
     qBadge(S.queue.length);
     if (!S.queue.length) return render();
     qDraftAhead();
@@ -357,6 +477,16 @@ tr.click:hover td { background: var(--cream); }
     if (b.hasAttribute('data-qskip')) { S.qSkip = (S.qSkip || []).filter(function (x) { return x !== pid; }).concat([pid]); $('qList').appendChild(el); return qDraftAhead(); }
     if (b.hasAttribute('data-qother')) { S.dtab = c.compliance && c.compliance.status === 'approved' ? 'overview' : 'compliance'; return openProspect(pid); }
     if (b.hasAttribute('data-qretry')) return qDraft(pid, true);
+    if (b.hasAttribute('data-qesc')) { var row = el.querySelector('[data-qescrow]'); row.hidden = !row.hidden; if (!row.hidden) row.querySelector('input').focus(); return; }
+    if (b.hasAttribute('data-qescgo')) {
+      var note = el.querySelector('[data-qnote]').value.trim();
+      if (!note) { toast('Say why, so the manager can decide'); return; }
+      try { await call('POST', '/queue/escalate', { contact_id: c.id, note: note }); }
+      catch (e) { return fail(e); }
+      c.compliance = Object.assign({}, c.compliance, { checks: Object.assign({}, (c.compliance || {}).checks, { escalated_by: S.me.name, escalated_note: note }) });
+      c.needs_manager = 'Sent to a manager';
+      toast('Sent to your manager'); return qRedraw(pid);
+    }
     if (S.busy) return;
     if (b.hasAttribute('data-qreject')) {
       if (!confirmTwice(b, 'Press again: never contact ' + (c.email || 'them'))) return;
@@ -502,7 +632,7 @@ tr.click:hover td { background: var(--cream); }
 
   // ---------------- prospect drawer ----------------
   function openDrawerHtml(html) { $('drawer').innerHTML = html; $('drawer').hidden = false; $('scrim').hidden = false; $('drawer').scrollTop = 0; }
-  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; S.drawer = null; if (/^#p=/.test(location.hash)) history.replaceState(null, '', location.pathname); if (S.tab === 'prospects' || S.tab === 'followups' || S.tab === 'queue') render(); }
+  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; S.drawer = null; if (/^#p=/.test(location.hash)) history.replaceState(null, '', location.pathname); if (['prospects', 'followups', 'queue', 'mine'].indexOf(S.tab) >= 0) render(); }
   async function openProspect(id) {
     try { S.drawer = await call('GET', '/prospects/' + id); } catch (e) { return fail(e); }
     history.replaceState(null, '', '#p=' + id);
@@ -861,6 +991,8 @@ tr.click:hover td { background: var(--cream); }
     var b = t.closest('button'); if (!b) return;
     if (b.hasAttribute('data-goq')) { S.tab = 'queue'; S.qFocus = b.getAttribute('data-goq'); try { localStorage.setItem('vm-ob-tab', S.tab); } catch (x) {} return render(); }
     if (b.closest('[data-qp]') && !b.closest('#drawer')) return qAction(b);
+    if (b.hasAttribute('data-qf')) { S.qFilter = b.getAttribute('data-qf'); return render(); }
+    if (!b.closest('#drawer') && (b.closest('[data-st]') || b.closest('[data-sc]') || b.hasAttribute('data-scopy')) && await stratAction(b)) return;
     if (b.hasAttribute('data-mine')) { S.filters.mine = b.getAttribute('data-mine') === '1'; S.offset = 0; return render(); }
     if (b.hasAttribute('data-page')) { S.offset = Math.max(0, S.offset + 50 * Number(b.getAttribute('data-page'))); return render(); }
     if (b.id === 'dRun') return runDiscovery();
@@ -929,6 +1061,7 @@ tr.click:hover td { background: var(--cream); }
   });
   document.addEventListener('change', function (ev) {
     var t = ev.target;
+    if (t.id === 'mineRep') { S.mineRep = t.value; S.qSkip = []; return render(); }
     var qel = t.closest && t.closest('[data-qp]');
     if (qel && t.hasAttribute('data-qchk')) return qSync(qel);
     if (qel && t.hasAttribute('data-qcontact')) { var qc = qCard(qel.getAttribute('data-qp')); qc.contact_id = t.value; qRedraw(qc.prospect.id); return qDraft(qc.prospect.id); }
