@@ -319,17 +319,17 @@ tr.click:hover td { background: var(--cream); }
     if (!c) return '<div class="card pad" style="margin-bottom:12px"><b>' + esc(s.category.name) + '</b><p class="note">No campaign for this category yet. Ask a manager.</p></div>';
     var days = function (x) { return 'Day 0' + (x.followups || []).map(function (f) { return ' · ' + f.day; }).join(''); };
     if (!s.own) return '<div class="card pad" style="margin-bottom:12px"><div class="toolbar" style="margin:0"><b style="font-size:16px">' + esc(s.category.name) + '</b> ' + st('info', 'shared') + '<span class="sp"></span><span class="small muted">' + esc(days(c)) + '</span></div>' +
-      '<p class="note" style="margin-top:8px">' + (mgr ? 'Uses the shared strategy “' + esc(c.name) + '”.' : 'You use the shared strategy “' + esc(c.name) + '”. Make your own copy to change the follow-ups and the offer for your prospects; your changes go live after a manager approves them.') + '</p>' +
+      '<p class="note" style="margin-top:8px">' + (mgr ? 'Uses the shared strategy “' + esc(c.name) + '”.' : 'You use the shared strategy “' + esc(c.name) + '”. Make your own copy to change the follow-ups and the offer for your prospects; your changes go live as soon as you save them.') + '</p>' +
       (mgr ? '' : '<button type="button" class="btn btn-primary" data-scopy="' + esc(c.id) + '">Make my own copy</button>') + '</div>';
     var v = c.pending ? Object.assign({}, c, c.pending) : c, ro = mgr ? ' disabled' : '';
     var h = '<div class="card pad" style="margin-bottom:12px" data-st="' + esc(c.id) + '"><div class="toolbar" style="margin:0"><b style="font-size:16px">' + esc(s.category.name) + '</b> ' + st('ok', 'own strategy') + ' ' +
-      (c.pending ? st('warn', 'changes waiting for approval') : c.templates_approved_at ? st('ok', 'approved v' + c.templates_version) : st('bad', 'not approved')) + '<span class="sp"></span><span class="small muted">' + esc(days(v)) + '</span></div>';
+      (c.pending ? st('warn', 'changes waiting for approval') : c.templates_approved_at ? st('ok', 'live v' + c.templates_version) : st('bad', 'not approved')) + '<span class="sp"></span><span class="small muted">' + esc(days(v)) + '</span></div>';
     if (c.pending) h += '<div class="banner" style="margin-top:10px">' + (mgr ? esc(c.pending_by || 'The rep') + ' sent changes ' + esc(when(c.pending_at)) + '. Approve or reject them in To approve.' : 'Your changes are waiting for a manager (sent ' + esc(when(c.pending_at)) + '). The approved version keeps sending until then. Below: your proposed version.') + '</div>';
     h += '<div class="form" style="margin-top:10px"><label style="grid-column:1/-1">First email subject<input class="inp" data-sf="isub" value="' + esc(v.initial_subject) + '"' + ro + '></label>' +
       '<label style="grid-column:1/-1">What we offer (the AI writes each first email from this and may not go beyond it)<textarea class="inp" data-sf="guide" rows="4"' + ro + '>' + esc(v.initial_guidance) + '</textarea></label></div>' +
       '<div class="h2" style="font-size:15px">Follow-ups <span class="small muted" style="font-weight:500">Placeholders {first_name} {company} {city} {rep_name}. Greeting and signature are added automatically.</span></div>' +
       '<div data-strows>' + (v.followups || []).map(function (f) { return fuRowHtml(f, ro); }).join('') + '</div>';
-    if (!mgr) h += '<div class="actions"><button type="button" class="btn btn-ghost" data-stadd>+ Add follow-up</button><span class="sp" style="flex:1"></span>' + (c.pending ? '<button type="button" class="btn btn-ghost" data-stwd>Withdraw changes</button>' : '') + '<button type="button" class="btn btn-primary" data-stsave>' + (c.pending ? 'Update my changes' : 'Send changes for approval') + '</button></div>';
+    if (!mgr) h += '<div class="actions"><button type="button" class="btn btn-ghost" data-stadd>+ Add follow-up</button><span class="sp" style="flex:1"></span>' + (c.pending ? '<button type="button" class="btn btn-ghost" data-stwd>Withdraw changes</button>' : '') + '<button type="button" class="btn btn-primary" data-stsave>' + 'Save: live now' + '</button></div>';
     return h + '</div>';
   }
   function changesHtml(list) {
@@ -358,7 +358,8 @@ tr.click:hover td { background: var(--cream); }
     if (b.hasAttribute('data-stsave')) {
       var g = function (k) { return el.querySelector('[data-sf="' + k + '"]').value; };
       var fus = [].slice.call(el.querySelectorAll('[data-sti]')).map(function (r) { return { day: Number(r.querySelector('[data-sf="day"]').value), subject: r.querySelector('[data-sf="subject"]').value, body: r.querySelector('[data-sf="body"]').value }; });
-      try { await call('PATCH', '/campaigns/' + el.getAttribute('data-st'), { initial_subject: g('isub'), initial_guidance: g('guide'), followups: fus }); toast('Sent to your manager for approval'); render(); } catch (e) { fail(e); }
+      if (!confirmTwice(b, 'Press again: live now, also for follow-ups already scheduled')) return true;
+      try { await call('PATCH', '/campaigns/' + el.getAttribute('data-st'), { initial_subject: g('isub'), initial_guidance: g('guide'), followups: fus }); toast('Saved: your strategy is live now'); render(); } catch (e) { fail(e); }
       return true;
     }
     var sc = b.closest('[data-sc]');
