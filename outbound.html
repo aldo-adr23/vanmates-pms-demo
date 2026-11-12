@@ -152,6 +152,15 @@ tr.click:hover td { background: var(--cream); }
 .notif-item.unread { background: var(--amber-soft); border-radius: 8px; }
 .banner { padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 13px; background: var(--amber-soft); color: var(--b-amber); }
 .banner.red { background: var(--red-soft); color: var(--red); }
+.qcard { padding: 16px; margin-bottom: 14px; }
+.qhead { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+.qhead h3 { font-family: var(--serif); font-size: 19px; margin: 0; overflow-wrap: anywhere; }
+.qmeta { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; margin: 10px 0; }
+.qmeta dt { color: var(--muted); font-weight: 600; }
+.qmeta dd { margin: 0; overflow-wrap: anywhere; }
+.qchecks { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--cream-2); border-radius: 10px; margin-bottom: 10px; }
+.qmail { border-top: 1px solid var(--line); padding-top: 10px; }
+.qmail textarea { min-height: 170px; }
 .facts { font-size: 12px; color: var(--muted); margin-top: 6px; }
 @media (max-width: 640px) {
   .kv { grid-template-columns: 1fr; }
@@ -171,6 +180,7 @@ tr.click:hover td { background: var(--cream); }
     <div class="card notif-panel" id="notifPanel" hidden></div>
   </div>
   <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button type="button" class="tab" data-tab="queue" id="queueTab" hidden>To approve <span class="tbadge" id="nQueue" hidden></span></button>
     <button type="button" class="tab on" data-tab="dashboard">Dashboard</button>
     <button type="button" class="tab" data-tab="discover">Discover leads</button>
     <button type="button" class="tab" data-tab="prospects">Prospects</button>
@@ -238,6 +248,7 @@ tr.click:hover td { background: var(--cream); }
     $('tabs').hidden = false; $('bell').hidden = false;
     chrome();
     render();
+    if (isMgr() && S.tab !== 'queue') call('GET', '/queue').then(function (r) { qBadge((r.cards || []).length); }).catch(function () {});
     if (m) openProspect(m[1]);
     setInterval(refreshMe, 60000);
   }
@@ -248,15 +259,133 @@ tr.click:hover td { background: var(--cream); }
     else if (S.me.send_mode !== 'live') { p.className = 'pill'; p.textContent = 'Test mode: only test recipients get email'; }
     else { p.className = 'pill green'; p.textContent = 'Live'; }
     $('nUnread').hidden = !S.me.unread; $('nUnread').textContent = S.me.unread;
+    $('queueTab').hidden = !isMgr();
+    if (S.tab === 'queue' && !isMgr()) S.tab = 'dashboard';
     document.querySelectorAll('#tabs .tab').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === S.tab); });
   }
   async function refreshMe() { try { S.me = await call('GET', '/me'); chrome(); } catch (e) {} }
 
   function render() {
     chrome();
-    var f = { dashboard: renderDashboard, discover: renderDiscover, prospects: renderProspects, campaigns: renderCampaigns, followups: renderFollowups, analytics: renderAnalytics, settings: renderSettings }[S.tab] || renderDashboard;
+    var f = { queue: renderQueue, dashboard: renderDashboard, discover: renderDiscover, prospects: renderProspects, campaigns: renderCampaigns, followups: renderFollowups, analytics: renderAnalytics, settings: renderSettings }[S.tab] || renderDashboard;
     $('app').innerHTML = '<div class="empty">Loading…</div>';
     f().catch(function (e) { $('app').innerHTML = '<div class="card empty">Could not load: ' + esc(e.message) + '</div>'; });
+  }
+
+  // ---------------- to approve (one card = contact approval + first email) ----------------
+  function qBadge(n) { $('nQueue').hidden = !n; $('nQueue').textContent = n; }
+  function qCard(pid) { return (S.queue || []).filter(function (c) { return c.prospect.id === pid; })[0]; }
+  function qContact(card) { return card.contacts.filter(function (c) { return c.id === card.contact_id; })[0] || card.contacts[0]; }
+  async function renderQueue() {
+    var cards = (await call('GET', '/queue')).cards || [];
+    var skipped = S.qSkip || [];
+    cards.sort(function (a, b) { return skipped.indexOf(a.prospect.id) - skipped.indexOf(b.prospect.id); });   // skipped go last, in skip order
+    S.queue = cards;
+    qBadge(cards.length);
+    var h = '<p class="note">Each card is one company. Check the contact, read the first email, then <b>Approve &amp; send</b>: that records the CASL approval, starts the sequence and sends from the rep\'s Gmail' +
+      (S.me.send_mode === 'live' && !S.me.sending_off ? ' <b>to the real prospect</b>.' : ' (test mode: only test recipients get email).') + ' Outside business hours it goes at their next morning.</p>';
+    h += cards.length ? '<div id="qList">' + cards.map(function (c) { return '<div class="card qcard" data-qp="' + esc(c.prospect.id) + '">' + qCardHtml(c) + '</div>'; }).join('') + '</div>'
+      : '<div class="card empty">Nothing to approve. New prospects appear here after research finds a contact email.</div>';
+    $('app').innerHTML = h;
+    if (S.qFocus) { var el = document.querySelector('[data-qp="' + S.qFocus + '"]'); S.qFocus = null; if (el) { el.scrollIntoView({ block: 'start' }); el.style.outline = '2px solid var(--red)'; } }
+    qDraftAhead();
+  }
+  function qCardHtml(card) {
+    var p = card.prospect, c = qContact(card), comp = c.compliance || {}, ch = comp.checks || {}, e = c.enrollment;
+    var approved = comp.status === 'approved';
+    var h = '<div class="qhead"><h3>' + esc(p.company_name) + '</h3>' + scoreHtml(p) + '<span class="muted small">' + esc([p.city, p.province].filter(Boolean).join(', ')) + (p.website_url ? ' · ' + link(p.website_url, p.normalized_domain || p.website_url) : '') + '</span>' +
+      '<span style="flex:1"></span><span class="small">Rep: <b>' + esc(p.rep_name || '') + '</b></span></div>';
+    if (p.score_explanation) h += '<div class="small muted" style="margin-top:4px">' + esc(p.score_explanation) + '</div>';
+    h += '<dl class="qmeta"><dt>To</dt><dd>' + (card.contacts.length > 1
+      ? '<select class="sel" data-qcontact>' + card.contacts.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === c.id ? ' selected' : '') + '>' + esc((x.full_name ? x.full_name + ' · ' : '') + x.email) + '</option>'; }).join('') + '</select>'
+      : esc((c.full_name ? c.full_name + ' · ' : '') + c.email)) + (c.job_title ? ' <span class="muted">(' + esc(c.job_title) + ')</span>' : '') + '</dd>' +
+      '<dt>Found on</dt><dd>' + (comp.evidence_url || c.source_url ? link(comp.evidence_url || c.source_url) : '<span class="muted">not recorded</span>') + '</dd></dl>';
+    if (ch.statement) h += '<div class="banner red">The site says: “' + esc(String(ch.statement).replace(/[.\s]+$/, '')) + '”. Do not email under “published address”: reject, or use Other basis.</div>';
+    else if (!approved && comp.lawful_basis === 'none') h += '<div class="banner">Research did not see this email on the company\'s own website. Open the page and check before ticking, or use Other basis.</div>';
+    if (approved) h += '<div class="qchecks"><span class="small">' + st('ok', 'Contact approved') + ' ' + esc((comp.lawful_basis || '').replace(/_/g, ' ')) + '</span></div>';
+    else {
+      var own = ch.published_on_own_site === true, nus = ch.no_unsolicited_statement !== false && !ch.statement;
+      h += '<div class="qchecks">' +
+        '<label class="chk"><input type="checkbox" data-qchk="own"' + (own ? ' checked' : '') + '> Published on their own website (not a directory)</label>' +
+        '<label class="chk"><input type="checkbox" data-qchk="role"' + (own ? ' checked' : '') + '> Our message fits this person\'s business role</label>' +
+        '<label class="chk"><input type="checkbox" data-qchk="nus"' + (nus ? ' checked' : '') + '> No “no unsolicited email” statement on the site</label></div>';
+    }
+    h += '<div class="qmail">';
+    if (!e || (!e.draft_body && !e.last_error)) h += '<div class="muted small">Writing the first email…</div>';
+    else if (!e.draft_body) h += '<div class="banner red">The first email could not be written: ' + esc(e.last_error) + '</div><button type="button" class="btn btn-ghost" data-qretry>Try again</button>';
+    else h += '<label class="fl">Subject<input class="inp" data-qsubj value="' + esc(e.draft_subject || '') + '"></label>' +
+      '<label class="fl" style="margin-top:8px">Message (greeting, ' + esc(p.rep_name || 'the rep') + '\'s signature, our address and the unsubscribe link are added automatically)<textarea class="inp" data-qbody rows="9">' + esc(e.draft_body) + '</textarea></label>';
+    h += '</div><div class="actions"><button type="button" class="btn btn-primary" data-qapprove>Approve &amp; send</button>' +
+      '<button type="button" class="btn btn-ghost" data-qskip>Skip</button>' +
+      (approved ? '' : '<button type="button" class="btn btn-ghost" data-qreject>Do not contact</button>') +
+      '<button type="button" class="btn btn-ghost" data-qother>' + (approved ? 'Details' : 'Other basis…') + '</button></div>';
+    return h;
+  }
+  function qSync(el) {
+    var card = qCard(el.getAttribute('data-qp')); if (!card) return;
+    var c = qContact(card), ch = (c.compliance && c.compliance.checks) || {};
+    var ok = !!(c.enrollment && c.enrollment.draft_body) && !ch.statement && [].slice.call(el.querySelectorAll('[data-qchk]')).every(function (x) { return x.checked; });
+    el.querySelector('[data-qapprove]').disabled = !ok;
+  }
+  function qRedraw(pid) { var el = document.querySelector('[data-qp="' + pid + '"]'); if (!el) return; el.innerHTML = qCardHtml(qCard(pid)); qSync(el); }
+  async function qDraft(pid, retry) {
+    var card = qCard(pid); if (!card) return;
+    var c = qContact(card);
+    if (c.enrollment && (c.enrollment.draft_body || c.enrollment.last_error) && !retry) return;
+    if (c._drafting) return; c._drafting = true;
+    try { c.enrollment = (await call('POST', '/queue/draft', { prospect_id: pid, contact_id: c.id, retry: !!retry })).enrollment; }
+    catch (e) { c.enrollment = { draft_body: null, last_error: e.message }; }
+    finally { c._drafting = false; }
+    qRedraw(pid);
+  }
+  async function qDraftAhead() {
+    // draft the first email for the next few cards only: no AI cost for cards nobody reaches
+    var els = [].slice.call(document.querySelectorAll('[data-qp]'));
+    els.forEach(qSync);
+    for (var i = 0; i < Math.min(3, els.length); i++) await qDraft(els[i].getAttribute('data-qp'));
+  }
+  function qRemove(pid) {
+    var el = document.querySelector('[data-qp="' + pid + '"]'); if (el) el.remove();
+    S.queue = (S.queue || []).filter(function (c) { return c.prospect.id !== pid; });
+    qBadge(S.queue.length);
+    if (!S.queue.length) return render();
+    qDraftAhead();
+  }
+  async function qAction(b) {
+    var el = b.closest('[data-qp]'), pid = el.getAttribute('data-qp'), card = qCard(pid); if (!card) return;
+    var c = qContact(card);
+    if (b.hasAttribute('data-qskip')) { S.qSkip = (S.qSkip || []).filter(function (x) { return x !== pid; }).concat([pid]); $('qList').appendChild(el); return qDraftAhead(); }
+    if (b.hasAttribute('data-qother')) { S.dtab = c.compliance && c.compliance.status === 'approved' ? 'overview' : 'compliance'; return openProspect(pid); }
+    if (b.hasAttribute('data-qretry')) return qDraft(pid, true);
+    if (S.busy) return;
+    if (b.hasAttribute('data-qreject')) {
+      if (!confirmTwice(b, 'Press again: never contact ' + (c.email || 'them'))) return;
+      S.busy = true;
+      try { await call('POST', '/contacts/' + c.id + '/compliance', { decision: 'reject' }); toast('Rejected: ' + c.email + ' will not be contacted'); }
+      catch (e) { fail(e); return; } finally { S.busy = false; }
+      card.contacts = card.contacts.filter(function (x) { return x.id !== c.id; });
+      if (!card.contacts.length) return qRemove(pid);
+      card.contact_id = card.contacts[0].id; qRedraw(pid); return qDraft(pid);
+    }
+    if (b.hasAttribute('data-qapprove')) {
+      if (!confirmTwice(b, S.me.send_mode === 'live' ? 'Press again to email ' + c.email : 'Press again to send')) return;
+      S.busy = true; b.disabled = true;
+      var g = function (k) { var x = el.querySelector('[data-qchk="' + k + '"]'); return x ? x.checked : true; };
+      var comp = c.compliance || {};
+      try {
+        var r = await call('POST', '/queue/approve', {
+          enrollment_id: c.enrollment.id, contact_id: c.id, subject: el.querySelector('[data-qsubj]').value, body: el.querySelector('[data-qbody]').value,
+          basis_evidence: comp.lawful_basis === 'conspicuous_publication' && comp.basis_evidence ? comp.basis_evidence : 'Published on ' + (comp.evidence_url || c.source_url || card.prospect.website_url || 'their website') + ' (checked by ' + S.me.name + ')',
+          evidence_url: comp.evidence_url || c.source_url,
+          checks: { published_on_own_site: g('own'), role_relevant: g('role'), no_unsolicited_statement: g('nus') } });
+        toast(r.sent ? 'Sent to ' + c.email + ' from ' + (card.prospect.rep_name || 'the rep') + '\'s Gmail' : r.scheduled_for ? 'Approved: goes to ' + c.email + ' ' + when(r.scheduled_for) + ' (their business hours)' : 'Approved, but not sent: ' + ((r.verdict && r.verdict.message) || 'see the prospect'));
+        qRemove(pid);
+      } catch (e) {
+        fail(e);
+        if (/^Contact approved/.test(e.message)) { c.compliance = Object.assign({}, comp, { status: 'approved' }); qRedraw(pid); }
+        else b.disabled = false;
+      } finally { S.busy = false; }
+    }
   }
 
   // ---------------- dashboard ----------------
@@ -265,7 +394,7 @@ tr.click:hover td { background: var(--cream); }
     // [label, value, alert when > 0, tab to open]
     var groups = [
       ['Needs attention', [
-        ['Contact reviews', k.pending_contact_reviews, true, 'prospects'], ['Possible duplicates', k.dedup_reviews, true, 'prospects'],
+        ['Contact reviews', k.pending_contact_reviews, true, isMgr() ? 'queue' : 'prospects'], ['Possible duplicates', k.dedup_reviews, true, 'prospects'],
         ['Emails awaiting approval', k.awaiting_approval, true, 'followups'], ['Paused sequences', k.paused, true, 'followups']]],
       ['Pipeline', [
         ['Total prospects', k.total_prospects, false, 'prospects'], ['Discovered today', k.discovered_today], ['Qualified (score 60+)', k.qualified, false, 'prospects'],
@@ -348,7 +477,7 @@ tr.click:hover td { background: var(--cream); }
     h += '<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>City</th><th>Score</th><th>Rep</th><th class="hide-sm">Status</th><th class="hide-sm">Last activity</th><th>Next action</th></tr></thead><tbody>' +
       (rows.length ? rows.map(function (p) {
         return '<tr class="click" tabindex="0" data-p="' + esc(p.id) + '"><td><b>' + esc(p.company_name) + '</b><div class="muted small">' + esc(p.normalized_domain || '') + '</div></td><td>' + esc(p.city || '') + '</td><td>' + scoreHtml(p) + '</td><td>' + esc(p.rep_name || '–') + '</td>' +
-          '<td class="hide-sm">' + st('', LIFE[p.lifecycle_status] || p.lifecycle_status) + (p.outreach_state ? ' ' + st(STATE_CLS[p.outreach_state], STATE_LABEL[p.outreach_state]) : '') + '</td><td class="hide-sm small">' + esc(day(p.last_activity_at || p.discovered_at)) + '</td><td class="small">' + esc(p.next_action) + '</td></tr>';
+          '<td class="hide-sm">' + st('', LIFE[p.lifecycle_status] || p.lifecycle_status) + (p.outreach_state ? ' ' + st(STATE_CLS[p.outreach_state], STATE_LABEL[p.outreach_state]) : '') + '</td><td class="hide-sm small">' + esc(day(p.last_activity_at || p.discovered_at)) + '</td><td class="small">' + (p.next_action === 'To approve' && isMgr() ? '<button type="button" class="btn btn-ghost" data-goq="' + esc(p.id) + '">To approve →</button>' : esc(p.next_action)) + '</td></tr>';
       }).join('') : '<tr><td colspan="7" class="empty">No prospects match.</td></tr>') + '</tbody></table></div>';
     h += '<div class="actions">' + (S.offset ? '<button type="button" class="btn btn-ghost" data-page="-1">← Previous</button>' : '') + (r.has_more ? '<button type="button" class="btn btn-ghost" data-page="1">Next →</button>' : '') + '</div>';
     $('app').innerHTML = h;
@@ -373,7 +502,7 @@ tr.click:hover td { background: var(--cream); }
 
   // ---------------- prospect drawer ----------------
   function openDrawerHtml(html) { $('drawer').innerHTML = html; $('drawer').hidden = false; $('scrim').hidden = false; $('drawer').scrollTop = 0; }
-  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; S.drawer = null; if (/^#p=/.test(location.hash)) history.replaceState(null, '', location.pathname); if (S.tab === 'prospects' || S.tab === 'followups') render(); }
+  function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; S.drawer = null; if (/^#p=/.test(location.hash)) history.replaceState(null, '', location.pathname); if (S.tab === 'prospects' || S.tab === 'followups' || S.tab === 'queue') render(); }
   async function openProspect(id) {
     try { S.drawer = await call('GET', '/prospects/' + id); } catch (e) { return fail(e); }
     history.replaceState(null, '', '#p=' + id);
@@ -730,6 +859,8 @@ tr.click:hover td { background: var(--cream); }
     var row = t.closest('[data-p]');
     if (row && !t.closest('button')) { S.dtab = row.getAttribute('data-dt') || 'overview'; $('notifPanel').hidden = true; return openProspect(row.getAttribute('data-p')); }
     var b = t.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-goq')) { S.tab = 'queue'; S.qFocus = b.getAttribute('data-goq'); try { localStorage.setItem('vm-ob-tab', S.tab); } catch (x) {} return render(); }
+    if (b.closest('[data-qp]') && !b.closest('#drawer')) return qAction(b);
     if (b.hasAttribute('data-mine')) { S.filters.mine = b.getAttribute('data-mine') === '1'; S.offset = 0; return render(); }
     if (b.hasAttribute('data-page')) { S.offset = Math.max(0, S.offset + 50 * Number(b.getAttribute('data-page'))); return render(); }
     if (b.id === 'dRun') return runDiscovery();
@@ -798,6 +929,9 @@ tr.click:hover td { background: var(--cream); }
   });
   document.addEventListener('change', function (ev) {
     var t = ev.target;
+    var qel = t.closest && t.closest('[data-qp]');
+    if (qel && t.hasAttribute('data-qchk')) return qSync(qel);
+    if (qel && t.hasAttribute('data-qcontact')) { var qc = qCard(qel.getAttribute('data-qp')); qc.contact_id = t.value; qRedraw(qc.prospect.id); return qDraft(qc.prospect.id); }
     if (t.id === 'repSel' && t.value && S.drawer) { var P = S.drawer.prospect; return act(function () { return call('POST', '/prospects/' + P.id + '/assign', { rep_id: t.value, reason: 'manual' }); }, 'Reassigned'); }
     var f = t.getAttribute && t.getAttribute('data-f');
     if (f && S.tab === 'prospects' && !t.closest('#drawer')) { S.filters[f] = t.value; S.offset = 0; render(); }
