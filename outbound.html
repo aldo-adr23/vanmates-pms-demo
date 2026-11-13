@@ -299,7 +299,7 @@ tr.click:hover td { background: var(--cream); }
     h += '<section class="dgroup"><h2 class="dhead">Replies to answer (' + replies.length + ')</h2>' + (replies.length ? '<div class="card tbl-wrap"><table class="tbl"><tbody>' + replies.map(function (x) {
       return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b> <span class="muted small">' + esc(x.city || '') + '</span></td><td>' + st(/interested|meeting|needs_information/.test(x.reply_class || '') ? 'ok' : '', (x.reply_class || 'reply').replace(/_/g, ' ')) + '</td><td class="small">Open the thread →</td></tr>';
     }).join('') + '</tbody></table></div>' : '<div class="card empty">No replies waiting.</div>') + '</section>';
-    h += '<section class="dgroup"><h2 class="dhead">To approve (' + cards.length + ')</h2>' + (cards.length ? qListHtml(cards) : '<div class="card empty">Nothing to approve. New companies are found every day and assigned to ' + (mgr ? esc(who) : 'you') + '.</div>') + '</section>';
+    h += '<section class="dgroup"><h2 class="dhead">To approve (' + cards.length + ')</h2>' + (cards.length ? qBulkHtml(cards) + qListHtml(cards) : '<div class="card empty">Nothing to approve. New companies are found every day and assigned to ' + (mgr ? esc(who) : 'you') + '.</div>') + '</section>';
     h += '<section class="dgroup"><h2 class="dhead">Running (' + running.length + ')</h2>' + (running.length ? '<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>Status</th><th>Next email</th><th class="hide-sm">Note</th><th></th></tr></thead><tbody>' + running.map(function (x) {
       var ctl = x.state === 'PAUSED' ? (x.unknown_send ? '<span class="small">Open to settle</span>' : '<button type="button" class="btn btn-ok" data-fact="resume" data-e="' + esc(x.enrollment_id) + '">Resume</button>') : '<button type="button" class="btn btn-ghost" data-fact="pause" data-e="' + esc(x.enrollment_id) + '">Pause</button>';
       return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div></td>' +
@@ -398,10 +398,62 @@ tr.click:hover td { background: var(--cream); }
     h += changesHtml(changes);
     h += '<div class="toolbar" style="margin-top:14px"><button type="button" class="chip' + (S.qFilter === 'need' ? ' on' : '') + '" data-qf="need">Needs a manager (' + need.length + ')</button><button type="button" class="chip' + (S.qFilter === 'all' ? ' on' : '') + '" data-qf="all">All reps (' + all.length + ')</button>' +
       '<span class="small muted">Reps approve their own clean contacts in My outreach. “Needs a manager” = doubtful or sent to you.</span></div>';
-    h += cards.length ? qListHtml(cards) : '<div class="card empty">' + (S.qFilter === 'need' ? 'Nothing needs a manager.' : 'Nothing to approve. New prospects appear here after research finds a contact email.') + '</div>';
+    h += cards.length ? qBulkHtml(cards) + qListHtml(cards) : '<div class="card empty">' + (S.qFilter === 'need' ? 'Nothing needs a manager.' : 'Nothing to approve. New prospects appear here after research finds a contact email.') + '</div>';
     $('app').innerHTML = h;
     if (S.qFocus) { var el = document.querySelector('[data-qp="' + S.qFocus + '"]'); S.qFocus = null; if (el) { el.scrollIntoView({ block: 'start' }); el.style.outline = '2px solid var(--red)'; } }
     qDraftAhead();
+  }
+  // "Approve & send all" (Aldo 2026-11-13): only CLEAN contacts (email seen on the company's own site, no refusal statement,
+  // not sent to a manager, or already approved). Doubtful ones stay for a person to check one by one.
+  function qClean(card) {
+    var c = qContact(card), comp = c.compliance || {}, ch = comp.checks || {};
+    if (comp.status === 'approved') return true;
+    return !c.needs_manager && comp.lawful_basis === 'conspicuous_publication' && ch.published_on_own_site === true && !ch.statement && !ch.escalated_by;
+  }
+  function qBulkHtml(cards) {
+    var n = cards.filter(qClean).length;
+    if (!n) return '';
+    return '<div class="toolbar" id="qBulk" style="margin:8px 0 12px"><button type="button" class="btn btn-primary" data-qall>Approve &amp; send all (' + n + ')</button>' +
+      '<button type="button" class="btn btn-ghost" data-qstop hidden>Stop</button><span class="small muted" id="qBulkMsg">' +
+      (n < cards.length ? (cards.length - n) + (cards.length - n === 1 ? ' doubtful contact stays' : ' doubtful contacts stay') + ' for one-by-one review. ' : '') +
+      'Each email is written by the AI and sent as is: open a card first if you want to read or change it.</span></div>';
+  }
+  async function qBulk(b) {
+    var cards = [].slice.call(document.querySelectorAll('#qList [data-qp]')).map(function (el) { return qCard(el.getAttribute('data-qp')); }).filter(function (c) { return c && qClean(c); });
+    if (!cards.length) return toast('Nothing clean to approve');
+    if (!confirmTwice(b, S.me.send_mode === 'live' && !S.me.sending_off ? 'Press again: email ' + cards.length + ' companies' : 'Press again to approve ' + cards.length)) return;
+    if (S.busy) return;
+    S.busy = true; S.qStop = false; b.disabled = true;
+    var stopBtn = document.querySelector('[data-qstop]'); if (stopBtn) stopBtn.hidden = false;
+    var msg = $('qBulkMsg'), ok = 0, later = 0, failed = [];
+    for (var i = 0; i < cards.length && !S.qStop; i++) {
+      var card = cards[i], pid = card.prospect.id, c = qContact(card), comp = c.compliance || {};
+      var el = document.querySelector('[data-qp="' + pid + '"]');
+      if (msg) msg.textContent = 'Working on ' + (i + 1) + ' of ' + cards.length + ': ' + card.prospect.company_name + '…';
+      try {
+        if (!c.enrollment || !c.enrollment.draft_body) {
+          c.enrollment = (await call('POST', '/queue/draft', { prospect_id: pid, contact_id: c.id, retry: true })).enrollment;
+          if (!c.enrollment || !c.enrollment.draft_body) throw new Error((c.enrollment && c.enrollment.last_error) || 'the first email could not be written');
+        }
+        // a draft the user edited on screen wins over the stored one
+        var subj = el && el.querySelector('[data-qsubj]'), body = el && el.querySelector('[data-qbody]');
+        var r = await call('POST', '/queue/approve', {
+          enrollment_id: c.enrollment.id, contact_id: c.id, subject: subj ? subj.value : c.enrollment.draft_subject, body: body ? body.value : c.enrollment.draft_body,
+          basis_evidence: comp.lawful_basis === 'conspicuous_publication' && comp.basis_evidence ? comp.basis_evidence : 'Published on ' + (comp.evidence_url || c.source_url || card.prospect.website_url || 'their website') + ' (checked by ' + S.me.name + ')',
+          evidence_url: comp.evidence_url || c.source_url,
+          checks: { published_on_own_site: true, role_relevant: true, no_unsolicited_statement: true, bulk: true } });
+        if (r.sent) ok++; else if (r.scheduled_for) later++; else failed.push(card.prospect.company_name + ': ' + ((r.verdict && r.verdict.message) || 'approved, not sent'));
+        if (el) el.remove();
+        S.queue = (S.queue || []).filter(function (x) { return x.prospect.id !== pid; });
+      } catch (e) {
+        failed.push(card.prospect.company_name + ': ' + e.message);
+        if (/^Contact approved/.test(e.message)) c.compliance = Object.assign({}, comp, { status: 'approved' });
+      }
+    }
+    S.busy = false;
+    var stopped = S.qStop; S.qStop = false;
+    render();
+    toast((stopped ? 'Stopped. ' : '') + ok + ' sent' + (later ? ', ' + later + ' scheduled for their business hours' : '') + (failed.length ? '. Not sent (still in the list): ' + failed.join(' · ') : ''));
   }
   function qCardHtml(card) {
     var p = card.prospect, c = qContact(card), comp = c.compliance || {}, ch = comp.checks || {}, e = c.enrollment;
@@ -991,6 +1043,8 @@ tr.click:hover td { background: var(--cream); }
     if (row && !t.closest('button')) { S.dtab = row.getAttribute('data-dt') || 'overview'; $('notifPanel').hidden = true; return openProspect(row.getAttribute('data-p')); }
     var b = t.closest('button'); if (!b) return;
     if (b.hasAttribute('data-goq')) { S.tab = 'queue'; S.qFocus = b.getAttribute('data-goq'); try { localStorage.setItem('vm-ob-tab', S.tab); } catch (x) {} return render(); }
+    if (b.hasAttribute('data-qall')) return qBulk(b);
+    if (b.hasAttribute('data-qstop')) { S.qStop = true; b.disabled = true; b.textContent = 'Stopping after this one…'; return; }
     if (b.closest('[data-qp]') && !b.closest('#drawer')) return qAction(b);
     if (b.hasAttribute('data-qf')) { S.qFilter = b.getAttribute('data-qf'); return render(); }
     if (!b.closest('#drawer') && (b.closest('[data-st]') || b.closest('[data-sc]') || b.hasAttribute('data-scopy')) && await stratAction(b)) return;
