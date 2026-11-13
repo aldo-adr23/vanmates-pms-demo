@@ -532,7 +532,8 @@ tr.click:hover td { background: var(--cream); }
     }
     h += '<div class="qmail">';
     if (rep && nm) h += '<div class="muted small">The first email is written once a manager approves the contact.</div>';
-    else if (!e || (!e.draft_body && !e.last_error)) h += '<div class="muted small">Writing the first email…</div>';
+    else if (c._drafting) h += '<div class="muted small">Writing the first email…</div>';
+    else if (!e || (!e.draft_body && !e.last_error)) h += '<div class="muted small">First email not written yet. It is written when you scroll to this card.</div><button type="button" class="btn btn-ghost" data-qwrite style="margin-top:6px">Write it now</button>';
     else if (!e.draft_body) h += '<div class="banner red">The first email could not be written: ' + esc(e.last_error) + '</div><button type="button" class="btn btn-ghost" data-qretry>Try again</button>';
     else h += '<label class="fl">Subject<input class="inp" data-qsubj value="' + esc(e.draft_subject || '') + '"></label>' +
       '<label class="fl" style="margin-top:8px">Message (greeting, ' + esc(p.rep_name || 'the rep') + '\'s signature, our address and the unsubscribe link are added automatically)<textarea class="inp" data-qbody rows="9">' + esc(e.draft_body) + '</textarea></label>' +
@@ -558,6 +559,7 @@ tr.click:hover td { background: var(--cream); }
     if (c.enrollment && (c.enrollment.draft_body || c.enrollment.last_error) && !retry) return;
     if (!isMgr() && c.needs_manager && !(c.compliance && c.compliance.status === 'approved')) return;
     if (c._drafting) return; c._drafting = true;
+    qRedraw(pid);   // show "Writing the first email…" while the AI works
     try { c.enrollment = (await call('POST', '/queue/draft', { prospect_id: pid, contact_id: c.id, retry: !!retry })).enrollment; }
     catch (e) { c.enrollment = { draft_body: null, last_error: e.message }; }
     finally { c._drafting = false; }
@@ -567,7 +569,25 @@ tr.click:hover td { background: var(--cream); }
     // draft the first email for the next few cards only: no AI cost for cards nobody reaches
     var els = [].slice.call(document.querySelectorAll('[data-qp]'));
     els.forEach(qSync);
+    qWatch(els);
     for (var i = 0; i < Math.min(3, els.length); i++) await qDraft(els[i].getAttribute('data-qp'));
+  }
+  // Also write a card's first email once it is on screen (Aldo 2026-11-13: cards below the top 3 sat on
+  // "Writing the first email…" forever). One AI call at a time; cards scrolled past quickly are dropped.
+  function qWatch(els) {
+    if (S.qObs) S.qObs.disconnect();
+    if (!window.IntersectionObserver) return;
+    S.qObs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        var pid = en.target.getAttribute('data-qp');
+        if (!en.isIntersecting) { clearTimeout(en.target._qT); return; }
+        en.target._qT = setTimeout(function () {
+          if (!document.body.contains(en.target)) return;
+          S.qChain = (S.qChain || Promise.resolve()).then(function () { return qDraft(pid); }).catch(function () {});
+        }, 600);
+      });
+    }, { threshold: 0.25 });
+    els.forEach(function (el) { S.qObs.observe(el); });
   }
   function qRemove(pid) {
     var el = document.querySelector('[data-qp="' + pid + '"]'); if (el) el.remove();
@@ -583,6 +603,7 @@ tr.click:hover td { background: var(--cream); }
     if (b.hasAttribute('data-qskip')) { S.qSkip = (S.qSkip || []).filter(function (x) { return x !== pid; }).concat([pid]); $('qList').appendChild(el); return qDraftAhead(); }
     if (b.hasAttribute('data-qother')) { S.dtab = c.compliance && c.compliance.status === 'approved' ? 'overview' : 'compliance'; return openProspect(pid); }
     if (b.hasAttribute('data-qretry')) return qDraft(pid, true);
+    if (b.hasAttribute('data-qwrite')) return qDraft(pid);
     if (b.hasAttribute('data-qesc')) { var row = el.querySelector('[data-qescrow]'); row.hidden = !row.hidden; if (!row.hidden) row.querySelector('input').focus(); return; }
     if (b.hasAttribute('data-qescgo')) {
       var note = el.querySelector('[data-qnote]').value.trim();
