@@ -294,15 +294,15 @@ tr.click:hover td { background: var(--cream); }
     S.queue = cards;
     var h = '';
     if (mgr) h += '<div class="toolbar"><label class="small" style="display:flex;gap:8px;align-items:center"><b>Viewing as</b><select class="sel" id="mineRep">' + S.me.reps.map(function (x) { return '<option value="' + esc(x.member_id) + '"' + (x.member_id === S.mineRep ? ' selected' : '') + '>' + esc(x.name) + (x.active ? '' : ' (inactive)') + '</option>'; }).join('') + '</select></label><span class="small muted">This is exactly what ' + esc(who) + ' sees.</span></div>';
-    var k = [['Emails sent this month', n.this_month.sent, 'last month ' + n.last_month.sent], ['Replies this month', n.this_month.replies, 'last month ' + n.last_month.replies], ['Positive replies', n.this_month.positive, 'last month ' + n.last_month.positive], ['Meetings', n.meetings, n.prospects + ' prospects'], ['Partners', n.partners, 'all time']];
-    h += '<section class="dgroup"><h2 class="dhead">' + (mgr ? esc(who) + '\'s numbers' : 'My numbers') + '</h2><div class="dgrid" style="--n:5">' + k.map(function (t) { return '<div class="card kpi"><div class="n">' + esc(t[1]) + '</div><div class="l">' + esc(t[0]) + '</div><div class="small muted">' + esc(t[2]) + '</div></div>'; }).join('') + '</div></section>';
+    var k = [['Emails sent this month', n.this_month.sent, 'last month ' + n.last_month.sent], ['Opened this month', n.this_month.opened || 0, 'last month ' + (n.last_month.opened || 0)], ['Replies this month', n.this_month.replies, 'last month ' + n.last_month.replies], ['Positive replies', n.this_month.positive, 'last month ' + n.last_month.positive], ['Meetings', n.meetings, n.prospects + ' prospects'], ['Partners', n.partners, 'all time']];
+    h += '<section class="dgroup"><h2 class="dhead">' + (mgr ? esc(who) + '\'s numbers' : 'My numbers') + '</h2><div class="dgrid" style="--n:' + k.length + '">' + k.map(function (t) { return '<div class="card kpi"><div class="n">' + esc(t[1]) + '</div><div class="l">' + esc(t[0]) + '</div><div class="small muted">' + esc(t[2]) + '</div></div>'; }).join('') + '</div></section>';
     h += '<section class="dgroup"><h2 class="dhead">Replies to answer (' + replies.length + ')</h2>' + (replies.length ? '<div class="card tbl-wrap"><table class="tbl"><tbody>' + replies.map(function (x) {
       return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b> <span class="muted small">' + esc(x.city || '') + '</span></td><td>' + st(/interested|meeting|needs_information/.test(x.reply_class || '') ? 'ok' : '', (x.reply_class || 'reply').replace(/_/g, ' ')) + '</td><td class="small">Open the thread →</td></tr>';
     }).join('') + '</tbody></table></div>' : '<div class="card empty">No replies waiting.</div>') + '</section>';
     h += '<section class="dgroup"><h2 class="dhead">To approve (' + cards.length + ')</h2>' + (cards.length ? qBulkHtml(cards) + qListHtml(cards) : '<div class="card empty">Nothing to approve. New companies are found every day and assigned to ' + (mgr ? esc(who) : 'you') + '.</div>') + '</section>';
     h += '<section class="dgroup"><h2 class="dhead">Running (' + running.length + ')</h2>' + (running.length ? '<div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>Status</th><th>Next email</th><th class="hide-sm">Note</th><th></th></tr></thead><tbody>' + running.map(function (x) {
       var ctl = x.state === 'PAUSED' ? (x.unknown_send ? '<span class="small">Open to settle</span>' : '<button type="button" class="btn btn-ok" data-fact="resume" data-e="' + esc(x.enrollment_id) + '">Resume</button>') : '<button type="button" class="btn btn-ghost" data-fact="pause" data-e="' + esc(x.enrollment_id) + '">Pause</button>';
-      return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div></td>' +
+      return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div>' + openHtml(x) + '</td>' +
         '<td class="small">' + esc(x.next_due_at && x.state !== 'PAUSED' ? when(x.next_due_at) : '–') + '</td><td class="hide-sm small' + (x.eligibility === 'ok' ? ' muted' : '') + '">' + esc(x.eligibility === 'ok' ? '' : x.eligibility || '') + '</td><td>' + ctl + '</td></tr>';
     }).join('') + '</tbody></table></div>' : '<div class="card empty">No sequences running.</div>') + '</section>';
     h += '<section class="dgroup"><h2 class="dhead">' + (mgr ? esc(who) + '\'s strategy' : 'My strategy') + '</h2>' + (strat.length ? strat.map(stratHtml).join('') : '<div class="card empty">No category to work yet.</div>') + '</section>';
@@ -377,6 +377,12 @@ tr.click:hover td { background: var(--cream); }
   }
 
   // ---------------- to approve (one card = contact approval + first email) ----------------
+  // open tracking (2026-11-13): real opens; Apple Mail fetches every image on delivery, so those are shown apart
+  function openHtml(x) {
+    if (x.opens) return '<div class="small">' + st('ok', 'Opened' + (x.opens > 1 ? ' ×' + x.opens : '')) + ' <span class="muted">' + esc(when(x.last_opened_at)) + '</span></div>';
+    if (x.apple_opens) return '<div class="small muted" title="Apple Mail loads images on delivery, so this does not mean they read it">Apple Mail: maybe opened</div>';
+    return x.opens === 0 ? '<div class="small muted">Not opened yet</div>' : '';
+  }
   function qBadge(n) { $('nQueue').hidden = !n; $('nQueue').textContent = n; }
   function qCard(pid) { return (S.queue || []).filter(function (c) { return c.prospect.id === pid; })[0]; }
   function qContact(card) { return card.contacts.filter(function (c) { return c.id === card.contact_id; })[0] || card.contacts[0]; }
@@ -891,7 +897,7 @@ tr.click:hover td { background: var(--cream); }
         var ctl = '';
         if (x.state === 'PAUSED') ctl = x.unknown_send ? '<span class="small">Open to settle</span>' : '<button type="button" class="btn btn-ok" data-fact="resume" data-e="' + esc(x.enrollment_id) + '">Resume</button>';
         else if (x.state === 'ACTIVE' || x.state === 'READY_TO_SEND') ctl = '<button type="button" class="btn btn-ghost" data-fact="pause" data-e="' + esc(x.enrollment_id) + '">Pause</button>';
-        return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + esc(x.rep_name || '') + '</td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div></td>' +
+        return '<tr class="click" tabindex="0" data-p="' + esc(x.prospect_id) + '" data-dt="emails"><td><b>' + esc(x.company) + '</b><div class="muted small">' + esc(x.city || '') + '</div></td><td>' + esc(x.rep_name || '') + '</td><td>' + st(STATE_CLS[x.state], STATE_LABEL[x.state]) + '<div class="small muted">' + esc(x.step) + '</div>' + openHtml(x) + '</td>' +
           '<td class="small">' + esc(x.next_due_at && ['ACTIVE', 'READY_TO_SEND'].indexOf(x.state) >= 0 ? when(x.next_due_at) : '–') + '</td><td class="small">' + esc(x.reply_class ? x.reply_class.replace(/_/g, ' ') : '–') + '</td><td class="hide-sm small' + (x.eligibility === 'ok' ? ' muted' : '') + '">' + esc(x.eligibility || '') + '</td><td>' + ctl + '</td></tr>';
       }).join('') : '<tr><td colspan="7" class="empty">Nothing here.</td></tr>') + '</tbody></table></div>';
     $('app').innerHTML = h;
