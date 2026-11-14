@@ -197,6 +197,14 @@ button.todo-it:hover { background: var(--cream); }
 .lbl2 { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
 @media (max-width: 860px) { .today { grid-template-columns: 1fr; } }
 .board-wrap { overflow-x: auto; padding-bottom: 6px; }
+.board.one { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.board.one .col { background: transparent; padding: 0; }
+.board.one .col .ch { display: none; }
+.board.one .col .hint { margin: 0 2px 2px; }
+.stages { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px 10px; padding: 2px 12px; }
+.stages::-webkit-scrollbar { display: none; }
+.stages .chip b { font-variant-numeric: tabular-nums; }
+.stages .chip.hotc:not(.on) { border-color: var(--red); color: var(--red); }
 .board { display: grid; grid-template-columns: repeat(var(--cols), minmax(200px, 1fr)); gap: 10px; min-width: calc(var(--cols) * 210px); align-items: start; }
 .col { background: var(--cream-2); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .col.hot { background: var(--red-soft); }
@@ -876,6 +884,8 @@ details.dsec > .in { padding: 0 12px 12px; }
     return '<div class="kc" tabindex="0" role="button" data-p="' + esc(x.id) + '"><span class="t">' + esc(x.company_name) + '</span><div class="m"><span>' + esc(x.city || '') + rep(x.rep_name) + '</span>' + scoreHtml(x) + '</div>' +
       (col === 'found' && x.next_action ? '<div class="small muted">' + esc(x.next_action) + '</div>' : '') + '</div>';
   }
+  var PHONE = window.matchMedia('(max-width: 700px)');
+  if (PHONE.addEventListener) PHONE.addEventListener('change', function () { if (S.tab === 'companies' && S.cview === 'board' && S.B && $('drawer').hidden) drawBoard(); });
   function drawBoard() {
     var B = S.B, mgr = isMgr(), team = mgr && !S.boardRep, LIM = 12;
     var cols = COLS.concat(S.boardDone ? [['done', 'Finished', 'All emails sent, stopped or opted out']] : []);
@@ -883,7 +893,17 @@ details.dsec > .in { padding: 0 12px 12px; }
       return '<button type="button" class="chip' + (S.boardRep === x.member_id ? ' on' : '') + '" data-brep="' + esc(x.member_id) + '">' + esc(x.name) + '</button>';
     }).join('') : '<span class="small muted">Your companies, left to right from found to partner. Click one to see everything about it.</span>') +
       '<span class="sp"></span><button type="button" class="chip' + (S.boardDone ? ' on' : '') + '" data-bdone>' + (S.boardDone ? 'Hide finished' : 'Show finished') + '</button></div>';
-    h += '<div class="board-wrap"><div class="board" style="--cols:' + cols.length + '">' + cols.map(function (c) {
+    // phone (2026-11-14): one stage at a time, picked from chips with counts, instead of six columns to swipe through
+    var phone = PHONE.matches;
+    if (phone) {
+      if (!S.bStage || !cols.some(function (c) { return c[0] === S.bStage; })) S.bStage = (cols.filter(function (c) { return (c[0] === 'replied' || c[0] === 'ready') && (B[c[0]] || []).length; })[0] || ['emailing'])[0];
+      h += '<div class="stages" role="tablist" aria-label="Stage">' + cols.map(function (c) {
+        var n = (B[c[0]] || []).length, hot = (c[0] === 'ready' || c[0] === 'replied') && n;
+        return '<button type="button" role="tab" aria-selected="' + (S.bStage === c[0]) + '" class="chip' + (S.bStage === c[0] ? ' on' : '') + (hot ? ' hotc' : '') + '" data-bstage="' + c[0] + '">' + esc(c[1]) + ' <b>' + esc(n + (B.more[c[0]] ? '+' : '')) + '</b></button>';
+      }).join('') + '</div>';
+      cols = cols.filter(function (c) { return c[0] === S.bStage; });
+    }
+    h += '<div class="board-wrap"><div class="board' + (phone ? ' one' : '') + '" style="--cols:' + cols.length + '">' + cols.map(function (c) {
       var list = B[c[0]] || [], n = list.length + (B.more[c[0]] ? '+' : ''), show = S.bOpen[c[0]] ? list : list.slice(0, LIM);
       var hot = (c[0] === 'ready' || c[0] === 'replied') && list.length;
       return '<div class="col' + (hot ? ' hot' : '') + '"><div class="ch"><span>' + esc(c[1]) + '</span><span class="n">' + esc(n) + '</span></div><div class="hint">' + esc(c[2]) + '</div>' +
@@ -1419,6 +1439,7 @@ details.dsec > .in { padding: 0 12px 12px; }
     if (b.hasAttribute('data-cv')) { S.cview = b.getAttribute('data-cv'); S.offset = 0; return render(); }
     if (b.hasAttribute('data-brep')) { S.boardRep = b.getAttribute('data-brep'); S.bOpen = {}; return render(); }
     if (b.hasAttribute('data-bdone')) { S.boardDone = !S.boardDone; return render(); }
+    if (b.hasAttribute('data-bstage')) { S.bStage = b.getAttribute('data-bstage'); return drawBoard(); }
     if (b.hasAttribute('data-bmore')) { S.bOpen[b.getAttribute('data-bmore')] = 1; return drawBoard(); }
     if (b.hasAttribute('data-blist')) { S.cview = 'list'; S.offset = 0; S.filters.status = b.getAttribute('data-blist'); if (S.boardRep) S.filters.rep = S.boardRep; return render(); }
     if (b.hasAttribute('data-erep')) { S.erep = b.getAttribute('data-erep'); return render(); }
