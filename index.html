@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-17-roomhold1"></script>
+<script src="pms-supabase.js?v=2026-11-17-celmsg1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -25222,8 +25222,28 @@ function celSettingsHtml(){
       <span class="name-sub" style="flex-basis:100%">New rates apply to bookings confirmed from now on; confirmed bookings keep their locked price. Same from/to as an existing rate replaces it.</span></form></div>`;
 }
 
+// The result used to show only at the top of the booking, above where staff had scrolled to the button
+// (Victor, CB-1059 2026-11-17: "it does not go through"). Now: buttons in the card go busy while it runs,
+// and the result shows as a toast and again inside the card that was used (when it is still on the page).
+function celShowResult(cardTitle){
+  const msg = CEL_STATE.msg;
+  if (!msg) return;
+  showToast(msg);
+  if (!cardTitle) return;
+  const card = [...document.querySelectorAll('.card')].find(c => (c.querySelector('h3') || {}).textContent === cardTitle);
+  if (!card) return;
+  const p = document.createElement('p');
+  p.className = 'name-sub'; p.dataset.celInlineMsg = '';
+  p.style.cssText = `margin:8px 0 0;font-weight:600;color:var(--${msg.startsWith('✓') ? 'green' : 'red'})`;
+  p.textContent = msg;
+  card.appendChild(p);
+}
 async function celAction(id, action, body, okMsg){
   CEL_STATE.msg = '';
+  const cardTitle = CEL_STATE.actCard || '';
+  CEL_STATE.actCard = '';
+  const card = cardTitle ? [...document.querySelectorAll('.card')].find(c => (c.querySelector('h3') || {}).textContent === cardTitle) : null;
+  if (card) { card.querySelectorAll('[data-cel-inline-msg]').forEach(n => n.remove()); card.querySelectorAll('button').forEach(b => { b.disabled = true; }); }
   try {
     await celCall('POST', `/api/staff/cat/bookings/${encodeURIComponent(id)}/${action}`, body || {});
     CEL_STATE.msg = '✓ ' + (okMsg || 'Saved');
@@ -25231,11 +25251,18 @@ async function celAction(id, action, body, okMsg){
     await celOpen(id);
     CEL_STATE.msg = '✓ ' + (okMsg || 'Saved');
     renderPartners();
-  } catch (e) { CEL_STATE.msg = e.message || String(e); renderPartners(); }
+  } catch (e) {
+    CEL_STATE.msg = '✗ Not done: ' + (e.message || String(e));
+    renderPartners();
+  }
+  celShowResult(cardTitle);
 }
 
 function celWire(root){
-  const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => fn(el, e)));
+  const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach(el => el.addEventListener(ev, e => {
+    CEL_STATE.actCard = ((el.closest('.card') || {}).querySelector ? (el.closest('.card').querySelector('h3') || {}).textContent : '') || '';
+    fn(el, e);
+  }));
   on('[data-cel-quick]', 'click', b => { CEL_STATE.filters.status = b.dataset.celQuick; renderPartners(); });
   on('[data-cel-filter]', 'change', el => { CEL_STATE.filters[el.dataset.celFilter] = el.value; renderPartners(); });
   on('[data-cel-open]', 'click', tr => { CEL_STATE.allOptions = false; celOpen(tr.dataset.celOpen); window.scrollTo(0, 0); });
