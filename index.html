@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-11-lunomx1"></script>
+<script src="pms-supabase.js?v=2026-11-17-roomhold1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11705,7 +11705,10 @@ async function loadVacancies(force){
       VAC_STATE.country = 'CA';
       // Latest open checkout per Asana room, for Turnover.
       const byGid = {};
-      ((rel && rel.data) || []).forEach(e => { const g = e.after && e.after.match === 'exact' && e.after.asana_gid; if (g && !byGid[g]) byGid[g] = e.case_id; });
+      // Only a case whose LATEST room_release is exact counts: a later held one (resident already
+      // left the room, checkout-room-hold-2026-11-17.sql) means the case says nothing about this room.
+      const seenCase = {};
+      ((rel && rel.data) || []).forEach(e => { if (seenCase[e.case_id]) return; seenCase[e.case_id] = 1; const g = e.after && e.after.match === 'exact' && e.after.asana_gid; if (g && !byGid[g]) byGid[g] = e.case_id; });
       const ids = [...new Set(Object.values(byGid))];
       const cases = ids.length ? ((await sb.from('checkout_cases').select('*').in('id', ids).is('deleted_at', null).neq('status', 'Closed')).data || []) : [];
       const caseById = {}; cases.forEach(c => { caseById[c.id] = c; });
@@ -28727,6 +28730,7 @@ function ckoTimeline(events, nameOf, city, snapshots){
     const who = /^staff:/.test(actor) ? nameOf(actor.slice(6)) : actor === 'system' ? ckoL('Vanmates (automatic)', 'Vanmates (automático)') : actor.replace(/^resident:/, '');
     const what = e.type === 'cleaning_report' && after.outcome === 'updated' ? 'Cleaning report updated'
       : e.type === 'refund_sent' && after.kind === 'top_up' ? ckoT('Top-up sent')
+      : e.type === 'room_release' && after.match === 'held' ? 'Room release held'
       : e.type === 'room_release' && after.match !== 'exact' ? 'Room not matched'
       : ckoT(CKO_EVENT_LABELS[e.type] || String(e.type || '').replace(/_/g, ' '));
     return { at: e.at, who, what, detail };
@@ -29473,6 +29477,9 @@ function ckoRoomRelease(events){
   if (e.type === 'room_release') {
     if (a.match === 'exact') return { tone: 'blue', text: `Queued: ${room}, available ${ckoRoomDay(a.target_date)}${a.via === 'staff' ? ' (chosen by staff)' : ''}` };
     if (a.match === 'test') return { tone: 'blue', text: 'Test house: no room released' };
+    // checkout-room-hold-2026-11-17.sql: the resident had already left this room, so Asana was not touched.
+    if (a.match === 'held' && a.hold_reason === 'duplicate_checkout') return { tone: 'amber', text: `Not released: ${a.earlier_case || 'an earlier checkout'} already checked this resident out of ${room}, so Asana was left as it is. Use Choose room only if the room really frees up on ${ckoRoomDay(a.target_date)}` };
+    if (a.match === 'held') return { tone: 'amber', text: `Not released: Tenants shows this resident moved out of ${a.tenant_property || room} on ${ckoRoomDay(a.tenant_moved_out_at)}, before this form, so Asana was left as it is. Use Choose room only if they really still live there` };
     if (a.match === 'ambiguous') return { tone: 'red', text: `Not released: several rooms match (${[].concat(a.candidates || []).join(', ')}). Use Choose room.` };
     if (a.match === 'no_inventory') return { tone: 'blue', text: 'Not released automatically: this city has no rooms in the inventory yet' };
     if (a.match === 'error') return { tone: 'red', text: `Room matching failed: ${a.error || 'unknown error'}. Put the room back on sale in Asana by hand.` };
@@ -29490,6 +29497,8 @@ function ckoRoomRelease(events){
       : { tone: 'amber', text: `Retrying (attempt ${a.attempt || '?'} of 3): ${err}` };
   }
   if (e.type === 'room_cancel_noted') return { tone: 'amber', text: `Checkout cancelled: ${room} was released; check in Asana whether it should be Rented again` };
+  // n8n leaves a room that is already in "Empty rooms" where it is (2026-11-17 Parker 402).
+  if (a.reason === 'already_listed' && /^empty rooms$/i.test(String(a.section || '').trim())) return { tone: 'green', text: `Already empty in Asana: ${room} stays on sale${a.listed_from ? ' from ' + ckoRoomDay(a.listed_from) : ''} (not moved to this resident's date)` };
   if (a.reason === 'already_listed') return { tone: 'green', text: `Already on sale: ${room}, available ${ckoRoomDay(a.target_date)}` };
   // 2026-10-04: no Lease Start, but the room already sits in a later month in Asana (re-booked by hand).
   if (a.reason === 'rebooked' && !a.lease_start && a.listed_from) return { tone: 'amber', text: `Not released: ${room} is already listed in Asana from ${ckoRoomDay(a.listed_from)} (booked until then?). If the resident is just leaving early, move it by hand` };
@@ -47536,7 +47545,7 @@ document.addEventListener("submit", (ev) => {
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
 <script src="extensions.js?v=2026-11-06-autoall2"></script>
-<script src="retention.js?v=2026-11-11-lunomx1"></script>
+<script src="retention.js?v=2026-11-17-roomhold1"></script>
 <script src="ap.js?v=2026-11-06-autoall2"></script>
 <script src="properties.js?v=2026-11-06-autoall2"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
