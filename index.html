@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-17-celmsg1"></script>
+<script src="pms-supabase.js?v=2026-11-17-celstu1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24851,6 +24851,16 @@ const CEL_STATUS = {
   CONFIRMED: ['Confirmed · room pending', 'amber'], ASSIGNED: ['Room assigned', 'green'], CANCELLED: ['Cancelled', 'red'],
 };
 const CEL_STAGE = { on_track: ['On track', 'green'], review: ['Review required', 'blue'], due_soon: ['Assignment due soon', 'gold'], overdue: ['Overdue / urgent', 'red'] };
+// CB-1059 2026-11-17: CEL sent "Marine" with no student profile; staff only found out when Assign was refused
+// (STUDENT_DETAILS_MISSING). Warn on the booking as soon as it is confirmed. The partner app reminds the school by
+// email at confirmation and 30/14/7 days before check-in (feat/cel-student-link).
+function celStudentNeededHtml(b){
+  if (!b || b.status !== 'CONFIRMED' || b.student_id) return '';
+  return `<div class="card" style="padding:12px 16px;margin-bottom:12px;background:var(--cream-2);border-left:4px solid var(--gold, #c58a1e)">
+    <strong>No student linked: the room can't be assigned yet.</strong>
+    <p class="name-sub" style="margin:4px 0 0">Ask ${esc(b.agency_name || 'the school')} to add the student (full name + email) in the partner portal, then link them under Student profile.
+    The school is also reminded by email 30, 14 and 7 days before arrival.</p></div>`;
+}
 const CEL_ERRORS = {
   ROOM_TAKEN: 'that room was just taken for these dates — pick another one',
   CLEANING_FEE_MISSING: 'set the CEL cleaning fee first (Settings below, admins)',
@@ -25054,7 +25064,7 @@ function celHtml(){
           <td class="name-sub">${esc(r.owner || '—')}</td>
           <td class="name-sub" style="white-space:nowrap">${r.last_review_at ? esc(ptnStamp(r.last_review_at)) : '—'}</td>
           <td class="name-sub" style="white-space:nowrap">${r.next_reminder ? esc(ptnDay(r.next_reminder)) : '—'}</td>
-          <td>${ptnPill(st)}${sg ? `<br>${ptnPill(sg)}` : ''}${r.attention_reason ? `<br><span class="tag-pill red">${esc(r.attention_reason === 'OVERCOMMITTED' ? 'Over-committed' : r.attention_reason)}</span>` : ''}
+          <td>${ptnPill(st)}${sg ? `<br>${ptnPill(sg)}` : ''}${r.status === 'CONFIRMED' && !r.student_id ? '<br><span class="tag-pill gold" title="The room can\'t be assigned until the school adds the student">No student yet</span>' : ''}${r.attention_reason ? `<br><span class="tag-pill red">${esc(r.attention_reason === 'OVERCOMMITTED' ? 'Over-committed' : r.attention_reason)}</span>` : ''}
             ${r.room ? `<br><span class="name-sub">${esc(r.room.property || '')} · ${esc(r.room.room || '')}</span>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table></div>` : '<p class="name-sub">No CEL bookings match.</p>'}`;
@@ -25083,6 +25093,7 @@ function celDetailHtml(){
       ${b.attention_reason ? `<span class="tag-pill red">${esc(b.attention_reason === 'OVERCOMMITTED' ? 'Over-committed: confirmed demand exceeds free rooms' : b.attention_reason)}</span>` : ''}
       <span class="name-sub" data-cel-checked style="margin-left:auto">${esc(celCheckedText())}</span></div>
     ${msg}
+    ${celStudentNeededHtml(b)}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;align-items:start">
       <div>
         ${section('Booking', `<table>${row('Agency', esc(b.agency_name || ''))}
@@ -25151,6 +25162,7 @@ function celDetailHtml(){
       </div>
       <div>
         ${b.status === 'CONFIRMED' || b.status === 'ASSIGNED' || open ? section(b.status === 'ASSIGNED' ? 'Move to another room' : 'Room options (smallest vacancy gap first)', `
+          ${b.status === 'CONFIRMED' && !b.student_id ? '<p class="name-sub" style="margin:0 0 8px;color:var(--red);font-weight:600">Link the student first: Assign is refused until the booking has a student profile with an email.</p>' : ''}
           ${cap && cap.ok ? `<p class="name-sub" style="margin:0 0 8px">Free eligible rooms: <strong>${cap.free_rooms}</strong> · confirmed ahead of this one: <strong>${cap.committed_ahead}</strong> · safe capacity: <strong style="color:var(--${cap.safe < (b.n_students || 1) ? 'red' : 'green'})">${cap.safe}</strong></p>` : ''}
           ${b.status === 'ASSIGNED' && !CEL_STATE.allOptions ? '<button class="btn btn-ghost btn-mini" type="button" data-cel-more>Show rooms free for these dates</button>' : opts.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
             <thead><tr class="name-sub" style="text-align:left"><th style="padding:6px">Room</th><th>Free from</th><th>Gap before</th><th>Gap after</th><th>Travel</th><th></th></tr></thead>
