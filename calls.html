@@ -189,7 +189,7 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
       <div class="chips" id="cbFilter">
         <button class="chip on" data-s="open">Open</button>
         <button class="chip" data-s="done">Done</button>
-        <button class="chip" data-s="cancelled">Cancelled</button>
+        <button class="chip" data-s="cancelled">Spam / duplicate</button>
       </div>
     </div>
     <div class="card" id="cbList"><div class="empty">Loading…</div></div>
@@ -357,6 +357,7 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
   }
 
   // ---------------------------------------------------------------- callbacks
+  var OUTCOME = { called_back: 'Called back', solved_elsewhere: 'Solved on WhatsApp / email', no_answer: 'Tried, no answer (keep open)', spam_vendor: 'Spam / vendor / not a customer', duplicate: 'Duplicate', other: 'Other (add a note)' };
   async function loadCallbacks() {
     var d = await api('/callbacks?status=' + S.cbStatus);
     var rows = d.callbacks || [];
@@ -373,8 +374,10 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
         (b.notes ? '<div class="small muted" style="white-space:pre-line">Notes: ' + esc(b.notes) + '</div>' : '') +
         '<div class="small"><a href="#' + esc(b.call_id) + '" data-call="' + esc(b.call_id) + '">Call details</a>' + (b.lead_id ? ' · <a href="index.html#lead=' + encodeURIComponent(b.lead_id) + '">Lead</a>' : '') + '</div>' +
         '</div><div class="acts">' + (b.status === 'open'
-          ? '<button class="btn btn-call btn-sm" data-dial="' + esc(b.phone) + '" data-dialcb="' + esc(b.id) + '" data-dialname="' + esc(b.name || '') + '">Call</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="done">Called back</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="note">Add note</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="cancelled">Cancel</button>'
-          : '<button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="open">Reopen</button>') + '</div></div>';
+          ? '<button class="btn btn-call btn-sm" data-dial="' + esc(b.phone) + '" data-dialcb="' + esc(b.id) + '" data-dialname="' + esc(b.name || '') + '">Call</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="close">What happened…</button><button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="note">Add note</button>'
+          : (b.outcome ? '<span class="pill p-grey">' + esc(OUTCOME[b.outcome] || b.outcome) + '</span>' : '') + '<button class="btn btn-ghost btn-sm" data-cb="' + esc(b.id) + '" data-to="open">Reopen</button>') + '</div>' +
+        (b.status !== 'open' && (b.outcome_note || b.closed_by) ? '<div class="small muted" style="grid-column:1/-1">' + esc(b.outcome_note || '') + (b.closed_by ? ' — ' + esc(b.closed_by) + (b.closed_at ? ', ' + esc(when(b.closed_at)) : '') : '') + '</div>' : '') +
+        (Number(b.repeat_count) > 0 ? '<div class="small" style="grid-column:1/-1"><span class="pill p-red">Called ' + (Number(b.repeat_count) + 1) + '×</span></div>' : '') + '</div>';
     }).join('');
   }
   async function updateCallback(id, to, btn) {
@@ -387,11 +390,30 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
       }
       return;
     }
-    if (to === 'savenote') body.notes = btn.parentNode.querySelector('textarea').value.trim();
+    if (to === 'close') {
+      var r = btn.closest('.cb');
+      if (!r.querySelector('.outcome')) {
+        r.insertAdjacentHTML('beforeend', '<div class="outcome" style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">' +
+          '<select class="inp" style="max-width:260px"><option value="">What happened?</option>' + Object.keys(OUTCOME).map(function (k) { return '<option value="' + k + '">' + esc(OUTCOME[k]) + '</option>'; }).join('') + '</select>' +
+          '<textarea class="inp" style="flex:1;min-width:200px" placeholder="Short note (what was agreed, ticket number…)"></textarea>' +
+          '<button class="btn btn-primary btn-sm" data-cb="' + esc(id) + '" data-to="saveoutcome">Save</button></div>');
+        r.querySelector('.outcome select').focus();
+      }
+      return;
+    }
+    if (to === 'saveoutcome') {
+      var box = btn.closest('.outcome');
+      body.outcome = box.querySelector('select').value;
+      body.note = box.querySelector('textarea').value.trim();
+      if (!body.outcome) { toast('Pick what happened.'); return; }
+      if (body.outcome === 'other' && !body.note) { toast('Add a short note for "Other".'); return; }
+    } else if (to === 'savenote') body.notes = btn.parentNode.querySelector('textarea').value.trim();
     else body.status = to;
     btn.disabled = true;
-    await api('/callbacks/' + encodeURIComponent(id), { method: 'POST', body: body });
-    toast(to === 'done' ? 'Marked as called back.' : to === 'savenote' ? 'Note saved.' : 'Updated.');
+    try {
+      await api('/callbacks/' + encodeURIComponent(id), { method: 'POST', body: body });
+    } catch (e) { btn.disabled = false; toast((e && e.message) || 'Could not save.'); return; }
+    toast(to === 'saveoutcome' ? (body.outcome === 'no_answer' ? 'Attempt noted; it stays open.' : 'Saved: ' + OUTCOME[body.outcome] + '.') : to === 'savenote' ? 'Note saved.' : 'Updated.');
     await loadCallbacks();
     loadOverview().catch(function () {});
   }
