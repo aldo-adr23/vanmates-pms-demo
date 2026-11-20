@@ -244,7 +244,23 @@
     }
     return out;
   }
-  const PR_CORE = { words, nums, index, resolve, roomLabel, tenantRoom, roomState, model, accessFor, contractRooms, roomNotes };
+  // House notices (tenant app stage 5b). Dates are YYYY-MM-DD in the portal's local day.
+  const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const isIso = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x || "");
+  // Shown in the app until the day after the event, or 14 days after posting.
+  function noticeUntil(eventDate, todayIso) { return isIso(eventDate) ? addDays(eventDate, 1) : addDays(todayIso, 14); }
+  // "" when the form can be posted, else the message to show.
+  function noticeCheck(f, todayIso) {
+    const title = String((f && f.title) || "").trim(), body = String((f && f.body) || "");
+    if (!title) return "Add a title.";
+    if (title.length > 120) return "Keep the title under 120 characters.";
+    if (body.length > 2000) return "Keep the message under 2000 characters.";
+    if (f.time && !isIso(f.date)) return "Pick a date for the event time.";
+    if (isIso(f.date) && f.date < todayIso) return "The event date is in the past.";
+    if (isIso(f.until) && f.until < todayIso) return "“Show until” can't be in the past.";
+    return "";
+  }
+  const PR_CORE = { words, nums, index, resolve, roomLabel, tenantRoom, roomState, model, accessFor, contractRooms, roomNotes, noticeUntil, noticeCheck };
   window.PR_CORE = PR_CORE;
   if (typeof document === "undefined" || !document.querySelector) return;
 
@@ -460,7 +476,8 @@
     const crumbs = [`<a href="#" data-pr-back>Properties</a>`, p0.city ? `<span>${esc(p0.city)}</span>` : "",
       !isBuilding && building !== name ? `<a href="#" data-pr-open="${esc(building)}">${esc(building)}</a>` : ""].filter(Boolean).join(`<span class="pr-sep">›</span>`);
     const kpi = (l, v, s, cls) => `<div class="kpi${cls ? " " + cls : ""}"><div class="kpi-label">${l}</div><div class="kpi-value">${v}</div>${s ? `<div class="kpi-trend">${s}</div>` : ""}</div>`;
-    const tabs = [["rooms", "Rooms", rooms.length || nRooms], ["tenants", "Tenants", live.length + moving.length], ["info", "House info", ""]].concat(showMoney ? [["money", "Money", ""]] : []);
+    const nActive = NT.key === names.join("|") && NT.list ? NT.list.filter((n) => n.active).length : "";
+    const tabs = [["rooms", "Rooms", rooms.length || nRooms], ["tenants", "Tenants", live.length + moving.length], ["info", "House info", ""], ["notices", "Notices", nActive || ""]].concat(showMoney ? [["money", "Money", ""]] : []);
     if (!tabs.some(([k]) => k === PR.tab)) PR.tab = "rooms";
     const prof = profileOf(names);
     box.innerHTML = `
@@ -485,7 +502,7 @@
       </div>
       ${isBuilding ? `<div class="pr-units">${names.map((n) => { const e = m.props.get(n) || { rooms: [], tenants: [] }; const r = ppRowOf(n); const f = e.rooms.filter((x) => x.state.key === "free").length; return `<button type="button" class="pr-unit" data-pr-open="${esc(n)}"><b>${esc(typeof ppUnitLabel === "function" && r ? ppUnitLabel(r) : n)}</b><span class="hb-sub">${r ? r.occupied + "/" + r.rooms + " occupied" : ""}${f ? ` · <span class="pr-free-txt">${f} free</span>` : ""}</span></button>`; }).join("")}</div>` : ""}
       <div class="hb-tabbar" role="tablist">${tabs.map(([k, l, n]) => `<button type="button" class="hb-tab${PR.tab === k ? " on" : ""}" role="tab" data-pr-tab="${k}">${l}${n !== "" ? `<span class="hb-n">${n}</span>` : ""}</button>`).join("")}</div>
-      <div class="pr-body">${PR.tab === "tenants" ? tenantsTab(tns, T) : PR.tab === "info" ? infoTab(names, rooms, prof, ll) : PR.tab === "money" ? moneyTab(pps, c) : roomsTab(rooms, loose, live, names, isBuilding)}</div>`;
+      <div class="pr-body">${PR.tab === "tenants" ? tenantsTab(tns, T) : PR.tab === "notices" ? noticesTab(names) : PR.tab === "info" ? infoTab(names, rooms, prof, ll) : PR.tab === "money" ? moneyTab(pps, c) : roomsTab(rooms, loose, live, names, isBuilding)}</div>`;
     if (PR.focus) { const el = box.querySelector(`[data-pr-room="${CSS.escape(PR.focus)}"]`); if (el) { el.classList.add("pr-hl"); el.scrollIntoView({ block: "center" }); } PR.focus = ""; }
     const sub = $("page-sub"); if (sub) sub.textContent = `${name} · ${live.length}/${nRooms} occupied`;
   }
@@ -555,6 +572,98 @@
     }).join("");
     return out || `<div class="tn-empty">No tenants on file for this property.</div>`;
   }
+  // ── Notices tab (tenant app stage 5b): post to the app's House screen + push ──
+  const NT = { key: "", names: [], list: null, recipients: null, loading: false, err: "", msg: "", busy: false, del: null, draft: null };
+  const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  const rpcErr = (e) => { const m = String((e && (e.message || e.code)) || e || ""); return /PGRST202|does not exist|Could not find the function/i.test(m) ? "Notices aren't switched on yet (stage 5b SQL not applied)." : /notice:forbidden/.test(m) ? "Only team members can post notices." : m; };
+  async function loadNotices(names, force) {
+    const key = names.join("|");
+    if (!force && NT.key === key && (NT.list || NT.loading)) return;
+    const sb = window.vmDb && window.vmDb.sb;
+    NT.key = key; NT.names = names; NT.loading = true; NT.err = "";
+    if (!force) { NT.list = null; NT.recipients = null; NT.msg = ""; NT.del = null; NT.draft = null; }
+    try {
+      if (!sb) throw new Error("Not signed in");
+      const [l, r] = await Promise.all([sb.rpc("app_notices_list", { p_properties: names }), sb.rpc("app_notice_recipients", { p_properties: names })]);
+      if (l.error) throw l.error;
+      if (r.error) throw r.error;
+      NT.list = Array.isArray(l.data) ? l.data : []; NT.recipients = r.data;
+    } catch (e) { NT.list = NT.list || []; NT.err = rpcErr(e); }
+    NT.loading = false;
+    if (PR.open && PR.tab === "notices") renderDetail();
+  }
+  function noticesTab(names) {
+    if (NT.key !== names.join("|")) { loadNotices(names); return `<p class="hb-sub">Loading notices…</p>`; }
+    const v = NT.draft || {}, t = todayIso();
+    const when = (n) => n.event_at ? new Date(n.event_at).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" }) : "";
+    const item = (n) => `<div class="pr-notice${n.active ? "" : " pr-notice-old"}" style="border:1px solid var(--line,#e5e0d8);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;gap:8px;align-items:baseline"><b style="flex:1">${esc(n.title)}</b>
+          ${n.active ? `<span class="hb-sub">until ${esc(dt(n.show_until))}</span>${NT.del === n.id ? `<button type="button" class="btn btn-ghost tn-mini" data-pr-ndel-ok="${esc(n.id)}" style="color:#B3261E">Confirm delete</button>` : `<button type="button" class="btn btn-ghost tn-mini" data-pr-ndel="${esc(n.id)}">Delete</button>`}`
+            : `<span class="hb-sub">${n.deleted_at ? "deleted" + (n.deleted_by ? " by " + esc(n.deleted_by) : "") : "ended"}</span>`}</div>
+        ${n.event_at ? `<div class="hb-sub">When: ${esc(when(n))}</div>` : ""}
+        ${n.body ? `<div style="white-space:pre-line;margin-top:6px">${esc(n.body)}</div>` : ""}
+        <div class="hb-sub" style="margin-top:6px">${esc(dt(n.created_at))}${n.created_by ? " · " + esc(n.created_by) : ""} · ${n.notify ? `push to ${esc(n.recipients)} tenant${n.recipients === 1 ? "" : "s"}` : `no push (${esc(n.recipients)} tenant${n.recipients === 1 ? "" : "s"} see it in the app)`}${names.length > 1 && (n.properties || []).length ? " · " + esc(n.properties.length) + " units" : ""}</div>
+      </div>`;
+    const active = (NT.list || []).filter((n) => n.active), old = (NT.list || []).filter((n) => !n.active);
+    return `<div class="pr-notices" style="display:grid;gap:18px;max-width:760px">
+      <form id="pr-nform" style="display:grid;gap:10px;border:1px solid var(--line,#e5e0d8);border-radius:14px;padding:16px">
+        <div style="font-weight:700">Post a notice to the tenant app</div>
+        <label class="hb-sub">Title<input class="form-input" name="ntitle" maxlength="120" value="${esc(v.title || "")}" placeholder="Water shut-off on Tuesday"></label>
+        <label class="hb-sub">Message<textarea class="form-input" name="nbody" maxlength="2000" rows="4" placeholder="What happens, when, and what tenants should do. Links work.">${esc(v.body || "")}</textarea></label>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+          <label class="hb-sub">Event date (optional)<input class="form-input" type="date" name="ndate" min="${t}" value="${esc(v.date || "")}"></label>
+          <label class="hb-sub">Time<input class="form-input" type="time" name="ntime" value="${esc(v.time || "")}"></label>
+          <label class="hb-sub">Show until<input class="form-input" type="date" name="nuntil" min="${t}" value="${esc(v.until || "")}" placeholder="auto"></label>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="nnotify" ${v.notify === false ? "" : "checked"}> Send a push notification</label>
+        <div class="hb-sub">${NT.recipients == null ? "" : `Reaches ${esc(NT.recipients)} current tenant${NT.recipients === 1 ? "" : "s"} of ${names.length > 1 ? "these " + names.length + " units" : "this property"} (moved in, or moving in within 14 days). `}Shown on their House screen until the day after the event, or 14 days if there's no event. Japanese and Spanish speakers see an automatic translation.</div>
+        ${NT.msg ? `<div class="hb-sub" role="status" style="color:${/^Posted/.test(NT.msg) ? "#1E6B3A" : "#B3261E"}">${esc(NT.msg)}</div>` : ""}
+        ${NT.err ? `<div class="hb-sub" role="alert" style="color:#B3261E">${esc(NT.err)}</div>` : ""}
+        <div><button class="btn btn-primary tn-mini" type="submit" ${NT.busy ? "disabled" : ""}>${NT.busy ? "Posting…" : "Post notice"}</button></div>
+      </form>
+      <div><div style="font-weight:700;margin-bottom:8px">Showing in the app now</div>${NT.loading && !NT.list ? `<p class="hb-sub">Loading…</p>` : active.length ? active.map(item).join("") : `<p class="hb-sub">No notices showing.</p>`}</div>
+      ${old.length ? `<div><div style="font-weight:700;margin-bottom:8px">Earlier</div>${old.slice(0, 20).map(item).join("")}</div>` : ""}
+    </div>`;
+  }
+  async function postNotice(f) {
+    const val = (n) => (f.elements.namedItem(n) || {}).value || "";
+    const v = { title: val("ntitle"), body: val("nbody"), date: val("ndate"), time: val("ntime"), until: val("nuntil"), notify: !!(f.elements.namedItem("nnotify") || {}).checked };
+    NT.draft = v; NT.msg = "";
+    const t = todayIso();
+    const bad = PR_CORE.noticeCheck(v, t);
+    if (bad) { NT.msg = bad; renderDetail(); return; }
+    const sb = window.vmDb && window.vmDb.sb;
+    NT.busy = true; renderDetail();
+    try {
+      const r = await sb.rpc("app_notice_create", {
+        p_properties: NT.names, p_title: v.title.trim(), p_body: v.body.trim(),
+        p_event_at: v.date ? new Date(`${v.date}T${v.time || "09:00"}`).toISOString() : null,
+        p_show_until: v.until || PR_CORE.noticeUntil(v.date, t), p_notify: v.notify,
+      });
+      if (r.error) throw r.error;
+      const n = (r.data && r.data.recipients) || 0;
+      NT.draft = null;
+      NT.msg = `Posted. ${v.notify ? `Push sent to ${n} tenant${n === 1 ? "" : "s"}.` : `Showing to ${n} tenant${n === 1 ? "" : "s"} (no push).`}`;
+      if (typeof showToast === "function") showToast("Notice posted");
+    } catch (e) { NT.msg = "Couldn't post: " + rpcErr(e); }
+    NT.busy = false;
+    await loadNotices(NT.names, true);
+    renderDetail();
+  }
+  async function deleteNotice(id) {
+    const sb = window.vmDb && window.vmDb.sb;
+    try { const r = await sb.rpc("app_notice_delete", { p_id: Number(id) }); if (r.error) throw r.error; NT.msg = ""; if (typeof showToast === "function") showToast("Notice removed from the app"); }
+    catch (e) { NT.msg = "Couldn't delete: " + rpcErr(e); }
+    NT.del = null;
+    await loadNotices(NT.names, true);
+    renderDetail();
+  }
+  document.addEventListener("submit", (e) => {
+    if (!e.target || e.target.id !== "pr-nform") return;
+    e.preventDefault();
+    postNotice(e.target);
+  });
+
   function infoTab(names, rooms, prof, ll) {
     const m = getModel();
     const acc = names.map((n) => m.access.get(n)).filter(Boolean);
@@ -626,9 +735,11 @@
   function onClick(e) {
     const an = e.target.closest(".pr-anote");
     if (an) { an.classList.toggle("pr-open"); return; }
-    const a = e.target.closest("[data-pr-mode],[data-pr-rf],[data-pr-back],[data-pr-open],[data-pr-tab],[data-pr-tenant],[data-pr-add],[data-pr-addroom],[data-pr-copy],[data-pr-ll],[data-pr-goto],[data-pr-tenants],[data-pr-asana]");
+    const a = e.target.closest("[data-pr-mode],[data-pr-rf],[data-pr-back],[data-pr-open],[data-pr-tab],[data-pr-tenant],[data-pr-add],[data-pr-addroom],[data-pr-copy],[data-pr-ll],[data-pr-goto],[data-pr-tenants],[data-pr-asana],[data-pr-ndel],[data-pr-ndel-ok]");
     if (!a) return;
     const d = a.dataset;
+    if (d.prNdel) { NT.del = Number(d.prNdel); renderDetail(); return; }
+    if (d.prNdelOk) { a.disabled = true; deleteNotice(d.prNdelOk); return; }
     if (d.prMode) { PR.mode = d.prMode; save(); syncMode(); return; }
     if (d.prRf) { PR.rf = d.prRf; renderRooms(); return; }
     if (a.hasAttribute("data-pr-back")) { e.preventDefault(); close(); return; }
