@@ -410,6 +410,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   .wkpick { flex: 1 1 100%; justify-content: space-between; }
   .toolbar select.sel { flex: 1 1 130px; min-width: 0; } /* was flex:1 — squeezed both to a bare arrow next to the buttons */
 }
+.ci-app{border:1px solid #E4DBC9;border-radius:12px;padding:10px 12px;margin:10px 0;background:#FFFDF8}
+.ci-app .note{margin:4px 0}
 </style>
 </head>
 <body data-tab="arrivals">
@@ -974,7 +976,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       '<div class="psub">' + esc([r.school, r.student_email].filter(str).join(' · ') || '—') + '</div><div style="margin-top:6px">' + chipHtml(r) + (isBooked(r) ? ' ' + sourceTag(r) : '') + '</div></div>' +
       '<button type="button" class="pclose" data-act="close" aria-label="Close">✕</button></div>' +
       '<dl class="facts">' + facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl>' +
-      sendsPanelHtml(sendList, Date.now()) + (S.sendsErr && r.sent_at ? '<p class="note">Could not load the emails sent: ' + esc(S.sendsErr) + '</p>' : '') +
+      appCheckinHtml(r) + sendsPanelHtml(sendList, Date.now()) + (S.sendsErr && r.sent_at ? '<p class="note">Could not load the emails sent: ' + esc(S.sendsErr) + '</p>' : '') +
       warn + '<div class="pact">' + acts.join('') + '</div>' + fx + fuPanelHtml(r) +
       '<div class="pv-head"><b>Email preview</b><span class="muted" style="font-size:12px">' + esc(r.student_email || 'no email yet') + '</span></div>' +
       '<div class="pv-subj">Subject: ' + esc(mail.subject) + '</div>' +
@@ -1097,6 +1099,41 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   // Cancel a whole arrival (rpc arrivals_set_status 'cancelled'): every unsent email of it stops — check-in
   // instructions, Welcome / room-change and check-out (the check-out trigger skips it). Nothing is deleted; Reopen /
   // Restore brings it back. A contract-voided arrival stays cancelled (the contract is gone).
+  // Tenant app self check-in (stage 7, arrivals_app_checkins): loaded when a panel opens; never changes status.
+  var CI_ITEM = { bed: 'Bed & mattress', wardrobe: 'Wardrobe', desk: 'Desk & chair', window: 'Window & blinds', lights: 'Lights & outlets', heat: 'Heating', lock: 'Door lock', clean: 'Cleanliness' };
+  var CI_KEY = { room_key: 'room key', fob: 'building fob', mailbox: 'mailbox key', door_code_ok: 'front door code' };
+  function appCheckinHtml(r) {
+    S.appCI = S.appCI || {};
+    var c = S.appCI[r.id];
+    if (c === undefined) {
+      S.appCI[r.id] = 'loading';
+      sb.rpc('arrivals_app_checkins', { p_ids: [r.id] }).then(function (res) {
+        S.appCI[r.id] = (!res.error && Array.isArray(res.data) && res.data[0]) || null;
+        if (S.openId === r.id) renderPanel();
+      }, function () { S.appCI[r.id] = null; });
+      return '';
+    }
+    if (!c || c === 'loading') return '';
+    if (c.status !== 'checked_in') {
+      return '<div class="ci-app"><b>Tenant app</b><p class="note">' + (c.status === 'living' ? 'Said they already live here (no check-in).' : 'Said they haven’t arrived yet; will check in from the app.') + '</p></div>';
+    }
+    var keys = c.keys || {}, missing = Object.keys(CI_KEY).filter(function (k) { return keys[k] === false; }).map(function (k) { return CI_KEY[k]; });
+    var items = (c.condition && Array.isArray(c.condition.items) ? c.condition.items : []).filter(function (i) { return i.status === 'issue'; }).map(function (i) { return CI_ITEM[i.id] || i.id; });
+    var photos = Array.isArray(c.photos) ? c.photos : [];
+    return '<div class="ci-app"><b>Checked in from the app · ' + esc(clock(c.checked_in_at)) + '</b>' +
+      '<p class="note">Keys: ' + (missing.length ? 'missing ' + esc(missing.join(', ')) : 'all received') + ' · Wi-Fi: ' + (c.wifi_ok === false ? 'not working' : c.wifi_ok ? 'connected' : '—') + '</p>' +
+      '<p class="note">Room: ' + (items.length ? '<b>issues</b> with ' + esc(items.join(', ')) : 'everything good') + '</p>' +
+      (c.note ? '<p class="note">“' + esc(c.note) + '”</p>' : '') +
+      (photos.length ? '<p class="note">' + photos.map(function (ph, i) { return '<button type="button" class="btn btn-ghost tn-mini" data-cip="' + esc(ph) + '">Photo ' + (i + 1) + '</button>'; }).join(' ') + '</p>' : '') + '</div>';
+  }
+  document.addEventListener('click', async function (e) {
+    var b = e.target.closest && e.target.closest('[data-cip]');
+    if (!b) return;
+    var path = String(b.getAttribute('data-cip')).replace(/^app-checkin\//, '');
+    var res = await sb.storage.from('app-checkin').createSignedUrl(path, 300);
+    if (res.error || !res.data) { toast('Could not open the photo'); return; }
+    window.open(res.data.signedUrl, '_blank', 'noopener');
+  });
   async function cancelArrival(arrivalId, name, after) {
     var ok = await confirmSheet('Cancel the arrival of ' + (str(name) || 'this tenant') + '?',
       '<p class="note">No more emails go to them for this stay: arrival instructions, welcome and check-out are all stopped. Emails already sent stay sent. You can reopen it later from Check-ins.</p>',
