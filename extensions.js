@@ -279,6 +279,16 @@
       </form>`;
   }
 
+  // 2026-11-20 (Victor): an extension done outside the portal (e.g. contract sent by hand) could only be
+  // closed with Decline, which emails the tenant "declined". This closes it as CANCELLED: no email.
+  function doneHtml(r, hs){
+    return `${H('Already handled outside the portal')}
+      <form data-ex-done="${e(r.id)}" style="display:grid;gap:10px">
+        <label class="name-sub" style="display:grid;gap:4px">What was done (internal, the ${hs ? 'student' : 'tenant'} is NOT emailed)<input class="form-input" name="done_note" maxlength="500" placeholder="e.g. Contract sent by hand by Marcela, signed Nov 18"></label>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-ghost" type="submit">Mark done (no email)</button></div>
+      </form>`;
+  }
+
   async function open(id){
     const tok = ++openSeq;
     if (!rows) await load();
@@ -363,6 +373,7 @@
       ${act.accept ? hsAcceptHtml(r) : ''}
       ${hsPaymentHtml(r)}
       ${act.decline ? declineHtml(r, true) : ''}
+      ${act.decline ? doneHtml(r, true) : ''}
       ${act.reopen ? `${H('Declined')}<div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><span class="name-sub">Changed your mind? Reopen it to accept it instead.</span><button class="btn btn-ghost" type="button" data-ex-reopen="${e(r.id)}">Reopen</button></div>` : ''}
       ${H('Request')}
       ${kv('Student', `${e(d.name || '')} <span class="name-sub">${e(r.email)}</span>`)}
@@ -398,6 +409,7 @@
       ${act.accept ? acceptHtml(r) : ''}
       ${contractHtml(r)}
       ${act.decline ? declineHtml(r) : ''}
+      ${act.decline ? doneHtml(r) : ''}
       ${act.reopen ? `${H('Declined')}<div style="display:flex;gap:8px;align-items:center;justify-content:space-between"><span class="name-sub">Changed your mind? Reopen it to accept it instead.</span><button class="btn btn-ghost" type="button" data-ex-reopen="${e(r.id)}">Reopen</button></div>` : ''}
       ${H('Request')}
       ${kv('Tenant', `${e(d.name || '')} <span class="name-sub">${e(r.email)}</span>`)}
@@ -598,6 +610,15 @@
     if (!ok && btn) btn.disabled = false;
   }
 
+  async function markDone(form){
+    const id = form.dataset.exDone;
+    const what = String(new FormData(form).get('done_note') || '').trim();
+    if (!confirm('Close ' + id + ' as already handled? No email is sent to the tenant.')) return;
+    const btn = form.querySelector('button[type="submit"]'); if (btn) btn.disabled = true;
+    const ok = await staffUpdate(id, { status: 'CANCELLED', note: 'Handled outside the portal' + (what ? ': ' + what : '') }, 'Closed ' + id + ' (no email)');
+    if (!ok && btn) btn.disabled = false;
+  }
+
   async function save(form){
     const id = form.dataset.exForm;
     const fd = new FormData(form);
@@ -641,6 +662,7 @@
       if (ev.target.matches('[data-ex-hs-accept]')) { ev.preventDefault(); hsAccept(ev.target.dataset.exHsAccept); }
       else if (ev.target.matches('[data-ex-accept]')) { ev.preventDefault(); const a = acc[ev.target.dataset.exAccept]; if (a) { a.room_gid = ''; } accept(ev.target.dataset.exAccept); }
       else if (ev.target.matches('[data-ex-decline]')) { ev.preventDefault(); decline(ev.target); }
+      else if (ev.target.matches('[data-ex-done]')) { ev.preventDefault(); markDone(ev.target); }
       else if (ev.target.matches('[data-ex-form]')) { ev.preventDefault(); save(ev.target); }
     });
     if (pb) pb.addEventListener('change', ev => {
