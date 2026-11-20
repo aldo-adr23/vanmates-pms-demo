@@ -178,7 +178,7 @@ a.brand-home:focus-visible { outline: 2px solid var(--red); outline-offset: 2px;
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12.5px; margin-top: 2px; }
 .chb { position: absolute; right: -3px; bottom: -3px; width: 15px; height: 15px; border-radius: 50%; border: 2px solid var(--surface); color: #fff;
   font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-.chb.whatsapp { background: var(--wa); } .chb.line { background: var(--ln); }
+.chb.whatsapp { background: var(--wa); } .chb.line { background: var(--ln); } .chb.app { background: #B94A3F; }
 .meta { flex: 1; min-width: 0; }
 .l1 { display: flex; gap: 6px; align-items: center; }
 .name { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -485,14 +485,14 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     </div>
     <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search name, phone, message" autocomplete="off" /></div>
     <div class="filters" id="filters">
-      <select data-f="platform"><option value="">All platforms</option><option value="whatsapp">WhatsApp</option><option value="line">LINE</option></select>
+      <select data-f="platform"><option value="">All platforms</option><option value="whatsapp">WhatsApp</option><option value="line">LINE</option><option value="app">Tenant app</option></select>
       <select data-f="agent" id="f-agent"><option value="">All agents</option></select>
       <select data-f="status"><option value="">All statuses</option><option value="new">New</option><option value="open">Open</option>
         <option value="waiting_customer">Waiting for customer</option><option value="waiting_internal">Waiting for internal team</option></select>
       <select data-f="priority"><option value="">All priorities</option><option value="urgent">Urgent</option><option value="high">High</option>
         <option value="normal">Normal</option><option value="low">Low</option></select>
       <select data-f="source"><option value="">All sources</option><option value="whatsapp_maya">WhatsApp Maya</option>
-        <option value="line_maya">LINE Maya</option><option value="japan_team">Japan team</option><option value="cs_agent">Taken back by CS</option></select>
+        <option value="line_maya">LINE Maya</option><option value="japan_team">Japan team</option><option value="cs_agent">Taken back by CS</option><option value="tenant_app">Tenant app</option></select>
       <input data-f="from" type="date" aria-label="From date" />
       <input data-f="to" type="date" aria-label="To date" />
       <div class="fbtns"><button type="button" class="act" id="fclear">Clear filters</button><button type="button" class="act primary fdone" id="fdone">Done</button></div>
@@ -512,7 +512,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="cs-core.js?v=2026-10-24b"></script>
+<script src="cs-core.js?v=2026-11-19-csapp1"></script>
 <script>
 (function () {
   'use strict';
@@ -737,7 +737,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     $('rows').innerHTML = list.map(function (c) {
       var u = C.csUnread(c, S.reads);
       return '<div class="row' + (u ? ' unread' : '') + (c.id === S.openId ? ' sel' : '') + '" data-id="' + esc(c.id) + '">' +
-        '<div class="av">' + esc(initials(c.customer_name)) + '<span class="chb ' + esc(c.channel) + '">' + (c.channel === 'line' ? 'L' : 'W') + '</span></div>' +
+        '<div class="av">' + esc(initials(c.customer_name)) + '<span class="chb ' + esc(c.channel) + '">' + (c.channel === 'line' ? 'L' : c.channel === 'app' ? 'A' : 'W') + '</span></div>' +
         '<div class="meta"><div class="l1"><span class="name">' + esc(c.customer_name || c.customer_phone || 'Unknown') + '</span>' +
         '<span class="time">' + esc(C.csAgo(c.last_message_at, now)) + (u ? ' <span class="badge">' + u + '</span>' : '') + '</span></div>' +
         '<div class="prev">' + esc(C.csPreview(c)) + '</div><div class="tags">' + tagsFor(c) + '</div></div></div>';
@@ -849,7 +849,8 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
   // so agents don't introduce themselves twice. WhatsApp keeps its exact original wording; LINE uses
   // C.csIntroHint's Japanese handoff phrase (Maya's own wording, not a translation of the English one).
   function introPending(c) {
-    if (!c || !c.current_case_id) return false;
+    // Tenant app: no Maya, no handoff intro (cs_app_reply sends the text as typed).
+    if (!c || !c.current_case_id || c.channel === 'app') return false;
     var k = S.cases.filter(function (x) { return x.id === c.current_case_id; })[0];
     return !!(k && !k.first_reply_at);
   }
@@ -868,7 +869,7 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
 
   function buildComposer(c, mode, now) {
     if (mode === 'take_back') {
-      return '<div class="composer"><button class="wide" data-act="take_back">Take back from ' + (c.owner_kind === 'japan_team' ? 'the Japan team' : 'Maya') + '</button></div>';
+      return '<div class="composer"><button class="wide" data-act="take_back">' + (c.channel === 'app' ? 'Reopen conversation' : 'Take back from ' + (c.owner_kind === 'japan_team' ? 'the Japan team' : 'Maya')) + '</button></div>';
     }
     if (mode === 'template' && S.mode === 'reply') {
       return '<div class="composer"><div class="cmodes"><span class="seg"><button class="on" data-mode="reply">Reply</button><button data-mode="note">Internal note</button></span>' +
@@ -892,7 +893,8 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     var quotaNote = (isLine && S.mode === 'reply')
       ? '<div class="quotafull" id="quotaFull"' + (quotaFull ? '' : ' hidden') + '>LINE monthly message limit reached — sending is disabled until it resets.</div>' : '';
     // 📎 is reply mode only (never internal notes, never the WhatsApp-window-closed template button above).
-    var attBtn = S.mode === 'reply'
+    // Tenant app: text only for now (no 📎).
+    var attBtn = S.mode === 'reply' && c.channel !== 'app'
       ? '<button type="button" class="iconbtn" id="attBtn" aria-label="Attach a photo, video or PDF" title="Attach">📎</button>' +
         '<input type="file" id="attFile" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif,video/mp4,application/pdf" hidden />'
       : '';
@@ -938,12 +940,13 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
         S.team.map(function (m) { return '<option value="' + esc(m.email) + '"' + (String(m.email).toLowerCase() === String(c.assignee || '').toLowerCase() ? ' selected' : '') + '>' + esc(m.name || m.email) + '</option>'; }).join('') + '</select>';
       actions += '<select class="act" data-act="priority" aria-label="Priority">' + ['urgent', 'high', 'normal', 'low'].map(function (p) {
         return '<option value="' + p + '"' + (c.priority === p ? ' selected' : '') + '>' + p.charAt(0).toUpperCase() + p.slice(1) + '</option>'; }).join('') + '</select>';
-      var returns = '<button class="act ghost" data-act="return">Return to Maya</button>' +
+      // Tenant app has no Maya: Resolve is the way to close it (the tenant's next message reopens a case).
+      var returns = (c.channel === 'app' ? '' : '<button class="act ghost" data-act="return">Return to Maya</button>') +
         (c.channel === 'line' ? '<button class="act ghost" data-act="return_japan">Return to Japan team</button>' : '');
       actions += '<button class="act primary" data-act="resolve">Resolve ✓</button>';
       // Wide screens: the returns live in a small ⋯ menu so the header toolbar stays one tidy row.
       // Phones: plain buttons in the scrollable bar (a dropdown would be clipped there).
-      actions += NARROW.matches ? returns
+      if (returns) actions += NARROW.matches ? returns
         : '<details class="more"><summary class="act" aria-label="More actions" title="More actions">⋯</summary><div class="menu">' + returns + '</div></details>';
     }
     var inHead = !NARROW.matches;
@@ -1281,6 +1284,13 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     }
     var conv = S.openId;
     try {
+      // Tenant app conversations: recorded in Supabase (cs_app_reply = cs_staff_sent + an in-app push), no n8n.
+      if ((S.convs[conv] || {}).channel === 'app') {
+        if (kind !== 'text') { toast('The tenant app takes text messages only.'); return false; }
+        var ar = await sb.rpc('cs_app_reply', { p_conversation_id: conv, p_body: text });
+        if (ar.error || !ar.data || !ar.data.ok) { toast((ar.data && ar.data.error) || 'Not sent.'); return false; }
+        return true;
+      }
       var res = await fetch(CS_SEND_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await token()) },
         body: JSON.stringify({ conversation_id: conv, kind: kind, text: text }) });
       var j = {}; try { j = await res.json(); } catch (e) { j = { ok: false, error: 'Bad response from the send service.' }; }
@@ -1717,8 +1727,8 @@ table.h tr.click { cursor: pointer; } table.h tr.click:hover td { background: va
     var agents = '<option value="">All agents</option>' + S.team.map(function (m) { return '<option value="' + esc(m.email) + '"' + (H.agent === m.email ? ' selected' : '') + '>' + esc(m.name || m.email) + '</option>'; }).join('');
     var sel = function (k, opts) { return '<select data-h="' + k + '">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + (H[k] === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>'; };
     el.innerHTML = '<div class="hfilters">' + sel('period', [['today', 'Last 24 h'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['all', 'All time']]) +
-      sel('platform', [['', 'All platforms'], ['whatsapp', 'WhatsApp'], ['line', 'LINE']]) +
-      sel('source', [['', 'All sources'], ['whatsapp_maya', 'WhatsApp Maya'], ['line_maya', 'LINE Maya'], ['japan_team', 'Japan team'], ['cs_agent', 'Taken back by CS']]) +
+      sel('platform', [['', 'All platforms'], ['whatsapp', 'WhatsApp'], ['line', 'LINE'], ['app', 'Tenant app']]) +
+      sel('source', [['', 'All sources'], ['whatsapp_maya', 'WhatsApp Maya'], ['line_maya', 'LINE Maya'], ['japan_team', 'Japan team'], ['cs_agent', 'Taken back by CS'], ['tenant_app', 'Tenant app']]) +
       '<select data-h="agent">' + agents + '</select></div><div id="hbody"><div class="empty">Loading…</div></div>';
     var now = new Date();
     var q = sb.from('cs_cases').select('*, cs_conversations(customer_name, channel, channel_account)').order('opened_at', { ascending: false }).limit(2000);
