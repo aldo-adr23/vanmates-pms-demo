@@ -588,6 +588,10 @@
       if (l.error) throw l.error;
       if (r.error) throw r.error;
       NT.list = Array.isArray(l.data) ? l.data : []; NT.recipients = r.data;
+      // Event registrations from the tenant app (stage 7); quietly absent until its SQL is applied.
+      const evIds = NT.list.filter((n) => n.event_at).map((n) => n.id);
+      NT.going = {};
+      if (evIds.length) { const g = await sb.rpc("app_notice_rsvp_counts", { p_ids: evIds }); if (!g.error && g.data && typeof g.data === "object") NT.going = g.data; }
     } catch (e) { NT.list = NT.list || []; NT.err = rpcErr(e); }
     NT.loading = false;
     if (PR.open && PR.tab === "notices") renderDetail();
@@ -600,7 +604,7 @@
         <div style="display:flex;gap:8px;align-items:baseline"><b style="flex:1">${esc(n.title)}</b>
           ${n.active ? `<span class="hb-sub">until ${esc(dt(n.show_until))}</span>${NT.del === n.id ? `<button type="button" class="btn btn-ghost tn-mini" data-pr-ndel-ok="${esc(n.id)}" style="color:#B3261E">Confirm delete</button>` : `<button type="button" class="btn btn-ghost tn-mini" data-pr-ndel="${esc(n.id)}">Delete</button>`}`
             : `<span class="hb-sub">${n.deleted_at ? "deleted" + (n.deleted_by ? " by " + esc(n.deleted_by) : "") : "ended"}</span>`}</div>
-        ${n.event_at ? `<div class="hb-sub">When: ${esc(when(n))}</div>` : ""}
+        ${n.event_at ? `<div class="hb-sub">When: ${esc(when(n))}${NT.going && NT.going[String(n.id)] ? ` · <b>${esc(NT.going[String(n.id)])} registered</b>` : ""}</div>` : ""}
         ${n.body ? `<div style="white-space:pre-line;margin-top:6px">${esc(n.body)}</div>` : ""}
         <div class="hb-sub" style="margin-top:6px">${esc(dt(n.created_at))}${n.created_by ? " · " + esc(n.created_by) : ""} · ${n.notify ? `push to ${esc(n.recipients)} tenant${n.recipients === 1 ? "" : "s"}` : `no push (${esc(n.recipients)} tenant${n.recipients === 1 ? "" : "s"} see it in the app)`}${names.length > 1 && (n.properties || []).length ? " · " + esc(n.properties.length) + " units" : ""}</div>
       </div>`;
