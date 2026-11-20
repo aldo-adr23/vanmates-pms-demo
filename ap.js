@@ -1,7 +1,7 @@
 /* AP (portal): accounts payable — one list of everything Vanmates pays.
    Reads ap_items / ap_events through RLS (ap-2026-10-11.sql). Writes only through ap_staff_update / ap_staff_bulk
    (admins and accountants). Lu (the Slack bookkeeper) fills the list: cleaners' pay workbook, BC Hydro / FortisBC /
-   internet bills from rent@ (PAD), and employee expenses (mirrored; those are approved on Lu's Slack card).
+   internet bills from rent@ (PAD), and employee expenses (mirrored from Lu; Approve / Deny / Mark paid here are queued for Lu, which applies them).
    Loaded by index.html after the main script (uses esc, showToast, CURRENT_USER, window.properties, window.vmDb.sb
    and the shared detail panel). */
 (function(){
@@ -53,7 +53,8 @@
     return list.slice().sort((a, b) => key(a).localeCompare(key(b)) || String(a.payee).localeCompare(String(b.payee)));
   }
   const periodText = (r) => r.period_start && r.period_end ? `${r.period_start} → ${r.period_end}` : (r.bill_date || '');
-  // What the drawer offers. Employee expenses are decided on Lu's Slack card, but can be edited or deleted here (Lu follows).
+  // What the drawer offers. Employee expenses belong to Lu: Approve / Deny / Mark paid here are queued for Lu (ap_staff_receipt_decide),
+  // which applies them to the receipt + payroll line and mirrors the new status back. They can also be edited or deleted here (Lu follows).
   // Once paid or in QuickBooks: details can still be fixed, the amount can't, and it can't be deleted.
   function actionsFor(r, canAct){
     const lu = r.type === 'employee_expense';
@@ -63,6 +64,7 @@
       approve: canAct && !lu && open, skip: canAct && !lu && !['paid', 'recorded', 'skipped'].includes(r.status),
       reopen: canAct && !lu && ['skipped', 'approved'].includes(r.status), markPaid: canAct && !lu && r.status === 'approved',
       setProperty: canAct && !lu, setEmail: canAct && r.type === 'cleaning' && !['paid', 'recorded'].includes(r.status),
+      luApprove: canAct && lu && open, luDeny: canAct && lu && open, luPaid: canAct && lu && r.status === 'approved',
       edit: canAct, editAmount: canAct && !settled, remove: canAct && !settled, note: canAct,
     };
   }
@@ -292,7 +294,7 @@
     if (action === 'copy-visible') return copyList(sortRows(filtered()));
     if (action === 'delete') return bulkDelete(picked);
     const eligible = picked.filter(r => { const a = actionsFor(r, true); return action === 'approve' ? a.approve : action === 'mark_paid' ? a.markPaid : a.skip; });
-    if (!eligible.length) { toast(action === 'mark_paid' ? 'Only approved items can be marked paid.' : action === 'approve' ? 'Nothing selected can be approved here (employee expenses are approved on Lu\'s Slack card).' : 'Nothing selected can be skipped.'); return; }
+    if (!eligible.length) { toast(action === 'mark_paid' ? 'Only approved items can be marked paid.' : action === 'approve' ? 'Nothing selected can be approved in bulk (open an employee expense to approve it; Lu applies it).' : 'Nothing selected can be skipped.'); return; }
     const ref = (document.getElementById('ap-bulk-ref') || {}).value || '';
     try {
       const r = await sb().rpc('ap_staff_bulk', { p_ids: eligible.map(x => x.id), p_action: action, p_patch: action === 'mark_paid' ? { paid_ref: ref } : {} });
@@ -386,6 +388,17 @@
     } catch (err) { toast('Could not update: ' + (err && err.message || err)); return false; }
   }
 
+  // Employee expense decisions are queued for Lu (ap-receipt-decide-2026-11-14.sql); the item's status changes when Lu applies them.
+  async function luDecide(id, action, btn){
+    if (btn) btn.disabled = true;
+    try {
+      const r = await sb().rpc('ap_staff_receipt_decide', { p_id: id, p_action: action });
+      if (r.error) throw r.error;
+      toast({ lu_approve: 'Approval', lu_deny: 'Denial', lu_paid: 'Mark paid' }[action] + ' sent to Lu. It applies within ~10 minutes.');
+      await open(id);
+    } catch (err) { if (btn) btn.disabled = false; toast('Could not send to Lu: ' + (err && err.message || err)); }
+  }
+
   function propertyOptions(current, withNew){
     const names = [...new Set(((window.properties || [])).map(p => p && p.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     return `<option value="">— choose —</option>` + names.map(n => `<option ${n === current ? 'selected' : ''}>${e(n)}</option>`).join('') + (current && !names.includes(current) ? `<option selected>${e(current)}</option>` : '')
@@ -442,7 +455,19 @@
           <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-ghost" type="button" data-ap-do="delete-cancel">Cancel</button><button class="btn btn-primary" type="submit" style="background:var(--red,#b42318);border-color:var(--red,#b42318)">Delete</button></div>
         </form>` : ''}` : ''}
       ${days.length ? H('By day') + `<div style="display:grid;grid-template-columns:auto auto;gap:2px 16px;max-width:280px">${days.map(([k, v]) => `<span class="name-sub">${e(k)}</span><span style="text-align:right">${e(money(v))}</span>`).join('')}</div>` : ''}
-      ${r.type === 'employee_expense' ? `<p class="name-sub" style="margin-top:16px">Employee expenses are approved on Lu's card in Slack (#bookkeping-review) and paid through payroll. Edits and deletes made here reach Lu too.</p>` : ''}
+      ${r.type === 'employee_expense' ? (() => {
+        const LU = ['lu_approve', 'lu_deny', 'lu_paid'];
+        // still waiting for Lu: the last decision sent has not changed the status yet (approve/deny leave review; paid leaves approved)
+        const last = (events || []).filter(ev => LU.includes(ev.action)).pop();
+        const queued = last && (last.action === 'lu_paid' ? r.status === 'approved' : ['needs_review', 'flagged'].includes(r.status)) ? last : null;
+        const what = queued ? { lu_approve: 'Approval', lu_deny: 'Denial', lu_paid: 'Mark paid' }[queued.action] : '';
+        return (queued ? `<p class="name-sub" style="margin-top:16px"><b>${e(what)} sent to Lu</b> by ${e(queued.actor || '')}. Lu applies it within ~10 minutes and this item updates.</p>`
+          : (a.luApprove || a.luPaid ? H('Decision') + `<div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${a.luApprove ? `<button class="btn btn-primary" type="button" data-ap-do="lu_approve">Approve</button>` : ''}
+            ${a.luDeny ? `<button class="btn btn-ghost" type="button" data-ap-do="lu_deny">Deny</button>` : ''}
+            ${a.luPaid ? `<button class="btn btn-primary" type="button" data-ap-do="lu_paid">Mark paid</button>` : ''}</div>` : ''))
+          + `<p class="name-sub" style="margin-top:12px">Employee expenses are reimbursed through payroll (housekeeping: by e-transfer). Approve, Deny and Mark paid here go to Lu, like edits and deletes; the <a href="lu.html">Lu inbox</a> shows the same receipts.</p>`;
+      })() : ''}
       ${a.approve || a.skip || a.reopen ? H('Decision') + `<div style="display:flex;gap:8px;flex-wrap:wrap">
         ${a.approve ? `<button class="btn btn-primary" type="button" data-ap-do="approve">Approve</button>` : ''}
         ${a.reopen ? `<button class="btn" type="button" data-ap-do="reopen">Back to review</button>` : ''}
@@ -1101,6 +1126,7 @@
       if (b.dataset.apDo === 'edit-cancel') { toggle('[data-ap-form="edit"]', false); return; }
       if (b.dataset.apDo === 'delete-open') { toggle('[data-ap-form="edit"]', false); toggle('[data-ap-form="delete"]', true); return; }
       if (b.dataset.apDo === 'delete-cancel') { toggle('[data-ap-form="delete"]', false); return; }
+      if (['lu_approve', 'lu_deny', 'lu_paid'].includes(b.dataset.apDo)) { luDecide(host.dataset.apId, b.dataset.apDo, b); return; }
       act(host.dataset.apId, b.dataset.apDo, {});
     });
     // "+ Add new property…": open the portal's Add property form; the new one is then picked here (Save still sets it).
