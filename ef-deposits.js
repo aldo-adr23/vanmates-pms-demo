@@ -7,11 +7,21 @@
    Loaded by index.html after the main script (uses esc, showToast, rcvApi, ptnToken, PARTNERS_APP). */
 (function(){
   const STATUS = {
-    upcoming: ['Upcoming Move-Out', 'blue'], pending_inspection: ['Pending Inspection', 'amber'], ready: ['Ready for Refund', 'green'],
-    not_found: ['Payment Not Found', 'red'], check: ['Check Match', 'amber'], processing: ['Refund Processing', 'amber'], refunded: ['Refunded', ''],
-    refunded_stripe: ['Refunded in Stripe', ''],
+    upcoming: ['Upcoming Move-Out', 'blue'], pending_reports: ['Pending Reports', 'amber'], review: ['Ready for Review', 'green'],
+    rejected: ['Rejected', 'red'], pending_auth: ['Pending Denise Approval', 'amber'],
+    not_found: ['Payment Not Found', 'red'], check: ['Check Match', 'amber'], processing: ['Approved / Processing', 'amber'], refunded: ['Refunded', ''],
+    refunded_stripe: ['Refunded in Stripe', ''], manual: ['Manual Review Required', 'red'],
     failed: ['Refund Failed', 'red'], closed: ['Closed (no refund)', ''], cancelled: ['Cancelled', ''],
   };
+  /** The review queue (spec 2026-11-22): what each band asks of whom. */
+  const APPROVE_BANDS = [
+    ['pending_auth', 'Pending Denise approval — authorize to send the refund', '#9a6b12'],
+    ['manual', 'Manual review required', 'var(--red-dark,#a33)'],
+    ['failed', 'Refund failed at Stripe', 'var(--red-dark,#a33)'],
+    ['rejected', 'Rejected by Denisse — review again', 'var(--red-dark,#a33)'],
+    ['review', 'Ready for review — cleaning report attached', '#3e6049'],
+    ['pending_reports', 'Pending reports — no Limpio cleaning report yet', '#9a6b12'],
+  ];
   const OVERDUE_DAYS = 14;   // moved out this long ago and no refund yet → overdue
   const SHEETJS = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
 
@@ -32,7 +42,7 @@
   const isOverdue = (r, today) => !['refunded', 'closed', 'cancelled', 'processing'].includes(r.status)
     && r.move_out && daysSince(r.move_out, today) >= OVERDUE_DAYS;
   /** Needs a person: no payment found, refund failed, overdue, or a roster change to check. */
-  const needsAttention = (r, today) => r.status === 'not_found' || r.status === 'check' || r.status === 'failed' || isOverdue(r, today)
+  const needsAttention = (r, today) => ['not_found', 'check', 'failed', 'manual', 'rejected'].includes(r.status) || isOverdue(r, today)
     || (r.roster_state === 'missing' && r.status === 'upcoming');
 
   function filterRows(rows, f, today){
@@ -55,7 +65,7 @@
     for (const r of live) {
       if (r.paid_cents != null) s.depositCents += r.paid_cents; else s.depositUnknown++;
       if (r.match_state === 'matched') s.matched++;
-      if (['pending_inspection', 'ready', 'processing', 'failed'].includes(r.status) || (r.status === 'upcoming' && r.move_out && r.move_out <= today)) s.pending++;
+      if (['pending_reports', 'review', 'rejected', 'pending_auth', 'processing', 'failed', 'manual'].includes(r.status) || (r.status === 'upcoming' && r.move_out && r.move_out <= today)) s.pending++;
       if (r.status === 'refunded') s.completed++;
       s.refundedCents += r.refunded_cents || 0;
       if (needsAttention(r, today)) s.unresolved++;
@@ -67,6 +77,11 @@
   /** The three questions the team asks (Aldo 2026-11-05): who is moving out, whose deposit we hold, who has not paid. */
   const hasDeposit = r => !!r.stripe_payment_intent && r.paid_cents != null;
   const isOpen = r => !['refunded', 'refunded_stripe', 'closed', 'cancelled'].includes(r.status);
+  /** Rows of the "To approve" view, grouped like APPROVE_BANDS. */
+  function approveBands(rows){
+    const byOut = (a, b) => (a.move_out || '9').localeCompare(b.move_out || '9') || (a.student_name || '').localeCompare(b.student_name || '');
+    return APPROVE_BANDS.map(([st, label, col]) => ({ status: st, label, col, rows: rows.filter(r => r.status === st).sort(byOut) })).filter(b => b.rows.length);
+  }
   /** Moved out, and the team sheet says the deposit went back although Stripe shows no refund. */
   const sheetSaysDone = r => !!(r.sheet_flag && r.sheet_flag.code === 'sheet_done');
   function efViews(rows, today){
@@ -82,12 +97,15 @@
   }
   /** What has to happen next for one stay, in plain words ([label, colour]). */
   function nextStep(r, today){
-    if (r.status === 'processing') return ['Refund processing', 'amber'];
-    if (r.status === 'failed') return ['Refund failed — retry', 'red'];
+    if (r.status === 'processing') return ['Approved — Stripe processing', 'amber'];
+    if (r.status === 'manual') return [r.stage === 'refunded' ? 'Refunded — receipt not delivered' : 'Stripe did not answer — check status', 'red'];
+    if (r.status === 'failed') return ['Refund failed — authorize again', 'red'];
     if (sheetSaysDone(r)) return ['Sheet says refunded — confirm how', 'amber'];
     if (!hasDeposit(r)) return r.match_state === 'review' ? ['Confirm the payment', 'amber'] : ['No deposit found', 'red'];
-    if (r.status === 'ready') return [`Send refund ${money(r.refund_due_cents)}`, 'green'];
-    if (r.status === 'pending_inspection') return ['Inspect the room', 'amber'];
+    if (r.status === 'pending_auth') return [`Denisse: authorize ${money(r.refund_due_cents)}`, 'amber'];
+    if (r.status === 'rejected') return ['Rejected — review again', 'red'];
+    if (r.status === 'review') return ['Review the refund', 'green'];
+    if (r.status === 'pending_reports') return ['Waiting for the cleaning report', 'amber'];
     if (r.move_out && r.move_out <= today) return ['Mark as moved out', 'amber'];
     return [`Return ${money(r.available_cents != null ? r.available_cents : r.paid_cents)} after move-out`, ''];
   }
@@ -256,11 +274,11 @@
     return { rows, tabs, problems: problems.slice(0, 30).concat(problems.length > 30 ? [`and ${problems.length - 30} more`] : []) };
   }
 
-  window.EF_CORE = { parseTeamSheet, toCents, sheetSaysDone, groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
+  window.EF_CORE = { approveBands, APPROVE_BANDS, parseTeamSheet, toCents, sheetSaysDone, groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
-  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', open: null, busy: false, confirm: false, upload: null };
+  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', viewChosen: false, open: null, busy: false, confirm: false, upload: null, settings: null, history: null };
   const $ = id => document.getElementById(id);
   const api = async (method, path, body) => {
     const res = await rcvApi(method, '/api/staff/ef-deposits' + path, body);
@@ -278,6 +296,10 @@
     PAYMENT_NOT_USABLE: 'That payment was not found in Stripe, or it did not succeed.', LINKED_BY_STAFF: 'This payment was linked by hand; unlink it first.',
     HAS_REFUND: 'This student already has a refund.', DISPUTED: 'The card holder disputed this payment (chargeback): the money already went back, so nothing is refunded here.', WRONG_STAGE: 'This step does not apply any more. Reload.', INVALID: 'Check the form', LOCKED: 'This deposit is already settled.',
     forbidden: 'You need the Damage deposits page (ask an admin).',
+    NOT_REVIEWER: 'Only the EF refund reviewer can approve or cancel (Settings).', NOT_AUTHORIZER: 'Only Denisse (the final authorizer) can authorize or reject.',
+    NOT_APPROVED: 'The refund has to be approved in the review first.', ALREADY_APPROVED: 'Already approved — waiting for Denisse.',
+    NO_REPORT: 'No Limpio cleaning report: say why it can be approved anyway.', NO_EMAIL: 'No email for the student: type one.', RECEIPT_FAILED: 'The receipt email failed.',
+    NOT_ADMIN: 'Only an admin can change the settings.', NO_REFUND: 'No confirmed refund yet.',
   };
   const errText = r => {
     const d = r.data || {}; const base = ERR[d.code] || ERR[d.error] || d.code || d.error || `HTTP ${r.status}`;
@@ -317,6 +339,9 @@
       const r = await api('GET', '');
       if (!r.ok) throw new Error(errText(r));
       S.data = r.data;
+      // the reviewer / Denisse land on their queue
+      const me = r.data.me || {};
+      if (!S.viewChosen && (me.can_review || me.can_authorize)) S.view = 'approve';
     } catch (e) { S.error = e.message || String(e); }
     S.loading = false; render();
   }
@@ -340,23 +365,25 @@
     box.innerHTML = `
       <div class="card" style="margin-bottom:14px"><div class="card-pad" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
         <div><b>EF damage deposits</b>
-          <div class="card-sub">${up ? `Last roster: <b>${esc(up.filename || 'roster')}</b>, ${esc(String(up.uploaded_at || '').slice(0, 10))}. ` : ''}${d.sheet_import ? `Team sheet imported ${esc(String(d.sheet_import.uploaded_at || '').slice(0, 10))} by ${esc(d.sheet_import.uploaded_by || '—')}. ` : ''}Click a student to see the payment, mark the move-out, inspect and refund.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
+          <div class="card-sub">${up ? `Last roster: <b>${esc(up.filename || 'roster')}</b>, ${esc(String(up.uploaded_at || '').slice(0, 10))}. ` : ''}${d.sheet_import ? `Team sheet imported ${esc(String(d.sheet_import.uploaded_at || '').slice(0, 10))} by ${esc(d.sheet_import.uploaded_by || '—')}. ` : ''}Click a student to see the payment, the Limpio cleaning report and the refund breakdown; Denisse authorizes every refund.${d.stripe ? '' : ' <b style="color:var(--red-dark)">Stripe is not connected.</b>'}</div></div>
         <span class="hb-links">
           <label class="btn btn-mini" style="cursor:pointer">Upload EF roster<input type="file" data-ef="file" accept=".xlsx,.xls,.csv" hidden></label>
           <label class="btn btn-mini" style="cursor:pointer" title="The team's EF Deposits - Canada sheet: File → Download → Microsoft Excel (.xlsx)">Import team sheet<input type="file" data-ef="sheetfile" accept=".xlsx" hidden></label>
           <button type="button" class="btn btn-mini" data-ef="match-all" ${S.busy ? 'disabled' : ''} title="Search Stripe for every student leaving in the next 3 weeks (or the last 2 months) who has no payment yet">Find Stripe payments</button>
+          ${d.me && d.me.is_admin ? '<button type="button" class="hb-link" data-ef="settings-open">Settings</button>' : ''}
           <button type="button" class="hb-link" data-ef="reload">Refresh</button>
         </span>
       </div>${S.upload ? uploadHtml() : ''}${S.sheet ? sheetHtml() : ''}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-        ${[['moving', 'Moving out', V.left.length + V.ahead.length], ['held', 'Deposits held', V.held.length], ['unpaid', 'No deposit', V.check.length + V.none.length]]
+        ${[['approve', 'To approve', approveBands(filterRows(all, { week: 'all', property: S.f.property, q: S.f.q }, today)).reduce((t, b) => t + b.rows.length, 0)], ['moving', 'Moving out', V.left.length + V.ahead.length], ['held', 'Deposits held', V.held.length], ['unpaid', 'No deposit', V.check.length + V.none.length]]
           .map(([k, l, n]) => `<button type="button" class="btn ${S.view === k ? 'btn-primary' : ''}" data-ef-view="${k}">${l} <span style="opacity:.75">${n}</span></button>`).join('')}
         <span style="flex:1"></span>
         <div class="filter-search" style="min-width:220px"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input data-ef-f="q" placeholder="Search student, email, EF id…" value="${esc(S.f.q)}"></div>
         <select data-ef-f="property" class="input" style="max-width:180px"><option value="">All buildings</option>${props.map(p => `<option ${S.f.property === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
       </div>
-      ${S.view === 'held' ? heldHtml(V, today) : S.view === 'unpaid' ? unpaidHtml(V, today) : movingHtml(V, today)}`;
+      ${S.settings ? settingsHtml() : ''}
+      ${S.view === 'approve' ? approveHtml(filterRows(all, { week: 'all', property: S.f.property, q: S.f.q }, today), today) : S.view === 'held' ? heldHtml(V, today) : S.view === 'unpaid' ? unpaidHtml(V, today) : movingHtml(V, today)}`;
     if (S.open) renderModal();
   }
 
@@ -384,6 +411,47 @@
     return `<div class="card-sub" style="margin:0 0 10px">Next 2 weeks: <b>${two.length}</b> students moving out · <b>${money(twoCents)}</b> in deposits to return${two.filter(r => !hasDeposit(r)).length ? ` · <span style="color:var(--red-dark,#a33)">${two.filter(r => !hasDeposit(r)).length} with no deposit</span>` : ''}</div>`
       + table(['Student', 'Building · room', 'Move-out', 'Deposit', 'Next step'], body, 'Nobody moving out for these filters.');
   }
+  function approveHtml(rows, today){
+    const me = S.data.me || {};
+    const fees = (S.data.settings || {}).cleaning_fees || {};
+    const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td>${esc(short(r.move_out))}</td>
+      <td>${r.has_report ? `<span style="color:#3e6049">✓ ${(r.cleaning || []).filter(c => c.status === 'completed').length} clean${(r.cleaning || []).filter(c => c.status === 'completed').length === 1 ? '' : 's'}</span>` : r.no_report_reason ? '<span style="color:#9a6b12">none — reason given</span>' : '<span style="color:#9a6b12">missing</span>'}</td>
+      <td class="right">${money(r.available_cents)}</td><td class="right">${r.stage === 'inspected' || r.stage === 'refunded' ? '−' + money(r.deduction_cents) : r.cleaning_fee_default_cents ? '−' + money(r.cleaning_fee_default_cents) + '<div class="name-sub">cleaning</div>' : '—'}</td>
+      <td class="right"><b>${money(r.stage === 'inspected' || r.stage === 'refunded' ? r.refund_due_cents : Math.max(0, (r.available_cents || 0) - (r.cleaning_fee_default_cents || 0)))}</b></td><td>${step(r, today)}</td></tr>`;
+    let body = '';
+    for (const b of approveBands(rows)) body += band(`<span style="color:${b.col}">${esc(b.label)}</span>`, b.rows.length) + b.rows.map(line).join('');
+    const feeText = Object.entries(fees).map(([k, c]) => `The ${k.replace(/\b\w/g, x => x.toUpperCase())} ${money(c)}`).join(' · ');
+    return `<div class="card-sub" style="margin:0 0 10px">Students who left: the Limpio cleaning report is linked automatically, the cleaning fee is taken off (${esc(feeText || 'no fees set')}), ${me.can_review ? 'you review' : 'the reviewer reviews'} and Denisse authorizes. Nothing is refunded before Denisse's authorization.</div>`
+      + table(['Student', 'Building · room', 'Move-out', 'Report', 'Deposit', 'Deductions', 'Refund', 'Next step'], body, 'Nothing to review or authorize for these filters.');
+  }
+  function settingsHtml(){
+    const x = S.settings;
+    if (x.loading) return '<div class="card" style="margin-bottom:14px"><div class="card-pad name-sub">Loading settings…</div></div>';
+    const fees = Object.entries(x.cleaning_fees || {});
+    return `<div class="card" style="margin-bottom:14px"><div class="card-pad">
+      <b>EF refund settings</b> <span class="name-sub">— admins only; every change is logged.</span>
+      <div style="margin-top:8px"><div class="name-sub">Cleaning fee taken from the deposit, per residence</div>
+        <div id="ef-set-fees">${fees.map(([k, c]) => feeRow(k, c)).join('')}</div>
+        <button type="button" class="hb-link" data-ef="set-fee-add">+ Add a residence</button></div>
+      <div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">
+        <label class="name-sub">Reviewers (Approve / Cancel), comma-separated<input class="input" data-ef-set="reviewers" value="${esc((x.reviewers || []).join(', '))}" style="width:100%"></label>
+        <label class="name-sub">Final authorization (sends the refund)<input class="input" data-ef-set="authorizers" value="${esc((x.authorizers || []).join(', '))}" style="width:100%"></label></div>
+      <div style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-ef="settings-save" ${S.busy ? 'disabled' : ''}>Save settings</button> <button type="button" class="hb-link" data-ef="settings-close">Close</button></div>
+    </div></div>`;
+  }
+  const feeRow = (k, c) => `<div data-ef-fee style="display:flex;gap:6px;margin:4px 0;align-items:center"><span class="name-sub">The</span><input class="input" data-ef-fee-name value="${esc(k)}" placeholder="well" style="max-width:160px"><input class="input" data-ef-fee-amt value="${c != null ? (c / 100).toFixed(2) : ''}" placeholder="$" inputmode="decimal" style="max-width:90px"><button type="button" class="hb-link" data-ef="set-fee-del">✕</button></div>`;
+  function readSettings(){
+    const fees = {};
+    for (const el of document.querySelectorAll('#ef-set-fees [data-ef-fee]')) {
+      const k = el.querySelector('[data-ef-fee-name]').value.trim(), a = el.querySelector('[data-ef-fee-amt]').value.replace(/[$,\s]/g, '');
+      if (!k && !a) continue;
+      const c = Math.round(Number(a) * 100);
+      if (!k || !(c >= 0) || a === '') throw new Error('each residence needs a name and an amount');
+      fees[k] = c;
+    }
+    const list = k => ((document.querySelector(`[data-ef-set="${k}"]`) || {}).value || '').split(/[,;\s]+/).map(x => x.trim()).filter(Boolean);
+    return { cleaning_fees: fees, reviewers: list('reviewers'), authorizers: list('authorizers') };
+  }
   function heldHtml(V, today){
     const body = V.held.map(r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td>${esc(short(r.move_in))} → <b>${esc(short(r.move_out))}</b></td>
       <td class="right">${dep(r)}</td><td>${step(r, today)}</td></tr>`).join('');
@@ -407,7 +475,7 @@
       : r.match_state === 'unchecked' ? '<span class="name-sub">not searched yet</span>'
       : `<span style="color:var(--red-dark,#a33)">${r.match_state === 'review' ? 'Check candidates' : 'Not found'}</span><div class="name-sub">${esc(r.match_note || '')}</div>`;
     const refund = r.refunded_cents ? `${money(r.refunded_cents)}${(r.refunds || []).find(f => f.stripe_refund_id) ? `<div class="name-sub">${esc((r.refunds.find(f => f.stripe_refund_id) || {}).stripe_refund_id)}</div>` : ''}`
-      : r.status === 'ready' ? `<span class="name-sub">due</span> ${money(r.refund_due_cents)}`
+      : r.status === 'pending_auth' ? `<span class="name-sub">due</span> ${money(r.refund_due_cents)}`
       : r.deduction_cents ? `<span class="name-sub">−${money(r.deduction_cents)}</span>` : '—';
     const roster = r.roster_state === 'missing' ? '<div class="name-sub" style="color:#9a6b12">⚠ not on the latest roster</div>'
       : r.roster_state === 'changed' && r.prev_move_out ? `<div class="name-sub" style="color:#9a6b12">was ${esc(short(r.prev_move_out))}</div>` : '';
@@ -568,34 +636,90 @@
     const movedBody = moved ? `<div class="name-sub">Confirmed by ${esc(r.moved_out_by || '—')} ${esc(String(r.moved_out_at || '').slice(0, 10))}</div>${r.stage !== 'refunded' && r.stage !== 'closed' && !(r.refunds || []).length ? `<button type="button" class="hb-link" data-ef="undo_moved_out" ${busy}>Undo</button>` : ''}`
       : `<button type="button" class="btn btn-mini" data-ef="moved_out" ${busy} ${r.status === 'cancelled' ? 'disabled' : ''}>Student has moved out</button>${r.move_out > today ? `<span class="name-sub"> (move-out is ${esc(short(r.move_out))})</span>` : ''}`;
 
-    // 3. inspection
-    const canInspect = r.stage === 'moved_out' || r.stage === 'inspected';
-    const inspected = r.stage === 'inspected' || r.stage === 'refunded' || r.stage === 'closed';
-    const editingInspection = canInspect && !(r.refunds || []).some(f => ['creating', 'pending'].includes(f.status));
-    const inspBody = !canInspect && !inspected ? '<div class="name-sub">After the move-out.</div>'
-      : `${r.inspected_at ? `<div class="name-sub">Inspected by ${esc(r.inspected_by || '—')} ${esc(String(r.inspected_at).slice(0, 10))}</div>` : ''}
-        ${editingInspection && !ded.length && r.sheet && r.sheet.deduction_cents > 0 ? `<div class="name-sub">Team sheet: −${money(r.sheet.deduction_cents)}${r.sheet.comments ? ' · ' + esc(r.sheet.comments) : ''} <button type="button" class="hb-link" data-ef="ded-sheet">Use it</button></div>` : ''}
-        ${editingInspection ? `<div id="ef-ded-list">${(ded.length ? ded : []).map((x, i) => dedRow(x, i)).join('')}</div>
-          <button type="button" class="hb-link" data-ef="ded-add">+ Add a deduction</button>
-          <textarea class="input" data-ef="insp-notes" rows="2" placeholder="Inspection notes (optional)" style="width:100%;margin-top:6px">${esc(r.inspection_notes || '')}</textarea>
-          <button type="button" class="btn btn-mini btn-primary" data-ef="inspected" ${busy} style="margin-top:6px">${r.stage === 'inspected' ? 'Save inspection' : 'Inspection done'}</button>`
-        : ded.length ? ded.map(x => `<div>−${money(x.cents)} · ${esc(x.reason)}</div>`).join('') : '<div class="name-sub">No deductions.</div>'}`;
+    // 3. Limpio cleaning reports (linked automatically every 10 minutes)
+    const cl = Array.isArray(r.cleaning) ? r.cleaning : [];
+    const photoLinks = ps => ps.length ? `<div class="name-sub" style="margin-top:2px">${ps.slice(0, 40).map((p, i) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.area || 'photo')} ${i + 1}</a>`).join(' · ')}</div>` : '<div class="name-sub">No photos.</div>';
+    const condText = c => { const it = c && c.items; if (!it) return ''; const bad = Object.entries(it).filter(([, v]) => v && v.status && v.status !== 'good');
+      return `<div class="name-sub">Pre-cleaning condition: ${bad.length ? bad.map(([k, v]) => `${esc(k)} ${esc(String(v.status).replace(/_/g, ' '))}${v.note ? ' (' + esc(v.note) + ')' : ''}`).join(' · ') : 'all good'}</div>`; };
+    const repBody = (cl.length ? cl.map(c => `<div style="border-top:1px solid var(--line);padding:6px 0">
+        <b>${esc(c.type || 'Clean')}</b> · ${esc(short(c.date))} · ${c.status === 'completed' ? '<span style="color:#3e6049">completed</span>' : esc(c.status)} · ${esc(c.property)} ${esc(c.unit)}${c.match === 'unit' ? ' <span class="name-sub">(apartment, bed not named)</span>' : ''}
+        <div class="name-sub">${esc(c.task_id)}${c.cleaner ? ' · ' + esc(c.cleaner) : ''}${c.clock_out ? ' · finished ' + esc(String(c.clock_out).replace('T', ' ').slice(0, 16)) : ''}</div>
+        ${c.notes ? `<div class="name-sub">Notes: ${esc(c.notes)}</div>` : ''}
+        ${(c.issues || []).map(i => `<div style="color:#9a6b12">⚠ ${esc(i.category)}${i.urgency ? ' · ' + esc(i.urgency) : ''}: ${esc(i.description)}${(i.photos || []).map((u, k) => ` <a href="${esc(u)}" target="_blank" rel="noopener">photo ${k + 1}</a>`).join('')}</div>`).join('')}
+        ${condText(c.condition)}${photoLinks(c.photos || [])}</div>`).join('')
+      : `<div style="color:#9a6b12">⚠ No Limpio clean found for ${esc(r.building)} ${esc(r.unit)}${r.bed ? ' bed ' + esc(r.bed) : ''} between the day before and a week after the move-out.</div>`)
+      + `<div class="name-sub" style="margin-top:4px">${r.cleaning_checked_at ? 'Checked ' + esc(String(r.cleaning_checked_at).replace('T', ' ').slice(0, 16)) + '. ' : ''}<button type="button" class="hb-link" data-ef="reports" ${busy}>Look in Limpio again</button></div>`;
 
-    // 4. refund
-    const open = (r.refunds || []).find(f => ['creating', 'pending'].includes(f.status));
-    let refBody = (r.refunds || []).map(f => `<div style="margin-bottom:4px">${money(f.amount_cents)} · <b>${esc(f.status)}</b>${f.stripe_refund_id ? ` · <a href="https://dashboard.stripe.com/refunds/${encodeURIComponent(f.stripe_refund_id)}" target="_blank" rel="noopener">${esc(f.stripe_refund_id)}</a>` : ''}
-      <div class="name-sub">approved by ${esc(f.approved_by)} ${esc(String(f.approved_at).replace('T', ' ').slice(0, 16))}${f.deduction_cents ? ` · deductions ${money(f.deduction_cents)}` : ''}${f.failure_reason ? ' · ' + esc(f.failure_reason) : ''}</div></div>`).join('');
+    // 4. review (reviewer: Approve / Cancel) — the cleaning fee comes from the settings, damage deductions are typed
+    const refunds = r.refunds || [];
+    const open = refunds.find(f => ['creating', 'pending'].includes(f.status));
+    const approved = r.stage === 'inspected' && r.review_state === 'approved';
+    const settled = ['refunded', 'closed'].includes(r.stage);
+    const left = r.stage === 'moved_out' || (r.stage === 'upcoming' && r.move_out && r.move_out <= today);
+    const damage = ded.filter(x => x.kind !== 'cleaning');
+    const fee = approved || settled ? (r.cleaning_fee_cents || 0) : (r.cleaning_fee_default_cents || 0);
+    S.bk = { avail: r.available_cents || 0, fee, bld: r.building || '' };
+    const bk = (dmgCents, feeCents) => `<table style="font-size:13px;margin:4px 0"><tbody>
+        <tr><td>Original deposit</td><td class="right">${money(r.available_cents)}</td></tr>
+        <tr><td>Cleaning fee (${esc(r.building || '')})</td><td class="right">−${money(feeCents)}</td></tr>
+        <tr><td>Damage deductions</td><td class="right">−${money(dmgCents)}</td></tr>
+        <tr><td><b>Refund</b></td><td class="right"><b>${money(Math.max(0, (r.available_cents || 0) - feeCents - dmgCents))}</b></td></tr></tbody></table>`;
+    let revBody;
+    if (settled || approved || open) {
+      revBody = `${r.reviewed_by ? `<div class="name-sub">Approved by ${esc(r.reviewed_by)} ${esc(String(r.reviewed_at || '').replace('T', ' ').slice(0, 16))}</div>` : ''}
+        ${bk(damage.reduce((t, x) => t + x.cents, 0), r.stage === 'closed' && r.review_state === 'cancelled' ? 0 : fee)}
+        ${damage.map(x => `<div class="name-sub">−${money(x.cents)} · ${esc(x.reason)}</div>`).join('')}
+        ${r.no_report_reason ? `<div class="name-sub" style="color:#9a6b12">Approved without a cleaning report: ${esc(r.no_report_reason)}</div>` : ''}
+        ${r.inspection_notes ? `<div class="name-sub">Notes: ${esc(r.inspection_notes)}</div>` : ''}
+        ${approved && !open && me.can_review ? `<button type="button" class="hb-link" data-ef="review-edit" ${busy}>Revise (sends it back to review)</button>` : ''}`;
+    } else if (!left) revBody = '<div class="name-sub">After the move-out.</div>';
+    else if (r.match_state !== 'matched') revBody = '<div class="name-sub" style="color:var(--red-dark,#a33)">Link the original Stripe payment first (step 1).</div>';
+    else if (!me.can_review) revBody = `<div class="name-sub">Waiting for the reviewer (${esc(((S.data.settings || {}).reviewers || []).join(', '))}).</div>${bk(0, fee)}`;
+    else {
+      const startDmg = damage.length ? damage : [];
+      revBody = `${r.review_state === 'rejected' ? `<div style="color:var(--red-dark,#a33);margin-bottom:4px">Rejected by ${esc(r.rejected_by || '')}: ${esc(r.reject_reason || '')}</div>` : ''}
+        <div id="ef-bk">${bk(startDmg.reduce((t, x) => t + x.cents, 0), fee)}</div>
+        ${fee ? `<label class="name-sub" style="display:block"><input type="checkbox" data-ef="waive"> Waive the cleaning fee</label><input class="input" data-ef="waive-reason" placeholder="Why the cleaning fee is waived" style="width:100%;display:none">` : `<div class="name-sub">No cleaning fee set for ${esc(r.building || 'this residence')} (Settings).</div>`}
+        ${!damage.length && r.sheet && r.sheet.deduction_cents > 0 ? `<div class="name-sub">Team sheet: −${money(r.sheet.deduction_cents)}${r.sheet.comments ? ' · ' + esc(r.sheet.comments) : ''} <button type="button" class="hb-link" data-ef="ded-sheet">Use it</button></div>` : ''}
+        <div id="ef-ded-list">${startDmg.map((x, i) => dedRow(x, i)).join('')}</div>
+        <button type="button" class="hb-link" data-ef="ded-add">+ Add a damage deduction</button>
+        ${r.has_report ? '' : `<input class="input" data-ef="no-report" placeholder="No cleaning report: why it can be approved anyway (required)" style="width:100%;margin-top:6px" value="${esc(r.no_report_reason || '')}">`}
+        <textarea class="input" data-ef="insp-notes" rows="2" placeholder="Notes for Denisse (optional)" style="width:100%;margin-top:6px">${esc(r.inspection_notes || '')}</textarea>
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn btn-mini btn-primary" data-ef="approve" ${busy}>Approve refund</button>
+          <details style="display:inline-block"><summary class="hb-link">Cancel refund…</summary><input class="input" data-ef="cancel-reason" placeholder="Why (required). Refunds nothing." style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="cancel" ${busy}>Cancel refund</button></details></div>`;
+    }
+
+    // 5. final authorization (Denisse)
+    let authBody;
+    if (r.stage === 'refunded' || refunds.some(f => f.status === 'succeeded')) authBody = `<div class="name-sub">Authorized by ${esc(r.authorized_by || (refunds[0] || {}).approved_by || '—')} ${esc(String(r.authorized_at || '').replace('T', ' ').slice(0, 16))}</div>`;
+    else if (open) authBody = `<div class="name-sub">Authorized by ${esc(open.approved_by)} — Stripe is processing.</div>`;
+    else if (!approved) authBody = `<div class="name-sub">${r.review_state === 'rejected' ? 'Rejected — waiting for a new review.' : 'After the review is approved.'}</div>`;
+    else if (!me.can_authorize) authBody = `<div class="name-sub">Pending Denise approval: ${money(r.refund_due_cents)}.</div>`;
+    else if (!S.confirm) authBody = `<div>Refund <b>${money(r.refund_due_cents)}</b> (deposit ${money(r.available_cents)} − deductions ${money(r.deduction_cents)}).</div>
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn btn-primary btn-mini" data-ef="refund-ask" ${busy} ${r.refund_due_cents > 0 ? '' : 'disabled'}>Authorize & refund ${money(r.refund_due_cents)}…</button>
+          <details style="display:inline-block"><summary class="hb-link">Reject…</summary><input class="input" data-ef="reject-reason" placeholder="Why (the reviewer sees it)" style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="reject" ${busy}>Reject</button></details></div>
+        ${r.refund_due_cents > 0 ? '' : '<div class="name-sub">Nothing left to refund after deductions: close it without a refund (step 6).</div>'}`;
+    else authBody = `<div style="background:#fff6e5;border:1px solid #e5c07b;border-radius:8px;padding:10px">
+        Refund <b>${money(r.refund_due_cents)}</b> to <b>${esc(r.student_name)}</b> on Stripe payment ${esc(r.stripe_payment_intent)}? This sends money back to their card and cannot be undone. The student gets the receipt when Stripe confirms.
+        <div style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-ef="refund-go" ${busy}>Yes, refund ${money(r.refund_due_cents)}</button> <button type="button" class="hb-link" data-ef="refund-no">Not now</button></div></div>`;
+
+    // 6. refund + receipt
+    let refBody = refunds.map(f => `<div style="margin-bottom:4px">${money(f.amount_cents)} · <b>${esc(f.status === 'succeeded' ? 'refunded (Stripe confirmed)' : f.status === 'creating' || f.status === 'pending' ? 'processing at Stripe' : f.status)}</b>${f.stripe_refund_id ? ` · <a href="https://dashboard.stripe.com/refunds/${encodeURIComponent(f.stripe_refund_id)}" target="_blank" rel="noopener">${esc(f.stripe_refund_id)}</a>` : ''}
+      <div class="name-sub">authorized by ${esc(f.approved_by)} ${esc(String(f.approved_at).replace('T', ' ').slice(0, 16))}${f.deduction_cents ? ` · deductions ${money(f.deduction_cents)}` : ''}${f.failure_reason ? ' · ' + esc(f.failure_reason) : ''}</div></div>`).join('');
     if (open) refBody += `<button type="button" class="btn btn-mini" data-ef="refresh" ${busy}>Check status</button>`;
-    else if (r.stage === 'inspected' && r.match_state === 'matched') {
-      if (!me.can_refund) refBody += `<div class="name-sub">Ready: ${money(r.refund_due_cents)} to refund. A refund approver (admin / finance) sends it.</div>`;
-      else if (r.refund_due_cents <= 0) refBody += `<div class="name-sub">Nothing left to refund after deductions.</div><input class="input" data-ef="close-reason" placeholder="Why no refund (required)" style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="close" ${busy}>Close without refund</button>`;
-      else if (!S.confirm) refBody += `<div>Deposit ${money(r.available_cents)}${r.deduction_cents ? ` − deductions ${money(r.deduction_cents)}` : ''} = <b>${money(r.refund_due_cents)}</b></div>
-        <button type="button" class="btn btn-primary btn-mini" data-ef="refund-ask" ${busy} style="margin-top:6px">Refund ${money(r.refund_due_cents)}…</button>`;
-      else refBody += `<div style="background:#fff6e5;border:1px solid #e5c07b;border-radius:8px;padding:10px;margin-top:6px">
-        Refund <b>${money(r.refund_due_cents)}</b> to <b>${esc(r.student_name)}</b> on Stripe payment ${esc(r.stripe_payment_intent)}? This sends money back to their card and cannot be undone.
-        <div style="margin-top:8px"><button type="button" class="btn btn-primary btn-mini" data-ef="refund-go" ${busy}>Yes, refund ${money(r.refund_due_cents)}</button> <button type="button" class="hb-link" data-ef="refund-no">Cancel</button></div></div>`;
-    } else if (!(r.refunds || []).length) refBody += `<div class="name-sub">${r.match_state !== 'matched' ? 'Link the Stripe payment first.' : 'After the inspection.'}</div>`;
-    if (me.can_refund && ['upcoming', 'moved_out'].includes(r.stage) && !open) refBody += `<details style="margin-top:8px"><summary class="name-sub">No refund due (paid elsewhere, forfeited…)</summary><input class="input" data-ef="close-reason" placeholder="Why (required)" style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="close" ${busy}>Close without refund</button></details>`;
+    if (r.stage === 'refunded') {
+      refBody += r.receipt_state === 'sent' ? `<div class="name-sub">Receipt emailed to ${esc(r.receipt_to || '')} ${esc(String(r.receipt_at || '').replace('T', ' ').slice(0, 16))}.</div>`
+        : `<div style="color:var(--red-dark,#a33)">${r.receipt_state === 'no_email' ? 'No student email: the receipt was not sent.' : r.receipt_state === 'failed' ? `The receipt email to ${esc(r.receipt_to || '')} failed.` : 'Receipt not sent.'}</div>`;
+      if ((me.can_review || me.can_authorize) && refunds.some(f => f.status === 'succeeded')) refBody += `<div style="margin-top:4px"><input class="input" data-ef="receipt-email" placeholder="${esc(r.student_email || 'student email')}" style="max-width:240px"> <button type="button" class="btn btn-mini" data-ef="receipt" ${busy}>${r.receipt_state === 'sent' ? 'Resend receipt' : 'Send receipt'}</button></div>`;
+    }
+    if (!refunds.length && !open) refBody += `<div class="name-sub">${approved ? 'Sent when Denisse authorizes.' : 'Nothing refunded.'}</div>`;
+    if (me.can_refund && ['upcoming', 'moved_out', 'inspected'].includes(r.stage) && !open) refBody += `<details style="margin-top:8px"><summary class="name-sub">No refund due (paid elsewhere, forfeited…)</summary><input class="input" data-ef="close-reason" placeholder="Why (required)" style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="close" ${busy}>Close without refund</button></details>`;
+
+    const hist = S.history && S.history.id === r.id ? S.history.events : null;
+    const histBody = hist ? (hist.length ? hist.map(e => `<div class="name-sub">${esc(String(e.at || '').replace('T', ' ').slice(0, 16))} · <b>${esc(String(e.action).replace(/_/g, ' '))}</b> · ${esc(String(e.actor || '').replace(/^staff:/, ''))}${e.detail && (e.detail.reason || e.detail.to) ? ' · ' + esc(e.detail.reason || e.detail.to) : ''}${e.detail && e.detail.refund_cents != null ? ' · refund ' + money(e.detail.refund_cents) : ''}</div>`).join('') : '<div class="name-sub">No history.</div>')
+      : `<button type="button" class="hb-link" data-ef="history" ${busy}>Show history</button>`;
 
     $('ef-dd-body').innerHTML = `
       ${r.roster_note ? `<div class="name-sub" style="color:#9a6b12;margin-bottom:6px">⚠ ${esc(r.roster_note)}</div>` : ''}
@@ -603,8 +727,11 @@
       ${sheetBox(r)}
       ${step(1, 'Original Stripe damage deposit', r.match_state === 'matched', pay)}
       ${step(2, 'Move-out confirmed', moved, movedBody)}
-      ${step(3, 'Room inspection & deductions', r.stage === 'inspected' || r.stage === 'refunded', inspBody)}
-      ${step(4, 'Refund', r.stage === 'refunded', refBody)}
+      ${step(3, 'Cleaning & condition reports (Limpio)', r.has_report, repBody)}
+      ${step(4, 'Review: approve or cancel', approved || settled || !!open, revBody)}
+      ${step(5, 'Final authorization (Denisse)', r.stage === 'refunded' || !!open, authBody)}
+      ${step(6, 'Refund & receipt', r.stage === 'refunded' && r.receipt_state === 'sent', refBody)}
+      <div style="margin-top:6px">${histBody}</div>
       <div style="margin-top:8px"><textarea class="input" data-ef="notes" rows="2" placeholder="Notes" style="width:100%">${esc(r.notes || '')}</textarea>
       <button type="button" class="hb-link" data-ef="note" ${busy}>Save notes</button></div>`;
   }
@@ -645,22 +772,30 @@
     S.busy = false; S.confirm = false;
     if (res.data && res.data.row) S.data.rows = S.data.rows.map(x => x.id === r.id ? res.data.row : x);
     if (!res.ok) showToast(errText(res));
-    else if (action === 'refund') showToast(res.data.status === 'succeeded' ? 'Refund sent' : 'Refund submitted to Stripe (' + res.data.status + ')');
+    else if (action === 'authorize') showToast(res.data.status === 'succeeded' ? 'Refunded — receipt sent to the student' : 'Authorized — Stripe is processing (' + res.data.status + ')');
+    else if (action === 'approve') showToast((S.data.me || {}).can_authorize ? 'Approved — now authorize it (step 5)' : 'Approved — sent to Denisse');
     else showToast('Saved');
-    if (res.data && ['AMOUNT_MISMATCH', 'STALE', 'CHANGED_IN_STRIPE', 'WRONG_STAGE'].includes(res.data.code)) { await load(); return; }
+    if (res.data && ['AMOUNT_MISMATCH', 'STALE', 'CHANGED_IN_STRIPE', 'WRONG_STAGE', 'NOT_APPROVED', 'ALREADY_APPROVED'].includes(res.data.code)) { await load(); return; }
     render();
   }
 
   function onInput(e){
     const k = e.target.dataset.efF;
     if (k) { S.f[k] = e.target.value; render(); if (k === 'q') { const i = document.querySelector('[data-ef-f="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } } return; }
+    if (e.target.closest && e.target.closest('#ef-ded-list, [data-ef="waive"]') && $('ef-bk') && S.bk) {
+      let dmg = 0; for (const el of document.querySelectorAll('#ef-ded-list [data-ef-ded-amt]')) dmg += Math.round((Number(el.value.replace(/[$,\s]/g, '')) || 0) * 100);
+      const fee = (document.querySelector('#ef-dd-body [data-ef="waive"]') || {}).checked ? 0 : S.bk.fee;
+      const cells = $('ef-bk').querySelectorAll('td.right');
+      if (cells.length === 4) { cells[1].textContent = '−' + money(fee); cells[2].textContent = '−' + money(dmg); cells[3].innerHTML = '<b>' + money(Math.max(0, S.bk.avail - fee - dmg)) + '</b>'; }
+    }
+    if (e.target.dataset.ef === 'waive') { const w = document.querySelector('#ef-dd-body [data-ef="waive-reason"]'); if (w) w.style.display = e.target.checked ? '' : 'none'; }
     if (e.target.dataset.ef === 'file' && e.target.files && e.target.files[0]) { readFile(e.target.files[0]); e.target.value = ''; }
     if (e.target.dataset.ef === 'sheetfile' && e.target.files && e.target.files[0]) { readSheetFile(e.target.files[0]); e.target.value = ''; }
   }
   async function onClick(e){
     if (e.target.closest('[data-ef-stop]') || (e.target.closest('a') && e.target.closest('#ef-dd, #ef-dd-backdrop'))) return;
     const vb = e.target.closest('[data-ef-view]');
-    if (vb) { S.view = vb.dataset.efView; return render(); }
+    if (vb) { S.view = vb.dataset.efView; S.viewChosen = true; return render(); }
     const openRow = e.target.closest('[data-ef-open]');
     const b = e.target.closest('[data-ef]');
     if (!b && openRow) { openModal(openRow.dataset.efOpen); return; }
@@ -670,6 +805,18 @@
     if (a === 'sheet-cancel') { S.sheet = null; return render(); }
     if (a === 'sheet-save') return saveSheet();
     if (a === 'reload') return load();
+    if (a === 'settings-open') { S.settings = Object.assign({}, S.data.settings || {}); return render(); }
+    if (a === 'settings-close') { S.settings = null; return render(); }
+    if (a === 'set-fee-add') { $('ef-set-fees').insertAdjacentHTML('beforeend', feeRow('', null)); return; }
+    if (a === 'set-fee-del') { b.closest('[data-ef-fee]').remove(); return; }
+    if (a === 'settings-save') {
+      let body; try { body = readSettings(); } catch (err) { return showToast(err.message); }
+      S.busy = true; render();
+      const res = await api('POST', '/settings', body);
+      S.busy = false;
+      if (!res.ok) { showToast('Could not save: ' + errText(res)); return render(); }
+      showToast('Settings saved'); S.settings = null; return load();
+    }
     if (a === 'dismiss') return closeModal();
     if (a === 'upload-cancel') { S.upload = null; return render(); }
     if (a === 'upload-save') return saveUpload();
@@ -689,11 +836,23 @@
     if (a === 'ded-add') { const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow({}, list.children.length)); return; }
     if (a === 'ded-sheet') { const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow({ cents: r.sheet.deduction_cents, reason: r.sheet.comments || 'Per the team sheet' }, list.children.length)); b.parentElement.remove(); return; }
     if (a === 'ded-del') { b.closest('[data-ef-ded]').remove(); return; }
-    if (a === 'inspected') { let ded; try { ded = readDeductions(); } catch (err) { return showToast(err.message); } return act('inspected', { deductions: ded, notes: (document.querySelector('[data-ef="insp-notes"]') || {}).value || '' }); }
+    if (a === 'approve') {
+      let ded; try { ded = readDeductions(); } catch (err) { return showToast(err.message); }
+      const v = sel => ((document.querySelector('#ef-dd-body ' + sel) || {}).value || '').trim();
+      const waive = (document.querySelector('#ef-dd-body [data-ef="waive"]') || {}).checked;
+      if (waive && v('[data-ef="waive-reason"]').length < 5) return showToast('Say why the cleaning fee is waived');
+      if (!r.has_report && v('[data-ef="no-report"]').length < 5) return showToast('No cleaning report: say why it can be approved anyway');
+      return act('approve', { deductions: ded, notes: v('[data-ef="insp-notes"]'), no_report_reason: r.has_report ? '' : v('[data-ef="no-report"]'), waive_cleaning_reason: waive ? v('[data-ef="waive-reason"]') : '', revise: !!r._editing });
+    }
+    if (a === 'cancel' || a === 'reject') { const why = (b.parentElement.querySelector(`[data-ef="${a}-reason"]`) || {}).value || ''; if (why.trim().length < 3) return showToast('Say why'); return act(a, { reason: why.trim() }); }
+    if (a === 'reports') return act('reports');
+    if (a === 'history') { S.busy = true; renderModal(); const res = await api('POST', `/${r.id}/history`, {}); S.busy = false; S.history = { id: r.id, events: res.ok ? res.data.events || [] : [] }; if (!res.ok) showToast(errText(res)); return renderModal(); }
+    if (a === 'receipt') return act('receipt', { email: ((document.querySelector('#ef-dd-body [data-ef="receipt-email"]') || {}).value || '').trim() });
+    if (a === 'review-edit') { S.data.rows = S.data.rows.map(x => x.id === r.id ? Object.assign({}, x, { review_state: '', stage: 'moved_out', _editing: true }) : x); return renderModal(); }
     if (a === 'note') return act('note', { notes: (document.querySelector('#ef-dd-body [data-ef="notes"]') || {}).value || '' });
     if (a === 'refund-ask') { S.confirm = true; return renderModal(); }
     if (a === 'refund-no') { S.confirm = false; return renderModal(); }
-    if (a === 'refund-go') return act('refund', { amount_cents: r.refund_due_cents, expected_refunded_cents: r.refunded_cents });
+    if (a === 'refund-go') return act('authorize', { amount_cents: r.refund_due_cents, expected_refunded_cents: r.refunded_cents });
     if (a === 'close' && b.closest('#ef-dd-body')) { const why = (b.parentElement.querySelector('[data-ef="close-reason"]') || {}).value || ''; if (why.trim().length < 3) return showToast('Say why no refund is sent'); return act('close', { reason: why.trim() }); }
   }
 
