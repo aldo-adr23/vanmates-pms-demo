@@ -260,7 +260,44 @@
     if (isIso(f.until) && f.until < todayIso) return "“Show until” can't be in the past.";
     return "";
   }
-  const PR_CORE = { words, nums, index, resolve, roomLabel, tenantRoom, roomState, model, accessFor, contractRooms, roomNotes, noticeUntil, noticeCheck };
+  // House guide (data.guide on the property row): what the tenant app's House tab shows. Replaces the Asana house
+  // profile. Door codes and Wi-Fi stay in Arrivals (never here); the bin code is hidden in the app until move-in and
+  // staff_notes never reach the app.
+  const GUIDE_TEXT = [
+    ["address", "Address", 200],
+    ["garbage_days", "Garbage & recycling days", 200], ["garbage_where", "Where the bins are", 300], ["garbage_code", "Bin / garbage room code", 60],
+    ["laundry", "Laundry", 500], ["parking", "Parking & bikes", 500], ["quiet_hours", "Quiet hours", 100], ["house_manager", "House manager", 100],
+    ["notes", "Notes for tenants", 3000], ["staff_notes", "Staff notes (not shown in the app)", 6000],
+  ];
+  const GUIDE_LINKS = [["photos", "Photos"], ["tour", "3D tour"], ["layout", "Layout"], ["whatsapp", "WhatsApp group"]];
+  // Same for every unit of a building; offered as "copy to the other units".
+  const GUIDE_SHARED = ["address", "garbage_days", "garbage_where", "garbage_code", "laundry", "parking", "quiet_hours", "house_manager"];
+  const cleanText = (v, max) => String(v == null ? "" : v).replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim().slice(0, max);
+  // Form values ({key: string}, links as link_<k>) → the stored guide. Empty fields are left out.
+  function guideFrom(vals, meta) {
+    const g = {};
+    for (const [k, , max] of GUIDE_TEXT) { const v = cleanText(vals && vals[k], max); if (v) g[k] = v; }
+    const links = {};
+    for (const [k] of GUIDE_LINKS) { const v = cleanText(vals && vals["link_" + k], 500); if (v) links[k] = v; }
+    if (Object.keys(links).length) g.links = links;
+    if (meta && meta.at) g.updated_at = meta.at;
+    if (meta && meta.by) g.updated_by = meta.by;
+    return g;
+  }
+  // "" when it can be saved, else the message.
+  function guideCheck(g) {
+    for (const [k, l] of GUIDE_LINKS) { const u = g && g.links && g.links[k]; if (u && !/^https:\/\/\S+$/.test(u)) return `${l}: use a full https:// link.`; }
+    return "";
+  }
+  // The guide with the shared fields of `from` copied in (unit-only fields of `to` kept).
+  function guideShare(to, from) {
+    const out = { ...(to || {}) };
+    for (const k of GUIDE_SHARED) { if (from && from[k]) out[k] = from[k]; else delete out[k]; }
+    return out;
+  }
+  const hasGuide = (g) => !!g && typeof g === "object" && (GUIDE_TEXT.some(([k]) => !!g[k]) || !!(g.links && Object.keys(g.links).length));
+  const PR_CORE = { words, nums, index, resolve, roomLabel, tenantRoom, roomState, model, accessFor, contractRooms, roomNotes, noticeUntil, noticeCheck,
+    GUIDE_TEXT, GUIDE_LINKS, GUIDE_SHARED, guideFrom, guideCheck, guideShare, hasGuide };
   window.PR_CORE = PR_CORE;
   if (typeof document === "undefined" || !document.querySelector) return;
 
@@ -489,7 +526,6 @@
           <div class="hb-sub">${[addr ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}" target="_blank" rel="noopener">${esc(addr)}</a>` : "", esc(p0.city || ""), isBuilding ? `${names.length} units` : esc(p0.type || ""), ll ? `Landlord: <a href="#" data-pr-ll="${esc(ll.id)}">${esc(ll.name)}</a>` : ""].filter(Boolean).join(" · ")}</div>
         </div>
         <div class="pr-actions">
-          ${prof && prof.url ? `<a class="btn btn-ghost tn-mini" href="${esc(prof.url)}" target="_blank" rel="noopener">House profile ↗</a>` : ""}
           <button type="button" class="btn btn-ghost tn-mini" data-pr-tenants="${esc(isBuilding ? "" : name)}" data-pr-tbld="${esc(isBuilding ? name : "")}">In Tenants</button>
           ${!isBuilding ? `<button type="button" class="btn btn-primary tn-mini" data-pr-add="${esc(name)}">+ Add tenant</button>` : ""}
         </div>
@@ -683,6 +719,7 @@
     const showMoney = money();
     const sec = (title, body, sub, wide) => (body.trim() ? `<div class="card card-pad pr-sec${wide ? " pr-wide" : ""}"><div class="pr-sech"><b>${title}</b>${sub ? `<span class="hb-sub">${sub}</span>` : ""}</div>${body}</div>` : "");
     return `<div class="pr-info">
+      ${guideSection(names)}
       ${sec("The house", [
         item("Address", esc(p0.addr || (b && b.address) || (rooms[0] && rooms[0].addr) || (prof && prof.address) || "")),
         item("City", esc(p0.city || "")),
@@ -690,7 +727,7 @@
         item("Rooms", esc(String(p0.rooms || "")) + (prof && prof.roomsFromTitle && prof.roomsFromTitle !== p0.rooms ? ` <span class="hb-sub">(Asana house profile says ${esc(prof.roomsFromTitle)})</span>` : "")),
         item("Bedrooms / baths", bedrooms != null ? esc(bedrooms + " bedrooms" + (baths != null ? " · " + baths + " bathrooms" : "")) : ""),
         item("Rent range", esc(p0.rent || "")),
-        item("House manager", esc((prof && prof.houseManager) || "")),
+        item("House manager", esc((guideOf(names[0]) || {}).house_manager || (prof && prof.houseManager) || "")),
       ].join(""))}
       ${sec("Arrivals & access", [
         item("Check-in video", link((b && b.checkin_video_url) || (prof && prof.links && prof.links.checkinVideo), "Watch")),
@@ -705,13 +742,82 @@
         showMoney && lease && lease.rent ? item("Landlord rent", esc(ppMoney(Number(lease.rent), lease.currency || cur(p0.city))) + "/month") : "",
         item("Status", esc(ll.statusLabel || "")),
       ].join("") : item("Landlord", `<span class="hb-need">none linked</span> · link one under <a href="#" data-pr-goto="landlords">Landlords</a>`))}
-      ${profilesOf(names).slice(0, names.length > 1 ? 30 : 4).map((prof) => sec(esc(prof.house || "Asana house profile"), [
-        item("Links", [link(prof.links && prof.links.photos, "Photos"), link(prof.links && prof.links.layout, "Layout"), link(prof.links && prof.links.tour, "3D tour")].filter(Boolean).join(" · ")),
-        (prof.rooms || []).length ? item("Rooms", `<div class="pr-prooms">` + prof.rooms.map((r) => `<div>${esc(r.label)}${r.bed ? ` <span class="hb-sub">· ${esc(r.bed)}</span>` : ""}${r.bath ? ` <span class="hb-sub">· ${esc(r.bath)} bath</span>` : ""}${r.note ? ` <span class="hb-sub">· ${esc(r.note)}</span>` : ""}</div>`).join("") + `</div>`) : "",
-        (prof.facts || []).length ? item("Notes", `<ul class="pr-facts">${prof.facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`) : "",
-      ].join("") || item("Profile", `<span class="hb-sub">Empty template in Asana</span>`), `${link(prof.url, "Open in Asana")}${prof.modified ? " · updated " + esc(dt(prof.modified)) : ""}`, true)).join("")}
     </div>`;
   }
+
+  // ── House guide (data.guide): shown in the tenant app's House tab ──
+  const GD = { edit: "", msg: "", busy: false, share: true };
+  const guideOf = (name) => { const p = properties.find((x) => x.name === name); return (p && p.guide && typeof p.guide === "object") ? p.guide : null; };
+  const siblingsOf = (name) => { const b = llBuilding(name); return properties.filter((p) => p.name !== name && !p.deleted_at && llBuilding(p.name) === b).map((p) => p.name); };
+  const canEdit = () => typeof CURRENT_USER === "undefined" || !CURRENT_USER || CURRENT_USER.role === "admin";
+  function guideView(name, g, editable) {
+    const item = (l, v, pre) => (v ? `<div class="pr-kv"><span>${esc(l)}</span><div${pre ? ' style="white-space:pre-line"' : ""}>${esc(v)}</div></div>` : "");
+    const links = PR_CORE.GUIDE_LINKS.map(([k, l]) => { const u = g && g.links && g.links[k]; return u && /^https?:\/\//.test(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(l)} ↗</a>` : ""; }).filter(Boolean).join(" · ");
+    const body = g ? PR_CORE.GUIDE_TEXT.map(([k, l]) => item(l, g[k], k === "notes" || k === "staff_notes" || k === "laundry" || k === "parking")).join("") + (links ? `<div class="pr-kv"><span>Links</span><div>${links}</div></div>` : "") : "";
+    const sub = [g && g.updated_at ? "updated " + esc(dt(g.updated_at)) + (g.updated_by ? " by " + esc(g.updated_by) : "") : "", g && g.imported_from === "asana" && !g.updated_at ? "imported from the old Asana profile — please check" : ""].filter(Boolean).join(" · ");
+    return `<div class="card card-pad pr-sec pr-wide" data-pr-guide="${esc(name)}"><div class="pr-sech"><b>House guide</b><span class="hb-sub">shown to tenants in the app${sub ? " · " + sub : ""}</span>
+        ${editable ? `<button type="button" class="btn btn-ghost tn-mini" style="margin-left:auto" data-pr-gedit="${esc(name)}">${PR_CORE.hasGuide(g) ? "Edit" : "+ Add house guide"}</button>` : ""}</div>
+      ${PR_CORE.hasGuide(g) ? body : `<p class="hb-sub">Nothing yet. Add the address, garbage and recycling days, laundry and parking so tenants find it in the app.</p>`}
+      ${GD.msg && GD.edit === "" && GD.last === name ? `<div class="hb-sub" role="status" style="color:#1E6B3A">${esc(GD.msg)}</div>` : ""}</div>`;
+  }
+  function guideForm(name, g) {
+    g = g || {};
+    const sibs = siblingsOf(name);
+    const field = ([k, l, max]) => {
+      const big = max > 300;
+      return `<label class="hb-sub" style="display:grid;gap:4px">${esc(l)}${big ? `<textarea class="form-input" name="${k}" maxlength="${max}" rows="${k === "staff_notes" ? 6 : 3}">${esc(g[k] || "")}</textarea>` : `<input class="form-input" name="${k}" maxlength="${max}" value="${esc(g[k] || "")}"${k === "garbage_days" ? ' placeholder="e.g. Garbage Tue, recycling every other Fri"' : k === "quiet_hours" ? ' placeholder="10pm–8am"' : ""}>`}</label>`;
+    };
+    return `<form id="pr-gform" data-name="${esc(name)}" class="card card-pad pr-sec pr-wide" style="display:grid;gap:10px">
+      <div class="pr-sech"><b>Edit house guide</b><span class="hb-sub">${esc(name)} · the bin code shows in the app only from move-in day · door codes and Wi-Fi stay in <a href="arrivals.html">Arrivals</a></span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">${PR_CORE.GUIDE_TEXT.filter(([, , m]) => m <= 300).map(field).join("")}</div>
+      ${PR_CORE.GUIDE_TEXT.filter(([, , m]) => m > 300).map(field).join("")}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">${PR_CORE.GUIDE_LINKS.map(([k, l]) => `<label class="hb-sub" style="display:grid;gap:4px">${esc(l)} link<input class="form-input" name="link_${k}" type="url" maxlength="500" placeholder="https://" value="${esc((g.links && g.links[k]) || "")}"></label>`).join("")}</div>
+      ${sibs.length ? `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="gshare" ${GD.share ? "checked" : ""}> Also copy address, garbage, laundry, parking, quiet hours and manager to the other ${sibs.length} unit${sibs.length === 1 ? "" : "s"} in ${esc(llBuilding(name))}</label>` : ""}
+      ${GD.msg ? `<div class="hb-sub" role="alert" style="color:#B3261E">${esc(GD.msg)}</div>` : ""}
+      <div style="display:flex;gap:8px"><button class="btn btn-primary tn-mini" type="submit" ${GD.busy ? "disabled" : ""}>${GD.busy ? "Saving…" : "Save"}</button><button class="btn btn-ghost tn-mini" type="button" data-pr-gcancel>Cancel</button></div>
+    </form>`;
+  }
+  function guideSection(names) {
+    const editable = canEdit();
+    if (names.length === 1) return GD.edit === names[0] ? guideForm(names[0], guideOf(names[0])) : guideView(names[0], guideOf(names[0]), editable);
+    // Building page: one card per unit; edit opens on the unit's own page.
+    return `<div class="card card-pad pr-sec pr-wide"><div class="pr-sech"><b>House guides</b><span class="hb-sub">shown to tenants in the app · open a unit to edit</span></div>
+      ${names.map((n) => { const g = guideOf(n); return `<div class="pr-kv"><span><a href="#" data-pr-open="${esc(n)}" data-pr-focus="">${esc(n)}</a></span><div>${PR_CORE.hasGuide(g) ? esc([g.address, g.garbage_days ? "Garbage: " + g.garbage_days : "", g.laundry ? "Laundry: " + g.laundry.split("\n")[0] : ""].filter(Boolean).join(" · ") || "filled in") : `<span class="hb-need">no guide yet</span>`}</div></div>`; }).join("")}</div>`;
+  }
+  async function saveGuide(f) {
+    const name = f.dataset.name;
+    const vals = {};
+    for (const el of f.elements) if (el.name && el.name !== "gshare") vals[el.name] = el.value;
+    const who = (typeof CURRENT_USER !== "undefined" && CURRENT_USER && (CURRENT_USER.name || CURRENT_USER.email)) || "";
+    const prev = guideOf(name) || {};
+    const g = PR_CORE.guideFrom(vals, { at: new Date().toISOString(), by: who });
+    const bad = PR_CORE.guideCheck(g);
+    GD.share = !!(f.elements.namedItem("gshare") || {}).checked;
+    if (bad) { GD.msg = bad; renderDetail(); return; }
+    if (prev.imported_from) g.imported_from = prev.imported_from;
+    const p = properties.find((x) => x.name === name);
+    if (!p || !window.vmDb || !window.vmDb.upsert) { GD.msg = "Couldn't save: not signed in."; renderDetail(); return; }
+    GD.busy = true; GD.msg = ""; renderDetail();
+    const before = p.guide;
+    p.guide = g;
+    let ok = await window.vmDb.upsert("properties", p), n = 0;
+    if (!ok) p.guide = before;
+    if (ok && GD.share) for (const s of siblingsOf(name)) {
+      const q = properties.find((x) => x.name === s); if (!q) continue;
+      const old = q.guide; q.guide = { ...PR_CORE.guideShare(old, g), updated_at: g.updated_at, updated_by: g.updated_by };
+      if (await window.vmDb.upsert("properties", q)) n++; else q.guide = old;
+    }
+    GD.busy = false;
+    if (!ok) { GD.msg = "Couldn't save (only admins can edit properties)."; renderDetail(); return; }
+    GD.edit = ""; GD.last = name; GD.msg = "Saved" + (n ? ` · copied to ${n} other unit${n === 1 ? "" : "s"}` : "") + ". Tenants see it next time the app refreshes.";
+    if (typeof showToast === "function") showToast("House guide saved");
+    renderDetail();
+  }
+  document.addEventListener("submit", (e) => {
+    if (!e.target || e.target.id !== "pr-gform") return;
+    e.preventDefault();
+    saveGuide(e.target);
+  });
   function moneyTab(pps, c) {
     if (!pps.length) return `<div class="tn-empty">No figures for this property.</div>`;
     return `<div class="card tn-card"><div class="tn-table-wrap"><table class="hb-table tn-table pp-table"><thead><tr><th>Unit</th><th>Rooms</th><th class="pp-num">Revenue</th><th class="pp-num">Landlord rent</th><th class="pp-num">Profit</th><th class="pp-num">Margin</th></tr></thead><tbody>
@@ -739,6 +845,8 @@
   function onClick(e) {
     const an = e.target.closest(".pr-anote");
     if (an) { an.classList.toggle("pr-open"); return; }
+    const ge = e.target.closest("[data-pr-gedit],[data-pr-gcancel]");
+    if (ge) { e.preventDefault(); GD.msg = ""; GD.edit = ge.hasAttribute("data-pr-gcancel") ? "" : ge.dataset.prGedit; renderDetail(); return; }
     const a = e.target.closest("[data-pr-mode],[data-pr-rf],[data-pr-back],[data-pr-open],[data-pr-tab],[data-pr-tenant],[data-pr-add],[data-pr-addroom],[data-pr-copy],[data-pr-ll],[data-pr-goto],[data-pr-tenants],[data-pr-asana],[data-pr-ndel],[data-pr-ndel-ok]");
     if (!a) return;
     const d = a.dataset;
