@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-22-efrefund1"></script>
+<script src="pms-supabase.js?v=2026-11-22-roomlink1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -7423,6 +7423,7 @@ const TN_TABS = [
   { key: "untyped", label: "Type not set", needs: true },
   { sep: true },
   { key: "contact", label: "Missing contact", needs: true },
+  { key: "noroom", label: "Room not linked", needs: true },
 ];
 const TN_TYPE_LABEL = { fixed: "Fixed", month_to_month: "Month to month" };
 
@@ -7521,8 +7522,31 @@ function tnInTab(t, tab, today) {
       const m = tnMissing(t);
       return (s === "living" || s === "moving") && (m.email || m.phone);
     }
+    case "noroom": return (s === "living" || s === "moving") && t.city !== "Guadalajara" && !tnRoomGid(t);
     default: return false;
   }
+}
+// The Asana inventory room the row is linked to (data.inventoryRoomGid), or "". Extensions,
+// check-outs and room swaps use it instead of matching the property/room text to room names.
+function tnRoomGid(t) {
+  const g = String((t && t.inventoryRoomGid) || "").trim();
+  return /^\d+$/.test(g) ? g : "";
+}
+// Rooms for the "Link room" picker, best guesses first: rooms whose name/address carry the
+// property's words (and its unit number), then rooms carrying the row's room words too.
+// rooms: [{ asana_gid, task_name, address, status }]. Returns [{ ...room, guess }] (guess 0..2).
+function tnRoomRank(t, rooms) {
+  const words = s => new Set(String(s == null ? "" : s).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[a-z0-9]+/g) || []);
+  const generic = new Set(["room", "unit", "house", "residence", "the", "tower", "east", "west", "st", "street", "apartments", "apartment", "building", "units", "home", "of", "and", "de", "bedroom", "whole", "app"]);
+  const pw = [...words(t && t.property)].filter(w => !generic.has(w));
+  const alpha = pw.filter(w => !/^\d+$/.test(w)), nums = pw.filter(w => /^\d+$/.test(w));
+  const rw = [...words(t && t.room)].filter(w => !generic.has(w));
+  return (rooms || []).map(r => {
+    const name = words(r.task_name), all = new Set([...name, ...words(r.address)]);
+    const inBuilding = (alpha.length || nums.length) && (!alpha.length || alpha.some(w => name.has(w))) && (!nums.length || nums.some(w => all.has(w)));
+    const guess = inBuilding ? (rw.length && rw.every(w => name.has(w)) ? 2 : 1) : 0;
+    return { ...r, guess };
+  }).sort((a, b) => b.guess - a.guess || (a.status === "hidden") - (b.status === "hidden") || String(a.task_name).localeCompare(String(b.task_name)));
 }
 function tnCounts(list, today) {
   const c = {};
@@ -8069,10 +8093,33 @@ function tnInline(html) {
   box.innerHTML = html; box.hidden = !html;
   return box;
 }
+// Asana rooms (the inventory mirror) per city, loaded once per page for the "Link room" picker.
+const TN_ROOMS = {};
+function tnRoomsFor(city) {
+  const c = String(city || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  if (!TN_ROOMS[c]) {
+    TN_ROOMS[c] = (async () => {
+      const sb = window.vmDb && window.vmDb.sb;
+      if (!sb) throw new Error("offline");
+      const { data, error } = await sb.from("inventory_rooms").select("asana_gid,task_name,address,status").eq("city", c).limit(2000);
+      if (error) throw error;
+      return (data || []).filter(r => r.asana_gid);
+    })();
+    TN_ROOMS[c].catch(() => { delete TN_ROOMS[c]; });
+  }
+  return TN_ROOMS[c];
+}
+
 function tnWirePanel(t0) {
   const panel = document.querySelector("#panel-body [data-tn-panel]");
   if (!panel) return;
   const key = tnKey(t0);
+  const rn = panel.querySelector("#tn-room-name");
+  if (rn) tnRoomsFor(t0.city).then(rs => {
+    const r = rs.find(x => x.asana_gid === rn.dataset.gid);
+    rn.innerHTML = r ? `${esc(String(r.task_name || "").trim())} <a href="https://app.asana.com/0/0/${esc(r.asana_gid)}" target="_blank" rel="noopener">↗</a>`
+                     : `<span class="tn-missing">Room ${esc(rn.dataset.gid)} is no longer in the inventory</span>`;
+  }).catch(() => {});
   panel.addEventListener("click", async e => {
     const t = tnFind(key) || t0;
     const act = e.target.closest("[data-tn-act]");
@@ -8123,6 +8170,26 @@ function tnWirePanel(t0) {
       const r = tnNoteDeletePatch(t, del.dataset.tnNoteDel);
       if (!r.ok) { showToast(r.error); return; }
       if (await tnSave(t, r.patch, "Note deleted.")) tnReopen(t);
+      return;
+    }
+    if (e.target.closest("[data-tn-room-link]")) {
+      let rooms;
+      try { rooms = tnRoomRank(t, await tnRoomsFor(t.city)); } catch (x) { showToast("Couldn't load the rooms. Check your connection and try again."); return; }
+      if (!rooms.length) { showToast("No Asana rooms found for " + (t.city || "this city") + "."); return; }
+      const cur = tnRoomGid(t);
+      const opt = r => `<option value="${esc(r.asana_gid)}"${r.asana_gid === cur ? " selected" : ""}>${esc(String(r.task_name || "").trim())}${r.status === "hidden" ? " (hidden)" : ""}</option>`;
+      const best = rooms.filter(r => r.guess), rest = rooms.filter(r => !r.guess);
+      const box = tnInline(`<div class="hb-inline-form"><div class="hb-sub" style="margin-bottom:8px">Which Asana room is ${esc(t.name || "this tenant")} in?${t.property ? ` The portal says ${esc(t.property)}${t.room && t.room !== "—" ? ", room " + esc(t.room) : ""}.` : ""}</div>
+        <div class="tn-fix" style="justify-content:flex-start;flex-wrap:wrap"><select class="form-input" id="tn-room-pick" style="max-width:100%;min-width:240px">${cur ? "" : `<option value="">Choose a room…</option>`}${best.length ? `<optgroup label="Best matches">${best.map(opt).join("")}</optgroup>` : ""}<optgroup label="All rooms in ${esc(t.city || "")}">${rest.map(opt).join("")}</optgroup></select>
+        <button type="button" class="btn btn-primary tn-mini" id="tn-room-save">Save</button><button type="button" class="btn btn-ghost tn-mini" id="tn-inline-cancel">Cancel</button></div></div>`);
+      box.querySelector("#tn-room-save").onclick = async () => {
+        const gid = box.querySelector("#tn-room-pick").value;
+        if (!/^\d+$/.test(gid)) { showToast("Choose a room first."); return; }
+        if (gid === cur) { tnReopen(t); return; }
+        const name = String((rooms.find(r => r.asana_gid === gid) || {}).task_name || "").trim();
+        if (await tnSave(t, { inventoryRoomGid: gid }, "Linked to " + name + ".")) tnReopen(t);
+      };
+      box.querySelector("#tn-inline-cancel").onclick = () => tnInline("");
       return;
     }
     if (e.target.closest("#tn-asana-save")) {
@@ -11277,6 +11344,9 @@ function openTenant(emailOrId){
         ${kv("Lease type", ltype ? esc(TN_TYPE_LABEL[ltype]) : `<span class="tn-missing">Not set</span>${tnLegacyType(t) ? ` <span class="hb-sub">was “${esc(tnLegacyType(t))}”</span>` : ""}`)}
         ${kv("Rent", Number(t.rent) ? `${t.city === "Guadalajara" ? "MX$" : "$"}${Number(t.rent).toLocaleString()} / month` : "—")}
         ${t.movedOutAt ? kv("Moved out", esc(tnFmt(t.movedOutAt))) : ""}
+        ${t.city !== "Guadalajara" ? kv("Asana room", tnRoomGid(t)
+          ? `<span id="tn-room-name" data-gid="${esc(tnRoomGid(t))}">Linked</span> <button type="button" class="hb-link" data-tn-room-link>Change</button>`
+          : `<span class="tn-missing">Not linked</span> <button type="button" class="hb-link" data-tn-room-link>Link room</button> <div class="hb-sub">Extensions, check-outs and room swaps use it to find the room.</div>`) : ""}
       </div>
     </div>
 
@@ -47544,13 +47614,13 @@ document.addEventListener("submit", (ev) => {
 });
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
-<script src="extensions.js?v=2026-11-22-efrefund1"></script>
+<script src="extensions.js?v=2026-11-22-roomlink1"></script>
 <script src="retention.js?v=2026-11-17-roomhold1"></script>
-<script src="ap.js?v=2026-11-22-efrefund1"></script>
-<script src="properties.js?v=2026-11-22-efrefund1"></script>
+<script src="ap.js?v=2026-11-22-roomlink1"></script>
+<script src="properties.js?v=2026-11-22-roomlink1"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
 <script src="ar.js?v=2026-11-06-autoall2"></script>
 <script src="mx-finance.js?v=2026-11-06-autoall2"></script>
-<script src="ef-deposits.js?v=2026-11-22-efrefund1"></script>
+<script src="ef-deposits.js?v=2026-11-22-roomlink1"></script>
 </body>
 </html>
