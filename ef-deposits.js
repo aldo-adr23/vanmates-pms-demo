@@ -433,6 +433,9 @@
       <div style="margin-top:8px"><div class="name-sub">Cleaning fee taken from the deposit, per residence</div>
         <div id="ef-set-fees">${fees.map(([k, c]) => feeRow(k, c)).join('')}</div>
         <button type="button" class="hb-link" data-ef="set-fee-add">+ Add a residence</button></div>
+      <div style="margin-top:8px"><div class="name-sub">Penalty List — amounts suggested from the cleaning reports (range top optional; amount 0 = market price, the reviewer types it)</div>
+        <div id="ef-set-pens">${(x.penalties || []).map(penRow).join('')}</div>
+        <button type="button" class="hb-link" data-ef="set-pen-add">+ Add a penalty</button></div>
       <div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">
         <label class="name-sub">Reviewers (Approve / Cancel), comma-separated<input class="input" data-ef-set="reviewers" value="${esc((x.reviewers || []).join(', '))}" style="width:100%"></label>
         <label class="name-sub">Final authorization (sends the refund)<input class="input" data-ef-set="authorizers" value="${esc((x.authorizers || []).join(', '))}" style="width:100%"></label></div>
@@ -440,6 +443,8 @@
     </div></div>`;
   }
   const feeRow = (k, c) => `<div data-ef-fee style="display:flex;gap:6px;margin:4px 0;align-items:center"><span class="name-sub">The</span><input class="input" data-ef-fee-name value="${esc(k)}" placeholder="well" style="max-width:160px"><input class="input" data-ef-fee-amt value="${c != null ? (c / 100).toFixed(2) : ''}" placeholder="$" inputmode="decimal" style="max-width:90px"><button type="button" class="hb-link" data-ef="set-fee-del">✕</button></div>`;
+  const dollars = c => c != null && c !== '' ? (c / 100).toFixed(2) : '';
+  const penRow = p => `<div data-ef-pen data-code="${esc(p.code || '')}" style="display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap"><input class="input" data-ef-pen-label value="${esc(p.label || '')}" placeholder="Penalty" style="flex:1;min-width:160px"><input class="input" data-ef-pen-amt value="${dollars(p.cents)}" placeholder="$" inputmode="decimal" style="max-width:80px"><span class="name-sub">to</span><input class="input" data-ef-pen-max value="${dollars(p.max_cents)}" placeholder="max $" inputmode="decimal" style="max-width:80px"><input class="input" data-ef-pen-note value="${esc(p.note || '')}" placeholder="note" style="max-width:200px"><button type="button" class="hb-link" data-ef="set-pen-del">✕</button></div>`;
   function readSettings(){
     const fees = {};
     for (const el of document.querySelectorAll('#ef-set-fees [data-ef-fee]')) {
@@ -450,7 +455,16 @@
       fees[k] = c;
     }
     const list = k => ((document.querySelector(`[data-ef-set="${k}"]`) || {}).value || '').split(/[,;\s]+/).map(x => x.trim()).filter(Boolean);
-    return { cleaning_fees: fees, reviewers: list('reviewers'), authorizers: list('authorizers') };
+    const penalties = [];
+    for (const el of document.querySelectorAll('#ef-set-pens [data-ef-pen]')) {
+      const q = k => el.querySelector(`[data-ef-pen-${k}]`).value.trim();
+      const label = q('label'), amt = q('amt').replace(/[$,\s]/g, ''), max = q('max').replace(/[$,\s]/g, '');
+      if (!label && !amt) continue;
+      const cents = Math.round(Number(amt || 0) * 100), maxC = max === '' ? null : Math.round(Number(max) * 100);
+      if (label.length < 3 || !(cents >= 0) || (maxC != null && !(maxC >= cents))) throw new Error(`penalty "${label || '?'}": name, amount, and a range top not below the amount`);
+      penalties.push({ code: el.dataset.code || '', label, cents, max_cents: maxC, note: q('note') });
+    }
+    return { cleaning_fees: fees, reviewers: list('reviewers'), authorizers: list('authorizers'), penalties };
   }
   function heldHtml(V, today){
     const body = V.held.map(r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td>${esc(short(r.move_in))} → <b>${esc(short(r.move_out))}</b></td>
@@ -668,7 +682,7 @@
     if (settled || approved || open) {
       revBody = `${r.reviewed_by ? `<div class="name-sub">Approved by ${esc(r.reviewed_by)} ${esc(String(r.reviewed_at || '').replace('T', ' ').slice(0, 16))}</div>` : ''}
         ${bk(damage.reduce((t, x) => t + x.cents, 0), r.stage === 'closed' && r.review_state === 'cancelled' ? 0 : fee)}
-        ${damage.map(x => `<div class="name-sub">−${money(x.cents)} · ${esc(x.reason)}</div>`).join('')}
+        ${damage.map(x => `<div class="name-sub">−${money(x.cents)} · ${esc(x.reason)}${x.code ? ' <span class="name-sub">(Penalty List)</span>' : ''}</div>`).join('')}
         ${r.no_report_reason ? `<div class="name-sub" style="color:#9a6b12">Approved without a cleaning report: ${esc(r.no_report_reason)}</div>` : ''}
         ${r.inspection_notes ? `<div class="name-sub">Notes: ${esc(r.inspection_notes)}</div>` : ''}
         ${approved && !open && me.can_review ? `<button type="button" class="hb-link" data-ef="review-edit" ${busy}>Revise (sends it back to review)</button>` : ''}`;
@@ -681,6 +695,7 @@
         <div id="ef-bk">${bk(startDmg.reduce((t, x) => t + x.cents, 0), fee)}</div>
         ${fee ? `<label class="name-sub" style="display:block"><input type="checkbox" data-ef="waive"> Waive the cleaning fee</label><input class="input" data-ef="waive-reason" placeholder="Why the cleaning fee is waived" style="width:100%;display:none">` : `<div class="name-sub">No cleaning fee set for ${esc(r.building || 'this residence')} (Settings).</div>`}
         ${!damage.length && r.sheet && r.sheet.deduction_cents > 0 ? `<div class="name-sub">Team sheet: −${money(r.sheet.deduction_cents)}${r.sheet.comments ? ' · ' + esc(r.sheet.comments) : ''} <button type="button" class="hb-link" data-ef="ded-sheet">Use it</button></div>` : ''}
+        ${sugHtml(r, startDmg)}
         <div id="ef-ded-list">${startDmg.map((x, i) => dedRow(x, i)).join('')}</div>
         <button type="button" class="hb-link" data-ef="ded-add">+ Add a damage deduction</button>
         ${r.has_report ? '' : `<input class="input" data-ef="no-report" placeholder="No cleaning report: why it can be approved anyway (required)" style="width:100%;margin-top:6px" value="${esc(r.no_report_reason || '')}">`}
@@ -749,7 +764,20 @@
       ${r.sheet_flag ? `<div style="color:#9a6b12;margin-top:4px">⚠ ${esc(r.sheet_flag.text)}</div>` : ''}
       <div class="name-sub">Imported ${esc(String(x.imported_at || '').slice(0, 10))} from ${esc(x.file || 'the sheet')}.</div></div>`;
   }
-  const dedRow = (x, i) => `<div data-ef-ded="${i}" style="display:flex;gap:6px;margin:4px 0"><input class="input" data-ef-ded-amt placeholder="$" value="${x.cents ? (x.cents / 100).toFixed(2) : ''}" style="max-width:90px" inputmode="decimal"><input class="input" data-ef-ded-why placeholder="What for (required)" value="${esc(x.reason || '')}" style="flex:1"><button type="button" class="hb-link" data-ef="ded-del">✕</button></div>`;
+  // Penalty List charges the Limpio reports point to — suggestions only, the reviewer adds or ignores each
+  const priceOf = x => x.cents ? money(x.cents) + (x.max_cents && x.max_cents > x.cents ? '–' + money(x.max_cents) : '') : 'market price';
+  function sugHtml(r, have){
+    const sug = (r.suggested_charges || []).filter(x => !have.some(d => d.code === x.code));
+    if (!sug.length) return '';
+    return `<div style="border:1px dashed #d9b766;border-radius:8px;padding:8px;margin:6px 0;background:rgba(217,183,102,.08)">
+      <div class="name-sub" style="margin-bottom:4px"><b>Suggested from the cleaning reports</b> (Penalty List) — check the photos, then add or ignore.</div>
+      ${sug.map(x => `<div data-ef-sug="${esc(x.code)}" style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;border-top:1px solid var(--line)">
+        <div style="flex:1"><b>${esc(x.label)}</b> · ${priceOf(x)}${x.note ? ` <span class="name-sub">(${esc(x.note)})</span>` : ''}
+          <div class="name-sub">${esc(x.reason)}${(x.photos || []).map((u, k) => ` <a href="${esc(u)}" target="_blank" rel="noopener">photo ${k + 1}</a>`).join('')}</div>
+          ${x.scope === 'unit' ? '<div class="name-sub" style="color:#9a6b12">Found on the apartment, not this bed — may be a roommate\'s.</div>' : ''}</div>
+        <button type="button" class="btn btn-mini" data-ef="sug-add" data-code="${esc(x.code)}">Add</button></div>`).join('')}</div>`;
+  }
+  const dedRow = (x, i) => `<div data-ef-ded="${i}" data-code="${esc(x.code || '')}" data-task="${esc(x.task_id || '')}" style="display:flex;gap:6px;margin:4px 0"><input class="input" data-ef-ded-amt placeholder="$" value="${x.cents ? (x.cents / 100).toFixed(2) : ''}" style="max-width:90px" inputmode="decimal"><input class="input" data-ef-ded-why placeholder="What for (required)" value="${esc(x.reason || '')}" style="flex:1"><button type="button" class="hb-link" data-ef="ded-del">✕</button></div>`;
   function readDeductions(){
     const out = [];
     for (const el of document.querySelectorAll('#ef-ded-list [data-ef-ded]')) {
@@ -758,7 +786,8 @@
       const cents = Math.round(Number(amt) * 100);
       if (!(cents > 0)) throw new Error('each deduction needs an amount');
       if (why.length < 3) throw new Error('each deduction needs an explanation');
-      out.push({ cents, reason: why });
+      const code = el.dataset.code, task = el.dataset.task;
+      out.push(Object.assign({ cents, reason: why }, code ? { code } : {}, task ? { task_id: task } : {}));
     }
     return out;
   }
@@ -808,6 +837,8 @@
     if (a === 'settings-open') { S.settings = Object.assign({}, S.data.settings || {}); return render(); }
     if (a === 'settings-close') { S.settings = null; return render(); }
     if (a === 'set-fee-add') { $('ef-set-fees').insertAdjacentHTML('beforeend', feeRow('', null)); return; }
+    if (a === 'set-pen-add') { $('ef-set-pens').insertAdjacentHTML('beforeend', penRow({})); return; }
+    if (a === 'set-pen-del') { b.closest('[data-ef-pen]').remove(); return; }
     if (a === 'set-fee-del') { b.closest('[data-ef-fee]').remove(); return; }
     if (a === 'settings-save') {
       let body; try { body = readSettings(); } catch (err) { return showToast(err.message); }
@@ -835,6 +866,14 @@
     if (a === 'unlink' || a === 'moved_out' || a === 'undo_moved_out' || a === 'refresh') return act(a);
     if (a === 'ded-add') { const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow({}, list.children.length)); return; }
     if (a === 'ded-sheet') { const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow({ cents: r.sheet.deduction_cents, reason: r.sheet.comments || 'Per the team sheet' }, list.children.length)); b.parentElement.remove(); return; }
+    if (a === 'sug-add') {
+      const x = (r.suggested_charges || []).find(s => s.code === b.dataset.code); if (!x) return;
+      const list = $('ef-ded-list');
+      list.insertAdjacentHTML('beforeend', dedRow({ cents: x.cents, reason: `${x.label} — ${x.reason.replace(/^[^:]*:\s*/, '')}`.slice(0, 290), code: x.code, task_id: x.task_id }, list.children.length));
+      const box = b.closest('[data-ef-sug]'); const wrap = box.parentElement; box.remove(); if (!wrap.querySelector('[data-ef-sug]')) wrap.remove();
+      if (!x.cents) { const inp = list.lastElementChild.querySelector('[data-ef-ded-amt]'); if (inp) inp.focus(); showToast('Type the amount (current market price)'); }
+      return;
+    }
     if (a === 'ded-del') { b.closest('[data-ef-ded]').remove(); return; }
     if (a === 'approve') {
       let ded; try { ded = readDeductions(); } catch (err) { return showToast(err.message); }
