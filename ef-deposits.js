@@ -399,7 +399,8 @@
     <tbody>${body || `<tr><td colspan="${head.length}" class="name-sub" style="padding:24px;text-align:center">${empty}</td></tr>`}</tbody></table></div></div>`;
   const band = (label, n) => `<tr><td colspan="9" style="background:var(--cream,#f7f3ec);font-weight:600;font-size:12px;letter-spacing:.02em">${label} · ${n}</td></tr>`;
   const rowOpen = r => `data-ef-open="${esc(r.id)}" style="cursor:pointer"`;
-  const pdfLink = r => r.has_report ? `<button type="button" class="hb-link" data-ef-pdf="${esc(r.id)}" title="Limpio cleaning report (PDF)">📄 Cleaning report</button>` : '';
+  const hasCond = r => (r.cleaning || []).some(c => c && c.condition_at);
+  const pdfLink = r => r.has_report ? `<button type="button" class="hb-link" data-ef-pdf="${esc(r.id)}" title="Limpio report (PDF)">📄 ${hasCond(r) ? 'Condition report' : 'Cleaning report'}</button>` : '';
 
   function movingHtml(V, today){
     const two = V.ahead.filter(r => r.move_out && r.move_out <= addDays(today, 13));
@@ -663,16 +664,25 @@
     // 3. Limpio cleaning reports (linked automatically every 10 minutes)
     const cl = Array.isArray(r.cleaning) ? r.cleaning : [];
     const photoLinks = ps => ps.length ? `<div class="name-sub" style="margin-top:2px">${ps.slice(0, 40).map((p, i) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.area || 'photo')} ${i + 1}</a>`).join(' · ')}</div>` : '<div class="name-sub">No photos.</div>';
-    const condText = c => { const it = c && c.items; if (!it) return ''; const bad = Object.entries(it).filter(([, v]) => v && v.status && v.status !== 'good');
-      return `<div class="name-sub">Pre-cleaning condition: ${bad.length ? bad.map(([k, v]) => `${esc(k)} ${esc(String(v.status).replace(/_/g, ' '))}${v.note ? ' (' + esc(v.note) + ')' : ''}`).join(' · ') : 'all good'}</div>`; };
+    const CLEAN = { clean: 'Clean', average: 'Average', dirty: 'Dirty', very_dirty: 'Very dirty' };
+    const condText = (c, x) => { const it = c && c.items; if (!it) return ''; const bad = Object.entries(it).filter(([, v]) => v && v.status && v.status !== 'good');
+      const k = c.keys || {}, p = (x && x.precheck) || {};
+      return `<div style="border-left:3px solid ${x && x.condition_at ? '#3e6049' : 'var(--line)'};padding:4px 8px;margin:4px 0">
+        ${x && x.condition_at ? `<div><b>Move-out condition report</b> <span class="name-sub">filed before cleaning · ${esc(String(x.condition_at).replace('T', ' ').slice(0, 16))}</span></div>` : ''}
+        <div class="name-sub">Condition: ${bad.length ? bad.map(([kk, v]) => `<span style="${/damage|missing/.test(v.status) ? 'color:var(--red-dark,#a33)' : ''}">${esc(kk)} ${esc(String(v.status).replace(/_/g, ' '))}${v.note ? ' (' + esc(v.note) + ')' : ''}</span>`).join(' · ') : 'all good'}</div>
+        ${k.status ? `<div class="name-sub">Keys: <span style="${k.status !== 'returned' ? 'color:var(--red-dark,#a33)' : ''}">${esc(k.status)}${k.found != null && k.status !== 'missing' ? ' (' + esc(k.found) + ' found)' : ''}</span></div>` : ''}
+        ${p.cleanliness ? `<div class="name-sub">General cleanliness: <b>${esc(CLEAN[p.cleanliness] || p.cleanliness)}</b></div>` : ''}
+        ${p.missing_items ? `<div class="name-sub">Missing or broken: ${esc(p.missing_items)}</div>` : ''}
+        ${p.observations ? `<div class="name-sub">Observations: ${esc(p.observations)}</div>` : ''}</div>`; };
     const repBody = (cl.length ? cl.map(c => `<div style="border-top:1px solid var(--line);padding:6px 0">
         <b>${esc(c.type || 'Clean')}</b> · ${esc(short(c.date))} · ${c.status === 'completed' ? '<span style="color:#3e6049">completed</span>' : esc(c.status)} · ${esc(c.property)} ${esc(c.unit)}${c.match === 'unit' ? ' <span class="name-sub">(apartment, bed not named)</span>' : ''}
         <div class="name-sub">${esc(c.task_id)}${c.cleaner ? ' · ' + esc(c.cleaner) : ''}${c.clock_out ? ' · finished ' + esc(String(c.clock_out).replace('T', ' ').slice(0, 16)) : ''}</div>
         ${c.notes ? `<div class="name-sub">Notes: ${esc(c.notes)}</div>` : ''}
         ${(c.issues || []).map(i => `<div style="color:#9a6b12">⚠ ${esc(i.category)}${i.urgency ? ' · ' + esc(i.urgency) : ''}: ${esc(i.description)}${(i.photos || []).map((u, k) => ` <a href="${esc(u)}" target="_blank" rel="noopener">photo ${k + 1}</a>`).join('')}</div>`).join('')}
-        ${condText(c.condition)}${photoLinks(c.photos || [])}</div>`).join('')
+        ${condText(c.condition, c)}${photoLinks(c.photos || [])}</div>`).join('')
       : `<div style="color:#9a6b12">⚠ No Limpio clean found for ${esc(r.building)} ${esc(r.unit)}${r.bed ? ' bed ' + esc(r.bed) : ''} between the day before and a week after the move-out.</div>`)
-      + (r.has_report ? `<div style="margin-top:6px"><button type="button" class="btn btn-mini" data-ef-pdf="${esc(r.id)}" ${busy}>📄 Open the cleaning report (PDF)</button></div>` : '')
+      + (r.has_report ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${hasCond(r) ? `<button type="button" class="btn btn-mini btn-primary" data-ef-pdf="${esc(r.id)}" ${busy}>📄 Move-out condition report (PDF)</button>` : ''}${cl.some(c => c.status === 'completed') ? `<button type="button" class="btn btn-mini" data-ef-pdf="${esc(r.id)}" data-kind="completion" ${busy}>📄 Cleaning completion report (PDF)</button>` : ''}</div>`
+          + (hasCond(r) ? '' : '<div class="name-sub" style="color:#9a6b12">No move-out condition report on this clean (filed before cleaning from 2026-11-23).</div>') : '')
       + `<div class="name-sub" style="margin-top:4px">${r.cleaning_checked_at ? 'Checked ' + esc(String(r.cleaning_checked_at).replace('T', ' ').slice(0, 16)) + '. ' : ''}<button type="button" class="hb-link" data-ef="reports" ${busy}>Look in Limpio again</button></div>`;
 
     // 4. review (reviewer: Approve / Cancel) — the cleaning fee comes from the settings, damage deductions are typed
@@ -837,7 +847,7 @@
     const mb = e.target.closest('[data-ef-month]');
     if (mb) { S.month = mb.dataset.efMonth; try { sessionStorage.setItem('ef-dd-month', S.month); } catch (_) {} return render(); }
     const pb = e.target.closest('[data-ef-pdf]');
-    if (pb) { e.stopPropagation(); return openReportPdf(pb.dataset.efPdf, pb); }
+    if (pb) { e.stopPropagation(); return openReportPdf(pb.dataset.efPdf, pb, pb.dataset.kind); }
     const vb = e.target.closest('[data-ef-view]');
     if (vb) { S.view = vb.dataset.efView; S.viewChosen = true; return render(); }
     const openRow = e.target.closest('[data-ef-open]');
@@ -911,10 +921,10 @@
   }
 
   /** The Limpio cleaning report PDF (made by Limpio's own generator via the partner app). */
-  async function openReportPdf(id, btn){
-    let win = null; try { win = window.open('', '_blank'); if (win) win.document.write('<p style="font:14px sans-serif;padding:20px">Making the cleaning report…</p>'); } catch (_) { win = null; }
+  async function openReportPdf(id, btn, kind){
+    let win = null; try { win = window.open('', '_blank'); if (win) win.document.write('<p style="font:14px sans-serif;padding:20px">Making the report…</p>'); } catch (_) { win = null; }
     if (btn) btn.disabled = true;
-    const res = await api('POST', `/${id}/report_pdf`, {});
+    const res = await api('POST', `/${id}/report_pdf`, kind ? { kind } : {});
     if (btn) btn.disabled = false;
     if (!res.ok || !res.data.pdf_base64) { if (win) win.close(); return showToast('Could not make the report: ' + errText(res)); }
     const bin = atob(String(res.data.pdf_base64).replace(/\s/g, '')), bytes = new Uint8Array(bin.length);
