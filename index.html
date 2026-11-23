@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-23-tnhouse1"></script>
+<script src="pms-supabase.js?v=2026-11-23-celnew1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -25037,7 +25037,8 @@ function celHtml(){
   if (CEL_STATE.rows === null) { celLoad(); return '<p class="name-sub">Loading CEL bookings…</p>'; }
   if (CEL_STATE.openId) return celDetailHtml();
   const rows = CEL_STATE.rows, f = CEL_STATE.filters, c = celCounts(rows);
-  const list = celFilter(rows, f);
+  // Newest submitted first (Aldo 2026-11-23: the list read as random because the API returns it by check-in).
+  const list = celFilter(rows, f).slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || String(b.id).localeCompare(String(a.id)));
   const owners = [...new Set(rows.map(r => r.owner).filter(Boolean))].sort();
   const card = (label, n, key, tone) => `<button type="button" class="card" data-cel-quick="${key}" style="padding:10px 14px;text-align:left;cursor:pointer;min-width:140px;border-left:4px solid var(--${tone || 'line'})">
       <div style="font-size:22px;font-weight:700">${n}</div><div class="name-sub">${esc(label)}</div></button>`;
@@ -25060,11 +25061,12 @@ function celHtml(){
     </div>
     ${CEL_STATE.showSettings ? celSettingsHtml() : ''}
     ${list.length ? `<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Booking</th><th>Student</th><th>Arrival → departure</th><th>Category</th><th>Days</th><th>Deadline</th><th>Owner</th><th>Last review</th><th>Next reminder</th><th>Status</th></tr></thead>
+      <thead><tr class="name-sub" style="text-align:left"><th style="padding:8px">Booking</th><th>Submitted</th><th>Student</th><th>Arrival → departure</th><th>Category</th><th>Days</th><th>Deadline</th><th>Owner</th><th>Last review</th><th>Next reminder</th><th>Status</th></tr></thead>
       <tbody>${list.map(r => {
         const st = celStatus(r.status), sg = celStage(r.stage);
         return `<tr style="border-top:1px solid var(--line);cursor:pointer" data-cel-open="${esc(r.id)}">
           <td style="padding:8px;white-space:nowrap"><strong>${esc(r.id)}</strong><br><span class="name-sub">${esc(r.agency_name || '')}</span></td>
+          <td class="name-sub" style="white-space:nowrap">${r.created_at ? esc(ptnStamp(r.created_at)) : '—'}</td>
           <td>${esc(r.student_name || r.student_ref)}${r.n_students > 1 ? `<br><span class="name-sub">${r.n_students} students${r.live_together ? ' · together' : ''}</span>` : ''}</td>
           <td style="white-space:nowrap">${esc(ptnDay(r.check_in))} → ${esc(ptnDay(r.check_out))}</td>
           <td>${esc(celLabel(CEL_CATS, r.category))}<br><span class="name-sub">${esc(celLabel(CEL_BATHS, r.bath))}</span></td>
