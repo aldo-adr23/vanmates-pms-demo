@@ -278,7 +278,7 @@
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
-  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', viewChosen: false, open: null, busy: false, confirm: false, upload: null, settings: null, history: null };
+  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', viewChosen: false, month: (() => { try { return sessionStorage.getItem('ef-dd-month') || ''; } catch (_) { return ''; } })(), open: null, busy: false, confirm: false, upload: null, settings: null, history: null };
   const $ = id => document.getElementById(id);
   const api = async (method, path, body) => {
     const res = await rcvApi(method, '/api/staff/ef-deposits' + path, body);
@@ -299,7 +299,7 @@
     NOT_REVIEWER: 'Only the EF refund reviewer can approve or cancel (Settings).', NOT_AUTHORIZER: 'Only Denisse (the final authorizer) can authorize or reject.',
     NOT_APPROVED: 'The refund has to be approved in the review first.', ALREADY_APPROVED: 'Already approved — waiting for Denisse.',
     NO_REPORT: 'No Limpio cleaning report: say why it can be approved anyway.', NO_EMAIL: 'No email for the student: type one.', RECEIPT_FAILED: 'The receipt email failed.',
-    NOT_ADMIN: 'Only an admin can change the settings.', NO_REFUND: 'No confirmed refund yet.',
+    NOT_ADMIN: 'Only an admin can change the settings.', PDF_FAILED: 'Limpio could not make the PDF (try again in a minute).', NO_REPORT: 'No finished Limpio clean is linked yet.', NO_REFUND: 'No confirmed refund yet.',
   };
   const errText = r => {
     const d = r.data || {}; const base = ERR[d.code] || ERR[d.error] || d.code || d.error || `HTTP ${r.status}`;
@@ -399,23 +399,33 @@
     <tbody>${body || `<tr><td colspan="${head.length}" class="name-sub" style="padding:24px;text-align:center">${empty}</td></tr>`}</tbody></table></div></div>`;
   const band = (label, n) => `<tr><td colspan="9" style="background:var(--cream,#f7f3ec);font-weight:600;font-size:12px;letter-spacing:.02em">${label} · ${n}</td></tr>`;
   const rowOpen = r => `data-ef-open="${esc(r.id)}" style="cursor:pointer"`;
+  const pdfLink = r => r.has_report ? `<button type="button" class="hb-link" data-ef-pdf="${esc(r.id)}" title="Limpio cleaning report (PDF)">📄 Cleaning report</button>` : '';
 
   function movingHtml(V, today){
     const two = V.ahead.filter(r => r.move_out && r.move_out <= addDays(today, 13));
     const twoCents = two.filter(hasDeposit).reduce((t, r) => t + (r.available_cents || 0), 0);
-    const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td><b>${esc(short(r.move_out))}</b></td><td class="right">${dep(r)}</td><td>${step(r, today)}</td></tr>`;
+    const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td><b>${esc(short(r.move_out))}</b></td><td class="right">${dep(r)}</td><td>${step(r, today)}${pdfLink(r) ? '<div>' + pdfLink(r) + '</div>' : ''}</td></tr>`;
+    // one button per group (moved out / each month) — pick one, no scrolling through every month
+    const groups = [];
+    if (V.left.length) groups.push({ key: 'left', label: 'Moved out', title: '<span style="color:var(--red-dark,#a33)">Already moved out — deposit not returned yet</span>', rows: V.left, col: 'var(--red-dark,#a33)' });
+    if (V.sheetDone.length) groups.push({ key: 'sheet', label: 'Sheet says refunded', title: '<span style="color:#9a6b12">Moved out — the team sheet says refunded, Stripe shows no refund: confirm how it was paid back</span>', rows: V.sheetDone, col: '#9a6b12' });
+    for (const g of groupByMonth(V.ahead)) groups.push({ key: g.month || 'none', label: g.month ? `${MONTHS[+g.month.slice(5, 7) - 1]}${g.month.slice(0, 4) !== today.slice(0, 4) ? ' ' + g.month.slice(2, 4) : ''}` : 'No date', title: esc(monthLabel(g.month, today)), rows: g.rows });
+    const thisMonth = groups.find(g => g.key === today.slice(0, 7));
+    const pick = groups.find(g => g.key === S.month) || (S.month === 'all' ? null : groups.find(g => g.key === 'left') || thisMonth || groups[0]);
+    const shown = pick ? [pick] : groups;
+    const chip = (key, label, n, on, col) => `<button type="button" class="btn btn-mini${on ? ' btn-primary' : ''}" data-ef-month="${esc(key)}" style="white-space:nowrap${col && !on ? ';color:' + col : ''}">${esc(label)} <span style="opacity:.7">${n}</span></button>`;
+    const chips = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;position:sticky;top:0;z-index:2;background:var(--bg,#fbf8f2);padding:6px 0">
+      ${groups.map(g => chip(g.key, g.label, g.rows.length, pick && pick.key === g.key, g.col)).join('')}${chip('all', 'All', groups.reduce((t, g) => t + g.rows.length, 0), !pick)}</div>`;
     let body = '';
-    if (V.left.length) body += band('<span style="color:var(--red-dark,#a33)">Already moved out — deposit not returned yet</span>', V.left.length) + V.left.map(line).join('');
-    if (V.sheetDone.length) body += band('<span style="color:#9a6b12">Moved out — the team sheet says refunded, Stripe shows no refund: confirm how it was paid back</span>', V.sheetDone.length) + V.sheetDone.map(line).join('');
-    for (const g of groupByMonth(V.ahead)) body += band(esc(monthLabel(g.month, today)), g.rows.length) + g.rows.map(line).join('');
-    return `<div class="card-sub" style="margin:0 0 10px">Next 2 weeks: <b>${two.length}</b> students moving out · <b>${money(twoCents)}</b> in deposits to return${two.filter(r => !hasDeposit(r)).length ? ` · <span style="color:var(--red-dark,#a33)">${two.filter(r => !hasDeposit(r)).length} with no deposit</span>` : ''}</div>`
+    for (const g of shown) body += band(g.title, g.rows.length) + g.rows.map(line).join('');
+    return chips + `<div class="card-sub" style="margin:0 0 10px">Next 2 weeks: <b>${two.length}</b> students moving out · <b>${money(twoCents)}</b> in deposits to return${two.filter(r => !hasDeposit(r)).length ? ` · <span style="color:var(--red-dark,#a33)">${two.filter(r => !hasDeposit(r)).length} with no deposit</span>` : ''}</div>`
       + table(['Student', 'Building · room', 'Move-out', 'Deposit', 'Next step'], body, 'Nobody moving out for these filters.');
   }
   function approveHtml(rows, today){
     const me = S.data.me || {};
     const fees = (S.data.settings || {}).cleaning_fees || {};
     const line = r => `<tr ${rowOpen(r)}><td>${who(r)}</td><td>${room(r)}</td><td>${esc(short(r.move_out))}</td>
-      <td>${r.has_report ? `<span style="color:#3e6049">✓ ${(r.cleaning || []).filter(c => c.status === 'completed').length} clean${(r.cleaning || []).filter(c => c.status === 'completed').length === 1 ? '' : 's'}</span>` : r.no_report_reason ? '<span style="color:#9a6b12">none — reason given</span>' : '<span style="color:#9a6b12">missing</span>'}</td>
+      <td>${r.has_report ? `<span style="color:#3e6049">✓</span> ${pdfLink(r)}` : r.no_report_reason ? '<span style="color:#9a6b12">none — reason given</span>' : '<span style="color:#9a6b12">missing</span>'}</td>
       <td class="right">${money(r.available_cents)}</td><td class="right">${r.stage === 'inspected' || r.stage === 'refunded' ? '−' + money(r.deduction_cents) : r.cleaning_fee_default_cents ? '−' + money(r.cleaning_fee_default_cents) + '<div class="name-sub">cleaning</div>' : '—'}</td>
       <td class="right"><b>${money(r.stage === 'inspected' || r.stage === 'refunded' ? r.refund_due_cents : Math.max(0, (r.available_cents || 0) - (r.cleaning_fee_default_cents || 0)))}</b></td><td>${step(r, today)}</td></tr>`;
     let body = '';
@@ -662,6 +672,7 @@
         ${(c.issues || []).map(i => `<div style="color:#9a6b12">⚠ ${esc(i.category)}${i.urgency ? ' · ' + esc(i.urgency) : ''}: ${esc(i.description)}${(i.photos || []).map((u, k) => ` <a href="${esc(u)}" target="_blank" rel="noopener">photo ${k + 1}</a>`).join('')}</div>`).join('')}
         ${condText(c.condition)}${photoLinks(c.photos || [])}</div>`).join('')
       : `<div style="color:#9a6b12">⚠ No Limpio clean found for ${esc(r.building)} ${esc(r.unit)}${r.bed ? ' bed ' + esc(r.bed) : ''} between the day before and a week after the move-out.</div>`)
+      + (r.has_report ? `<div style="margin-top:6px"><button type="button" class="btn btn-mini" data-ef-pdf="${esc(r.id)}" ${busy}>📄 Open the cleaning report (PDF)</button></div>` : '')
       + `<div class="name-sub" style="margin-top:4px">${r.cleaning_checked_at ? 'Checked ' + esc(String(r.cleaning_checked_at).replace('T', ' ').slice(0, 16)) + '. ' : ''}<button type="button" class="hb-link" data-ef="reports" ${busy}>Look in Limpio again</button></div>`;
 
     // 4. review (reviewer: Approve / Cancel) — the cleaning fee comes from the settings, damage deductions are typed
@@ -823,6 +834,10 @@
   }
   async function onClick(e){
     if (e.target.closest('[data-ef-stop]') || (e.target.closest('a') && e.target.closest('#ef-dd, #ef-dd-backdrop'))) return;
+    const mb = e.target.closest('[data-ef-month]');
+    if (mb) { S.month = mb.dataset.efMonth; try { sessionStorage.setItem('ef-dd-month', S.month); } catch (_) {} return render(); }
+    const pb = e.target.closest('[data-ef-pdf]');
+    if (pb) { e.stopPropagation(); return openReportPdf(pb.dataset.efPdf, pb); }
     const vb = e.target.closest('[data-ef-view]');
     if (vb) { S.view = vb.dataset.efView; S.viewChosen = true; return render(); }
     const openRow = e.target.closest('[data-ef-open]');
@@ -893,6 +908,21 @@
     if (a === 'refund-no') { S.confirm = false; return renderModal(); }
     if (a === 'refund-go') return act('authorize', { amount_cents: r.refund_due_cents, expected_refunded_cents: r.refunded_cents });
     if (a === 'close' && b.closest('#ef-dd-body')) { const why = (b.parentElement.querySelector('[data-ef="close-reason"]') || {}).value || ''; if (why.trim().length < 3) return showToast('Say why no refund is sent'); return act('close', { reason: why.trim() }); }
+  }
+
+  /** The Limpio cleaning report PDF (made by Limpio's own generator via the partner app). */
+  async function openReportPdf(id, btn){
+    let win = null; try { win = window.open('', '_blank'); if (win) win.document.write('<p style="font:14px sans-serif;padding:20px">Making the cleaning report…</p>'); } catch (_) { win = null; }
+    if (btn) btn.disabled = true;
+    const res = await api('POST', `/${id}/report_pdf`, {});
+    if (btn) btn.disabled = false;
+    if (!res.ok || !res.data.pdf_base64) { if (win) win.close(); return showToast('Could not make the report: ' + errText(res)); }
+    const bin = atob(String(res.data.pdf_base64).replace(/\s/g, '')), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    if (win) win.location.href = url;
+    else { const a = document.createElement('a'); a.href = url; a.download = res.data.filename || 'cleaning-report.pdf'; document.body.appendChild(a); a.click(); a.remove(); }
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
   }
 
   /** Called by goToView('deposits'). */
