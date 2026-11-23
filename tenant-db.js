@@ -292,6 +292,24 @@
 .td-ev{width:100%;font-size:12px;border-collapse:collapse;margin-top:6px}
 .td-ev td,.td-ev th{border-top:1px solid var(--line,#efe8e0);padding:4px 6px;text-align:left}
 .td-hrow{font-size:12px;padding:6px 0;border-top:1px solid var(--line,#efe8e0)}
+.tb-sum{margin:0 0 10px}
+.tb-house{padding:0;margin-bottom:12px;overflow:hidden}
+.tb-head{display:grid;grid-template-columns:minmax(0,1fr) 220px auto;gap:10px 18px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--cream-2,#efe8e0)}
+.tb-name{font-weight:700;font-size:15px;color:inherit;text-decoration:none}
+.tb-name:hover{color:var(--red)}
+.tb-occ{display:flex;align-items:center;gap:8px;font-size:13px}
+.tb-occ .occ-bar{display:block;flex:1;margin:0;min-width:60px}
+.tb-occ .occ-fill{display:block;height:100%}
+.tb-acts{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.tb-cols,.tb-row{display:grid;grid-template-columns:minmax(110px,1.1fr) minmax(0,2fr) minmax(150px,1fr) 80px;gap:4px 14px;padding:9px 16px;align-items:start}
+.tb-cols{padding-top:8px;padding-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.tb-cols span:last-child,.tb-rent{text-align:right}
+.tb-row{border-top:1px solid var(--cream-2,#efe8e0);font-size:13.5px}
+.tb-span{grid-column:2 / -1}
+.tb-next{grid-column:2 / -1}
+.tb-empty{background:var(--cream,#faf6f1)}
+.tb-who .td-link{font-weight:600}
+@media (max-width:760px){.tb-head{grid-template-columns:1fr}.tb-acts{justify-content:flex-start}.tb-cols{display:none}.tb-row{grid-template-columns:minmax(90px,1fr) minmax(0,2fr)}.tb-dates,.tb-rent{grid-column:2;text-align:left}}
 @media (max-width:640px){.td-moves{grid-template-columns:1fr}.td-rooms th:nth-child(3),.td-rooms td:nth-child(3){display:none}}`;
     document.head.appendChild(st);
   })();
@@ -480,22 +498,79 @@
     </details>`;
   }
 
+  // ── Tenants › By house: one block per house, every room with who is in it today (like Properties & rooms).
+  function rentText(t) { const r = Number(t && t.rent); return r ? (t.city === "Guadalajara" ? "MX$" : "$") + r.toLocaleString() : "—"; }
+  function contactText(t) { return [t.email ? tnEmail(t.email) : "", t.phone || ""].filter(Boolean).join(" · "); }
+  function houseWho(x, today) {
+    const t = x.t, s = stay(t, today);
+    return `<div class="tb-who">${tenantLink(t)}${tagsHtml(x.flags, t)}<div class="hb-sub">${esc(contactText(t) || "No contact")}</div></div>
+      <div class="tb-dates">${esc(s.start ? fmt(s.start) : "?")} – ${esc(s.end ? fmt(s.end) : "open")}</div>
+      <div class="tb-rent num">${rentText(t)}</div>`;
+  }
+  function houseBlock(v, today) {
+    const c = v.counts;
+    const pct = c.rooms ? Math.round((c.occupied / c.rooms) * 100) : 0;
+    const rows = v.rooms.map((r) => {
+      const label = `<div class="tb-room"><b>${esc(r.label)}</b>${r.unit && !new RegExp("\\b" + String(r.unit).replace(/[^\w]/g, "") + "\\b").test(v.name) ? `<div class="hb-sub">Unit ${esc(r.unit)}</div>` : ""}${r.conflict ? `<span class="td-tag bad">double-booked</span>` : r.possible ? `<span class="td-tag warn">check: 2 people</span>` : ""}</div>`;
+      const next = r.next ? `<div class="tb-next hb-sub">Next: ${tenantLink(r.next)} from ${esc(fmt(stay(r.next, today).start))}</div>` : "";
+      if (!r.on.length) {
+        const empty = r.status === "occupied" ? `<span class="td-tag warn" title="Asana has this room as rented, but no portal tenant is linked to it">Rented in Asana · tenant not linked</span>`
+          : `<span class="td-vac">Empty${r.status === "not_bookable" ? " · not bookable" : ""}</span>`;
+        return `<div class="tb-row tb-empty">${label}<div class="tb-span">${empty}${next}</div></div>`;
+      }
+      return r.on.map((x, i) => `<div class="tb-row${r.conflict ? " td-conf" : ""}">${i ? "<div></div>" : label}${houseWho(x, today)}${i === r.on.length - 1 ? next : ""}</div>`).join("");
+    }).join("");
+    const loose = v.unplaced.map((x, i) => `<div class="tb-row">${i ? "<div></div>" : `<div class="tb-room"><b>Room not linked</b></div>`}${houseWho(x, today)}${x.t.room && x.t.room !== "—" ? `<div class="tb-next hb-sub">Room on file: “${esc(x.t.room)}”</div>` : ""}</div>`).join("");
+    return `<section class="card tb-house" data-tb-house="${esc(v.name)}">
+      <header class="tb-head">
+        <div class="tb-title"><a href="#" class="tb-name" data-pr-open="${esc(v.name)}" title="Open ${esc(v.name)}">${esc(v.name)}</a><div class="hb-sub">${esc([v.addr, v.city].filter(Boolean).join(" · "))}</div></div>
+        <div class="tb-occ">${c.rooms ? `<span class="num">${c.occupied}/${c.rooms}</span><span class="occ-bar"><span class="occ-fill" style="width:${pct}%"></span></span><span class="hb-sub">${c.vacant ? `${c.vacant} empty` : "full"}</span>` : `<span class="hb-sub">${c.people} tenant${c.people === 1 ? "" : "s"}</span>`}</div>
+        <div class="tb-acts">${c.conflicts ? `<span class="td-tag bad">${c.conflicts} double-booked</span>` : ""}${v.departures.length ? `<span class="td-tag">${v.departures.length} leaving soon</span>` : ""}${v.arrivals.length ? `<span class="td-tag ok">${v.arrivals.length} arriving</span>` : ""}
+          ${c.people ? `<button type="button" class="btn btn-ghost tn-mini" data-tn-email-house="${esc(v.name)}">Email this house</button>` : ""}</div>
+      </header>
+      ${rows || loose ? `<div class="tb-cols hb-sub"><span>Room</span><span>Tenant</span><span>Stay</span><span>Rent</span></div><div class="tb-rows">${rows}${loose}</div>` : `<div class="tn-empty">No rooms on file.</div>`}
+    </section>`;
+  }
+  function renderHouses() {
+    const el = $("tn-houses");
+    if (!el) return;
+    const today = todayIso();
+    if (!OC.inv) { el.innerHTML = `<div class="card tn-empty">Loading rooms…</div>`; loadInv().then(() => { if (TN.view === "house") renderHouses(); }); return; }
+    const list = liveTenants();
+    const m = model();
+    const placement = place(list, m, PR_CORE.contractRooms(window.contracts));
+    const all = occupancy(m, list, placement, today, today, 30).filter((v) => v.name && (v.rooms.length || v.counts.people));
+    // A house not set up in Properties takes its tenants' city.
+    all.forEach((v) => { if (!v.city) { const p = v.rooms.flatMap((r) => r.on).concat(v.unplaced)[0]; v.city = (p && p.t.city) || ""; } });
+    const cityKey = (v) => (v.city ? "0" + v.city : "1");
+    const views = filterViews(all, { city: TN.city, prop: TN.house, q: TN.q, only: "" })
+      .sort((a, b) => cityKey(a).localeCompare(cityKey(b)) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+    if (!views.length) { el.innerHTML = `<div class="card tn-empty">${TN.q || TN.city || TN.house ? "No house matches these filters." : "No houses yet."}</div>`; return; }
+    const tot = totals(views);
+    const cities = [...new Set(views.map((v) => v.city || "Other"))];
+    el.innerHTML = `${OC.err ? `<div class="card-sub hb-note">${esc(OC.err)}</div>` : ""}
+      <div class="hb-sub tb-sum">${views.length} house${views.length === 1 ? "" : "s"} · ${tot.people} living here today · ${tot.occupied}/${tot.rooms} rooms occupied · ${tot.vacant} empty</div>
+      ${cities.map((city) => `<section class="tn-city"><h3 class="tn-city-h">${esc(city)}</h3>${views.filter((v) => (v.city || "Other") === city).slice(0, 150).map((v) => houseBlock(v, today)).join("")}</section>`).join("")}`;
+  }
+
   // Hook into the Tenants page: the Occupancy segment hides the list/house views and shows ours.
   const baseRender = window.renderTenants;
   if (typeof baseRender === "function") {
     window.renderTenants = function () {
       ensureShell();
-      const occ = TN.view === "occ";
-      if (occ) { TN.view = "list"; baseRender.apply(this, arguments); TN.view = "occ"; }
+      const occ = TN.view === "occ", house = TN.view === "house";
+      if (occ || house) { const v = TN.view; TN.view = "list"; baseRender.apply(this, arguments); TN.view = v; }
       else baseRender.apply(this, arguments);
       document.querySelectorAll("[data-tn-view]").forEach((b) => b.classList.toggle("on", b.dataset.tnView === TN.view));
       const o = $("tn-occ");
       if (o) o.hidden = !occ;
-      if (occ) {
-        ["tn-list-card", "tn-houses", "tn-banner"].forEach((id) => { const x = $(id); if (x) x.hidden = true; });
-        const tabs = $("tn-tabs"); if (tabs) tabs.style.display = "none";
-        renderOcc();
-      } else { const tabs = $("tn-tabs"); if (tabs) tabs.style.display = ""; }
+      const tabs = $("tn-tabs");
+      if (occ || house) {
+        ["tn-list-card", "tn-houses", "tn-banner", "bulk-bar"].forEach((id) => { const x = $(id); if (x) x.hidden = true; });
+        if (tabs) tabs.style.display = "none";
+        if (occ) renderOcc();
+        else { $("tn-houses").hidden = false; renderHouses(); }
+      } else if (tabs) tabs.style.display = "";
     };
     try { if (localStorage.getItem("vm_tn_view") === "occ") TN.view = "occ"; } catch (e) {}
   }
