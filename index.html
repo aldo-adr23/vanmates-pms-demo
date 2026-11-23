@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-23-celnew1"></script>
+<script src="pms-supabase.js?v=2026-11-23-celstu2"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -24879,7 +24879,7 @@ const CEL_ERRORS = {
   NOT_CONFIGURED: 'this agency has no CEL settings yet',
   OFFER_REQUIRED: 'an alternative needs a category, bathroom or dates',
   ALREADY_CLOSED: 'already cancelled or declined', SAME_ROOM: 'that is already the room',
-  STUDENT_NOT_FOUND: 'student not found for this agency', NOT_FOUND: 'not found', VOID: 'that deposit was voided',
+  STUDENT_NOT_FOUND: 'student not found for this agency', ALREADY_ASSIGNED: 'a room is already assigned', NOT_FOUND: 'not found', VOID: 'that deposit was voided',
   NOT_INSTALLED: 'the CEL database setup has not been applied yet (Supabase SQL: sql/2026-10-10-cel-category-bookings.sql in vanmates-partners)',
 };
 const celLabel = (list, v) => (list.find(([k]) => k === v) || [v, v || '—'])[1];
@@ -25138,7 +25138,27 @@ function celDetailHtml(){
             <button class="btn btn-primary" type="button" data-cel-act="confirm">Confirm booking (room pending)</button>`) : ''}
         ${!closed && b.status !== 'ASSIGNED' ? section('Student profile', `${(d.students || []).length ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
             <select class="form-input" data-cel-student style="max-width:320px">${ptnOptions([['', 'Choose the student…'], ...d.students.map(s => [s.id, `${s.name} · ${s.email}`])], b.student_id || '')}</select>
-            <button class="btn btn-ghost" type="button" data-cel-act="student">Link</button></div>` : '<p class="name-sub">The agency has no student profiles yet: ask CEL to add the student in the partner portal.</p>'}`) : ''}
+            <button class="btn btn-ghost" type="button" data-cel-act="student">Link</button></div>` : '<p class="name-sub">The school has no student profiles yet.</p>'}
+            ${!b.student_id ? `<details style="margin-top:10px"${CEL_STATE.newStudentOpen ? ' open' : ''} data-cel-newstu-box><summary style="cursor:pointer;font-weight:600">+ Add the student yourself</summary>
+            <form data-cel-newstu style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+              <p class="name-sub" style="margin:0">Use when the school sent the student's details by email but hasn't added them in the partner portal. The profile is saved under ${esc(b.agency_name || 'the school')} (they can see and complete it), linked to this booking, and the room is booked if the school already picked one.</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <input class="form-input" name="given_name" placeholder="First name *" required style="max-width:200px">
+                <input class="form-input" name="family_name" placeholder="Last name *" required style="max-width:200px">
+                <input class="form-input" name="email" type="email" placeholder="Student email *" required style="max-width:260px">
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input class="form-input" name="phone" placeholder="Phone with country code, e.g. +55 11 91234 5678 *" required style="max-width:300px">
+                <label class="name-sub">Date of birth * <input class="form-input" name="date_of_birth" type="date" required style="max-width:160px"></label>
+                <input class="form-input" name="nationality" placeholder="Nationality *" required style="max-width:180px">
+                <select class="form-input" name="gender" style="max-width:140px">${ptnOptions([['', 'Gender'], ['female', 'Female'], ['male', 'Male']], b.gender || '')}</select>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <input class="form-input" name="emergency_name" placeholder="Emergency contact name (optional)" style="max-width:260px">
+                <input class="form-input" name="emergency_phone" placeholder="Emergency phone (optional)" style="max-width:240px">
+              </div>
+              <div><button class="btn btn-primary" type="submit">Add and link student</button></div>
+            </form></details>` : ''}`) : ''}
         ${b.status === 'CONFIRMED' ? section('Review & follow-up', `<form data-cel-review style="display:flex;flex-direction:column;gap:8px">
             <textarea class="form-input" name="note" rows="2" placeholder="What did you check? (inventory review note)">${esc(b.review_note || '')}</textarea>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -25173,7 +25193,7 @@ function celDetailHtml(){
       </div>
       <div>
         ${b.status === 'CONFIRMED' || b.status === 'ASSIGNED' || open ? section(b.status === 'ASSIGNED' ? 'Move to another room' : 'Room options (smallest vacancy gap first)', `
-          ${b.status === 'CONFIRMED' && !b.student_id ? '<p class="name-sub" style="margin:0 0 8px;color:var(--red);font-weight:600">Link the student first: Assign is refused until the booking has a student profile with an email.</p>' : ''}
+          ${b.status === 'CONFIRMED' && !b.student_id ? '<p class="name-sub" style="margin:0 0 8px;color:var(--red);font-weight:600">Link the student first: Assign is refused until the booking has a student profile with an email. No profile from the school? Use “+ Add the student yourself” under Student profile.</p>' : ''}
           ${cap && cap.ok ? `<p class="name-sub" style="margin:0 0 8px">Free eligible rooms: <strong>${cap.free_rooms}</strong> · confirmed ahead of this one: <strong>${cap.committed_ahead}</strong> · safe capacity: <strong style="color:var(--${cap.safe < (b.n_students || 1) ? 'red' : 'green'})">${cap.safe}</strong></p>` : ''}
           ${b.status === 'ASSIGNED' && !CEL_STATE.allOptions ? '<button class="btn btn-ghost btn-mini" type="button" data-cel-more>Show rooms free for these dates</button>' : opts.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
             <thead><tr class="name-sub" style="text-align:left"><th style="padding:6px">Room</th><th>Free from</th><th>Gap before</th><th>Gap after</th><th>Travel</th><th></th></tr></thead>
@@ -25308,6 +25328,13 @@ function celWire(root){
     const v = Object.fromEntries(new FormData(f));
     const offer = v.decision === 'ALTERNATIVE' ? { category: v.category || undefined, bath: v.bath || undefined, check_in: v.check_in || undefined, check_out: v.check_out || undefined } : {};
     celAction(id, 'respond', { decision: v.decision, offer, note: v.note || undefined, notify: f.querySelector('[name="notify"]').checked }, 'Answer saved' + (f.querySelector('[name="notify"]').checked ? ' and emailed to the school' : ''));
+  });
+  on('[data-cel-newstu-box]', 'toggle', d => { CEL_STATE.newStudentOpen = d.open; });
+  on('[data-cel-newstu]', 'submit', (f, e) => {
+    e.preventDefault();
+    const v = Object.fromEntries([...new FormData(f)].map(([k, x]) => [k, String(x).trim()]));
+    CEL_STATE.newStudentOpen = false;
+    celAction(id, 'new_student', v, `Student ${v.given_name} ${v.family_name} added and linked`);
   });
   on('[data-cel-act]', 'click', b => {
     const act = b.dataset.celAct;
