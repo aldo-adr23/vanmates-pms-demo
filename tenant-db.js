@@ -204,7 +204,44 @@
     return patch;
   }
 
-  const TDB_CORE = { FAR, iso, addDays, stay, covers, flagsOn, together, buildRooms, place, occupancy, filterViews, totals, changeLines, who, suggestionPatch };
+  // Who is with us during a month [from, to]: one group per person (current and future rows, not moved out).
+  // notices: Map email -> check-out move-out date (a check-out form = the tenant gave notice).
+  //   staying     there the whole month, no notice inside it
+  //   arriving    moves in during the month (new sales)
+  //   notice      leaves during the month and gave notice
+  //   leaseEnds   leaves during the month because the lease ends, no notice on file
+  //   unconfirmed lease ended before today but still marked living (renewed? left?)
+  //   undated     no move-in and no lease end on the row
+  const AGENCY = /ces-schools|englishcollege|uhomes|ilsc|ef\.com|kaplan|globalyouth|4stay|coliving|vanmates/;
+  function monthRoster(list, notices, from, to, today) {
+    const g = { staying: [], arriving: [], notice: [], leaseEnds: [], unconfirmed: [], undated: [] };
+    for (const t of list || []) {
+      if (!t || isPast(t)) continue;
+      const mi = iso(t.moveIn), le = iso(t.leaseEnd);
+      const em = String(t.email || "").trim().toLowerCase();
+      let nd = em && !AGENCY.test(em) && notices ? iso(notices.get(em)) : null;
+      if (nd && mi && nd < mi) nd = null;            // a notice from an earlier stay
+      if (mi && mi > to) continue;                   // arrives after the month
+      if (!mi && !le) { g.undated.push({ t }); continue; }
+      if (le && le < today && !nd) { g.unconfirmed.push({ t, end: le }); continue; }
+      const end = [le, nd].filter(Boolean).sort()[0] || null;
+      if (end && end < from) continue;               // gone before the month starts
+      if (mi && mi >= from) g.arriving.push({ t, start: mi, end });
+      else if (end && end <= to) (nd && nd <= to ? g.notice : g.leaseEnds).push({ t, end });
+      else g.staying.push({ t, end });
+    }
+    const by = (k) => (a, b) => String(a[k] || "").localeCompare(String(b[k] || "")) || String(a.t.name || "").localeCompare(String(b.t.name || ""));
+    g.arriving.sort(by("start")); g.notice.sort(by("end")); g.leaseEnds.sort(by("end")); g.unconfirmed.sort(by("end"));
+    g.staying.sort((a, b) => String(a.t.property || "").localeCompare(String(b.t.property || ""), undefined, { numeric: true }) || String(a.t.name || "").localeCompare(String(b.t.name || "")));
+    return g;
+  }
+  function monthBounds(ym) {
+    const [y, m] = ym.split("-").map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, "0")}` };
+  }
+
+  const TDB_CORE = { FAR, iso, addDays, stay, covers, flagsOn, together, buildRooms, place, occupancy, filterViews, totals, changeLines, who, suggestionPatch, monthRoster, monthBounds };
   window.TDB_CORE = TDB_CORE;
   if (typeof document === "undefined" || !document.querySelector) return;
 
@@ -260,7 +297,7 @@
   })();
 
   // ── 2. Tenants › Occupancy ────────────────────────────────────────────────────
-  const OC = { date: null, win: 14, only: "", inv: null, invAt: 0, loading: null, err: "", open: new Set() };
+  const OC = { date: null, win: 14, only: "", inv: null, invAt: 0, loading: null, err: "", open: new Set(), month: "", group: "", notices: null };
   try { const s = JSON.parse(localStorage.getItem("vm_td_oc") || "{}"); if (s.win) OC.win = s.win; } catch (e) {}
 
   async function loadInv(force) {
@@ -300,10 +337,80 @@
     if (houses) houses.insertAdjacentHTML("afterend", `<div id="tn-occ" hidden></div>`);
   }
 
+  // Check-out forms = notice given. Read once per page load (staff without Checkouts access see none).
+  async function loadNotices() {
+    const c = sb();
+    if (!c) { OC.notices = new Map(); return; }
+    try {
+      const { data, error } = await c.from("checkout_cases").select("email,move_out_date,created_at,deleted_at").not("move_out_date", "is", null).order("created_at").limit(5000);
+      if (error) throw error;
+      const m = new Map();
+      (data || []).forEach((r) => { if (!r.deleted_at && r.email) m.set(String(r.email).trim().toLowerCase(), r.move_out_date); });
+      OC.notices = m;
+    } catch (e) { console.warn("[tenant-db] notices", e); OC.notices = new Map(); OC.noticeErr = true; }
+  }
+  const MONTH_GROUPS = [
+    ["staying", "Staying all month", "No notice; the lease runs past the month."],
+    ["arriving", "New: moving in", "Move-in date inside the month (new sales)."],
+    ["notice", "Leaving: gave notice", "A check-out form gives a date inside the month."],
+    ["leaseEnds", "Leaving: lease ends", "Lease ends inside the month, no check-out form yet: renewing or leaving?"],
+    ["unconfirmed", "Unclear: lease already ended", "Still marked living though the lease ended. Confirm renewed or moved out."],
+    ["undated", "Unclear: no dates", "No move-in or lease end on the row."],
+  ];
+  function monthOptions(today) {
+    const out = [];
+    const [y, m] = today.split("-").map(Number);
+    for (let i = 0; i < 7; i++) { const d = new Date(Date.UTC(y, m - 1 + i, 1)); out.push(d.toISOString().slice(0, 7)); }
+    return out;
+  }
+  const monthLabel = (ym) => { const [y, m] = ym.split("-").map(Number); return ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m - 1] + " " + y; };
+  function renderMonth(el, today) {
+    if (!OC.notices) { el.innerHTML = `<div class="card tn-empty">Loading…</div>`; loadNotices().then(renderOcc); return; }
+    const { from, to } = monthBounds(OC.month);
+    const scoped = liveTenants().filter((t) => (!TN.city || t.city === TN.city) && (!TN.house || t.property === TN.house) && (!TN.q || norm([t.name, t.email, t.property, t.room].join(" ")).includes(norm(TN.q))));
+    const g = monthRoster(scoped, OC.notices, from, to, today);
+    const sure = g.staying.length + g.arriving.length;
+    const part = g.notice.length + g.leaseEnds.length;
+    const tile = (k, label, n, cls) => `<button type="button" class="td-tile${OC.group === k ? " on" : ""}${cls && n ? " " + cls : ""}" data-td-group="${k}"><b>${n}</b>${label}</button>`;
+    const shown = OC.group ? MONTH_GROUPS.filter(([k]) => k === OC.group) : MONTH_GROUPS;
+    const row = (k, x) => { const t = x.t; return `<tr><td>${tenantLink(t)}<div class="hb-sub">${esc(t.email || "")}</div></td><td>${esc(t.property || "—")}${t.room && t.room !== "—" ? `<div class="hb-sub">${esc(t.room)}</div>` : ""}</td><td>${esc(t.city || "")}</td><td>${esc(fmt(iso(t.moveIn)) || "—")}</td><td>${esc(fmt(x.end) || (k === "staying" ? "no end date" : "—"))}${k === "notice" ? `<div class="hb-sub">check-out form</div>` : ""}</td></tr>`; };
+    el.innerHTML = `
+      ${monthBar(today)}
+      <div class="td-tiles">
+        ${tile("", `with us all of ${monthLabel(OC.month)} or arriving: <b style="display:inline;font-size:inherit">${g.staying.length}</b> staying + <b style="display:inline;font-size:inherit">${g.arriving.length}</b> new`, sure)}
+        ${tile("leaving", "leaving during the month (" + g.notice.length + " gave notice · " + g.leaseEnds.length + " lease ends)", part)}
+        ${tile("unclear", "unclear: confirm renewed or left", g.unconfirmed.length + g.undated.length, "bad")}
+      </div>
+      ${OC.noticeErr ? `<div class="card-sub hb-note">Check-out forms couldn't be read with your access, so "gave notice" is based on lease ends only.</div>` : ""}
+      ${shown.filter(([k]) => OC.group !== "leaving" || k === "notice" || k === "leaseEnds").filter(([k]) => OC.group !== "unclear" || k === "unconfirmed" || k === "undated").map(([k, label, help]) => g[k].length ? `
+        <details class="card td-prop" open><summary><span class="td-prop-name">${esc(label)}</span><span class="hb-sub">${g[k].length} · ${esc(help)}</span></summary>
+        <div class="tn-table-wrap"><table class="td-rooms"><thead><tr><th>Tenant</th><th>House · room</th><th>City</th><th>Move-in</th><th>${k === "arriving" ? "Until" : k === "unconfirmed" ? "Lease ended" : "Until"}</th></tr></thead>
+        <tbody>${g[k].map((x) => row(k, x)).join("")}</tbody></table></div></details>` : "").join("")}`;
+    OC.lastRoster = g;
+  }
+  function monthBar(today) {
+    return `<div class="td-bar">
+        <span class="td-seg" role="group"><button type="button" class="td-chip${OC.month ? "" : " on"}" data-td-month="">One day</button>
+        ${monthOptions(today).map((ym) => `<button type="button" class="td-chip${OC.month === ym ? " on" : ""}" data-td-month="${ym}">${esc(monthLabel(ym).replace(/ \d{4}$/, ""))}</button>`).join("")}</span>
+        ${OC.month ? `<button type="button" class="btn btn-ghost tn-mini" data-td-csv style="margin-left:auto">Download CSV</button>` : ""}
+      </div>`;
+  }
+  function rosterCsv() {
+    const g = OC.lastRoster; if (!g) return;
+    const cell = (v) => { let x = String(v == null ? "" : v); if (/^[=+\-@]/.test(x) && !/^[+-]?\d/.test(x)) x = "'" + x; return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+    const lines = [["Group", "Name", "Email", "WhatsApp", "City", "House", "Room", "Move-in", "Until"].join(",")];
+    MONTH_GROUPS.forEach(([k, label]) => g[k].forEach((x) => lines.push([label, x.t.name, x.t.email, x.t.phone, x.t.city, x.t.property, x.t.room, iso(x.t.moveIn), x.end].map(cell).join(","))));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }));
+    a.download = `vanmates-tenants-${OC.month}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
   function renderOcc() {
     const el = $("tn-occ");
     if (!el) return;
     const today = todayIso();
+    if (OC.month) { renderMonth(el, today); return; }
     const d = OC.date || today;
     if (!OC.inv) { el.innerHTML = `<div class="card tn-empty">Loading rooms…</div>`; loadInv().then(renderOcc); return; }
     const list = liveTenants();
@@ -318,6 +425,7 @@
     const tile = (key, n, label, bad) => `<button type="button" class="td-tile${OC.only === key ? " on" : ""}${bad && n ? " bad" : ""}" data-td-only="${key}"><b>${n}</b>${label}</button>`;
     const cards = views.slice(0, 200).map((v) => propCard(v, d, today)).join("");
     el.innerHTML = `
+      ${monthBar(today)}
       <div class="td-bar">
         <label class="hb-sub" for="td-date">Who lives here on</label>
         <input type="date" class="form-input" id="td-date" value="${d}">
@@ -396,6 +504,11 @@
     if (!view) return;
     const dt = e.target.closest("[data-td-date]");
     if (dt) { OC.date = dt.dataset.tdDate; renderOcc(); return; }
+    const mo = e.target.closest("[data-td-month]");
+    if (mo) { OC.month = mo.dataset.tdMonth; OC.group = ""; renderOcc(); return; }
+    const gr = e.target.closest("[data-td-group]");
+    if (gr) { OC.group = OC.group === gr.dataset.tdGroup ? "" : gr.dataset.tdGroup; renderOcc(); return; }
+    if (e.target.closest("[data-td-csv]")) { rosterCsv(); return; }
     const only = e.target.closest("[data-td-only]");
     if (only) { OC.only = OC.only === only.dataset.tdOnly ? "" : only.dataset.tdOnly; renderOcc(); return; }
     const op = e.target.closest("[data-td-open]");
