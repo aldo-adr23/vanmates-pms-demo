@@ -274,7 +274,21 @@
     return { rows, tabs, problems: problems.slice(0, 30).concat(problems.length > 30 ? [`and ${problems.length - 30} more`] : []) };
   }
 
-  window.EF_CORE = { approveBands, APPROVE_BANDS, parseTeamSheet, toCents, sheetSaysDone, groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
+  const priceOf = x => x.cents ? money(x.cents) + (x.max_cents && x.max_cents > x.cents ? '–' + money(x.max_cents) : '') : 'market price';
+  /** Step 3: the deductions the reports point to, always visible (even before the payment is linked); added in step 4. */
+  function proposedHtml(r){
+    const sug = r.suggested_charges || []; if (!sug.length) return '';
+    const lo = sug.reduce((t, x) => t + (x.cents || 0), 0), hi = sug.reduce((t, x) => t + (x.max_cents || x.cents || 0), 0), market = sug.some(x => !x.cents);
+    const total = (lo ? money(lo) + (hi > lo ? '–' + money(hi) : '') : '') + (market ? (lo ? ' + ' : '') + 'damage at market price' : '');
+    return `<div style="border:1px solid #d9b766;border-radius:8px;padding:8px 10px;margin:8px 0;background:rgba(217,183,102,.10)">
+      <div style="font-weight:600">Proposed deductions <span class="name-sub" style="font-weight:400">(Penalty List)</span></div>
+      ${sug.map(x => `<div style="display:flex;gap:8px;padding:3px 0;border-top:1px solid var(--line)"><div style="flex:1"><b>${esc(x.label)}</b>
+        <div class="name-sub">${esc(x.reason)}${x.scope === 'unit' ? ' — found on the apartment, may be a roommate\'s' : ''}</div></div>
+        <div style="white-space:nowrap;font-weight:600">${priceOf(x)}</div></div>`).join('')}
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:4px;margin-top:2px"><b>Proposed total</b><b>${total}</b></div>
+      <div class="name-sub" style="margin-top:2px">Plus the cleaning fee. Nothing is deducted automatically: the reviewer adds each one with its amount in step 4.</div></div>`;
+  }
+  window.EF_CORE = { proposedHtml, priceOf, approveBands, APPROVE_BANDS, parseTeamSheet, toCents, sheetSaysDone, groupByMonth, monthLabel, efViews, nextStep, money, monday, weekLabel, filterRows, summary, groupByWeek, parseRoster, parseCsv, readDate, isOverdue, needsAttention, STATUS };
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
@@ -665,10 +679,11 @@
     const cl = Array.isArray(r.cleaning) ? r.cleaning : [];
     const photoLinks = ps => ps.length ? `<div class="name-sub" style="margin-top:2px">${ps.slice(0, 40).map((p, i) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.area || 'photo')} ${i + 1}</a>`).join(' · ')}</div>` : '<div class="name-sub">No photos.</div>';
     const CLEAN = { clean: 'Clean', average: 'Average', dirty: 'Dirty', very_dirty: 'Very dirty' };
+    const et = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? '' : new Date(t).toLocaleString('en-CA', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Toronto' }) + ' ET'; };
     const condText = (c, x) => { const it = c && c.items; if (!it) return ''; const bad = Object.entries(it).filter(([, v]) => v && v.status && v.status !== 'good');
       const k = c.keys || {}, p = (x && x.precheck) || {};
       return `<div style="border-left:3px solid ${x && x.condition_at ? '#3e6049' : 'var(--line)'};padding:4px 8px;margin:4px 0">
-        ${x && x.condition_at ? `<div><b>Move-out condition report</b> <span class="name-sub">filed before cleaning · ${esc(String(x.condition_at).replace('T', ' ').slice(0, 16))}</span></div>` : ''}
+        ${x && x.condition_at ? `<div><b>Move-out condition report</b> <span class="name-sub">filed before cleaning · ${esc(et(x.condition_at))}</span></div>` : ''}
         <div class="name-sub">Condition: ${bad.length ? bad.map(([kk, v]) => `<span style="${/damage|missing/.test(v.status) ? 'color:var(--red-dark,#a33)' : ''}">${esc(kk)} ${esc(String(v.status).replace(/_/g, ' '))}${v.note ? ' (' + esc(v.note) + ')' : ''}</span>`).join(' · ') : 'all good'}</div>
         ${k.status ? `<div class="name-sub">Keys: <span style="${k.status !== 'returned' ? 'color:var(--red-dark,#a33)' : ''}">${esc(k.status)}${k.found != null && k.status !== 'missing' ? ' (' + esc(k.found) + ' found)' : ''}</span></div>` : ''}
         ${p.cleanliness ? `<div class="name-sub">General cleanliness: <b>${esc(CLEAN[p.cleanliness] || p.cleanliness)}</b></div>` : ''}
@@ -676,14 +691,15 @@
         ${p.observations ? `<div class="name-sub">Observations: ${esc(p.observations)}</div>` : ''}</div>`; };
     const repBody = (cl.length ? cl.map(c => `<div style="border-top:1px solid var(--line);padding:6px 0">
         <b>${esc(c.type || 'Clean')}</b> · ${esc(short(c.date))} · ${c.status === 'completed' ? '<span style="color:#3e6049">completed</span>' : esc(c.status)} · ${esc(c.property)} ${esc(c.unit)}${c.match === 'unit' ? ' <span class="name-sub">(apartment, bed not named)</span>' : ''}
-        <div class="name-sub">${esc(c.task_id)}${c.cleaner ? ' · ' + esc(c.cleaner) : ''}${c.clock_out ? ' · finished ' + esc(String(c.clock_out).replace('T', ' ').slice(0, 16)) : ''}</div>
+        <div class="name-sub">${esc(c.task_id)}${c.cleaner ? ' · ' + esc(c.cleaner) : ''}${c.clock_out ? ' · finished ' + esc(et(c.clock_out)) : ''}</div>
         ${c.notes ? `<div class="name-sub">Notes: ${esc(c.notes)}</div>` : ''}
         ${(c.issues || []).map(i => `<div style="color:#9a6b12">⚠ ${esc(i.category)}${i.urgency ? ' · ' + esc(i.urgency) : ''}: ${esc(i.description)}${(i.photos || []).map((u, k) => ` <a href="${esc(u)}" target="_blank" rel="noopener">photo ${k + 1}</a>`).join('')}</div>`).join('')}
         ${condText(c.condition, c)}${photoLinks(c.photos || [])}</div>`).join('')
       : `<div style="color:#9a6b12">⚠ No Limpio clean found for ${esc(r.building)} ${esc(r.unit)}${r.bed ? ' bed ' + esc(r.bed) : ''} between the day before and a week after the move-out.</div>`)
       + (r.has_report ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${hasCond(r) ? `<button type="button" class="btn btn-mini btn-primary" data-ef-pdf="${esc(r.id)}" ${busy}>📄 Move-out condition report (PDF)</button>` : ''}${cl.some(c => c.status === 'completed') ? `<button type="button" class="btn btn-mini" data-ef-pdf="${esc(r.id)}" data-kind="completion" ${busy}>📄 Cleaning completion report (PDF)</button>` : ''}</div>`
           + (hasCond(r) ? '' : '<div class="name-sub" style="color:#9a6b12">No move-out condition report on this clean (filed before cleaning from 2026-11-23).</div>') : '')
-      + `<div class="name-sub" style="margin-top:4px">${r.cleaning_checked_at ? 'Checked ' + esc(String(r.cleaning_checked_at).replace('T', ' ').slice(0, 16)) + '. ' : ''}<button type="button" class="hb-link" data-ef="reports" ${busy}>Look in Limpio again</button></div>`;
+      + proposedHtml(r)
+      + `<div class="name-sub" style="margin-top:4px">${r.cleaning_checked_at ? 'Checked ' + esc(et(r.cleaning_checked_at)) + '. ' : ''}<button type="button" class="hb-link" data-ef="reports" ${busy}>Look in Limpio again</button></div>`;
 
     // 4. review (reviewer: Approve / Cancel) — the cleaning fee comes from the settings, damage deductions are typed
     const refunds = r.refunds || [];
@@ -786,7 +802,6 @@
       <div class="name-sub">Imported ${esc(String(x.imported_at || '').slice(0, 10))} from ${esc(x.file || 'the sheet')}.</div></div>`;
   }
   // Penalty List charges the Limpio reports point to — suggestions only, the reviewer adds or ignores each
-  const priceOf = x => x.cents ? money(x.cents) + (x.max_cents && x.max_cents > x.cents ? '–' + money(x.max_cents) : '') : 'market price';
   function sugHtml(r, have){
     const sug = (r.suggested_charges || []).filter(x => !have.some(d => d.code === x.code));
     if (!sug.length) return '';
