@@ -1905,7 +1905,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-22-sofiab2"></script>
+<script src="pms-supabase.js?v=2026-11-22-tenantdb1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -1979,6 +1979,13 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
     <button class="nav-item" data-view="tenants">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M21.5 19a4.5 4.5 0 0 0-7-3.7"/></svg>
       Tenants
+      <span class="nav-count">—</span>
+    </button>
+    <!-- Tenant review (2026-11-22, tenant-db.js): automated tenant changes waiting for a reviewer, the daily data
+         check and failed writes. Admins + whoever has "Tenant review" ticked (allowed_pages 'tenant-review'). -->
+    <button class="nav-item" data-view="tenant-review">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Tenant review
       <span class="nav-count">—</span>
     </button>
     <a class="nav-item" data-view="cs" href="cs.html" style="text-decoration:none">
@@ -2715,6 +2722,9 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
         </div>
       </div>
     </section>
+
+    <!-- ============ TENANT REVIEW (tenant-db.js) ============ -->
+    <section class="view hb-view" data-view="tenant-review"><div id="tr-root"></div></section>
 
     <!-- ============ TENANTS ============ -->
     <section class="view hb-view tn-view" data-view="tenants">
@@ -9287,7 +9297,7 @@ const roles = {
                 // homestay-bookings is in no non-admin role preset, so it stays
                 // off by default — but it is in ALL_PAGES as of 2026-08-10, so
                 // an admin can now grant it per-person. See the note there.
-                nav:["dashboard","leads","jpleads","assistants","tenants","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","retention","team","settings"]},
+                nav:["dashboard","leads","jpleads","assistants","tenants","tenant-review","properties","partner-inventory","partners","portfolio","landlords","homestay-clients","homestay-hosts","homestay-matching","homestay-bookings","homestay-finance","vacancies","maintenance","financials","ap","ar","deposits","checkouts","room-changes","extensions","retention","team","settings"]},
   ops:         {label:"Operations Manager", color:"#3F6E94", desc:"All operational pages, no financials",
                 nav:["dashboard","leads","jpleads","tenants","properties","homestay-clients","homestay-hosts","vacancies","maintenance","deposits","checkouts","room-changes","extensions"]},
   property:    {label:"Property Manager",   color:"#5C8A6B", desc:"Scoped to assigned property only",
@@ -9573,6 +9583,7 @@ const ALL_PAGES = [
   ["arrivals",         "Arrivals"],
   ["assistants",       "Assistants"],
   ["tenants",          "Tenants"],
+  ["tenant-review",    "Tenant review (verify Hugo's changes)"],
   ["properties",       "Properties & rooms"],
   ["partner-inventory","Partner inventory"],
   ["partners",         "Partners"],
@@ -10332,7 +10343,7 @@ function openInviteMailto({name, email, role, title, pages, assigned}){
     "homestay-bookings":"Homestay bookings",
     "homestay-matching":"Homestay matching","vacancies":"Vacancies",
     "maintenance":"Maintenance","financials":"Financials","ap":"Accounts payable","ar":"Accounts receivable","deposits":"Damage deposits","checkouts":"Checkouts","room-changes":"Room changes","extensions":"Extensions","retention":"Customer retention","contracts":"Contracts",
-    "team":"Team","settings":"Settings"
+    "tenant-review":"Tenant review","team":"Team","settings":"Settings"
   };
   const pageList = (pages || []).map(p => "  • " + (pageLabels[p] || p)).join("\n");
   const acceptUrl = `https://portal.vanmates.com/signup.html?invite=${encodeURIComponent(email)}&role=${encodeURIComponent(role)}`;
@@ -12122,6 +12133,7 @@ const titlesMX = {
 const titles = {
   dashboard: ["Welcome", "Loading…"],
   tenants: ["<em>Tenants</em>", "All current and past residents across your properties"],
+  "tenant-review": ["Tenant <em>review</em>", "What Hugo and the automations changed, the daily data check and failed writes: verify, correct or flag"],
   leads: ["<em>Leads</em>", "Inbound enquiries from the website — triage, assign, and track"],
   jpleads: ["<em>JP Leads</em>", "Every Japanese lead in one place — LINE and email, worked by Maya and the Japan team"],
   "room-changes": ["Room <em>changes</em>", "Requests from vanmates.com/room-swap or opened by staff (+ New room swap): review, quote with the tenant, confirm, complete"],
@@ -12190,6 +12202,7 @@ function goToView(v, savedView){
   if(v === "deposits" && typeof window.efDdShow === "function") window.efDdShow();   // Damage deposits → EF tab (ef-deposits.js)
   if(v === "room-changes" && typeof loadRoomChanges === "function") loadRoomChanges();
   if(v === "extensions" && typeof loadExtensions === "function") loadExtensions();
+  if(v === "tenant-review" && typeof loadTenantReview === "function") loadTenantReview();
   if(v === "retention" && typeof loadRetention === "function") loadRetention();
   if(v === "ap" && typeof loadAp === "function") loadAp();
   if(v === "ar" && typeof loadAr === "function") loadAr();
@@ -47615,13 +47628,14 @@ document.addEventListener("submit", (ev) => {
 });
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
-<script src="extensions.js?v=2026-11-22-sofiab2"></script>
+<script src="extensions.js?v=2026-11-22-tenantdb1"></script>
 <script src="retention.js?v=2026-11-17-roomhold1"></script>
-<script src="ap.js?v=2026-11-22-sofiab2"></script>
-<script src="properties.js?v=2026-11-22-sofiab2"></script>
+<script src="ap.js?v=2026-11-22-tenantdb1"></script>
+<script src="properties.js?v=2026-11-22-tenantdb1"></script>
+<script src="tenant-db.js?v=2026-11-22-tenantdb1"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
 <script src="ar.js?v=2026-11-06-autoall2"></script>
 <script src="mx-finance.js?v=2026-11-06-autoall2"></script>
-<script src="ef-deposits.js?v=2026-11-22-sofiab2"></script>
+<script src="ef-deposits.js?v=2026-11-22-tenantdb1"></script>
 </body>
 </html>
