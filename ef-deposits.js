@@ -8,18 +8,18 @@
 (function(){
   const STATUS = {
     upcoming: ['Upcoming Move-Out', 'blue'], pending_reports: ['Pending Reports', 'amber'], review: ['Ready for Review', 'green'],
-    rejected: ['Rejected', 'red'], pending_auth: ['Pending Denise Approval', 'amber'],
+    rejected: ['Rejected', 'red'], pending_auth: ['Pending Denisse Approval', 'amber'],
     not_found: ['Payment Not Found', 'red'], check: ['Check Match', 'amber'], processing: ['Approved / Processing', 'amber'], refunded: ['Refunded', ''],
     refunded_stripe: ['Refunded in Stripe', ''], manual: ['Manual Review Required', 'red'],
     failed: ['Refund Failed', 'red'], closed: ['Closed (no refund)', ''], cancelled: ['Cancelled', ''],
   };
   /** The review queue (spec 2026-11-22): what each band asks of whom. */
   const APPROVE_BANDS = [
-    ['pending_auth', 'Pending Denise approval — authorize to send the refund', '#9a6b12'],
+    ['pending_auth', 'Checked by Iliana — waiting for Denisse\'s final approval', '#9a6b12'],
     ['manual', 'Manual review required', 'var(--red-dark,#a33)'],
     ['failed', 'Refund failed at Stripe', 'var(--red-dark,#a33)'],
     ['rejected', 'Rejected by Denisse — review again', 'var(--red-dark,#a33)'],
-    ['review', 'Ready for review — cleaning report attached', '#3e6049'],
+    ['review', 'Ready for Iliana — check the inspection report and extra charges', '#3e6049'],
     ['pending_reports', 'Pending reports — no Limpio cleaning report yet', '#9a6b12'],
   ];
   const OVERDUE_DAYS = 14;   // moved out this long ago and no refund yet → overdue
@@ -310,7 +310,7 @@
     PAYMENT_NOT_USABLE: 'That payment was not found in Stripe, or it did not succeed.', LINKED_BY_STAFF: 'This payment was linked by hand; unlink it first.',
     HAS_REFUND: 'This student already has a refund.', DISPUTED: 'The card holder disputed this payment (chargeback): the money already went back, so nothing is refunded here.', WRONG_STAGE: 'This step does not apply any more. Reload.', INVALID: 'Check the form', LOCKED: 'This deposit is already settled.',
     forbidden: 'You need the Damage deposits page (ask an admin).',
-    NOT_REVIEWER: 'Only the EF refund reviewer can approve or cancel (Settings).', NOT_AUTHORIZER: 'Only Denisse (the final authorizer) can authorize or reject.',
+    NOT_REVIEWER: 'Only Iliana (the EF refund checker, Settings) can approve or cancel.', NOT_AUTHORIZER: 'Only Denisse (final approval) can approve or reject.',
     NOT_APPROVED: 'The refund has to be approved in the review first.', ALREADY_APPROVED: 'Already approved — waiting for Denisse.',
     NO_REPORT: 'No Limpio cleaning report: say why it can be approved anyway.', NO_EMAIL: 'No email for the student: type one.', RECEIPT_FAILED: 'The receipt email failed.',
     NOT_ADMIN: 'Only an admin can change the settings.', PDF_FAILED: 'Limpio could not make the PDF (try again in a minute).', NO_REPORT: 'No finished Limpio clean is linked yet.', NO_REFUND: 'No confirmed refund yet.',
@@ -446,7 +446,7 @@
     let body = '';
     for (const b of approveBands(rows)) body += band(`<span style="color:${b.col}">${esc(b.label)}</span>`, b.rows.length) + b.rows.map(line).join('');
     const feeText = Object.entries(fees).map(([k, c]) => `The ${k.replace(/\b\w/g, x => x.toUpperCase())} ${money(c)}`).join(' · ');
-    return `<div class="card-sub" style="margin:0 0 10px">Students who left: the Limpio cleaning report is linked automatically, the cleaning fee is taken off (${esc(feeText || 'no fees set')}), ${me.can_review ? 'you review' : 'the reviewer reviews'} and Denisse authorizes. Nothing is refunded before Denisse's authorization.</div>`
+    return `<div class="card-sub" style="margin:0 0 10px">Students who left: the Limpio cleaning report is linked automatically, the cleaning fee is taken off (${esc(feeText || 'no fees set')}), ${me.can_review ? 'you check' : 'Iliana checks'} the inspection report and any extra charges, then Denisse gives the final approval. When she approves, the refund goes out, the student is emailed that it is on its way and 4Stay's page shows it.</div>`
       + table(['Student', 'Building · room', 'Move-out', 'Report', 'Deposit', 'Deductions', 'Refund', 'Next step'], body, 'Nothing to review or authorize for these filters.');
   }
   function settingsHtml(){
@@ -747,10 +747,10 @@
     if (r.stage === 'refunded' || refunds.some(f => f.status === 'succeeded')) authBody = `<div class="name-sub">Authorized by ${esc(r.authorized_by || (refunds[0] || {}).approved_by || '—')} ${esc(String(r.authorized_at || '').replace('T', ' ').slice(0, 16))}</div>`;
     else if (open) authBody = `<div class="name-sub">Authorized by ${esc(open.approved_by)} — Stripe is processing.</div>`;
     else if (!approved) authBody = `<div class="name-sub">${r.review_state === 'rejected' ? 'Rejected — waiting for a new review.' : 'After the review is approved.'}</div>`;
-    else if (!me.can_authorize) authBody = `<div class="name-sub">Pending Denise approval: ${money(r.refund_due_cents)}.</div>`;
+    else if (!me.can_authorize) authBody = `<div class="name-sub">Waiting for Denisse's final approval: ${money(r.refund_due_cents)}.</div>`;
     else if (!S.confirm) authBody = `<div>Refund <b>${money(r.refund_due_cents)}</b> (deposit ${money(r.available_cents)} − deductions ${money(r.deduction_cents)}).</div>
         <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button type="button" class="btn btn-primary btn-mini" data-ef="refund-ask" ${busy} ${r.refund_due_cents > 0 ? '' : 'disabled'}>Authorize & refund ${money(r.refund_due_cents)}…</button>
+          <button type="button" class="btn btn-primary btn-mini" data-ef="refund-ask" ${busy} ${r.refund_due_cents > 0 ? '' : 'disabled'}>Approve & send refund ${money(r.refund_due_cents)}…</button>
           <details style="display:inline-block"><summary class="hb-link">Reject…</summary><input class="input" data-ef="reject-reason" placeholder="Why (the reviewer sees it)" style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="reject" ${busy}>Reject</button></details></div>
         ${r.refund_due_cents > 0 ? '' : '<div class="name-sub">Nothing left to refund after deductions: close it without a refund (step 6).</div>'}`;
     else authBody = `<div style="background:#fff6e5;border:1px solid #e5c07b;border-radius:8px;padding:10px">
@@ -777,10 +777,10 @@
       }
     }
     if (open) refBody += `<button type="button" class="btn btn-mini" data-ef="refresh" ${busy}>Check status</button>`;
-    if (r.stage === 'refunded') {
+    if (r.stage === 'refunded' || r.receipt_state) {
       refBody += r.receipt_state === 'sent' ? `<div class="name-sub">Receipt emailed to ${esc(r.receipt_to || '')} ${esc(String(r.receipt_at || '').replace('T', ' ').slice(0, 16))}.</div>`
         : `<div style="color:var(--red-dark,#a33)">${r.receipt_state === 'no_email' ? 'No student email: the receipt was not sent.' : r.receipt_state === 'failed' ? `The receipt email to ${esc(r.receipt_to || '')} failed.` : 'Receipt not sent.'}</div>`;
-      if ((me.can_review || me.can_authorize) && refunds.some(f => f.status === 'succeeded')) refBody += `<div style="margin-top:4px"><input class="input" data-ef="receipt-email" placeholder="${esc(r.student_email || 'student email')}" style="max-width:240px"> <button type="button" class="btn btn-mini" data-ef="receipt" ${busy}>${r.receipt_state === 'sent' ? 'Resend receipt' : 'Send receipt'}</button></div>`;
+      if ((me.can_review || me.can_authorize) && refunds.some(f => f.status === 'succeeded' || f.status === 'pending')) refBody += `<div style="margin-top:4px"><input class="input" data-ef="receipt-email" placeholder="${esc(r.student_email || 'student email')}" style="max-width:240px"> <button type="button" class="btn btn-mini" data-ef="receipt" ${busy}>${r.receipt_state === 'sent' ? 'Resend receipt' : 'Send receipt'}</button></div>`;
     }
     if (!refunds.length && !open) refBody += `<div class="name-sub">${approved ? 'Sent when Denisse authorizes.' : 'Nothing refunded.'}</div>`;
     if (me.can_refund && ['upcoming', 'moved_out', 'inspected'].includes(r.stage) && !open) refBody += `<details style="margin-top:8px"><summary class="name-sub">No refund due (paid elsewhere, forfeited…)</summary><input class="input" data-ef="close-reason" placeholder="Why (required)" style="max-width:300px"> <button type="button" class="btn btn-mini" data-ef="close" ${busy}>Close without refund</button></details>`;
@@ -796,8 +796,8 @@
       ${step(1, 'Original Stripe damage deposit', r.match_state === 'matched', pay)}
       ${step(2, 'Move-out confirmed', moved, movedBody)}
       ${step(3, 'Cleaning & condition reports (Limpio)', r.has_report, repBody)}
-      ${step(4, 'Review: approve or cancel', approved || settled || !!open, revBody)}
-      ${step(5, 'Final authorization (Denisse)', r.stage === 'refunded' || !!open, authBody)}
+      ${step(4, 'Iliana: inspection report & extra charges', approved || settled || !!open, revBody)}
+      ${step(5, 'Denisse: final approval', r.stage === 'refunded' || !!open, authBody)}
       ${step(6, 'Refund & receipt', r.stage === 'refunded' && r.receipt_state === 'sent', refBody)}
       <div style="margin-top:6px">${histBody}</div>
       <div style="margin-top:8px"><textarea class="input" data-ef="notes" rows="2" placeholder="Notes" style="width:100%">${esc(r.notes || '')}</textarea>
@@ -866,8 +866,8 @@
     if (['refresh', 'authorize', 'refund'].includes(action)) S.proof = null;
     if (res.data && res.data.row) S.data.rows = S.data.rows.map(x => x.id === r.id ? res.data.row : x);
     if (!res.ok) showToast(errText(res));
-    else if (action === 'authorize') showToast(res.data.status === 'succeeded' ? 'Refunded — receipt sent to the student' : 'Authorized — Stripe is processing (' + res.data.status + ')');
-    else if (action === 'approve') showToast((S.data.me || {}).can_authorize ? 'Approved — now authorize it (step 5)' : 'Approved — sent to Denisse');
+    else if (action === 'authorize') showToast(res.data.status === 'succeeded' || res.data.status === 'pending' ? 'Approved — refund sent, student emailed, 4Stay updated' : 'Approved — Stripe is processing (' + res.data.status + ')');
+    else if (action === 'approve') showToast((S.data.me || {}).can_authorize ? 'Checked — now give the final approval (step 5)' : 'Checked — sent to Denisse for final approval');
     else showToast('Saved');
     if (res.data && ['AMOUNT_MISMATCH', 'STALE', 'CHANGED_IN_STRIPE', 'WRONG_STAGE', 'NOT_APPROVED', 'ALREADY_APPROVED'].includes(res.data.code)) { await load(); return; }
     render();
