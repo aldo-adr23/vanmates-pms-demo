@@ -1949,7 +1949,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-24-vaclist5"></script>
+<script src="pms-supabase.js?v=2026-11-24-stayedit1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -7798,6 +7798,40 @@ function tnNoteDeletePatch(t, id) {
   const next = list.filter(n => n.id !== id);
   return next.length === list.length ? { ok: false, error: "That note is already gone." } : { ok: true, patch: { staffNotes: next } };
 }
+// Edit a stay from the profile (Marcela 2026-11-24: tenants who cancel or leave without a
+// check-out form kept showing as "lives here"). in: { mode: 'living'|'moved'|'cancelled',
+// moveIn, leaseEnd, movedOutAt, reason } as typed. The lease end / move-out is the last night.
+// A cancelled booking is a past row with cancelledAt and no move-out: it never occupies the room.
+function tnStayPatch(t, input, today) {
+  const o = input || {}, mode = o.mode, t0 = tnIso(today);
+  const reason = String(o.reason || "").trim();
+  if (reason.length < 3) return { ok: false, error: "Say why you're changing the stay (it goes in the notes)." };
+  const day = v => { const d = tnDate(v); return d ? tnIso(d) : null; };
+  const mi = day(o.moveIn) || day(t && t.moveIn);
+  const cur = { moveIn: day(t && t.moveIn), leaseEnd: day(t && t.leaseEnd), status: String((t && t.status) || "active").toLowerCase() === "past" ? "past" : "active", movedOutAt: day(t && t.movedOutAt), cancelledAt: day(t && t.cancelledAt) };
+  let patch;
+  if (mode === "living") {
+    const le = day(o.leaseEnd);
+    if (!mi) return { ok: false, error: "Add the move-in date." };
+    if (le && le < mi) return { ok: false, error: "The lease end is before the move-in." };
+    patch = { moveIn: mi, leaseEnd: le || cur.leaseEnd, status: "active", movedOutAt: null, cancelledAt: null };
+  } else if (mode === "moved") {
+    const out = day(o.movedOutAt);
+    if (!out) return { ok: false, error: "Pick the day they moved out (their last night)." };
+    if (out > t0) return { ok: false, error: "That day hasn't come yet. Keep them as living here and set the lease end to it instead." };
+    if (mi && out < mi) return { ok: false, error: "The move-out is before the move-in." };
+    const le = cur.leaseEnd && cur.leaseEnd < out ? cur.leaseEnd : out;
+    patch = { moveIn: mi || cur.moveIn, leaseEnd: le, status: "past", movedOutAt: out, cancelledAt: null, movedOutVia: "portal: stay edit" };
+  } else if (mode === "cancelled") {
+    patch = { status: "past", movedOutAt: null, cancelledAt: cur.cancelledAt || t0, movedOutVia: "portal: stay cancelled" };
+  } else return { ok: false, error: "Choose what happened to the stay." };
+  const same = Object.keys(cur).every(k => !(k in patch) || (patch[k] || null) === (cur[k] || null));
+  if (same) return { ok: false, error: "Nothing changed." };
+  const what = mode === "cancelled" ? "cancelled (never moved in)"
+    : mode === "moved" ? "moved out " + tnFmt(patch.movedOutAt)
+    : "living here, " + (patch.moveIn ? tnFmt(patch.moveIn) : "?") + " to " + (patch.leaseEnd ? tnFmt(patch.leaseEnd) : "no end date");
+  return { ok: true, patch, summary: "Stay changed: " + what + ". " + reason };
+}
 /* TENANTS-VIEW-CORE-END */
 
 
@@ -8142,6 +8176,8 @@ renderTenants();
 
 /* ============ TENANT PANEL ACTIONS ============ */
 function tnReopen(t) { setTimeout(() => openTenant(tnKey(t)), 0); }
+// Edit stay: admins + whoever has Tenant review ticked (Marcela). The database (RLS) still decides.
+function tnCanEditStay() { const u = (typeof activeRole === "function" && activeRole()) || {}; const p = Array.isArray(u.allowed_pages) ? u.allowed_pages : []; return u.role === "admin" || p.includes("tenant-review"); }
 function tnInline(html) {
   const box = document.getElementById("tn-panel-inline");
   if (!box) return null;
@@ -8182,6 +8218,39 @@ function tnWirePanel(t0) {
     if (act && act.dataset.tnAct === "whatsapp") {
       const p = tnPhone(t.phone); if (!p) return;
       window.open("https://wa.me/" + p.slice(1), "_blank", "noopener");
+      return;
+    }
+    if (act && act.dataset.tnAct === "stay") {
+      const iso = v => { const d = tnDate(v); return d ? tnIso(d) : ""; };
+      const mode0 = t.cancelledAt ? "cancelled" : String(t.status || "").toLowerCase() === "past" ? "moved" : "living";
+      const radio = (v, label, help) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;cursor:pointer"><input type="radio" name="tn-stay-mode" value="${v}"${v === mode0 ? " checked" : ""} style="margin-top:3px"><span><b style="font-weight:600">${label}</b><br><span class="hb-sub">${help}</span></span></label>`;
+      const box = tnInline(`<div class="hb-inline-form" id="tn-stay-form">
+        <div class="hb-sub" style="margin-bottom:6px">What happened with ${esc(t.name || "this tenant")}'s stay?</div>
+        ${radio("living", "Living here / booked", "Change the move-in or lease end (last night).")}
+        ${radio("moved", "Moved out", "Left early or without a check-out form. The room is free the day after.")}
+        ${radio("cancelled", "Cancelled, never moved in", "The booking fell through. They stop showing on the room.")}
+        <div class="tn-fix" data-stay-for="living" style="justify-content:flex-start;flex-wrap:wrap;gap:8px;margin-top:8px">
+          <label class="hb-sub">Move-in <input type="date" class="form-input tn-date" id="tn-stay-in" value="${iso(t.moveIn)}"></label>
+          <label class="hb-sub">Lease end (last night) <input type="date" class="form-input tn-date" id="tn-stay-end" value="${iso(t.leaseEnd)}"></label>
+        </div>
+        <div class="tn-fix" data-stay-for="moved" style="justify-content:flex-start;gap:8px;margin-top:8px">
+          <label class="hb-sub">Moved out (last night) <input type="date" class="form-input tn-date" id="tn-stay-out" value="${iso(t.movedOutAt) || tnIso(tnToday())}" max="${tnIso(tnToday())}"></label>
+        </div>
+        <label class="hb-sub" style="display:block;margin-top:8px">Why? <span style="opacity:.7">(saved in Notes)</span>
+          <input class="form-input tn-in" id="tn-stay-reason" style="width:100%" maxlength="300" placeholder="e.g. Cancelled by email Nov 20 / left Nov 15, no check-out form"></label>
+        <div class="tn-fix" style="justify-content:flex-start;margin-top:10px"><button type="button" class="btn btn-primary tn-mini" id="tn-stay-save">Save</button><button type="button" class="btn btn-ghost tn-mini" id="tn-inline-cancel">Cancel</button></div>
+      </div>`);
+      const mode = () => (box.querySelector('input[name="tn-stay-mode"]:checked') || {}).value;
+      const sync = () => box.querySelectorAll("[data-stay-for]").forEach(el => { el.style.display = el.dataset.stayFor === mode() ? "flex" : "none"; });
+      box.querySelectorAll('input[name="tn-stay-mode"]').forEach(r => r.onchange = sync); sync();
+      box.querySelector("#tn-stay-save").onclick = async ev => {
+        const r = tnStayPatch(t, { mode: mode(), moveIn: box.querySelector("#tn-stay-in").value, leaseEnd: box.querySelector("#tn-stay-end").value, movedOutAt: box.querySelector("#tn-stay-out").value, reason: box.querySelector("#tn-stay-reason").value }, tnToday());
+        if (!r.ok) { showToast(r.error); return; }
+        const n = tnNoteAddPatch(t, r.summary, (CURRENT_USER && (CURRENT_USER.name || CURRENT_USER.email)) || "", new Date().toISOString());
+        ev.target.disabled = true;
+        if (await tnSave(t, Object.assign({}, r.patch, n.ok ? n.patch : {}), `${t.name}: stay saved.`)) tnReopen(t); else ev.target.disabled = false;
+      };
+      box.querySelector("#tn-inline-cancel").onclick = () => tnInline("");
       return;
     }
     if (act && act.dataset.tnAct === "renew") {
@@ -11346,7 +11415,7 @@ function openTenant(emailOrId){
   const phone = tnPhone(t.phone);
   const propMeta = properties.find(p => p.name === t.property);
   const address  = propMeta ? propMeta.addr : "";
-  const stageText = { moving: "Moving in " + tnFmt(t.moveIn), living: daysLeft == null ? "Living here" : daysLeft <= 60 ? `Leaving in ${daysLeft} day${daysLeft === 1 ? "" : "s"}` : "Living here", ended: "Lease ended, check", past: "Moved out" }[stage];
+  const stageText = { moving: "Moving in " + tnFmt(t.moveIn), living: daysLeft == null ? "Living here" : daysLeft <= 60 ? `Leaving in ${daysLeft} day${daysLeft === 1 ? "" : "s"}` : "Living here", ended: "Lease ended, check", past: t.cancelledAt ? "Cancelled" : "Moved out" }[stage];
   document.getElementById("panel-sub").textContent = [t.property, t.room && t.room !== "—" ? "Room " + t.room : "", t.city].filter(Boolean).join(" · ");
   document.getElementById("panel-meta").innerHTML =
     `<span class="hb-meta${stage === "ended" ? " hb-need" : ""}">${esc(stageText)}</span>` +
@@ -11393,8 +11462,9 @@ function openTenant(emailOrId){
     </div>
 
     <div class="panel-section">
-      <div class="panel-section-title"><span><em>Stay</em></span></div>
+      <div class="panel-section-title"><span><em>Stay</em></span>${tnCanEditStay() ? `<button type="button" class="hb-link" data-tn-act="stay">Edit stay</button>` : ""}</div>
       <div class="card card-pad">
+        ${t.cancelledAt ? kv("Cancelled", `<span class="tn-missing">Never moved in</span> <span class="hb-sub">· marked ${esc(tnFmt(t.cancelledAt))}</span>`) : ""}
         ${kv("Moved in", mi ? esc(tnFmt(t.moveIn)) : "—")}
         ${kv("Lease ends", le ? esc(tnFmt(t.leaseEnd)) + ` <span class="hb-sub">· ${daysLeft < 0 ? `ended ${-daysLeft} days ago` : daysLeft === 0 ? "today" : `in ${daysLeft} days`}</span>` : "—")}
         ${kv("Lease type", ltype ? esc(TN_TYPE_LABEL[ltype]) : `<span class="tn-missing">Not set</span>${tnLegacyType(t) ? ` <span class="hb-sub">was “${esc(tnLegacyType(t))}”</span>` : ""}`)}
@@ -48219,14 +48289,14 @@ document.addEventListener("submit", (ev) => {
 });
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
-<script src="extensions.js?v=2026-11-24-vaclist5"></script>
+<script src="extensions.js?v=2026-11-24-stayedit1"></script>
 <script src="retention.js?v=2026-11-17-roomhold1"></script>
-<script src="ap.js?v=2026-11-24-vaclist5"></script>
-<script src="properties.js?v=2026-11-24-vaclist5"></script>
-<script src="tenant-db.js?v=2026-11-24-vaclist5"></script>
+<script src="ap.js?v=2026-11-24-stayedit1"></script>
+<script src="properties.js?v=2026-11-24-stayedit1"></script>
+<script src="tenant-db.js?v=2026-11-24-stayedit1"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
 <script src="ar.js?v=2026-11-06-autoall2"></script>
 <script src="mx-finance.js?v=2026-11-06-autoall2"></script>
-<script src="ef-deposits.js?v=2026-11-24-vaclist5"></script>
+<script src="ef-deposits.js?v=2026-11-24-stayedit1"></script>
 </body>
 </html>
