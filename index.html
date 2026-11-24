@@ -1606,6 +1606,16 @@
   :root[data-theme="dark"] .modal-backdrop{ background:rgba(0,0,0,.65); }
   :root[data-theme="dark"] .panel-backdrop{ background:rgba(0,0,0,.6); }
 .vac-l-sec{border-top:1px solid var(--line)}
+.vac-l-sort{background:none;border:0;padding:0;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer}
+.vac-l-fix{margin-left:6px;font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid currentColor;background:var(--surface);color:inherit;cursor:pointer;font-weight:600}
+.vac-l-fix:hover{background:var(--wash)}
+.vac-card-bad{outline:2px solid rgba(196,60,50,.45)}
+.vac-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+.vac-edit-grid label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+.vac-notes{display:grid;gap:8px;max-height:360px;overflow:auto}
+.vac-note{padding:8px 10px;border-radius:8px;background:var(--wash);font-size:13px;line-height:1.4}
+.vac-note.change{background:none;border-left:2px solid var(--line);border-radius:0;font-size:12px;color:var(--muted)}
+@media (max-width:640px){.vac-edit-grid{grid-template-columns:1fr}}
 .vac-ph-cover{position:relative;display:block;width:100%;padding:0;border:0;background:var(--wash);border-radius:10px;overflow:hidden;cursor:zoom-in;margin-bottom:6px}
 .vac-ph-cover img{width:100%;max-height:220px;object-fit:cover;display:block}
 .vac-ph-n{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:3px 8px;border-radius:999px}
@@ -1939,7 +1949,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-24-vaclist4"></script>
+<script src="pms-supabase.js?v=2026-11-24-vaclist5"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11710,8 +11720,9 @@ function vacSections(model, o){
     if (o.city && v.city !== o.city) return;
     if (q && !(v.room + ' ' + v.prop + ' ' + v.addr + ' ' + v.city + ' ' + (v.who || '')).toLowerCase().includes(q)) return;
     if (o.keep && !o.keep(v)) return;
-    const label = v.section || VAC_STATUS_SECTION[v.status] || 'Other';
-    const g = G[label] || (G[label] = { key: label, label, status: v.status, sort: vacSectionKey(v.section || (v.status === 'available' ? 'Empty rooms' : ''), v.status), rooms: [], vacant: 0, rent: 0 });
+    const byB = o.group === 'building';
+    const label = byB ? (v.prop || 'No building') + ' · ' + (v.city || '—') : v.section || VAC_STATUS_SECTION[v.status] || 'Other';
+    const g = G[label] || (G[label] = { key: label, label, status: v.status, sort: byB ? [0, 0] : vacSectionKey(v.section || (v.status === 'available' ? 'Empty rooms' : ''), v.status), rooms: [], vacant: 0, rent: 0 });
     g.rooms.push(v);
     if (v.listable) { g.vacant++; g.rent += v.rent || 0; }
   });
@@ -11746,6 +11757,61 @@ function vacRowFlags(v, occ, cs, today){
   if (v.emptyNow && cs && cs.move_out_date && String(cs.move_out_date).slice(0, 10) > today) F.push({ level: 'warn', key: 'checkout', text: 'Listed free, but checkout says moves out ' + vacDay(String(cs.move_out_date).slice(0, 10)) });
   return F;
 }
+// Asana section of a month: "December 2026".
+function vacMonthSection(iso){ return VAC_MON_LONG[Number(String(iso).slice(5, 7)) - 1] + ' ' + String(iso).slice(0, 4); }
+// The status the inventory mirror gives a section (inventory-sync mapping.ts sectionStatus).
+function vacSectionStatus(name){
+  const n = String(name || '').toLowerCase().replace(/[-/&]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (n === 'empty rooms') return 'available';
+  if (n === 'rented') return 'occupied';
+  if (/^(in progress pending|on hold special case|packages pre bookings)$/.test(n) || / pre bookings$/.test(n)) return 'not_bookable';
+  const m = /^([a-z]+) (\d{4})$/.exec(n);
+  if (m && VAC_MON_LONG.map(x => x.toLowerCase()).includes(m[1])) return 'available_later';
+  return 'hidden';
+}
+// One-click fix for a List flag, as a room-edit change set (n8n "VM - Room Edit (portal)"), or null.
+// stays / lives: list the room from the day after the last tenant's last night (or Rented when a
+// stay has no end). booked: set Lease Start to the booking, which closes the free window the day
+// before (an Empty-rooms room also needs a due date before it for the mirror's gap rule).
+function vacFixFor(v, flag, occ){
+  if (!v || !flag) return null;
+  if (flag.key === 'stays' || flag.key === 'lives') {
+    const ppl = ((occ && occ.on) || []).filter(p => !p.leaves && !p.unconfirmed);
+    if (!ppl.length) return null;
+    if (ppl.some(p => !p.end)) return { label: 'Mark Rented', changes: { section: 'Rented' }, reason: flag.text };
+    const free = vacAddDays(ppl.map(p => p.end).sort().pop(), 1);
+    return { label: 'List from ' + vacDay(free), changes: { section: vacMonthSection(free), due_on: free }, reason: flag.text };
+  }
+  if (flag.key === 'booked' && occ && occ.next && occ.next.start) {
+    const ch = { lease_start: occ.next.start };
+    if (v.status === 'available' && (!v.due || v.due >= occ.next.start)) ch.due_on = vacAddDays(occ.next.start, -1);
+    return { label: 'Stop sale from ' + vacDay(occ.next.start), changes: ch, reason: flag.text };
+  }
+  return null;
+}
+// Show a saved change at once, before the mirror catches up (it re-syncs from Asana within a minute).
+function vacApplyLocal(v, ch, today){
+  if (!v || !ch) return v;
+  if (ch.section != null) { v.section = ch.section; v.status = vacSectionStatus(ch.section); }
+  if ('due_on' in ch) v.due = ch.due_on || null;
+  if (ch.price != null) v.rent = Number(ch.price);
+  if (ch.lease_type != null) v.lease = ch.lease_type;
+  if ('lease_start' in ch && ch.lease_start) v.until = vacAddDays(ch.lease_start, -1);
+  if ('lease_start' in ch && !ch.lease_start) v.until = null;
+  const t = today || v.today;
+  v.from = v.status === 'available' ? t : v.status === 'available_later' ? (v.due || null) : null;
+  v.listable = (v.status === 'available' || v.status === 'available_later') && !!v.from;
+  v.emptyNow = v.listable && v.from <= t;
+  v.daysEmpty = 0; v.listed = v.listable; v.availDate = v.from;
+  return v;
+}
+// List sort inside a section: key = room | building | rent | free; dir 1 / -1.
+function vacSortRooms(rooms, key, dir){
+  const d = dir === -1 ? -1 : 1;
+  const val = v => key === 'rent' ? (v.rent == null ? Infinity : v.rent) : key === 'building' ? (v.prop || '~') + ' ' + v.room : key === 'room' ? v.room : String(v.from || v.due || '9');
+  return rooms.slice().sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * d || a.room.localeCompare(b.room); });
+}
+function vacCsvCell(x){ const t = String(x == null ? '' : x); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }
 /* VAC-CORE-END */
 const VAC_STATE = { list: { q: '', city: '', showHidden: false, attention: false, closed: null }, tab: 'list', turnView: 'week', f: { q: '', moveIn: '', maxRent: '', city: '', types: [] }, model: null, cases: {}, hist: null, loadedAt: 0, err: '' };
 let vacLoading = null;
@@ -11810,7 +11876,7 @@ function renderVacancies(){
   const M = VAC_STATE.model;
   if (sync) {
     const newest = M && M.reduce((a, v) => (v.syncedAt && v.syncedAt > a ? v.syncedAt : a), '');
-    sync.textContent = VAC_STATE.err ? VAC_STATE.err : !M ? 'Loading the inventory…' : VAC_STATE.country === 'MX' ? `Vanmates Mexico · from the portal's rooms and leases · ${M.filter(v => v.listable).length} rooms available now or in the next 12 months` : `Live from Asana · last change synced ${vacAgo(newest, Date.now())} · ${M.filter(v => v.listable).length} rooms available now or later`;
+    sync.textContent = VAC_STATE.err ? VAC_STATE.err : !M ? 'Loading the inventory…' : VAC_STATE.country === 'MX' ? `Vanmates Mexico · from the portal's rooms and leases · ${M.filter(v => v.listable).length} rooms available now or in the next 12 months` : `Live from Asana · last change synced ${vacAgo(newest, Date.now())} · refreshes every 3 min · ${M.filter(v => v.listable).length} rooms available now or later`;
   }
   document.querySelectorAll('#vac-tabs [data-vac-tab]').forEach(t => { const on = t.dataset.vacTab === VAC_STATE.tab; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
   if (!M) { root.innerHTML = VAC_STATE.err ? `<p class="name-sub">${esc(VAC_STATE.err)}</p>` : '<p class="name-sub">Loading…</p>'; return; }
@@ -11857,8 +11923,9 @@ function vacRenderCards(){
   const f = VAC_STATE.f;
   const list = vacFilter(VAC_STATE.model, { q: f.q, moveIn: f.moveIn, maxRent: Number(f.maxRent) || 0, city: f.city, types: f.types });
   document.getElementById('vac-count').textContent = `${list.length} room${list.length === 1 ? '' : 's'}${f.moveIn ? ' free on ' + vacDay(f.moveIn) : ''}${Number(f.maxRent) ? ' under ' + vacMoney(Number(f.maxRent)) : ''} · soonest first`;
-  box.innerHTML = list.length ? list.map(v => `
-    <button type="button" class="card" data-vac-open="${esc(v.id)}" style="padding:0;overflow:hidden;text-align:left;cursor:pointer;font:inherit;color:inherit;display:grid">
+  const occ = vacOccupancy();
+  box.innerHTML = list.length ? list.map(v => { const fl = vacListFlags(v, occ), bad = fl.filter(x => x.level === 'bad'); return `
+    <button type="button" class="card${bad.length ? ' vac-card-bad' : ''}" data-vac-open="${esc(v.id)}" style="padding:0;overflow:hidden;text-align:left;cursor:pointer;font:inherit;color:inherit;display:grid">
       <div style="aspect-ratio:16/9;max-width:100%;background:var(--cream-2);position:relative">
         ${v.cover ? `<img src="${esc(v.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.remove()">` : ''}
         <span class="badge ${v.emptyNow ? 'badge-amber' : 'badge-grey'}" style="position:absolute;left:8px;top:8px"><span class="dot"></span>${esc(vacWhen(v))}</span>
@@ -11869,8 +11936,9 @@ function vacRenderCards(){
           <div class="num" style="font-weight:700;white-space:nowrap">${vacMoney(v.rent)}<span class="name-sub">/mo</span></div>
         </div>
         <div class="name-sub">${esc(v.typeLabel)}${v.lease ? ' · ' + esc(String(v.lease).replace(/_/g, ' ')) : ''}${v.until ? ' · until ' + esc(vacDay(v.until)) : ''}</div>
+        ${bad.length ? `<div class="vac-l-flag bad">⚠ Check before offering: ${esc(bad[0].text)}</div>` : ''}
       </div>
-    </button>`).join('') : '<div class="empty"><div class="t">No rooms match</div><div>Try a later move-in date, a higher rent or fewer filters.</div></div>';
+    </button>`; }).join('') : '<div class="empty"><div class="t">No rooms match</div><div>Try a later move-in date, a higher rent or fewer filters.</div></div>';
 }
 // Vacancies › List — looks like the Asana inventory list: one block per section, rooms as rows,
 // a count under each block and the vacancy total pinned at the bottom (vacSections in VAC-CORE).
@@ -11904,6 +11972,54 @@ function vacOccupancy(){
   return out;
 }
 function vacListFlags(v, occ){ return vacRowFlags(v, occ[v.gid], VAC_STATE.cases[v.gid], v.today); }
+// Who may change rooms (n8n room-edit checks the same server-side): admins, Tenant review, Vacancies edit.
+function vacCanEdit(){ const u = (typeof activeRole === 'function' && activeRole()) || {}; const p = Array.isArray(u.allowed_pages) ? u.allowed_pages : []; return u.role === 'admin' || p.includes('tenant-review') || p.includes('vacancies-edit'); }
+const VAC_ROOM_API = 'https://adr23.app.n8n.cloud/webhook/room-edit';
+async function vacRoomApi(body){
+  const sess = window.vmDb && window.vmDb.sb ? await window.vmDb.sb.auth.getSession() : null;
+  const tok = sess && sess.data && sess.data.session && sess.data.session.access_token;
+  if (!tok) throw new Error('Sign in again.');
+  const r = await fetch(VAC_ROOM_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok }, body: JSON.stringify(body) }).catch(() => null);
+  if (!r) throw new Error("Couldn't reach n8n.");
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || 'Asana update failed (HTTP ' + r.status + ').');
+  return j;
+}
+// Save a change set on a room, show it at once, then re-read the mirror (Asana → mirror ≈ 1 min).
+async function vacSaveRoom(v, changes, reason){
+  const j = await vacRoomApi({ action: 'update', gid: v.gid, changes, reason: reason || '' });
+  vacApplyLocal(v, changes, v.today);
+  VAC_OCC = null;
+  showToast(j.changed && j.changed.length ? 'Saved in Asana' : 'Nothing changed');
+  renderVacancies();
+  [15000, 60000].forEach(ms => setTimeout(() => { if (!document.getElementById('detail-panel').classList.contains('open')) loadVacancies(true); }, ms));
+  return j;
+}
+async function vacRunFix(id, k){
+  const v = (VAC_STATE.model || []).find(x => x.id === id); if (!v) return;
+  const occ = vacOccupancy(), flag = vacListFlags(v, occ).find(f => f.key === k), fix = flag && vacFixFor(v, flag, occ[v.gid]);
+  if (!fix) return;
+  if (!confirm(fix.label + ' — ' + v.room + '?\n\nThis changes the room in Asana (a note is added there).')) return;
+  try { await vacSaveRoom(v, fix.changes, 'fix: ' + fix.reason); } catch (e) { showToast(e.message || String(e)); }
+}
+const VAC_LIST_KEY = 'vm_vac_list';
+function vacListSave(){ try { const f = VAC_STATE.list; localStorage.setItem(VAC_LIST_KEY, JSON.stringify({ closed: f.closed, group: f.group, sort: f.sort, dir: f.dir })); } catch (e) {} }
+(function(){ try { const x = JSON.parse(localStorage.getItem(VAC_LIST_KEY) || 'null'); if (x) Object.assign(VAC_STATE.list, { closed: x.closed || null, group: x.group || '', sort: x.sort || '', dir: x.dir || 1 }); } catch (e) {} })();
+function vacListOpts(extra){ const f = VAC_STATE.list; return Object.assign({ q: f.q, city: f.city, showHidden: f.showHidden, group: f.group }, extra || {}); }
+function vacListCsv(){
+  const occ = vacOccupancy(), f = VAC_STATE.list;
+  const S = vacSections(VAC_STATE.model, vacListOpts({ keep: f.attention ? v => vacListFlags(v, occ).length : null }));
+  const rows = [['Section', 'Room', 'Building', 'City', 'Type', 'Lease', 'Rent', 'Free from', 'Until', 'Status', 'Tenant now', 'Lease end', 'Next booking', 'Next from', 'Needs attention', 'Asana']];
+  S.forEach(g => g.rooms.forEach(v => {
+    const o = occ[v.gid] || { on: [], next: null };
+    rows.push([g.label, v.room, v.prop, v.city, v.typeLabel, v.lease, v.rent, v.listable ? v.from : '', v.until || '', v.status,
+      o.on.map(p => p.name).join(' & '), o.on.map(p => p.end || '').join(' & '), o.next ? o.next.name : '', o.next ? o.next.start : '',
+      vacListFlags(v, occ).map(x => x.text).join(' | '), vacAsanaUrl(v)]);
+  }));
+  const blob = new Blob(['﻿' + rows.map(r => r.map(vacCsvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'vacancies-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
 function vacRenderList(root, M){
   const f = VAC_STATE.list;
   if (!f.closed) f.closed = {};
@@ -11915,9 +12031,10 @@ function vacRenderList(root, M){
           <div class="filter-search"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
             <input id="vac-l-q" placeholder="Room, house, street or tenant…" value="${esc(f.q)}" /></div>
           <select id="vac-l-city" class="sort-select"><option value="">All cities</option>${cities.map(c => `<option${c === f.city ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <select id="vac-l-group" class="sort-select" aria-label="Group by"><option value="">By Asana section</option><option value="building"${f.group === 'building' ? ' selected' : ''}>By building</option></select>
           <button type="button" class="filter-chip${f.attention ? ' has-value' : ''}" id="vac-l-att" aria-pressed="${!!f.attention}"><span class="label">Needs attention</span></button>
           <button type="button" class="filter-chip${f.showHidden ? ' has-value' : ''}" id="vac-l-hidden" aria-pressed="${f.showHidden}"><span class="label">Show hidden sections</span></button>
-          <button type="button" class="btn" id="vac-l-all" style="margin-left:auto">Expand all</button>
+          <span style="margin-left:auto;display:flex;gap:6px"><button type="button" class="btn" id="vac-l-csv">CSV</button><button type="button" class="btn" id="vac-l-all">Expand all</button></span>
         </div>
         <div id="vac-l-body" style="margin-top:12px"></div>
         <div id="vac-l-total" class="vac-l-total"></div>
@@ -11925,18 +12042,24 @@ function vacRenderList(root, M){
     const setAtt = on => { f.attention = on; const b = root.querySelector('#vac-l-att'); b.classList.toggle('has-value', on); b.setAttribute('aria-pressed', on); vacRenderListBody(); };
     root.querySelector('#vac-l-q').addEventListener('input', e => { f.q = e.target.value; vacRenderListBody(); });
     root.querySelector('#vac-l-city').addEventListener('change', e => { f.city = e.target.value; vacRenderListBody(); });
+    root.querySelector('#vac-l-group').addEventListener('change', e => { f.group = e.target.value; vacListSave(); vacRenderListBody(); });
+    root.querySelector('#vac-l-csv').addEventListener('click', vacListCsv);
     root.querySelector('#vac-l-att').addEventListener('click', () => setAtt(!f.attention));
-    root.querySelector('#vac-l-total').addEventListener('click', e => { if (e.target.closest('[data-vac-att]')) { setAtt(true); root.scrollIntoView({ block: 'start' }); } });
+    root.querySelector('#vac-l-total').addEventListener('click', e => { if (e.target.closest('[data-vac-att]')) { e.preventDefault(); setAtt(true); root.scrollIntoView({ block: 'start' }); } });
     root.querySelector('#vac-l-hidden').addEventListener('click', e => { f.showHidden = !f.showHidden; e.currentTarget.classList.toggle('has-value', f.showHidden); e.currentTarget.setAttribute('aria-pressed', f.showHidden); vacRenderListBody(); });
     root.querySelector('#vac-l-all').addEventListener('click', () => {
-      const S = vacSections(VAC_STATE.model, f), anyClosed = S.some(vacListClosed);
+      const S = vacSections(VAC_STATE.model, vacListOpts()), anyClosed = S.some(vacListClosed);
       S.forEach(g => { f.closed[g.key] = anyClosed ? 0 : 1; });
-      vacRenderListBody();
+      vacListSave(); vacRenderListBody();
     });
     const body = root.querySelector('#vac-l-body');
     body.addEventListener('click', e => {
+      const fx = e.target.closest('[data-vac-fix]');
+      if (fx) { e.stopPropagation(); vacRunFix(fx.dataset.vacFix, fx.dataset.fixKey); return; }
+      const th = e.target.closest('[data-vac-sort]');
+      if (th) { const k = th.dataset.vacSort; f.dir = f.sort === k ? -(f.dir || 1) : 1; f.sort = k; vacListSave(); vacRenderListBody(); return; }
       const h = e.target.closest('[data-vac-sec]');
-      if (h) { const k = h.dataset.vacSec, g = vacSections(VAC_STATE.model, f).find(x => x.key === k); f.closed[k] = g && vacListClosed(g) ? 0 : 1; vacRenderListBody(); return; }
+      if (h) { const k = h.dataset.vacSec, g = vacSections(VAC_STATE.model, vacListOpts()).find(x => x.key === k); f.closed[k] = g && vacListClosed(g) ? 0 : 1; vacListSave(); vacRenderListBody(); return; }
       const tn = e.target.closest('[data-vac-tenant]');
       if (tn) { e.preventDefault(); if (typeof openTenant === 'function') openTenant(tn.dataset.vacTenant); return; }
       if (e.target.closest('a')) return;
@@ -11946,15 +12069,20 @@ function vacRenderList(root, M){
   }
   vacRenderListBody();
 }
-// A block with nothing vacant (Rented, On hold…) starts folded, like a collapsed Asana section.
-function vacListClosed(g){ if (VAC_STATE.list.attention) return false; const c = VAC_STATE.list.closed || {}; return g.key in c ? !!c[g.key] : !g.vacant; }
+// A block with nothing vacant (Rented, On hold…) starts folded, like a collapsed Asana section; the choice is remembered.
+function vacListClosed(g){ if (VAC_STATE.list.attention) return false; const c = VAC_STATE.list.closed || {}; return g.key in c ? !!c[g.key] : (VAC_STATE.list.group === 'building' ? false : !g.vacant); }
+function vacFlagHtml(v, x, occ, canEdit){
+  const fix = canEdit ? vacFixFor(v, x, occ[v.gid]) : null;
+  return `<div class="vac-l-flag ${x.level}">${x.level === 'bad' ? '⚠' : '•'} ${esc(x.text)}${fix ? ` <button type="button" class="vac-l-fix" data-vac-fix="${esc(v.id)}" data-fix-key="${esc(x.key)}">${esc(fix.label)}</button>` : ''}</div>`;
+}
 function vacRenderListBody(){
   const body = document.getElementById('vac-l-body'), foot = document.getElementById('vac-l-total');
   if (!body || !VAC_STATE.model) return;
-  const f = VAC_STATE.list, occ = vacOccupancy(), FL = {};
+  const f = VAC_STATE.list, occ = vacOccupancy(), FL = {}, canEdit = vacCanEdit();
   VAC_STATE.model.forEach(v => { FL[v.id] = vacListFlags(v, occ); });
-  const flagged = vacSections(VAC_STATE.model, Object.assign({}, f, { keep: v => FL[v.id].length })).reduce((n, g) => n + g.rooms.length, 0);
-  const S = vacSections(VAC_STATE.model, Object.assign({}, f, { keep: f.attention ? v => FL[v.id].length : null }));
+  const flagged = vacSections(VAC_STATE.model, vacListOpts({ keep: v => FL[v.id].length })).reduce((n, g) => n + g.rooms.length, 0);
+  const S = vacSections(VAC_STATE.model, vacListOpts({ keep: f.attention ? v => FL[v.id].length : null }));
+  if (f.sort) S.forEach(g => { g.rooms = vacSortRooms(g.rooms, f.sort, f.dir); });
   const att = document.querySelector('#vac-l-att .label'); if (att) att.textContent = 'Needs attention' + (flagged ? ' (' + flagged + ')' : '');
   const all = document.getElementById('vac-l-all'); if (all) { all.hidden = !!f.attention; all.textContent = S.some(vacListClosed) ? 'Expand all' : 'Collapse all'; }
   const person = (p, extra) => `<div><a href="#" class="vac-l-who" data-vac-tenant="${esc(p.key)}">${esc(p.name || 'Unnamed')}</a> <span class="name-sub">${esc(extra)}</span></div>`;
@@ -11965,12 +12093,14 @@ function vacRenderListBody(){
     const nx = o.next ? `<div class="name-sub">Next: <a href="#" class="vac-l-who" data-vac-tenant="${esc(o.next.key)}">${esc(o.next.name || 'Unnamed')}</a> from ${esc(vacListDate(o.next.start))}</div>` : '';
     return now || nx ? now + nx : '<span class="name-sub">Empty</span>';
   };
+  const arrow = k => f.sort === k ? (f.dir === -1 ? ' ↓' : ' ↑') : '';
+  const th = (k, label, cls) => `<th${cls ? ` class="${cls}"` : ''}><button type="button" class="vac-l-sort" data-vac-sort="${k}">${label}${arrow(k)}</button></th>`;
   const row = v => {
     const fl = FL[v.id], bad = fl.some(x => x.level === 'bad');
-    const when = v.listable ? (v.emptyNow ? '<span class="badge badge-amber"><span class="dot"></span>Now</span>' : esc(vacListDate(v.from)) + (v.approx ? ' <span class="name-sub">(approx.)</span>' : ''))
+    const when = v.listable ? (v.emptyNow ? `<span class="badge badge-amber"><span class="dot"></span>Now</span>${v.daysEmpty ? ` <span class="name-sub">${v.daysEmpty} d empty</span>` : ''}` : esc(vacListDate(v.from)) + (v.approx ? ' <span class="name-sub">(approx.)</span>' : ''))
       : v.due ? `<span class="name-sub">${esc(vacListDate(v.due))}</span>` : '<span class="name-sub">—</span>';
     return `<tr data-vac-open="${esc(v.id)}" tabindex="0" class="${bad ? 'vac-l-bad' : fl.length ? 'vac-l-warn' : ''}" style="cursor:pointer">
-      <td><div class="name-main">${esc(v.room)}</div>${fl.map(x => `<div class="vac-l-flag ${x.level}">${x.level === 'bad' ? '⚠' : '•'} ${esc(x.text)}</div>`).join('')}</td>
+      <td><div class="name-main">${esc(v.room)}</div>${f.group === 'building' && v.section ? `<div class="name-sub">${esc(v.section)}</div>` : ''}${fl.map(x => vacFlagHtml(v, x, occ, canEdit)).join('')}</td>
       <td class="vac-l-tn">${tenantCell(v)}</td>
       <td><div class="name-sub">${esc(v.prop || '—')}</div><div class="name-sub" style="opacity:.75">${esc(v.city)}</div></td>
       <td>${esc(v.typeLabel)}</td>
@@ -11990,7 +12120,7 @@ function vacRenderListBody(){
         ${nf && !f.attention ? `<span class="badge badge-red"><span class="dot"></span>${nf} to check</span>` : ''}
         ${g.vacant ? `<span class="badge badge-green" style="margin-left:auto"><span class="dot"></span>${g.vacant} vacant · ${vacMoney(g.rent)}/mo</span>` : ''}
       </div>
-      ${open ? `<div style="overflow-x:auto"><table class="m-keep vac-l-table"><thead><tr><th>Room</th><th>Tenant</th><th>Building</th><th>Type</th><th>Lease</th><th class="right">Rent</th><th>${g.vacant ? 'Free from' : 'Due'}</th><th></th></tr></thead>
+      ${open ? `<div style="overflow-x:auto"><table class="m-keep vac-l-table"><thead><tr>${th('room', 'Room')}<th>Tenant</th>${th('building', 'Building')}<th>Type</th><th>Lease</th>${th('rent', 'Rent', 'right')}${th('free', g.vacant ? 'Free from' : 'Due')}<th></th></tr></thead>
         <tbody>${g.rooms.map(row).join('')}</tbody>
         <tfoot><tr><td colspan="8" class="name-sub">${g.rooms.length} room${g.rooms.length === 1 ? '' : 's'}${g.vacant ? ` · <b>${g.vacant} vacant</b> · ${vacMoney(g.rent)}/mo asking` : ' · none vacant'}</td></tr></tfoot>
       </table></div>` : ''}
@@ -12132,6 +12262,85 @@ function vacPhotoViewer(photos, start, title){
   document.addEventListener('keydown', key, true);
   document.body.appendChild(el); show();
 }
+// Room panel extras (Canada): what needs attention + fixes, edit the room in Asana, the room's Asana notes.
+const VAC_SECTION_FIXED = ['Empty rooms', 'Rented', 'ON HOLD / Special Case', 'In Progress / Pending', 'Packages & Pre Bookings'];
+function vacSectionOptions(v){
+  const t = v.today || vacTodayIn(v.city, Date.now()), out = VAC_SECTION_FIXED.slice(0, 1);
+  for (let i = 0; i < 18; i++) { const d = new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1 + i, 1)); out.push(vacMonthSection(d.toISOString().slice(0, 10))); }
+  out.push(...VAC_SECTION_FIXED.slice(1));
+  if (v.section && !out.some(x => x.toLowerCase().replace(/[^a-z0-9]/g, '') === v.section.toLowerCase().replace(/[^a-z0-9]/g, ''))) out.unshift(v.section);
+  return out;
+}
+function vacPanelExtras(v){
+  const occ = vacOccupancy(), fl = vacListFlags(v, occ), can = vacCanEdit();
+  const same = (a, b) => String(a || '').toLowerCase().replace(/[^a-z0-9]/g, '') === String(b || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const leaseOpt = (k, l) => `<option value="${k}"${v.lease === k ? ' selected' : ''}>${l}</option>`;
+  return `<div id="vac-px">
+    ${fl.length ? `<div class="panel-section"><div class="panel-section-title"><span><em>Needs attention</em></span></div>${fl.map(x => vacFlagHtml(v, x, occ, can)).join('')}</div>` : ''}
+    ${can ? `<div class="panel-section" id="vac-edit"><div class="panel-section-title"><span><em>Edit in Asana</em></span><span class="ct">saved to Asana with a note</span></div>
+      <div class="vac-edit-grid">
+        <label>Section<select id="vac-e-sec" class="form-input">${vacSectionOptions(v).map(n => `<option${same(n, v.section) ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+        <label>Free from (due date)<input id="vac-e-due" class="form-input" type="date" value="${esc(v.due || '')}"></label>
+        <label>Rent / month<input id="vac-e-price" class="form-input" type="number" min="0" step="10" value="${v.rent == null ? '' : esc(v.rent)}"></label>
+        <label>Lease type<select id="vac-e-lease" class="form-input"><option value="">—</option>${leaseOpt('month_to_month', 'Month to Month')}${leaseOpt('fixed', 'Fixed')}${leaseOpt('flex_lease', 'Flex lease')}</select></label>
+        <label>Next booking starts (Lease Start)<input id="vac-e-ls" class="form-input" type="date" value="${esc(v.until ? vacAddDays(v.until, 1) : '')}"></label>
+      </div>
+      <div class="name-sub" style="margin:6px 0 8px">Picking a date moves the room to that month's section. Lease Start ends the free window the day before.</div>
+      <div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn btn-primary" id="vac-e-save">Save to Asana</button><span class="name-sub" id="vac-e-msg"></span></div>
+    </div>` : ''}
+    <div class="panel-section" id="vac-notes"><div class="panel-section-title"><span><em>Notes</em> from Asana</span><span class="ct" id="vac-n-ct">loading…</span></div>
+      ${can ? `<div style="display:flex;gap:8px;margin-bottom:8px"><textarea id="vac-n-text" class="form-input" rows="2" placeholder="Add a note (posted on the Asana task)…" style="flex:1"></textarea><button type="button" class="btn" id="vac-n-add">Add</button></div>` : ''}
+      <div id="vac-n-list" class="vac-notes"></div>
+    </div></div>`;
+}
+function vacPanelWire(body, v){
+  const px = body.querySelector('#vac-px'); if (!px) return;
+  px.addEventListener('click', e => { const fx = e.target.closest('[data-vac-fix]'); if (fx) vacRunFix(fx.dataset.vacFix, fx.dataset.fixKey).then(() => { if (document.getElementById('detail-panel').classList.contains('open')) openVacancy(v.id); }); });
+  const $ = id => body.querySelector('#' + id);
+  if ($('vac-e-due')) $('vac-e-due').addEventListener('change', e => { const d = e.target.value; const sel = $('vac-e-sec'); if (d && sel && !/^(rented|on ?hold)/i.test(sel.value)) { const t = d <= v.today ? 'Empty rooms' : vacMonthSection(d); [...sel.options].forEach(o => { o.selected = o.value === t; }); } });
+  if ($('vac-e-save')) $('vac-e-save').addEventListener('click', async () => {
+    const ch = {}, sec = $('vac-e-sec').value, due = $('vac-e-due').value || null, price = $('vac-e-price').value, lease = $('vac-e-lease').value, ls = $('vac-e-ls').value || null;
+    const same = (a, b) => String(a || '').toLowerCase().replace(/[^a-z0-9]/g, '') === String(b || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!same(sec, v.section)) ch.section = sec;
+    if ((due || null) !== (v.due || null)) ch.due_on = due;
+    if (price !== '' && Number(price) !== v.rent) ch.price = Number(price);
+    if (lease && lease !== v.lease) ch.lease_type = lease;
+    const curLs = v.until ? vacAddDays(v.until, 1) : null;
+    if ((ls || null) !== curLs) ch.lease_start = ls;
+    if (vacSectionStatus(ch.section || v.section) === 'available_later' && !(ch.due_on || v.due)) { $('vac-e-msg').textContent = 'A month section needs a free-from date.'; return; }
+    if (!Object.keys(ch).length) { $('vac-e-msg').textContent = 'Nothing changed.'; return; }
+    const btn = $('vac-e-save'); btn.disabled = true; $('vac-e-msg').textContent = 'Saving…';
+    try { await vacSaveRoom(v, ch); openVacancy(v.id); } catch (err) { $('vac-e-msg').textContent = err.message || String(err); btn.disabled = false; }
+  });
+  const list = $('vac-n-list'), ct = $('vac-n-ct');
+  const load = async () => {
+    try {
+      const j = await vacRoomApi({ action: 'stories', gid: v.gid });
+      const items = j.items || [];
+      ct.textContent = items.filter(x => x.kind === 'comment').length + ' notes';
+      list.innerHTML = items.length ? items.slice(0, 25).map(x => `<div class="vac-note ${x.kind}"><div class="name-sub"><b>${esc(x.by)}</b> · ${esc(new Date(x.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }))}</div><div>${esc(x.text).replace(/\n/g, '<br>')}</div></div>`).join('') : '<div class="name-sub">No notes yet.</div>';
+    } catch (err) { ct.textContent = ''; list.innerHTML = `<div class="name-sub">${esc(err.message || String(err))}</div>`; }
+  };
+  load();
+  if ($('vac-n-add')) $('vac-n-add').addEventListener('click', async () => {
+    const t = $('vac-n-text').value.trim(); if (!t) return;
+    const b = $('vac-n-add'); b.disabled = true;
+    try { await vacRoomApi({ action: 'comment', gid: v.gid, text: t }); $('vac-n-text').value = ''; showToast('Note added in Asana'); await load(); }
+    catch (err) { showToast(err.message || String(err)); }
+    b.disabled = false;
+  });
+}
+// Keep the page current while it stays open: re-read the mirror every 3 minutes (not while a room is open).
+setInterval(() => {
+  try {
+    if (document.hidden || vacLoading || VAC_STATE.country === 'MX' || !VAC_STATE.model) return;
+    const view = document.querySelector('section.view[data-view="vacancies"]');
+    if (!view || !view.classList.contains('active')) return;
+    if (document.getElementById('detail-panel').classList.contains('open')) return;
+    if (Date.now() - VAC_STATE.loadedAt < 170000) return;
+    loadVacancies(true);
+  } catch (e) {}
+}, 60000);
 function openVacancy(id){
   const v = (VAC_STATE.model || []).find(x => x.id === id); if (!v) return;
   const hero = document.getElementById('panel-hero');
@@ -12159,13 +12368,15 @@ function openVacancy(id){
       <button type="button" class="btn" id="vac-copy-link">Copy room link</button>
       ${v.gid ? `<a class="btn" href="${esc(vacAsanaUrl(v))}" target="_blank" rel="noopener">Open in Asana</a>` : ''}
       ${v.pictures ? `<a class="btn" href="${esc(v.pictures)}" target="_blank" rel="noopener">All photos</a>` : ''}
-    </div>`;
+    </div>
+    ${VAC_STATE.country !== 'MX' && v.gid ? vacPanelExtras(v) : ''}`;
   const copy = (text, sel) => {
     const fallback = () => { const t = document.getElementById('vac-msg'); if (t) { t.value = text; t.select(); } showToast('Press ⌘C to copy'); };
     try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => showToast('Copied'), fallback); else fallback(); } catch (e) { fallback(); }
   };
   body.querySelector('#vac-copy-msg').addEventListener('click', () => copy(document.getElementById('vac-msg').value));
   body.querySelector('#vac-copy-link').addEventListener('click', () => copy(vacRoomUrl(v)));
+  if (VAC_STATE.country !== 'MX' && v.gid) vacPanelWire(body, v);
   document.getElementById('detail-panel').classList.add('open');
   document.getElementById('detail-panel').setAttribute('aria-hidden', 'false');
   document.getElementById('panel-backdrop').classList.add('open');
@@ -48008,14 +48219,14 @@ document.addEventListener("submit", (ev) => {
 });
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
-<script src="extensions.js?v=2026-11-24-vaclist4"></script>
+<script src="extensions.js?v=2026-11-24-vaclist5"></script>
 <script src="retention.js?v=2026-11-17-roomhold1"></script>
-<script src="ap.js?v=2026-11-24-vaclist4"></script>
-<script src="properties.js?v=2026-11-24-vaclist4"></script>
-<script src="tenant-db.js?v=2026-11-24-vaclist4"></script>
+<script src="ap.js?v=2026-11-24-vaclist5"></script>
+<script src="properties.js?v=2026-11-24-vaclist5"></script>
+<script src="tenant-db.js?v=2026-11-24-vaclist5"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
 <script src="ar.js?v=2026-11-06-autoall2"></script>
 <script src="mx-finance.js?v=2026-11-06-autoall2"></script>
-<script src="ef-deposits.js?v=2026-11-24-vaclist4"></script>
+<script src="ef-deposits.js?v=2026-11-24-vaclist5"></script>
 </body>
 </html>
