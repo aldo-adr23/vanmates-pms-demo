@@ -1626,8 +1626,17 @@
 .vac-l-name{font-weight:700}
 .vac-l-table{margin-bottom:10px}
 .vac-l-table td{padding-top:7px;padding-bottom:7px}
-.vac-l-table td:first-child{min-width:240px}
+.vac-l-table td:first-child{min-width:210px}
+#vac-list{contain:inline-size}
 .vac-l-table tbody tr:hover{background:var(--wash)}
+.vac-l-table tr.vac-l-bad td{background:rgba(196,60,50,.06)}
+.vac-l-table tr.vac-l-warn td{background:rgba(214,150,40,.06)}
+.vac-l-flag{font-size:12px;margin-top:3px;line-height:1.3}
+.vac-l-flag.bad{color:var(--red-dark)}
+.vac-l-flag.warn{color:#9a6a12}
+.vac-l-tn{min-width:170px;font-size:13px}
+.vac-l-who{color:inherit;font-weight:600;text-decoration:underline;text-decoration-color:rgba(0,0,0,.2)}
+.vac-l-attlink{color:var(--red-dark);font-weight:600}
 .vac-l-table tfoot td{border-top:1px solid var(--line);padding-top:8px}
 .vac-l-total{position:sticky;bottom:0;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 -22px;padding:12px 22px;background:var(--surface);border-top:2px solid var(--line);box-shadow:0 -4px 12px rgba(0,0,0,.05)}
 .vac-thumb-empty{width:48px;height:36px;border-radius:6px;background:var(--wash);border:1px dashed var(--line);display:block}
@@ -1930,7 +1939,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-24-vaclist3"></script>
+<script src="pms-supabase.js?v=2026-11-24-vaclist4"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -11699,7 +11708,8 @@ function vacSections(model, o){
   (model || []).forEach(v => {
     if (v.status === 'hidden' && !o.showHidden) return;
     if (o.city && v.city !== o.city) return;
-    if (q && !(v.room + ' ' + v.prop + ' ' + v.addr + ' ' + v.city).toLowerCase().includes(q)) return;
+    if (q && !(v.room + ' ' + v.prop + ' ' + v.addr + ' ' + v.city + ' ' + (v.who || '')).toLowerCase().includes(q)) return;
+    if (o.keep && !o.keep(v)) return;
     const label = v.section || VAC_STATUS_SECTION[v.status] || 'Other';
     const g = G[label] || (G[label] = { key: label, label, status: v.status, sort: vacSectionKey(v.section || (v.status === 'available' ? 'Empty rooms' : ''), v.status), rooms: [], vacant: 0, rent: 0 });
     g.rooms.push(v);
@@ -11712,8 +11722,32 @@ function vacSections(model, o){
     return g;
   }).sort((a, b) => a.sort[0] - b.sort[0] || a.sort[1] - b.sort[1] || a.label.localeCompare(b.label));
 }
+// Problems on one List row, from the room (v), who the portal has in it today (occ, built from
+// TDB_CORE.occupancy: on = [{ name, key, start, end, unconfirmed, leaves }], next = { name, key, start },
+// conflict / possible), its open checkout (cs) and today. [{ level: 'bad'|'warn', key, text }].
+function vacRowFlags(v, occ, cs, today){
+  const F = [], on = (occ && occ.on) || [], live = on.filter(p => !p.leaves);
+  const names = a => a.map(p => p.name || 'Unnamed').join(' & ');
+  if (v.listable) {
+    const firm = live.filter(p => !p.unconfirmed), loose = live.filter(p => p.unconfirmed);
+    if (v.emptyNow && firm.length) F.push({ level: 'bad', key: 'lives', text: 'Listed free, but ' + names(firm) + ' lives here' });
+    else if (!v.emptyNow) {
+      // A stay's end is its last night and the next person may arrive that day (handover): only past it is a clash.
+      const stays = firm.filter(p => !p.end || p.end > v.from);
+      if (stays.length) F.push({ level: 'bad', key: 'stays', text: 'Free from ' + vacDay(v.from) + ', but ' + stays.map(p => (p.name || 'Unnamed') + (p.end ? ' stays until ' + vacDay(p.end) : ' has no end date')).join(' & ') });
+    }
+    if (loose.length) F.push({ level: 'warn', key: 'ended', text: names(loose) + ' still marked living here (lease ended ' + loose.map(p => vacDay(p.end)).join(', ') + ')' });
+    const n = occ && occ.next;
+    if (n && n.start && n.start >= v.from && (!v.until || n.start <= v.until)) F.push({ level: 'bad', key: 'booked', text: 'Booked by ' + (n.name || 'Unnamed') + ' from ' + vacDay(n.start) + ' — still for sale' });
+  }
+  if (occ && occ.conflict) F.push({ level: 'bad', key: 'overlap', text: 'Overlap: ' + names(on) });
+  else if (occ && occ.possible) F.push({ level: 'warn', key: 'overlap', text: 'Possible overlap: ' + names(on) });
+  if (occ && v.status === 'occupied' && !on.length) F.push({ level: 'warn', key: 'notenant', text: occ.next ? 'Rented, nobody in the portal until ' + vacDay(occ.next.start) : 'Rented in Asana, no tenant in the portal' });
+  if (v.emptyNow && cs && cs.move_out_date && String(cs.move_out_date).slice(0, 10) > today) F.push({ level: 'warn', key: 'checkout', text: 'Listed free, but checkout says moves out ' + vacDay(String(cs.move_out_date).slice(0, 10)) });
+  return F;
+}
 /* VAC-CORE-END */
-const VAC_STATE = { list: { q: '', city: '', showHidden: false, closed: null }, tab: 'list', turnView: 'week', f: { q: '', moveIn: '', maxRent: '', city: '', types: [] }, model: null, cases: {}, hist: null, loadedAt: 0, err: '' };
+const VAC_STATE = { list: { q: '', city: '', showHidden: false, attention: false, closed: null }, tab: 'list', turnView: 'week', f: { q: '', moveIn: '', maxRent: '', city: '', types: [] }, model: null, cases: {}, hist: null, loadedAt: 0, err: '' };
 let vacLoading = null;
 async function loadVacancies(force){
   const vc = window.vmCountry ? window.vmCountry.current() : 'CA';
@@ -11840,7 +11874,36 @@ function vacRenderCards(){
 }
 // Vacancies › List — looks like the Asana inventory list: one block per section, rooms as rows,
 // a count under each block and the vacancy total pinned at the bottom (vacSections in VAC-CORE).
+// Each row also shows who the portal has in the room (TDB_CORE occupancy from tenant-db.js) and
+// flags what disagrees with Asana (vacRowFlags); "Needs attention" shows only flagged rows.
 function vacListDate(iso){ if (!iso) return ''; const y = iso.slice(0, 4); return vacDay(iso) + (y !== String(new Date().getFullYear()) ? ', ' + y : ''); }
+let VAC_OCC = null, VAC_OCC_KEY = '';
+// gid -> { on, next, conflict, possible } for every Asana room the portal can place on a property.
+function vacOccupancy(){
+  const T = window.TDB_CORE, M = VAC_STATE.model;
+  if (!T || !M || VAC_STATE.country === 'MX') return {};
+  let list = (typeof tnScoped === 'function' ? tnScoped() : tenants) || [];
+  list = list.filter(t => t && !t._deletedAt);
+  const key = [list.length, M.length, VAC_STATE.loadedAt, (properties || []).length].join('|');
+  if (VAC_OCC && VAC_OCC_KEY === key) return VAC_OCC;
+  const out = {};
+  try {
+    const today = typeof tnToday === 'function' ? tnIso(tnToday()) : vacTodayIn('', Date.now());
+    const model = T.buildRooms(properties, M), place = T.place(list, model, null);
+    const who = t => ({ name: t.name || '', key: tnKey(t) });
+    T.occupancy(model, list, place, today, today, 0).forEach(view => view.rooms.forEach(r => {
+      out[r.gid] = {
+        on: r.on.map(x => { const st = T.stay(x.t, today); return Object.assign(who(x.t), { start: st.start, end: st.end, unconfirmed: st.unconfirmed || st.undated, leaves: x.flags.includes('leaves') }); }),
+        next: r.next ? Object.assign(who(r.next), { start: T.stay(r.next, today).start }) : null,
+        conflict: !!r.conflict, possible: !!r.possible
+      };
+    }));
+  } catch (e) { console.warn('[vacancies] occupancy', e); }
+  M.forEach(v => { const o = out[v.gid]; v.who = o ? o.on.concat(o.next ? [o.next] : []).map(p => p.name).join(' ') : ''; });
+  VAC_OCC = out; VAC_OCC_KEY = key;
+  return out;
+}
+function vacListFlags(v, occ){ return vacRowFlags(v, occ[v.gid], VAC_STATE.cases[v.gid], v.today); }
 function vacRenderList(root, M){
   const f = VAC_STATE.list;
   if (!f.closed) f.closed = {};
@@ -11850,16 +11913,20 @@ function vacRenderList(root, M){
       <div class="card card-pad" id="vac-list" style="padding-bottom:0">
         <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
           <div class="filter-search"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            <input id="vac-l-q" placeholder="Room, house or street…" value="${esc(f.q)}" /></div>
+            <input id="vac-l-q" placeholder="Room, house, street or tenant…" value="${esc(f.q)}" /></div>
           <select id="vac-l-city" class="sort-select"><option value="">All cities</option>${cities.map(c => `<option${c === f.city ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <button type="button" class="filter-chip${f.attention ? ' has-value' : ''}" id="vac-l-att" aria-pressed="${!!f.attention}"><span class="label">Needs attention</span></button>
           <button type="button" class="filter-chip${f.showHidden ? ' has-value' : ''}" id="vac-l-hidden" aria-pressed="${f.showHidden}"><span class="label">Show hidden sections</span></button>
           <button type="button" class="btn" id="vac-l-all" style="margin-left:auto">Expand all</button>
         </div>
         <div id="vac-l-body" style="margin-top:12px"></div>
         <div id="vac-l-total" class="vac-l-total"></div>
       </div>`;
+    const setAtt = on => { f.attention = on; const b = root.querySelector('#vac-l-att'); b.classList.toggle('has-value', on); b.setAttribute('aria-pressed', on); vacRenderListBody(); };
     root.querySelector('#vac-l-q').addEventListener('input', e => { f.q = e.target.value; vacRenderListBody(); });
     root.querySelector('#vac-l-city').addEventListener('change', e => { f.city = e.target.value; vacRenderListBody(); });
+    root.querySelector('#vac-l-att').addEventListener('click', () => setAtt(!f.attention));
+    root.querySelector('#vac-l-total').addEventListener('click', e => { if (e.target.closest('[data-vac-att]')) { setAtt(true); root.scrollIntoView({ block: 'start' }); } });
     root.querySelector('#vac-l-hidden').addEventListener('click', e => { f.showHidden = !f.showHidden; e.currentTarget.classList.toggle('has-value', f.showHidden); e.currentTarget.setAttribute('aria-pressed', f.showHidden); vacRenderListBody(); });
     root.querySelector('#vac-l-all').addEventListener('click', () => {
       const S = vacSections(VAC_STATE.model, f), anyClosed = S.some(vacListClosed);
@@ -11870,6 +11937,8 @@ function vacRenderList(root, M){
     body.addEventListener('click', e => {
       const h = e.target.closest('[data-vac-sec]');
       if (h) { const k = h.dataset.vacSec, g = vacSections(VAC_STATE.model, f).find(x => x.key === k); f.closed[k] = g && vacListClosed(g) ? 0 : 1; vacRenderListBody(); return; }
+      const tn = e.target.closest('[data-vac-tenant]');
+      if (tn) { e.preventDefault(); if (typeof openTenant === 'function') openTenant(tn.dataset.vacTenant); return; }
       if (e.target.closest('a')) return;
       const r = e.target.closest('[data-vac-open]'); if (r) openVacancy(r.dataset.vacOpen);
     });
@@ -11878,19 +11947,32 @@ function vacRenderList(root, M){
   vacRenderListBody();
 }
 // A block with nothing vacant (Rented, On hold…) starts folded, like a collapsed Asana section.
-function vacListClosed(g){ const c = VAC_STATE.list.closed || {}; return g.key in c ? !!c[g.key] : !g.vacant; }
+function vacListClosed(g){ if (VAC_STATE.list.attention) return false; const c = VAC_STATE.list.closed || {}; return g.key in c ? !!c[g.key] : !g.vacant; }
 function vacRenderListBody(){
   const body = document.getElementById('vac-l-body'), foot = document.getElementById('vac-l-total');
   if (!body || !VAC_STATE.model) return;
-  const f = VAC_STATE.list, S = vacSections(VAC_STATE.model, f);
-  const all = document.getElementById('vac-l-all'); if (all) all.textContent = S.some(vacListClosed) ? 'Expand all' : 'Collapse all';
+  const f = VAC_STATE.list, occ = vacOccupancy(), FL = {};
+  VAC_STATE.model.forEach(v => { FL[v.id] = vacListFlags(v, occ); });
+  const flagged = vacSections(VAC_STATE.model, Object.assign({}, f, { keep: v => FL[v.id].length })).reduce((n, g) => n + g.rooms.length, 0);
+  const S = vacSections(VAC_STATE.model, Object.assign({}, f, { keep: f.attention ? v => FL[v.id].length : null }));
+  const att = document.querySelector('#vac-l-att .label'); if (att) att.textContent = 'Needs attention' + (flagged ? ' (' + flagged + ')' : '');
+  const all = document.getElementById('vac-l-all'); if (all) { all.hidden = !!f.attention; all.textContent = S.some(vacListClosed) ? 'Expand all' : 'Collapse all'; }
+  const person = (p, extra) => `<div><a href="#" class="vac-l-who" data-vac-tenant="${esc(p.key)}">${esc(p.name || 'Unnamed')}</a> <span class="name-sub">${esc(extra)}</span></div>`;
+  const tenantCell = v => {
+    const o = occ[v.gid];
+    if (!o) return '<span class="name-sub">—</span>';
+    const now = o.on.map(p => person(p, p.leaves ? 'leaves today' : p.unconfirmed ? (p.end ? 'lease ended ' + vacDay(p.end) : 'no dates') : p.end ? 'until ' + vacListDate(p.end) : 'no end date')).join('');
+    const nx = o.next ? `<div class="name-sub">Next: <a href="#" class="vac-l-who" data-vac-tenant="${esc(o.next.key)}">${esc(o.next.name || 'Unnamed')}</a> from ${esc(vacListDate(o.next.start))}</div>` : '';
+    return now || nx ? now + nx : '<span class="name-sub">Empty</span>';
+  };
   const row = v => {
+    const fl = FL[v.id], bad = fl.some(x => x.level === 'bad');
     const when = v.listable ? (v.emptyNow ? '<span class="badge badge-amber"><span class="dot"></span>Now</span>' : esc(vacListDate(v.from)) + (v.approx ? ' <span class="name-sub">(approx.)</span>' : ''))
       : v.due ? `<span class="name-sub">${esc(vacListDate(v.due))}</span>` : '<span class="name-sub">—</span>';
-    return `<tr data-vac-open="${esc(v.id)}" tabindex="0" style="cursor:pointer">
-      <td><div class="name-main">${esc(v.room)}</div></td>
-      <td class="name-sub">${esc(v.prop || '—')}</td>
-      <td class="name-sub">${esc(v.city)}</td>
+    return `<tr data-vac-open="${esc(v.id)}" tabindex="0" class="${bad ? 'vac-l-bad' : fl.length ? 'vac-l-warn' : ''}" style="cursor:pointer">
+      <td><div class="name-main">${esc(v.room)}</div>${fl.map(x => `<div class="vac-l-flag ${x.level}">${x.level === 'bad' ? '⚠' : '•'} ${esc(x.text)}</div>`).join('')}</td>
+      <td class="vac-l-tn">${tenantCell(v)}</td>
+      <td><div class="name-sub">${esc(v.prop || '—')}</div><div class="name-sub" style="opacity:.75">${esc(v.city)}</div></td>
       <td>${esc(v.typeLabel)}</td>
       <td class="name-sub">${esc(String(v.lease || '').replace(/_/g, ' ')) || '—'}</td>
       <td class="right num">${vacMoney(v.rent)}</td>
@@ -11899,23 +11981,24 @@ function vacRenderListBody(){
     </tr>`;
   };
   body.innerHTML = S.length ? S.map(g => {
-    const open = !vacListClosed(g);
+    const open = !vacListClosed(g), nf = g.rooms.filter(v => FL[v.id].length).length;
     return `<div class="vac-l-sec">
       <div class="vac-l-head" data-vac-sec="${esc(g.key)}" role="button" tabindex="0" aria-expanded="${open}">
         <span class="vac-l-caret">${open ? '▾' : '▸'}</span><span class="vac-l-name">${esc(g.label)}</span>
         <span class="name-sub">${g.rooms.length}</span>
         ${g.past ? '<span class="badge badge-red"><span class="dot"></span>Month passed — move these</span>' : ''}
+        ${nf && !f.attention ? `<span class="badge badge-red"><span class="dot"></span>${nf} to check</span>` : ''}
         ${g.vacant ? `<span class="badge badge-green" style="margin-left:auto"><span class="dot"></span>${g.vacant} vacant · ${vacMoney(g.rent)}/mo</span>` : ''}
       </div>
-      ${open ? `<div style="overflow-x:auto"><table class="m-keep vac-l-table"><thead><tr><th>Room</th><th>Building</th><th>City</th><th>Type</th><th>Lease</th><th class="right">Rent</th><th>${g.vacant ? 'Free from' : 'Due'}</th><th></th></tr></thead>
+      ${open ? `<div style="overflow-x:auto"><table class="m-keep vac-l-table"><thead><tr><th>Room</th><th>Tenant</th><th>Building</th><th>Type</th><th>Lease</th><th class="right">Rent</th><th>${g.vacant ? 'Free from' : 'Due'}</th><th></th></tr></thead>
         <tbody>${g.rooms.map(row).join('')}</tbody>
         <tfoot><tr><td colspan="8" class="name-sub">${g.rooms.length} room${g.rooms.length === 1 ? '' : 's'}${g.vacant ? ` · <b>${g.vacant} vacant</b> · ${vacMoney(g.rent)}/mo asking` : ' · none vacant'}</td></tr></tfoot>
       </table></div>` : ''}
     </div>`;
-  }).join('') : '<div class="empty"><div class="t">No rooms match</div></div>';
+  }).join('') : `<div class="empty"><div class="t">${f.attention ? 'Nothing needs attention' : 'No rooms match'}</div></div>`;
   const vac = S.flatMap(g => g.rooms.filter(v => v.listable)), now = vac.filter(v => v.emptyNow), T = vacTotals(vac);
   const shown = S.reduce((n, g) => n + g.rooms.length, 0);
-  foot.innerHTML = `<div><b>${vac.length} vacant</b> of ${shown} rooms · <span class="badge badge-amber"><span class="dot"></span>${now.length} empty now</span> + ${vac.length - now.length} opening later</div>
+  foot.innerHTML = `<div><b>${vac.length} vacant</b> of ${shown} rooms · <span class="badge badge-amber"><span class="dot"></span>${now.length} empty now</span> + ${vac.length - now.length} opening later${flagged && !f.attention ? ` · <a href="#" data-vac-att class="vac-l-attlink">${flagged} need attention</a>` : ''}</div>
     <div class="name-sub">${vacMoney(T.rent)}/mo asking${T.cities.length > 1 ? ' · ' + T.cities.map(c => `${esc(c.city)} ${c.n}`).join(' · ') : ''}</div>`;
 }
 function vacCaseLine(v){
@@ -47925,14 +48008,14 @@ document.addEventListener("submit", (ev) => {
 });
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
-<script src="extensions.js?v=2026-11-24-vaclist3"></script>
+<script src="extensions.js?v=2026-11-24-vaclist4"></script>
 <script src="retention.js?v=2026-11-17-roomhold1"></script>
-<script src="ap.js?v=2026-11-24-vaclist3"></script>
-<script src="properties.js?v=2026-11-24-vaclist3"></script>
-<script src="tenant-db.js?v=2026-11-24-vaclist3"></script>
+<script src="ap.js?v=2026-11-24-vaclist4"></script>
+<script src="properties.js?v=2026-11-24-vaclist4"></script>
+<script src="tenant-db.js?v=2026-11-24-vaclist4"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
 <script src="ar.js?v=2026-11-06-autoall2"></script>
 <script src="mx-finance.js?v=2026-11-06-autoall2"></script>
-<script src="ef-deposits.js?v=2026-11-24-vaclist3"></script>
+<script src="ef-deposits.js?v=2026-11-24-vaclist4"></script>
 </body>
 </html>
