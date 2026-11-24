@@ -292,7 +292,7 @@
   if (typeof document === 'undefined' || !document.querySelector) return;
 
   // ───────────── page ─────────────
-  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', viewChosen: false, month: (() => { try { return sessionStorage.getItem('ef-dd-month') || ''; } catch (_) { return ''; } })(), open: null, busy: false, confirm: false, upload: null, settings: null, history: null };
+  const S = { sheet: null, tab: 'deposits', data: null, loading: false, error: '', f: { week: 'all', property: '', q: '', status: 'all' }, view: 'moving', viewChosen: false, month: (() => { try { return sessionStorage.getItem('ef-dd-month') || ''; } catch (_) { return ''; } })(), open: null, busy: false, confirm: false, upload: null, settings: null, history: null, proof: null };
   const $ = id => document.getElementById(id);
   const api = async (method, path, body) => {
     const res = await rcvApi(method, '/api/staff/ef-deposits' + path, body);
@@ -760,6 +760,22 @@
     // 6. refund + receipt
     let refBody = refunds.map(f => `<div style="margin-bottom:4px">${money(f.amount_cents)} · <b>${esc(f.status === 'succeeded' ? 'refunded (Stripe confirmed)' : f.status === 'creating' || f.status === 'pending' ? 'processing at Stripe' : f.status)}</b>${f.stripe_refund_id ? ` · <a href="https://dashboard.stripe.com/refunds/${encodeURIComponent(f.stripe_refund_id)}" target="_blank" rel="noopener">${esc(f.stripe_refund_id)}</a>` : ''}
       <div class="name-sub">authorized by ${esc(f.approved_by)} ${esc(String(f.approved_at).replace('T', ' ').slice(0, 16))}${f.deduction_cents ? ` · deductions ${money(f.deduction_cents)}` : ''}${f.failure_reason ? ' · ' + esc(f.failure_reason) : ''}</div></div>`).join('');
+    if (refunds.length || r.stripe_refunded_cents) {
+      // the Stripe receipt, read live (2026-11-24 Aldo: "so we don't have to go to Stripe to get it")
+      const P = S.proof && S.proof.id === r.id ? S.proof : null;
+      if (!P) setTimeout(() => loadProof(r.id), 0);
+      if (!P || P.loading) refBody += '<div class="name-sub">Loading the Stripe receipt…</div>';
+      else if (P.error) refBody += `<div class="name-sub" style="color:var(--red-dark,#a33)">Could not read the Stripe receipt (${esc(P.error)}). <button type="button" class="hb-link" data-ef="proof">Try again</button></div>`;
+      else if (P.data) {
+        const d = P.data, rf = d.refunds || [];
+        refBody += `<div style="margin-top:8px;background:var(--bg-soft,#f6f7f9);border:1px solid var(--line);border-radius:8px;padding:10px">
+          <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center"><b>Stripe receipt</b>
+          ${d.receipt_url ? `<a class="btn btn-mini" href="${esc(d.receipt_url)}" target="_blank" rel="noopener">🧾 View / download receipt</a>` : '<span class="name-sub">Stripe gave no receipt link</span>'}</div>
+          <div class="name-sub" style="margin-top:4px">${money(d.amount_refunded_cents)} ${esc(String(d.currency || '').toUpperCase())} refunded${d.card ? ` to ${esc(String(d.card.brand || 'card').toUpperCase())} •••• ${esc(d.card.last4)}` : ''} · payment ref ${esc(d.payment_ref)}</div>
+          ${rf.length ? rf.map(f => `<div class="name-sub">${money(f.amount_cents)} · ${esc(f.status === 'succeeded' ? 'refunded' : f.status)} ${esc(et(f.refunded_on))}${f.id ? ' · ' + esc(f.id) : ''} · ${f.bank_reference ? 'bank ref (ARN) <b>' + esc(f.bank_reference) + '</b>' : 'bank ref (ARN) not available yet'}</div>`).join('') : '<div class="name-sub">No refund on this payment in Stripe.</div>'}
+        </div>`;
+      }
+    }
     if (open) refBody += `<button type="button" class="btn btn-mini" data-ef="refresh" ${busy}>Check status</button>`;
     if (r.stage === 'refunded') {
       refBody += r.receipt_state === 'sent' ? `<div class="name-sub">Receipt emailed to ${esc(r.receipt_to || '')} ${esc(String(r.receipt_at || '').replace('T', ' ').slice(0, 16))}.</div>`
@@ -828,6 +844,18 @@
     return out;
   }
 
+  async function loadProof(id){
+    if (S.proof && S.proof.id === id) return;
+    S.proof = { id, loading: true };
+    let res;
+    try { res = await api('POST', `/${id}/proof`, {}); } catch (e) { res = { ok: false, data: { code: e.message } }; }
+    if (!S.proof || S.proof.id !== id) return;
+    S.proof = res.ok ? { id, data: res.data.proof } : { id, error: errText(res) };
+    if (res.ok && res.data.row && S.data) S.data.rows = S.data.rows.map(x => x.id === id ? res.data.row : x);
+    if (S.open === id) renderModal();
+    if (res.ok && res.data.row) render();
+  }
+
   async function act(action, body){
     const r = cur(); if (!r || S.busy) return;
     S.busy = true; renderModal();
@@ -835,6 +863,7 @@
     try { res = await api('POST', `/${r.id}/${action}`, body || {}); }
     catch (e) { res = { ok: false, status: 0, data: { code: e.message } }; }
     S.busy = false; S.confirm = false;
+    if (['refresh', 'authorize', 'refund'].includes(action)) S.proof = null;
     if (res.data && res.data.row) S.data.rows = S.data.rows.map(x => x.id === r.id ? res.data.row : x);
     if (!res.ok) showToast(errText(res));
     else if (action === 'authorize') showToast(res.data.status === 'succeeded' ? 'Refunded — receipt sent to the student' : 'Authorized — Stripe is processing (' + res.data.status + ')');
@@ -925,6 +954,7 @@
     }
     if (a === 'cancel' || a === 'reject') { const why = (b.parentElement.querySelector(`[data-ef="${a}-reason"]`) || {}).value || ''; if (why.trim().length < 3) return showToast('Say why'); return act(a, { reason: why.trim() }); }
     if (a === 'reports') return act('reports');
+    if (a === 'proof') { S.proof = null; return renderModal(); }
     if (a === 'history') { S.busy = true; renderModal(); const res = await api('POST', `/${r.id}/history`, {}); S.busy = false; S.history = { id: r.id, events: res.ok ? res.data.events || [] : [] }; if (!res.ok) showToast(errText(res)); return renderModal(); }
     if (a === 'receipt') return act('receipt', { email: ((document.querySelector('#ef-dd-body [data-ef="receipt-email"]') || {}).value || '').trim() });
     if (a === 'review-edit') { S.data.rows = S.data.rows.map(x => x.id === r.id ? Object.assign({}, x, { review_state: '', stage: 'moved_out', _editing: true }) : x); return renderModal(); }
