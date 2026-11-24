@@ -28,7 +28,8 @@
   function stay(t, today) {
     const start = iso(t && t.moveIn);
     const past = isPast(t);
-    let end = past ? iso(t.movedOutAt) || iso(t.leaseEnd) : iso(t && t.leaseEnd);
+    // A cancelled booking (cancelledAt, set from the profile's Edit stay) never occupied the room.
+    let end = past ? (t.cancelledAt ? null : iso(t.movedOutAt) || iso(t.leaseEnd)) : iso(t && t.leaseEnd);
     const unconfirmed = !past && !!end && !!today && end < today;
     // No move-in and no lease end: an old row nobody dated. True today (it says active), unknown later.
     const undated = !past && !start && !end;
