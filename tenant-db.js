@@ -124,8 +124,9 @@
       if (covers(t, d, today)) {
         const entry = { t, flags: flagsOn(t, d, today), firm: !!room && (pl.how === "linked" || pl.how === "contract") };
         if (room) room.on.push(entry); else v.unplaced.push(entry);
-      } else if (room && s.start && s.start > d && (!room.next || s.start < stay(room.next, today).start)) room.next = t;
-      if (s.start && s.start > d && s.start <= end) v.arrivals.push(t);
+      // A past row that starts later is a cancelled booking (Edit stay) or a stale one: nobody is coming.
+      } else if (room && !s.past && s.start && s.start > d && (!room.next || s.start < stay(room.next, today).start)) room.next = t;
+      if (!s.past && s.start && s.start > d && s.start <= end) v.arrivals.push(t);
       if (!s.unconfirmed && s.end && s.end >= d && s.end <= end && (!s.start || s.start <= s.end)) v.departures.push(t);
     }
     const out = [];
