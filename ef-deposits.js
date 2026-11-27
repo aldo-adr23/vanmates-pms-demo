@@ -234,7 +234,7 @@
     return out;
   }
 
-  // ── the team's deposit sheet ("EF Deposits - Canada": tabs EF The Ivy / EF The Well / EF The Parker) ──
+  // ── the team's deposit sheet ("EF Deposits - Canada": tabs EF The Ivy / EF The Well / EF The Parker / Landis) ──
   const SHEET_HEAD = {
     name: /^(what is your full name\??|name|full\s*name|student(\s*name)?)$/i,
     move_out: /^(departure(\s*date)?|move[\s-]*out(\s*date)?|check[\s-]*out(\s*date)?)$/i,
@@ -248,11 +248,13 @@
     const rows = [], tabs = [], problems = [];
     const from = today ? addDays(today, -400) : '';
     for (const sh of sheets) {
-      if (!/^ef\b/i.test(String(sh.name || '').trim())) continue;
+      const landis = /^landis\b/i.test(String(sh.name || '').trim());   // EF Vancouver's tab is just "Landis", its move-out column "Date"
+      if (!/^ef\b/i.test(String(sh.name || '').trim()) && !landis) continue;
       let hdr = null;
       for (let i = 0; i < Math.min(sh.aoa.length, 5) && !hdr; i++) {
         const cols = {};
         (sh.aoa[i] || []).forEach((c, j) => { const t = cellStr(c); for (const [k, re] of Object.entries(SHEET_HEAD)) if (re.test(t)) (cols[k] = cols[k] || []).push(j); });
+        if (landis && !cols.move_out) (sh.aoa[i] || []).forEach((c, j) => { if (/^date$/i.test(cellStr(c))) (cols.move_out = cols.move_out || []).push(j); });
         if (cols.name && cols.move_out && cols.status) hdr = { row: i, cols };
       }
       if (!hdr) { problems.push(`${sh.name}: no Name / Move-out / Status header — skipped`); continue; }
