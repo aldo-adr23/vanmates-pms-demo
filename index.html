@@ -1964,7 +1964,7 @@ tr.lpp-a3 td{background:rgba(217,164,0,.10)}tr.lpp-a5 td{background:rgba(234,120
 <!-- ============ Phase 2.2 · Supabase persistence layer ============ -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="pms-supabase.js?v=2026-11-26-langs1"></script>
+<script src="pms-supabase.js?v=2026-11-27-hminfo1"></script>
 <!-- Fee maths for the homestay booking console. Loaded from vanmates.com rather
      than copied, so there is one source of truth: scripts/n8n and the marketing
      site already share it, and hand-mirrored copies of this maths have drifted
@@ -22759,6 +22759,28 @@ function hmGenderChoice(p){
   const g = (p && p.student_genders) || [];
   return g.length === 1 && HM_GENDERS.includes(g[0]) ? g[0] : "any";
 }
+// Whole years from a YYYY-MM-DD birth date to today (YYYY-MM-DD); null when unknown or not a sane age.
+function hmAgeYears(dob, today){
+  const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dob || "")), t = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(today || ""));
+  if (!d || !t) return null;
+  let a = Number(t[1]) - Number(d[1]);
+  if (t[2] + t[3] < d[2] + d[3]) a--;
+  return a >= 0 && a < 120 ? a : null;
+}
+// Case summary facts (Emilio 2026-11-26): nationality = student_country, gender = student_gender, age from the DOB,
+// phone = requester_phone (the student on a website request; the agency agent on a partner request). Blank = null.
+function hmStudentFacts(c, today){
+  const t = v => { const s = String(v == null ? "" : v).trim(); return s || null; };
+  const g = t(c && c.student_gender);
+  const phone = t(c && c.requester_phone);
+  return {
+    nationality: t(c && c.student_country),
+    gender: g ? g.charAt(0).toUpperCase() + g.slice(1).toLowerCase() : null,
+    age: hmAgeYears(c && c.student_dob, today),
+    phone, phoneTel: phone ? phone.replace(/[^\d+]/g, "") : null,
+    phoneLabel: c && c.source === "partner" ? "Agent phone" : "Phone",
+  };
+}
 function hmProfileFromForm(f){
   const t = v => { const s = String(v == null ? "" : v).trim(); return s || null; };
   // A blank age is no limit; otherwise a whole number 13–99 (NaN = invalid).
@@ -41272,11 +41294,18 @@ async function hmOpenCase(id){
         <div style="grid-column:1/-1"><button class="btn" type="submit">Save answer</button></div>
         <div class="card-sub" id="hm-phone-msg" style="grid-column:1/-1"></div>
       </form></details>` : "";
+  // Nationality, gender, age and phone (Emilio 2026-11-26): read-only, from the intake (no form field saves them).
+  const facts = hmStudentFacts(c, new Date().toLocaleDateString("en-CA"));
+  const phoneHtml = facts.phone ? `<a href="tel:${hmEsc(facts.phoneTel)}">${hmEsc(facts.phone)}</a>` : "";
+  const studentLine = [facts.nationality && hmEsc(facts.nationality), facts.gender && hmEsc(facts.gender),
+    facts.age != null && hmEsc(facts.age + " yrs"), phoneHtml && (c.source === "partner" ? "agent " : "") + phoneHtml].filter(Boolean).join(" · ");
+  const fact = (label, html) => `<label>${label} <span style="padding:10px 0;font-size:13.5px;color:${html ? "var(--ink)" : "var(--muted)"}">${html || "not given"}</span></label>`;
   const fold = (id, title, body, open) => `<details ${id ? `id="${id}"` : ""} style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px" ${open ? "open" : ""}>
       <summary class="card-title" style="cursor:pointer;font-size:15px">${title}</summary>${body}</details>`;
   document.getElementById("hm-case").innerHTML = `
     <div class="card-head"><div><div class="card-title">${hmEsc(c.id)}${c.student_name ? " · " + hmEsc(c.student_name) : ""} ${hmChip(c.status)} ${c.urgent ? '<span class="badge badge-red">Urgent</span>' : ""}</div>
       <div class="card-sub">${hmEsc(c.city ? c.city.charAt(0).toUpperCase() + c.city.slice(1) : "city not set")} · ${hmEsc(c.arrival || "?")} → ${hmEsc(c.departure || "?")} · ${hmEsc(mealWord)}</div>
+      ${studentLine ? `<div class="card-sub">${studentLine}</div>` : ""}
       <div class="card-sub">${c.source === "partner" ? hmEsc(hmAgencyLabel(c, HM.agencyNames)) : "Direct" + (c.source_ref ? " · " + hmEsc(c.source_ref) : "")}${c.status_reason ? " · " + hmEsc(String(c.status_reason).replace(/acct_[A-Za-z0-9_]+/g, id => nameOf(id))) : ""}</div>
       ${hmOwnerLine(c)}</div></div>
     ${hmPreferredHostsText(c.preferred_host_ids, hmWebNames()) ? `<div class="card-sub">Student liked on website: ${hmEsc(hmPreferredHostsText(c.preferred_host_ids, hmWebNames()))}</div>` : ""}
@@ -41292,6 +41321,10 @@ async function hmOpenCase(id){
       <label>Student <input class="form-input" name="student_name" value="${hmEsc(c.student_name)}" ${disabled}></label>
       <label>Email <input class="form-input" name="student_email" value="${hmEsc(c.student_email)}" ${disabled}></label>
       <label>Date of birth <input class="form-input" type="date" name="student_dob" value="${hmEsc(c.student_dob)}" ${disabled}></label>
+      ${fact("Age", facts.age == null ? "" : hmEsc(facts.age))}
+      ${fact("Nationality", hmEsc(facts.nationality || ""))}
+      ${fact("Gender", hmEsc(facts.gender || ""))}
+      ${fact(hmEsc(facts.phoneLabel), phoneHtml)}
       <label>City <select class="form-input" name="city" ${disabled}><option value="">—</option>${HM_CITIES.map(x => `<option ${c.city === x ? "selected" : ""}>${x}</option>`).join("")}${c.city && !HM_CITIES.includes(c.city) ? `<option selected>${hmEsc(c.city)}</option>` : ""}</select></label>
       <label>Area wanted <input class="form-input" name="area_pref" value="${hmEsc(c.area_pref)}" ${disabled}></label>
       <label>Arrival <input class="form-input" type="date" name="arrival" value="${hmEsc(c.arrival)}" ${disabled}></label>
@@ -48535,15 +48568,15 @@ document.addEventListener("submit", (ev) => {
 });
 </script>
 <script src="room-changes.js?v=2026-11-06-autoall2"></script>
-<script src="extensions.js?v=2026-11-26-langs1"></script>
+<script src="extensions.js?v=2026-11-27-hminfo1"></script>
 <script src="retention.js?v=2026-11-17-roomhold1"></script>
-<script src="ap.js?v=2026-11-26-langs1"></script>
-<script src="properties.js?v=2026-11-26-langs1"></script>
-<script src="tenant-db.js?v=2026-11-26-langs1"></script>
-<script src="school-students.js?v=2026-11-26-langs1"></script>
+<script src="ap.js?v=2026-11-27-hminfo1"></script>
+<script src="properties.js?v=2026-11-27-hminfo1"></script>
+<script src="tenant-db.js?v=2026-11-27-hminfo1"></script>
+<script src="school-students.js?v=2026-11-27-hminfo1"></script>
 <script src="partner-sales.js?v=2026-11-06-autoall2"></script>
 <script src="ar.js?v=2026-11-06-autoall2"></script>
 <script src="mx-finance.js?v=2026-11-06-autoall2"></script>
-<script src="ef-deposits.js?v=2026-11-26-langs1"></script>
+<script src="ef-deposits.js?v=2026-11-27-hminfo1"></script>
 </body>
 </html>
