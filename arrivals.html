@@ -410,6 +410,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
   .wkpick { flex: 1 1 100%; justify-content: space-between; }
   .toolbar select.sel { flex: 1 1 130px; min-width: 0; } /* was flex:1 — squeezed both to a bare arrow next to the buttons */
 }
+.bn-pv { white-space: pre-wrap; font: 13.5px/1.55 var(--sans, system-ui, sans-serif); background: var(--surface); border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px; margin: 0 0 12px; overflow-wrap: anywhere; }
+#bnBanner .warnbox { margin-bottom: 10px; }
 .ci-app{border:1px solid #E4DBC9;border-radius:12px;padding:10px 12px;margin:10px 0;background:#FFFDF8}
 .ci-app .note{margin:4px 0}
 </style>
@@ -423,6 +425,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     <button class="tab" data-tab="moveouts">Move-outs <span class="tbadge" id="moBadge" hidden></span></button>
     <button class="tab" data-tab="access">Rooms</button>
     <button class="tab" data-tab="templates">Templates</button>
+    <button class="tab" data-tab="notices">Notices <span class="tbadge" id="bnBadge" hidden></span></button>
   </nav></div>
   <span class="sp"></span>
   <a class="portal btn btn-ghost" href="index.html" aria-label="Back to the portal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg><span class="lbl">Portal</span></a>
@@ -511,6 +514,31 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     </div>
     <div id="accBody"><div class="empty">Loading…</div></div>
   </section>
+  <section id="v-notices" hidden>
+    <div class="toolbar">
+      <div class="seg" id="bnSeg" role="group" aria-label="Notices view"></div>
+      <select class="sel" id="bnCity" aria-label="City"><option value="">All cities</option><option>Toronto</option><option>Montréal</option><option>Vancouver</option></select>
+      <input class="inp" id="bnQ" type="search" placeholder="Search resident, building or unit" aria-label="Search" autocomplete="off" style="max-width:240px" />
+      <span class="sp"></span>
+      <button type="button" class="btn btn-ghost" id="bnRefresh">Refresh</button>
+    </div>
+    <div id="bnBanner"></div>
+    <div id="bnNotices">
+      <p class="note">Vanmates bookings at the buildings in <b>Building contacts</b> get an arrival notice to the building’s management at 7:00 AM Eastern on the arrival day (at once if the booking is confirmed later that day). School students never do. The email only carries the resident’s name, unit and arrival date.</p>
+      <div class="chips" id="bnChips" style="margin-bottom:10px"></div>
+      <div class="split">
+        <div id="bnList"><div class="empty">Loading…</div></div>
+        <aside class="panel card" id="bnPanel"></aside>
+      </div>
+    </div>
+    <div id="bnContacts" hidden>
+      <div class="toolbar"><span class="sp"></span><button type="button" class="btn btn-primary" id="bnAdd">Add building</button></div>
+      <div class="split">
+        <div id="bnContactList"></div>
+        <aside class="panel card" id="bnContactPanel"></aside>
+      </div>
+    </div>
+  </section>
   <section id="v-templates" hidden>
     <div class="tlay">
       <aside class="tside card" aria-label="Buildings">
@@ -533,6 +561,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
 <script src="arrivals-core.js?v=2026-11-06-autoall2"></script>
+<script src="building-notices.js?v=2026-11-27-bnotice1"></script>
 <script>
 (function () {
   'use strict';
@@ -659,7 +688,8 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     var h = (location.hash || '').replace('#', '');
     if (h === 'bookings') S.av = 'bookings';
     if (h === 'scheduled') S.av = 'scheduled';
-    setTab(h === 'access' || h === 'templates' || h === 'moveouts' ? h : 'arrivals');
+    setTab(h === 'access' || h === 'templates' || h === 'moveouts' || h === 'notices' ? h : 'arrivals');
+    if (S.tab !== 'notices' && window.BuildingNotices) window.BuildingNotices.badge();
     if (S.tab !== 'moveouts') loadMoBadge();
     if (!(S.tab === 'arrivals' && S.av === 'bookings')) loadBkBadge();
     if (!(S.tab === 'arrivals' && S.av === 'scheduled')) loadScBadge();
@@ -675,10 +705,12 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
     $('v-moveouts').hidden = t !== 'moveouts';
     $('v-access').hidden = t !== 'access';
     $('v-templates').hidden = t !== 'templates';
+    $('v-notices').hidden = t !== 'notices';
     try { history.replaceState(null, '', location.pathname + location.search + (t === 'arrivals' ? '' : '#' + t)); } catch (e) {}
     document.body.dataset.panel = '';
     if (t === 'arrivals') setAv(S.av);
     else if (t === 'moveouts') loadMoveouts();
+    else if (t === 'notices') { if (window.BuildingNotices) window.BuildingNotices.show(); }
     else loadAccess();
   }
 
@@ -3967,6 +3999,7 @@ iframe.pv { width: 100%; height: 640px; border: 1px solid var(--line); border-ra
       else if (S.tab === 'arrivals' && S.av === 'scheduled' && S.sc.openId && NARROW.matches) scAct('close');
       else if (S.tab === 'arrivals' && S.av === 'checkins' && S.openId && NARROW.matches) act('close');
       else if (S.tab === 'moveouts' && S.mo.openId && NARROW.matches) moAct('close');
+      else if (S.tab === 'notices' && NARROW.matches && window.BuildingNotices) window.BuildingNotices.closePanel();
       else if (S.tab === 'access' && S.rsel && NARROW.matches) closeRoom();
     });
     window.addEventListener('beforeunload', function (e) { if (S.tplDirty) { e.preventDefault(); e.returnValue = ''; } });
