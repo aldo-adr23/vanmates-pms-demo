@@ -413,7 +413,10 @@
   const sheetLine = r => !r.sheet ? '' : `<div class="name-sub">Sheet: ${esc(r.sheet.status || 'no status')}${r.sheet.deduction_cents ? ` · −${money(r.sheet.deduction_cents)}` : ''}</div>`
     + (r.sheet_flag && !sheetSaysDone(r) ? `<div class="name-sub" style="color:#9a6b12">⚠ ${esc(r.sheet_flag.text)}</div>` : '');
   const step = (r, today) => { const [l, c] = nextStep(r, today); const col = { red: 'var(--red-dark,#a33)', green: '#3e6049', amber: '#9a6b12' }[c] || 'var(--muted)';
-    return `<span style="color:${col};font-weight:${c ? 600 : 400};white-space:nowrap">${esc(l)}</span>${sheetLine(r)}`; };
+    return `<span style="color:${col};font-weight:${c ? 600 : 400};white-space:nowrap">${esc(l)}</span>${sheetLine(r)}${p4Line(r)}`; };
+  // charges 4Stay added on partners.vanmates.com (2026-11-26) — the reviewer decides on each in step 4
+  const p4List = r => (Array.isArray(r.partner_charges) ? r.partner_charges : []).filter(c => c && c.cents > 0);
+  const p4Line = r => { const l = p4List(r); return l.length ? `<div class="name-sub" style="color:#9a6b12">4Stay charges: −${money(l.reduce((t, c) => t + c.cents, 0))} (${l.length})</div>` : ''; };
   const dep = r => hasDeposit(r) ? `${money(r.available_cents != null ? r.available_cents : r.paid_cents)}<div class="name-sub">paid ${esc(short(String(r.paid_at || '').slice(0, 10)))}</div>`
     : r.match_state === 'review' ? '<span style="color:#9a6b12">to confirm</span>' : '<span style="color:var(--red-dark,#a33)">none</span>';
   const table = (head, body, empty) => `<div class="card"><div style="overflow-x:auto"><table><thead><tr>${head.map(h => `<th${/Deposit|Held/.test(h) ? ' class="right"' : ''}>${h}</th>`).join('')}</tr></thead>
@@ -732,19 +735,21 @@
         ${damage.map(x => `<div class="name-sub">−${money(x.cents)} · ${esc(x.reason)}${x.code ? ' <span class="name-sub">(Penalty List)</span>' : ''}</div>`).join('')}
         ${r.no_report_reason ? `<div class="name-sub" style="color:#9a6b12">Approved without a cleaning report: ${esc(r.no_report_reason)}</div>` : ''}
         ${r.inspection_notes ? `<div class="name-sub">Notes: ${esc(r.inspection_notes)}</div>` : ''}
+        ${p4Html(r, damage, false)}
         ${(approved || withPartner) && !open && me.can_review ? `<button type="button" class="hb-link" data-ef="review-edit" ${busy}>Revise (sends it back to review)</button>` : ''}`;
-    } else if (!left) revBody = '<div class="name-sub">After the move-out.</div>';
+    } else if (!left) revBody = '<div class="name-sub">After the move-out.</div>' + p4Html(r, [], false);
     else if (r.match_state !== 'matched') revBody = '<div class="name-sub" style="color:var(--red-dark,#a33)">Link the original Stripe payment first (step 1).</div>';
     else if (!me.can_review) revBody = `<div class="name-sub">Waiting for the reviewer (${esc(((S.data.settings || {}).reviewers || []).join(', '))}).</div>${bk(0, fee)}`;
     else {
-      const startDmg = damage.length ? damage : [];
+      // 4Stay's charges start in the list on a fresh review; the reviewer removes any that don't apply
+      const startDmg = damage.length ? damage : p4List(r).map(p4Ded);
       revBody = `${r.review_state === 'rejected' ? `<div style="color:var(--red-dark,#a33);margin-bottom:4px">Rejected by ${esc(r.rejected_by || '')}: ${esc(r.reject_reason || '')}</div>` : ''}
         ${returned ? `<div style="color:var(--red-dark,#a33);margin-bottom:4px">4Stay sent it back (${esc(r.partner_by || '')}): ${esc(r.partner_note || '')}</div>` : ''}
         <div class="name-sub">Extra charges (anything but the cleaning fee) go to 4Stay first: they confirm them with EF, then Denisse gives the final approval.</div>
         <div id="ef-bk">${bk(startDmg.reduce((t, x) => t + x.cents, 0), fee)}</div>
         ${fee ? `<label class="name-sub" style="display:block"><input type="checkbox" data-ef="waive"> Waive the cleaning fee</label><input class="input" data-ef="waive-reason" placeholder="Why the cleaning fee is waived" style="width:100%;display:none">` : `<div class="name-sub">No cleaning fee set for ${esc(r.building || 'this residence')} (Settings).</div>`}
         ${!damage.length && r.sheet && r.sheet.deduction_cents > 0 ? `<div class="name-sub">Team sheet: −${money(r.sheet.deduction_cents)}${r.sheet.comments ? ' · ' + esc(r.sheet.comments) : ''} <button type="button" class="hb-link" data-ef="ded-sheet">Use it</button></div>` : ''}
-        ${sugHtml(r, startDmg)}
+        ${p4Html(r, startDmg, true)}${sugHtml(r, startDmg)}
         <div id="ef-ded-list">${startDmg.map((x, i) => dedRow(x, i)).join('')}</div>
         <button type="button" class="hb-link" data-ef="ded-add">+ Add a damage deduction</button>
         ${r.has_report ? '' : `<input class="input" data-ef="no-report" placeholder="No cleaning report: why it can be approved anyway (required)" style="width:100%;margin-top:6px" value="${esc(r.no_report_reason || '')}">`}
@@ -839,6 +844,18 @@
       ${x.link ? `<a href="${esc(x.link)}" target="_blank" rel="noopener" class="name-sub">Open the file in Drive</a>` : ''}
       ${r.sheet_flag ? `<div style="color:#9a6b12;margin-top:4px">⚠ ${esc(r.sheet_flag.text)}</div>` : ''}
       <div class="name-sub">Imported ${esc(String(x.imported_at || '').slice(0, 10))} from ${esc(x.file || 'the sheet')}.</div></div>`;
+  }
+  // 4Stay's charges as damage lines ("4Stay: …"); one already in the list is matched by its text and amount
+  const p4Ded = c => ({ cents: c.cents, reason: `4Stay: ${c.reason}`.slice(0, 300) });
+  const p4In = (c, have) => have.some(d => d.cents === c.cents && String(d.reason || '') === p4Ded(c).reason);
+  function p4Html(r, have, editable){
+    const l = p4List(r); if (!l.length) return '';
+    const who = c => String(c.by || '').replace(/\s*\(.*\)$/, '');
+    return `<div style="border:1px dashed #9a6b12;border-radius:8px;padding:8px;margin:6px 0;background:rgba(154,107,18,.06)">
+      <div class="name-sub" style="margin-bottom:4px"><b>Charges added by 4Stay</b>${editable ? ' — in the list below on a new review; remove any that don\'t apply. 4Stay confirms the final charges with EF afterwards.' : ''}</div>
+      ${l.map(c => `<div data-ef-p4="${esc(c.id)}" style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;border-top:1px solid var(--line)">
+        <div style="flex:1"><b>−${money(c.cents)}</b> · ${esc(c.reason)}<div class="name-sub">${esc(who(c))} · ${esc(String(c.at || '').replace('T', ' ').slice(0, 16))}${p4In(c, have) ? ' · in the breakdown' : ''}</div></div>
+        ${editable && !p4In(c, have) ? `<button type="button" class="btn btn-mini" data-ef="p4-add" data-id="${esc(c.id)}">Add</button>` : ''}</div>`).join('')}</div>`;
   }
   // Penalty List charges the Limpio reports point to — suggestions only, the reviewer adds or ignores each
   function sugHtml(r, have){
@@ -966,6 +983,11 @@
       const box = b.closest('[data-ef-sug]'); const wrap = box.parentElement; box.remove(); if (!wrap.querySelector('[data-ef-sug]')) wrap.remove();
       if (!x.cents) { const inp = list.lastElementChild.querySelector('[data-ef-ded-amt]'); if (inp) inp.focus(); showToast('Type the amount (current market price)'); }
       return;
+    }
+    if (a === 'p4-add') {
+      const c = p4List(r).find(x => x.id === b.dataset.id); if (!c) return;
+      const list = $('ef-ded-list'); list.insertAdjacentHTML('beforeend', dedRow(p4Ded(c), list.children.length));
+      b.remove(); return;
     }
     if (a === 'ded-del') { b.closest('[data-ef-ded]').remove(); return; }
     if (a === 'approve') {
