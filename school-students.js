@@ -141,6 +141,7 @@
 .ss-tlt .not_in_roster{background:var(--amber-soft);color:#8a5f12}
 .ss-drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100%);background:var(--surface,#fff);border-left:1px solid var(--line);box-shadow:-12px 0 30px -18px rgba(0,0,0,.35);padding:18px;overflow:auto;z-index:60}
 .ss-drawer h2{margin:0 0 2px;font-size:21px}
+.ss-edit{display:grid;gap:8px;margin:10px 0}.ss-edit label{display:grid;gap:3px;font-size:12.5px;color:var(--muted)}.ss-edit .row{display:flex;gap:8px;flex-wrap:wrap}.ss-edit .row label{flex:1 1 140px}.ss-stay-ed{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0}
 .ss-kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:5px 10px;font-size:13.5px;margin:10px 0}.ss-kv dt{color:var(--muted)}.ss-kv dd{margin:0;overflow-wrap:anywhere}
 .ss-dt{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0 8px}
 .ss-dt button{font:inherit;font-size:13px;font-weight:600;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:6px 8px;cursor:pointer}
@@ -349,7 +350,20 @@
     const tabs = [["ov", "Overview"], ["st", `Stays (${stays.length})`], ["ms", "Messages"], ["ch", "Changes"]];
     const T = today();
     const codes = cur.stage === "upcoming" ? `Shown from ${fmt(cur.check_in)}` : cur.stage === "past" ? "Hidden, stay ended" : cur.check_out ? `Shown until ${fmt(cur.check_out)}` : "Shown (no departure date)";
-    const body = S.dtab === "ov" ? `<dl class="ss-kv"><dt>Email</dt><dd>${e(s.email || "none")}${s.shared_email ? ` <span class="ss-tag warn">shared inbox</span>` : ""}</dd><dt>Phone</dt><dd>${e(s.phone || "—")}</dd>
+    const editing = S.edit && S.dtab === "ov";
+    const stayEd = (y) => `<div class="ss-stay-ed"><b>${e(y.building)} ${e([y.unit, y.bed].filter(Boolean).join(" · "))}</b> ${stageTag(y)}
+        <div class="row"><label>Arrival<input type="date" class="form-input" data-ss-ein="${y.id}" value="${e(y.check_in || "")}"></label>
+        <label>Departure<input type="date" class="form-input" data-ss-eout="${y.id}" value="${e(y.check_out || "")}"></label></div>
+        <div class="row" style="margin-top:6px"><button class="btn btn-primary tn-mini" data-ss-ed="dates|${y.id}">Save dates</button>
+        ${y.left_confirmed_at ? `<button class="btn btn-ghost tn-mini" data-ss-ed="still|${y.id}">Undo moved out</button>`
+          : `<input type="date" class="form-input" data-ss-eleft="${y.id}" style="width:auto" aria-label="Moved out on"><button class="btn btn-ghost tn-mini" data-ss-ed="left|${y.id}">Moved out on this day</button>`}</div></div>`;
+    const editForm = `<div class="ss-edit"><label>Name<input class="form-input" id="ss-e-name" value="${e(s.name || "")}"></label>
+        <label>Email (the student's own: it is their app sign-in)<input class="form-input" id="ss-e-email" value="${e(s.email || "")}"></label>
+        <label>Phone<input class="form-input" id="ss-e-phone" value="${e(s.phone || "")}"></label>
+        <div class="row"><button class="btn btn-primary tn-mini" data-ss-ed="profile|${s.id}">Save profile</button><button class="btn btn-ghost tn-mini" data-ss-ed="cancel|">Done editing</button></div>
+        <div class="ss-sub">Stays: fix the dates if the school roster is wrong. A newer roster with a different date replaces your fix. The room itself comes from the roster: change it in Arrivals.</div>
+        ${stays.filter((y) => !y.cancelled).map(stayEd).join("")}</div>`;
+    const body = editing ? editForm : S.dtab === "ov" ? `<button class="btn btn-ghost tn-mini" data-ss-ed="open|" style="float:right">Edit</button><dl class="ss-kv"><dt>Email</dt><dd>${e(s.email || "none")}${s.shared_email ? ` <span class="ss-tag warn">shared inbox</span>` : ""}</dd><dt>Phone</dt><dd>${e(s.phone || "—")}</dd>
         <dt>School</dt><dd>${e(cur.school || s.school)} · ${e(cur.city || s.city)}</dd><dt>Property</dt><dd>${e(cur.building || "—")}</dd><dt>Unit · bed</dt><dd>${e([cur.unit, cur.bed].filter(Boolean).join(" · ") || "—")}</dd>
         <dt>Stay</dt><dd>${fmt(cur.check_in, 1)} → ${fmt(cur.check_out, 1)}${cur.check_in && cur.check_out ? ` (${SS_CORE.days(cur.check_in, cur.check_out)} nights)` : ""}</dd>
         <dt>Codes in the app</dt><dd>${codes}</dd><dt>App</dt><dd>${s.app_activated_at ? `Active since ${fmt(SS_CORE.iso(s.app_activated_at), 1)}` : s.shared_email || !s.email ? "No own email, no app link" : "Not activated yet"}</dd>
@@ -368,7 +382,12 @@
     if (c.kind === "created") return "Profile created";
     if (c.kind === "new_stay") return `New stay: ${[d.building, d.unit, d.bed].filter(Boolean).join(" ")}, ${fmt(d.check_in)} → ${fmt(d.check_out)}${d.roster ? " (" + d.roster + ")" : ""}`;
     if (c.kind === "room_change") return d.to ? `Room changed: ${d.from} → ${d.to}` : `Moved to ${[d.building, d.unit, d.bed].filter(Boolean).join(" ")}${d.from ? " from " + d.from : ""}`;
-    if (c.kind === "dates_changed") return `${d.what === "extension" ? "Extended" : d.what === "shortened" ? "Shortened" : "Dates moved"}: departure ${fmt((d.check_out || [])[0])} → ${fmt((d.check_out || [])[1])}`;
+    if (c.kind === "dates_changed") {
+      const io = (k) => { const v = d[k] || []; return v[0] !== v[1] ? `${k === "check_in" ? "arrival" : "departure"} ${fmt(v[0])} → ${fmt(v[1])}` : ""; };
+      const what = { extension: "Extended", shortened: "Shortened", room_move: "Moved rooms, this stay ended", corrected: "Dates corrected", moved_out: "Moved out" }[d.what] || "Dates moved";
+      return `${what}: ${[io("check_in"), io("check_out")].filter(Boolean).join(", ") || "no change"}`;
+    }
+    if (c.kind === "edited") return `Profile edited: ${Object.keys(d.to || {}).map((k) => `${k} ${(d.from || {})[k] || "—"} → ${(d.to || {})[k] || "—"}`).join(", ")}`;
     if (c.kind === "imported") return `Imported from ${d.source || "the sheet"}${d.row ? " (" + d.row + ")" : ""}`;
     if (c.kind === "linked_to_roster") return `Matched to a roster${d.roster ? " (" + d.roster + ")" : ""}`;
     if (c.kind === "review") return `Review: ${RV_LABEL[d.kind] || d.kind} → ${d.decision}`;
@@ -379,7 +398,7 @@
   }
 
   async function openStudent(id) {
-    S.open = id; S.detail = null; S.dtab = "ov"; render();
+    S.open = id; S.detail = null; S.dtab = "ov"; S.edit = false; render();
     const { data, error } = await sb().rpc("school_student_detail", { p_student: id });
     if (error) { toast(error.message); S.open = null; } else S.detail = data;
     render();
@@ -390,9 +409,40 @@
     if (kind === "set_dates") { const v = (document.querySelector(`[data-ss-out="${id}"]`) || {}).value; if (!v) return toast("Pick the departure date first"); p.check_out = v; }
     if (kind === "set_email") { const v = ((document.querySelector(`[data-ss-email="${id}"]`) || {}).value || "").trim(); if (!v) return toast("Type the student's own email first"); p.email = v; }
     const { data, error } = await sb().rpc("school_review_decide", { p_review: id, p_decision: kind, p });
-    if (error || !data || !data.ok) return toast(error ? error.message : data && data.error === "email" ? "That email is a school or agency inbox, or not an email" : "Couldn't save");
+    if (error || !data || !data.ok) return toast(error ? error.message : errText(data && data.error));
     toast("Saved");
     await load(); render();
+  }
+  function errText(c) {
+    return { email: "That email is a school or agency inbox, or not an email", email_taken: "Another student already has that email",
+      order: "The arrival must be before the departure", date: "Pick a date first", name: "The name can't be empty" }[c] || "Couldn't save";
+  }
+  async function edit(kind, id) {
+    if (kind === "open") { S.edit = true; return render(); }
+    if (kind === "cancel") { S.edit = false; return render(); }
+    const val = (sel) => ((document.querySelector(sel) || {}).value || "").trim();
+    let res;
+    if (kind === "profile") res = await sb().rpc("school_student_edit", { p_student: id, p: { name: val("#ss-e-name"), email: val("#ss-e-email"), phone: val("#ss-e-phone") } });
+    else if (kind === "dates") {
+      const p = {}, i = val(`[data-ss-ein="${id}"]`), o = val(`[data-ss-eout="${id}"]`);
+      if (i) p.check_in = i;
+      if (!o) return toast("Pick the departure date");
+      p.check_out = o;
+      res = await sb().rpc("school_stay_edit", { p_stay: id, p });
+    } else if (kind === "left") {
+      const v = val(`[data-ss-eleft="${id}"]`);
+      if (!v) return toast("Pick the day they moved out");
+      res = await sb().rpc("school_stay_edit", { p_stay: id, p: { moved_out: v } });
+    } else if (kind === "still") res = await sb().rpc("school_stay_edit", { p_stay: id, p: { still_here: true } });
+    else return;
+    const { data, error } = res;
+    if (error || !data || !data.ok) return toast(error ? error.message : errText(data && data.error));
+    toast("Saved");
+    const sid = S.open;
+    await load();
+    const r = await sb().rpc("school_student_detail", { p_student: sid });
+    if (!r.error) S.detail = r.data;
+    render();
   }
   function download(name, text) {
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" })); a.download = name; a.click();
@@ -404,7 +454,7 @@
     if (!root || root.dataset.wired) return;
     root.dataset.wired = "1";
     root.addEventListener("click", (ev) => {
-      const t = ev.target.closest("[data-ss-tab],[data-ss-city],[data-ss-mode],[data-ss-view],[data-ss-act],[data-ss-split],[data-ss-clear],[data-ss-sort],[data-ss-open],[data-ss-close],[data-ss-dtab],[data-ss-dec],[data-ss-tl],[data-ss-csv],[data-ss-bulk]");
+      const t = ev.target.closest("[data-ss-tab],[data-ss-city],[data-ss-mode],[data-ss-view],[data-ss-act],[data-ss-split],[data-ss-clear],[data-ss-sort],[data-ss-open],[data-ss-close],[data-ss-dtab],[data-ss-dec],[data-ss-ed],[data-ss-tl],[data-ss-csv],[data-ss-bulk]");
       if (!t || ev.target.matches("input[type=checkbox]")) return;
       const d = t.dataset;
       if (d.ssTab) { S.tab = d.ssTab; }
@@ -417,8 +467,9 @@
       else if (d.ssSort) S.sort = d.ssSort;
       else if (d.ssOpen) { ev.preventDefault(); return openStudent(d.ssOpen); }
       else if (d.ssClose != null) { S.open = null; S.detail = null; }
-      else if (d.ssDtab) S.dtab = d.ssDtab;
+      else if (d.ssDtab) { S.dtab = d.ssDtab; S.edit = false; }
       else if (d.ssDec) { const [k, id] = d.ssDec.split("|"); return decide(k, id); }
+      else if (d.ssEd) { const [k, id] = d.ssEd.split("|"); return edit(k, id); }
       else if (d.ssTl) { S.tlBuilding = d.ssTl; S.f.building = d.ssTl; S.mode = "time"; }
       else if (d.ssCsv != null) return download(`school-students-${today()}.csv`, SS_CORE.csv(SS_CORE.filter(S.rows, S.view, S.f, today())));
       else if (d.ssBulk) {
@@ -452,6 +503,12 @@
     document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && S.open) { S.open = null; S.detail = null; render(); } });
   }
 
+  // Header search while on this page searches school students (not Tenants).
+  window.schoolStudentsSearch = function (q) {
+    S.tab = "students"; S.mode = S.mode || "list";
+    if (q) { S.f.q = q; if (S.view !== "all") S.view = "all"; } else { delete S.f.q; S.view = "current"; }
+    render();
+  };
   window.loadSchoolStudents = async function () { wire(); render(); await load(); render(); };
   // Review badge in the sidebar, for staff, shortly after sign-in.
   setTimeout(async () => { if (isStaff() && sb()) { try { const { data } = await sb().rpc("school_reviews_open"); if (Array.isArray(data)) { S.reviews = data; setBadge(); } } catch (x) {} } }, 4000);
